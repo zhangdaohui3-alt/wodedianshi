@@ -1,16 +1,51 @@
-YAML                         name: Build My TV APK
+YAML                          name: Build My TV APK
 
 on:
+
   workflow_dispatch:
 
+  push:
+
+    branches: [main]
+
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout
+
         uses: actions/checkout@v4
 
-      - name: Check project files
+      - name: Setup JDK
+
+        uses: actions/setup-java@v4
+
+        with:
+
+          distribution: temurin
+
+          java-version: '17'
+
+      - name: Setup Android SDK
+
+        uses: android-actions/setup-android@v3
+
+      - name: Build APK
+
         run: |
-          echo "Repository is ready"
-          ls -la
+
+          gradle assembleDebug
+
+      - name: Upload APK
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: My-TV-APK
+
+          path: app/build/outputs/apk/debug/*.apk
