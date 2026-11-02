@@ -1,7 +1,6 @@
+YAML
 
-  
-
-YAML                                                                               name: Build My TV APK
+name: Build My TV APK
 
 on:
 
