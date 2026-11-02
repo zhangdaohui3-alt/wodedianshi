@@ -1,4 +1,4 @@
-YAML                          name: Build My TV APK
+YAML                                  name: Build My TV APK
 
 on:
 
@@ -6,7 +6,9 @@ on:
 
   push:
 
-    branches: [main]
+    branches:
+
+      - main
 
 jobs:
 
@@ -34,11 +36,17 @@ jobs:
 
         uses: android-actions/setup-android@v3
 
+      - name: Setup Gradle
+
+        uses: gradle/actions/setup-gradle@v4
+
+        with:
+
+          gradle-version: '8.9'
+
       - name: Build APK
 
-        run: |
-
-          gradle assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
 
@@ -48,4 +56,4 @@ jobs:
 
           name: My-TV-APK
 
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/*.apk      
