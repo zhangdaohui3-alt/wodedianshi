@@ -1,8 +1,6 @@
-
-
 name: Build My TV APK
 
-on:
+'on':
 
   workflow_dispatch:
 
