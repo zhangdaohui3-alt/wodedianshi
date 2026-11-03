@@ -1,4 +1,4 @@
-gradle             pluginManagement {
+pluginManagement {
     repositories {
         google()
         mavenCentral()
