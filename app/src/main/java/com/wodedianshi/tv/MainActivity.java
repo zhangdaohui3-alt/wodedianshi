@@ -1,4 +1,4 @@
-java                       package com.wodedianshi.tv;
+package com.wodedianshi.tv;
 
 import android.app.Activity;
 
