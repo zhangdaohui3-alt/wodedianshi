@@ -69,9 +69,9 @@ public class MainActivity extends Activity {
     LinearLayout main=new LinearLayout(this);main.setOrientation(1);
     info=new TextView(this);info.setText("国内频道请导入授权播放源，或从左侧打开国内官方平台");info.setTextColor(-1);main.addView(info);
     video=new PlayerView(this);video.setUseController(true);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
-    root.addView(side,new LinearLayout.LayoutParams(dp(290),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();
+    root.addView(side,new LinearLayout.LayoutParams(dp(310),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();side.setFocusableInTouchMode(true);side.requestFocus();
   }
-  private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setOnClickListener(l);p.addView(b);}
+  private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
   private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
     new AlertDialog.Builder(this).setTitle("国内直播频道分类")
@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
-      Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setOnClickListener(v->play(ix));
+      Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));b.setFocusable(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(28,105,175):Color.rgb(35,45,62)));});b.setOnClickListener(v->play(ix));
       b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else{channels.remove(ix);favorites.remove(c.key());}persist();refresh();}).show();return true;});list.addView(b);
     }
   }
