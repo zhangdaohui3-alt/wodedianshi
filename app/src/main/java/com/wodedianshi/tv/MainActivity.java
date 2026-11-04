@@ -73,13 +73,21 @@ public class MainActivity extends Activity {
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setOnClickListener(l);p.addView(b);}
   private void officialDialog(){
-    String[] names={"央视网直播与点播","央视频（电视/影视/节目库）","央视影音官方客户端","爱奇艺","腾讯视频","优酷","芒果TV","哔哩哔哩"};
-    String[] urls={"https://cctv.cntv.cn/","https://www.yangshipin.cn/tv/home?pid=600002525","https://app.cctv.cn/","https://www.iqiyi.com/","https://v.qq.com/","https://www.youku.com/","https://www.mgtv.com/","https://www.bilibili.com/"};
-    new AlertDialog.Builder(this).setTitle("国内官方平台")
-      .setItems(names,(dialog,which)->{
-        try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which]));startActivity(i);}
-        catch(Exception e){toast("无法打开平台，请检查电视是否安装浏览器");}
+    String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
+    new AlertDialog.Builder(this).setTitle("国内直播频道分类")
+      .setItems(categories,(dialog,which)->{
+        if(which==0) openOfficialList("央视频道",new String[]{"央视网直播","央视网节目官网"},new String[]{"https://tv.cctv.com/live/","https://cctv.cntv.cn/"});
+        else if(which==1) openOfficialList("省级卫视",new String[]{"北京卫视","东方卫视","江苏卫视","浙江卫视","湖南卫视","广东卫视","深圳卫视","四川卫视"},new String[]{"https://www.btime.com/","https://www.kankanews.com/","https://live.jstv.com/","https://tv.cztv.com/live1","https://www.mgtv.com/","https://www.gdtv.com.cn/","https://www.cutv.com/","https://www.sctv.com/"});
+        else if(which==2) openOfficialList("省市地方频道",new String[]{"央视网地方频道","央视网直播中国（省市/港澳台）","福建网络广播电视","浙江网络广播电视","江苏网络广播电视","广东网络广播电视","四川广播电视台"},new String[]{"https://local.cctv.cn/","https://livechina.cctv.cn/qbcs/index.shtml","https://live.fjtv.net/","https://tv.cztv.com/","https://live.jstv.com/","https://www.gdtv.com.cn/","https://www.sctv.com/"});
+        else if(which==3) openOfficialList("港澳台频道",new String[]{"香港电台 RTHK","香港无线新闻 TVB News","澳门广播电视 TDM","台湾公共电视 PTS"},new String[]{"https://www.rthk.hk/tv","https://news.tvb.com/","https://www.tdm.com.mo/","https://www.pts.org.tw/"});
+        else if(which==4) openOfficialList("国内影视与节目",new String[]{"央视网","央视频","爱奇艺","腾讯视频","优酷","芒果TV","哔哩哔哩"},new String[]{"https://cctv.cntv.cn/","https://www.yangshipin.cn/","https://www.iqiyi.com/","https://v.qq.com/","https://www.youku.com/","https://www.mgtv.com/","https://www.bilibili.com/"});
       }).setNegativeButton("关闭",null).show();
+  }
+  private void openOfficialList(String title,String[] names,String[] urls){
+    new AlertDialog.Builder(this).setTitle(title).setItems(names,(dialog,which)->{
+      try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which]));startActivity(i);}
+      catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
+    }).setNegativeButton("返回",null).show();
   }
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
