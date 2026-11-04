@@ -56,26 +56,24 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
     } catch(Exception ignored) {}
   }
+  private String activeCategory="全部";
   private void makeUi(){
-    LinearLayout root=new LinearLayout(this);root.setOrientation(0);root.setPadding(dp(12),dp(8),dp(12),dp(8));root.setBackgroundColor(Color.rgb(12,18,32));
-    LinearLayout side=new LinearLayout(this);side.setOrientation(1);
-    TextView heading=new TextView(this);heading.setText("我的电视");heading.setTextColor(-1);heading.setTextSize(26);side.addView(heading);
-    addButton(side,"导入 M3U 文件",v->chooseFile());
-    addButton(side,"导入播放列表网址",v->urlDialog());
-    addButton(side,"全部频道 / 收藏",v->{favoriteMode=!favoriteMode;refresh();});
-    addButton(side,"导出 M3U 配置",v->exportFile());
-    addButton(side,"手动添加频道",v->addDialog());
-    addButton(side,"国内官方观看平台",v->officialDialog());
-    search=new EditText(this);search.setSingleLine(true);search.setHint("搜索频道");side.addView(search);
-    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh();}public void afterTextChanged(android.text.Editable e){}});
-    list=new LinearLayout(this);list.setOrientation(1);ScrollView sc=new ScrollView(this);sc.addView(list);side.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
-    LinearLayout main=new LinearLayout(this);main.setOrientation(1);
-    info=new TextView(this);info.setText("国内频道请导入授权播放源，或从左侧打开国内官方平台");info.setTextColor(-1);main.addView(info);
-    video=new PlayerView(this);video.setUseController(true);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
-    root.addView(side,new LinearLayout.LayoutParams(dp(310),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();
-    side.setFocusable(false);side.setFocusableInTouchMode(false);
-    for(int i=0;i<menuButtons.size();i++){Button current=menuButtons.get(i);Button up=menuButtons.get((i+menuButtons.size()-1)%menuButtons.size());Button down=menuButtons.get((i+1)%menuButtons.size());current.setNextFocusUpId(up.getId());current.setNextFocusDownId(down.getId());}
-    if(!menuButtons.isEmpty())menuButtons.get(0).post(()->menuButtons.get(0).requestFocus());
+    LinearLayout root=new LinearLayout(this);root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
+    LinearLayout cats=new LinearLayout(this);cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
+    TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
+    String[] names={"全部","央视","卫视","地方","港澳台","收藏"};
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));x.setBackgroundTintList(android.content.res.ColorStateList.valueOf(name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40)));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<cats.getChildCount();i++){View z=cats.getChildAt(i);if(z instanceof Button)((Button)z).setBackgroundTintList(android.content.res.ColorStateList.valueOf(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40)));}refresh();});cats.addView(x,new LinearLayout.LayoutParams(-1,dp(54)));}
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else officialDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    LinearLayout channelPane=new LinearLayout(this);channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
+    TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
+    search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
+    list=new LinearLayout(this);list.setOrientation(1);ScrollView sc=new ScrollView(this);sc.addView(list);channelPane.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+    LinearLayout main=new LinearLayout(this);main.setOrientation(1);main.setPadding(dp(10),0,0,0);
+    info=new TextView(this);info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
+    video=new PlayerView(this);video.setUseController(true);video.setBackgroundColor(Color.BLACK);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
+    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh();}public void afterTextChanged(android.text.Editable e){}});
+    refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
   @Override public boolean dispatchKeyEvent(KeyEvent event){
@@ -99,9 +97,10 @@ public class MainActivity extends Activity {
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
   }
+  private boolean categoryMatch(Channel c,String cat){String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视");if(cat.equals("卫视"))return x.contains("卫视");if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台");if(cat.equals("地方"))return !(x.contains("cctv")||x.contains("央视")||x.contains("卫视")||x.contains("香港")||x.contains("澳门")||x.contains("台湾"));return true;}
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
-    for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
+    for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
       Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));b.setFocusable(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(28,105,175):Color.rgb(35,45,62)));});b.setOnClickListener(v->play(ix));
       b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{sourceIndex=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());}persist();refresh();}).show();return true;});list.addView(b);
     }
