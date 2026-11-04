@@ -133,9 +133,39 @@ public class MainActivity extends Activity {
   private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>8*1024*1024)throw new IOException("播放列表超过 8 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int parse(String data){
-    String name=null,group="";int added=0;
-    for(String raw:data.split("\\r?\\n")){String line=raw.trim();if(line.startsWith("#EXTINF")){int comma=line.lastIndexOf(',');name=comma>=0?line.substring(comma+1).trim():"频道";int g=line.indexOf("group-title=\"");if(g>=0){int end=line.indexOf('"',g+13);if(end>g)group=line.substring(g+13,end);}}
-      else if((line.startsWith("http://")||line.startsWith("https://"))&&!line.startsWith("#")){if(name==null)name="频道 "+(channels.size()+1);boolean exists=false;for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}if(!exists){Channel same=null;for(Channel c:channels)if(c.name.equalsIgnoreCase(name)&&c.group.equalsIgnoreCase(group)){same=c;break;}if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);added++;}}else{channels.add(new Channel(name,line,group));added++;}}name=null;group="";}}
+    String name=null,group="",pendingGroup="";int added=0;
+    if(data==null)return 0;
+    data=data.replace("\uFEFF","").replace("\r\n","\n").replace('\r','\n');
+    for(String raw:data.split("\n")){
+      String line=raw.trim();
+      if(line.isEmpty())continue;
+      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
+      if(line.startsWith("#EXTINF")){
+        int comma=line.lastIndexOf(',');
+        name=comma>=0?line.substring(comma+1).trim():"";
+        java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
+        String tvgName=nm.find()?nm.group(1).trim():"";
+        if(name.isEmpty())name=tvgName;
+        if(name.isEmpty())name="频道 "+(channels.size()+1);
+        group=pendingGroup;pendingGroup="";
+        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);
+        if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
+        continue;
+      }
+      if(line.startsWith("#"))continue;
+      if(line.startsWith("http://")||line.startsWith("https://")){
+        if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
+        boolean exists=false;
+        for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}
+        if(!exists){
+          Channel same=null;
+          for(Channel c:channels)if(c.name.equalsIgnoreCase(name)&&c.group.equalsIgnoreCase(group)){same=c;break;}
+          if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);added++;}}
+          else{channels.add(new Channel(name,line,group));added++;}
+        }
+        name=null;group="";
+      }
+    }
     return added;
   }
   protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(req==10&&result==RESULT_OK&&data!=null){Uri u=data.getData();worker.execute(()->{try(InputStream in=getContentResolver().openInputStream(u)){String s=read(in);runOnUiThread(()->finishImport(s));}catch(Exception e){runOnUiThread(()->toast("读取失败"));}});}if(req==11&&result==RESULT_OK&&data!=null){worker.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(data.getData())){StringBuilder b=new StringBuilder("#EXTM3U\n");for(Channel c:channels)b.append("#EXTINF:-1 group-title=\"").append(c.group).append("\",").append(c.name).append("\n").append(c.url).append("\n");o.write(b.toString().getBytes("UTF-8"));runOnUiThread(()->toast("已导出"));}catch(Exception e){runOnUiThread(()->toast("导出失败"));}});}}
