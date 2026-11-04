@@ -132,6 +132,7 @@ public class MainActivity extends Activity {
   }
   private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>8*1024*1024)throw new IOException("播放列表超过 8 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
+  private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
     String name=null,group="",pendingGroup="";int added=0;
     if(data==null)return 0;
@@ -141,7 +142,7 @@ public class MainActivity extends Activity {
       if(line.isEmpty())continue;
       if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
       if(line.startsWith("#EXTINF")){
-        int comma=line.lastIndexOf(',');
+        int comma=extinfComma(line);
         name=comma>=0?line.substring(comma+1).trim():"";
         java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
         String tvgName=nm.find()?nm.group(1).trim():"";
