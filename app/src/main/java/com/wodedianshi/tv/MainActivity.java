@@ -27,9 +27,11 @@ public class MainActivity extends Activity {
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private boolean favoriteMode = false;
   private int selected = -1;
+  private int sourceIndex = 0;
   private static class Channel {
     String name, url, group;
-    Channel(String n,String u,String g){name=n;url=u;group=g;}
+    ArrayList<String> backups = new ArrayList<>();
+    Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
   }
 
@@ -44,13 +46,13 @@ public class MainActivity extends Activity {
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);channels.add(new Channel(o.getString("name"),o.getString("url"),o.optString("group","")));}
+      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}channels.add(c);}
     } catch(Exception ignored) {}
   }
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);a.put(o);}
+      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
       getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
     } catch(Exception ignored) {}
   }
@@ -101,7 +103,7 @@ public class MainActivity extends Activity {
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
       Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));b.setFocusable(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(28,105,175):Color.rgb(35,45,62)));});b.setOnClickListener(v->play(ix));
-      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else{channels.remove(ix);favorites.remove(c.key());}persist();refresh();}).show();return true;});list.addView(b);
+      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{sourceIndex=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());}persist();refresh();}).show();return true;});list.addView(b);
     }
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
@@ -115,13 +117,13 @@ public class MainActivity extends Activity {
   private int parse(String data){
     String name=null,group="";int added=0;
     for(String raw:data.split("\\r?\\n")){String line=raw.trim();if(line.startsWith("#EXTINF")){int comma=line.lastIndexOf(',');name=comma>=0?line.substring(comma+1).trim():"频道";int g=line.indexOf("group-title=\"");if(g>=0){int end=line.indexOf('"',g+13);if(end>g)group=line.substring(g+13,end);}}
-      else if((line.startsWith("http://")||line.startsWith("https://"))&&!line.startsWith("#")){if(name==null)name="频道 "+(channels.size()+1);boolean exists=false;for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}if(!exists){channels.add(new Channel(name,line,group));added++;}name=null;group="";}}
+      else if((line.startsWith("http://")||line.startsWith("https://"))&&!line.startsWith("#")){if(name==null)name="频道 "+(channels.size()+1);boolean exists=false;for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}if(!exists){Channel same=null;for(Channel c:channels)if(c.name.equalsIgnoreCase(name)&&c.group.equalsIgnoreCase(group)){same=c;break;}if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);added++;}}else{channels.add(new Channel(name,line,group));added++;}}name=null;group="";}}
     return added;
   }
   protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(req==10&&result==RESULT_OK&&data!=null){Uri u=data.getData();worker.execute(()->{try(InputStream in=getContentResolver().openInputStream(u)){String s=read(in);runOnUiThread(()->finishImport(s));}catch(Exception e){runOnUiThread(()->toast("读取失败"));}});}if(req==11&&result==RESULT_OK&&data!=null){worker.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(data.getData())){StringBuilder b=new StringBuilder("#EXTM3U\n");for(Channel c:channels)b.append("#EXTINF:-1 group-title=\"").append(c.group).append("\",").append(c.name).append("\n").append(c.url).append("\n");o.write(b.toString().getBytes("UTF-8"));runOnUiThread(()->toast("已导出"));}catch(Exception e){runOnUiThread(()->toast("导出失败"));}});}}
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("http(s)://...m3u8");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String url=u.getText().toString().trim();if(url.startsWith("http://")||url.startsWith("https://")){channels.add(new Channel(n.getText().toString().trim(),url,"自定义"));persist();refresh();play(channels.size()-1);}else toast("请输入有效网址");}).show();}
-  private void play(int ix){selected=ix;Channel c=channels.get(ix);info.setText("正在加载："+c.name);if(player==null){player=new ExoPlayer.Builder(this).build();video.setPlayer(player);player.addListener(new Player.Listener(){public void onPlayerError(PlaybackException e){info.setText("播放失败："+e.getErrorCodeName()+"；请检查链接、网络及播放权限");}public void onPlaybackStateChanged(int s){if(s==Player.STATE_READY&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name);}});}player.setMediaItem(MediaItem.fromUri(c.url));player.prepare();player.play();}
+  private void play(int ix){if(ix<0||ix>=channels.size())return;selected=ix;Channel c=channels.get(ix);if(sourceIndex<0||sourceIndex>=c.backups.size())sourceIndex=0;info.setText("正在尝试："+c.name+"（源 "+(sourceIndex+1)+"/"+c.backups.size()+"）");if(player==null){player=new ExoPlayer.Builder(this).build();video.setPlayer(player);player.addListener(new Player.Listener(){public void onPlayerError(PlaybackException e){if(selected>=0&&selected<channels.size()){Channel ch=channels.get(selected);if(sourceIndex+1<ch.backups.size()){sourceIndex++;info.setText("当前源失败，自动切换备用源 "+(sourceIndex+1)+"/"+ch.backups.size());play(selected);}else info.setText("所有已配置播放源均失败，请稍后重试或检查网络");}}public void onPlaybackStateChanged(int st){if(st==Player.STATE_READY&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name+"（源 "+(sourceIndex+1)+"/"+channels.get(selected).backups.size()+"）");}});}player.setMediaItem(MediaItem.fromUri(c.backups.get(sourceIndex)));player.prepare();player.play();}
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStop(){super.onStop();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();worker.shutdown();}
