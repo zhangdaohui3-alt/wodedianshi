@@ -62,15 +62,25 @@ public class MainActivity extends Activity {
     addButton(side,"全部频道 / 收藏",v->{favoriteMode=!favoriteMode;refresh();});
     addButton(side,"导出 M3U 配置",v->exportFile());
     addButton(side,"手动添加频道",v->addDialog());
+    addButton(side,"国内官方观看平台",v->officialDialog());
     search=new EditText(this);search.setSingleLine(true);search.setHint("搜索频道");side.addView(search);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh();}public void afterTextChanged(android.text.Editable e){}});
     list=new LinearLayout(this);list.setOrientation(1);ScrollView sc=new ScrollView(this);sc.addView(list);side.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);main.setOrientation(1);
-    info=new TextView(this);info.setText("请导入你有权使用的 M3U / M3U8 播放列表");info.setTextColor(-1);main.addView(info);
+    info=new TextView(this);info.setText("国内频道请导入授权播放源，或从左侧打开国内官方平台");info.setTextColor(-1);main.addView(info);
     video=new PlayerView(this);video.setUseController(true);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(side,new LinearLayout.LayoutParams(dp(290),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setOnClickListener(l);p.addView(b);}
+  private void officialDialog(){
+    String[] names={"央视网直播与点播","央视频（电视/影视/节目库）","央视影音官方客户端","爱奇艺","腾讯视频","优酷","芒果TV","哔哩哔哩"};
+    String[] urls={"https://cctv.cntv.cn/","https://www.yangshipin.cn/tv/home?pid=600002525","https://app.cctv.cn/","https://www.iqiyi.com/","https://v.qq.com/","https://www.youku.com/","https://www.mgtv.com/","https://www.bilibili.com/"};
+    new AlertDialog.Builder(this).setTitle("国内官方平台")
+      .setItems(names,(dialog,which)->{
+        try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which]));startActivity(i);}
+        catch(Exception e){toast("无法打开平台，请检查电视是否安装浏览器");}
+      }).setNegativeButton("关闭",null).show();
+  }
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
