@@ -67,12 +67,15 @@ public class MainActivity extends Activity {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
       for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}channels.add(c);}
     } catch(Exception ignored) {}
-    if(channels.isEmpty()){
-      try(InputStream in=getAssets().open("default_channels.m3u")){
-        String bundled=new String(read(in),"UTF-8");
-        parse(bundled);
-        persist();
-      } catch(Exception ignored) {}
+    if(!p.getBoolean("defaults_loaded",false)){
+      if(channels.isEmpty()){
+        try(InputStream in=getAssets().open("default_channels.m3u")){
+          String bundled=read(in);
+          parse(bundled);
+          persist();
+        } catch(Exception ignored) {}
+      }
+      p.edit().putBoolean("defaults_loaded",true).apply();
     }
   }
   private void persist(){
