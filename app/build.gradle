@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace 'com.wodedianshi.tv'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'com.wodedianshi.tv'
