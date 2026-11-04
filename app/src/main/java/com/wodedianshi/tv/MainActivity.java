@@ -70,10 +70,13 @@ public class MainActivity extends Activity {
     LinearLayout main=new LinearLayout(this);main.setOrientation(1);
     info=new TextView(this);info.setText("国内频道请导入授权播放源，或从左侧打开国内官方平台");info.setTextColor(-1);main.addView(info);
     video=new PlayerView(this);video.setUseController(true);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
-    root.addView(side,new LinearLayout.LayoutParams(dp(310),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();\n    side.setFocusable(false);side.setFocusableInTouchMode(false);\n    for(int i=0;i<menuButtons.size();i++){Button current=menuButtons.get(i);Button up=menuButtons.get((i+menuButtons.size()-1)%menuButtons.size());Button down=menuButtons.get((i+1)%menuButtons.size());current.setNextFocusUpId(up.getId());current.setNextFocusDownId(down.getId());}\n    if(!menuButtons.isEmpty())menuButtons.get(0).post(()->menuButtons.get(0).requestFocus());
+    root.addView(side,new LinearLayout.LayoutParams(dp(310),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);refresh();
+    side.setFocusable(false);side.setFocusableInTouchMode(false);\n    for(int i=0;i<menuButtons.size();i++){Button current=menuButtons.get(i);Button up=menuButtons.get((i+menuButtons.size()-1)%menuButtons.size());Button down=menuButtons.get((i+1)%menuButtons.size());current.setNextFocusUpId(up.getId());current.setNextFocusDownId(down.getId());}\n    if(!menuButtons.isEmpty())menuButtons.get(0).post(()->menuButtons.get(0).requestFocus());
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
-  @Override public boolean dispatchKeyEvent(KeyEvent event){\n    if(video!=null && video.dispatchKeyEvent(event))return true;\n    return super.dispatchKeyEvent(event);\n  }\n  private void officialDialog(){
+  @Override public boolean dispatchKeyEvent(KeyEvent event){
+    if(video!=null && video.dispatchKeyEvent(event))return true;\n    return super.dispatchKeyEvent(event);
+  }\n  private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
     new AlertDialog.Builder(this).setTitle("国内直播频道分类")
       .setItems(categories,(dialog,which)->{
@@ -107,8 +110,7 @@ public class MainActivity extends Activity {
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int parse(String data){
     String name=null,group="";int added=0;
-    for(String raw:data.split("\\r?
-")){String line=raw.trim();if(line.startsWith("#EXTINF")){int comma=line.lastIndexOf(',');name=comma>=0?line.substring(comma+1).trim():"频道";int g=line.indexOf("group-title=\"");if(g>=0){int end=line.indexOf('"',g+13);if(end>g)group=line.substring(g+13,end);}}
+    for(String raw:data.split("\\r?\\n")){String line=raw.trim();if(line.startsWith("#EXTINF")){int comma=line.lastIndexOf(',');name=comma>=0?line.substring(comma+1).trim():"频道";int g=line.indexOf("group-title=\"");if(g>=0){int end=line.indexOf('"',g+13);if(end>g)group=line.substring(g+13,end);}}
       else if((line.startsWith("http://")||line.startsWith("https://"))&&!line.startsWith("#")){if(name==null)name="频道 "+(channels.size()+1);boolean exists=false;for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}if(!exists){channels.add(new Channel(name,line,group));added++;}name=null;group="";}}
     return added;
   }
