@@ -240,7 +240,7 @@ public class MainActivity extends Activity {
   private void refresh(){
     if(list==null||search==null)return;
     int previousFocusedIndex=-1;
-    View currentFocus=findFocus();
+    View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
     list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     final int maxRows=120;int shown=0,totalMatches=0;
