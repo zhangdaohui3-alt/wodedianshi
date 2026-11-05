@@ -1031,6 +1031,8 @@ public class MainActivity extends Activity {
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   private long sourceAttemptStartedAt=0L;
+  private long sourceReadyAt=0L;
+  private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
   private boolean sourceWasBuffering=false;
   private void cancelPlaybackWatchdog(){
@@ -1060,10 +1062,22 @@ public class MainActivity extends Activity {
       }
       // A live source can leave ExoPlayer in READY while its audio/video output has
       // silently stopped. Monitor actual video-frame callbacks, not only position.
-      if(videoFrameMonitoringActive && hasReceivedVideoFrame && player.getVideoFormat()!=null
-          && now-lastVideoFrameAt>=20000L){
-        recoverFromSilentFreeze("检测到视频帧连续 20 秒没有输出");
-        return;
+      if(videoFrameMonitoringActive && player.getVideoFormat()!=null){
+        if(!hasReceivedVideoFrame && sourceReadyAt>0L && now-sourceReadyAt>=20000L){
+          recoverFromSilentFreeze("播放器已连接，但 20 秒内没有输出视频画面");
+          return;
+        }
+        if(hasReceivedVideoFrame && now-lastVideoFrameAt>=20000L){
+          recoverFromSilentFreeze("检测到视频帧连续 20 秒没有输出");
+          return;
+        }
+      }
+      // After two minutes of uninterrupted playback, replenish the failover budget.
+      // A source that was healthy for a long time should not consume the startup retry budget forever.
+      if(sourceReadyAt>0L && now-sourceReadyAt>=120000L){
+        automaticSwitchCount=0;
+        sameSourceRecoveryCount=0;
+        sourceReadyAt=now;
       }
       schedulePlaybackWatchdog();
     };
@@ -1135,6 +1149,7 @@ public class MainActivity extends Activity {
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
+    sourceReadyAt=0L;
     lastVideoFrameAt=0L;
     hasReceivedVideoFrame=false;
     videoFrameMonitoringActive=false;
@@ -1203,6 +1218,7 @@ public class MainActivity extends Activity {
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
+            sourceReadyAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
             lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
@@ -1293,6 +1309,7 @@ public class MainActivity extends Activity {
       }).setNegativeButton("关闭",null).show();
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-  protected void onStop(){super.onStop();saveLastChannel();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
+  protected void onStart(){super.onStart();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
+  protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();}
 }
