@@ -12,6 +12,7 @@ import android.view.*;
 import android.widget.*;
 import androidx.media3.common.*;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.datasource.DefaultHttpDataSource;
@@ -1056,8 +1057,11 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int seconds=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",5);
-    if(seconds<=0)return;
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
+    if(configured<=0)return;
+    // Initial live startup can legitimately take longer than a mid-stream rebuffer.
+    // Do not abandon a healthy but slow-to-start source after only 3-5 seconds.
+    int seconds=sourceReadyRecorded?configured:18;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
@@ -1116,7 +1120,12 @@ public class MainActivity extends Activity {
           .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);
       DefaultRenderersFactory renderersFactory=new DefaultRenderersFactory(this)
           .setEnableDecoderFallback(getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1);
+      DefaultLoadControl loadControl=new DefaultLoadControl.Builder()
+          .setBufferDurationsMs(20000,50000,1500,3500)
+          .setPrioritizeTimeOverSizeThresholds(true)
+          .build();
       player=new ExoPlayer.Builder(this,renderersFactory)
+          .setLoadControl(loadControl)
           .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
       video.setPlayer(player);
       player.addListener(new Player.Listener(){
@@ -1217,17 +1226,17 @@ public class MainActivity extends Activity {
     persist();
   }
   private void bufferingSwitchSettingsDialog(){
-    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",5);
-    String[] labels={"3 秒后切换备用源","5 秒后切换备用源（推荐）","10 秒后切换备用源","关闭自动卡顿切换"};
-    int[] values={3,5,10,0};
-    int checked=current==3?0:current==10?2:current==0?3:1;
+    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
+    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换（推荐）","12 秒后切换","关闭自动卡顿切换"};
+    int[] values={3,5,8,12,0};
+    int checked=current==3?0:current==5?1:current==12?3:current==0?4:2;
     new AlertDialog.Builder(this).setTitle("卡顿自动切换备用源")
       .setSingleChoiceItems(labels,checked,(dialog,which)->{
         getSharedPreferences("mytv",0).edit().putInt("buffer_switch_seconds",values[which]).apply();
         cancelBufferingFallback();
         if(player!=null&&player.getPlaybackState()==Player.STATE_BUFFERING)scheduleBufferingFallback();
         dialog.dismiss();
-        toast(values[which]==0?"已关闭卡顿自动切换":"已设置为卡顿 "+values[which]+" 秒后尝试下一个播放源");
+        toast(values[which]==0?"已关闭卡顿自动切换":"播放中连续缓冲 "+values[which]+" 秒后尝试下一个源；首次打开会多等待一会儿");
       }).setNegativeButton("关闭",null).show();
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
