@@ -38,6 +38,8 @@ public class MainActivity extends Activity {
   private boolean fullScreenPlayback = false;
   private PopupWindow fullscreenMenuPopup;
   private TextView fullscreenMenuButton;
+  private TextView channelZapOverlay;
+  private Runnable hideChannelZapOverlay;
   private LinearLayout list;
   private TextView info;
   private EditText search;
@@ -215,7 +217,7 @@ public class MainActivity extends Activity {
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);// 直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(23);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setPadding(dp(18),dp(10),dp(18),dp(10));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(24);video.addView(channelZapOverlay,zapParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");restoreLastChannel();
@@ -907,6 +909,15 @@ public class MainActivity extends Activity {
     if(channels.isEmpty()){toast("当前没有可播放频道");return;}
     int next=selected<0?(delta>0?0:channels.size()-1):(selected+delta+channels.size())%channels.size();
     play(next);
+    showChannelZapOverlay();
+  }
+  private void showChannelZapOverlay(){
+    if(channelZapOverlay==null||selected<0||selected>=channels.size())return;
+    if(hideChannelZapOverlay!=null)uiHandler.removeCallbacks(hideChannelZapOverlay);
+    channelZapOverlay.setText(channels.get(selected).name);
+    channelZapOverlay.setVisibility(View.VISIBLE);
+    hideChannelZapOverlay=()->{if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);hideChannelZapOverlay=null;};
+    uiHandler.postDelayed(hideChannelZapOverlay,2800L);
   }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
@@ -937,7 +948,7 @@ public class MainActivity extends Activity {
       playbackWatchdog=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId))return;
       if(player.getPlaybackState()!=Player.STATE_READY||!player.isPlaying())return;
-      long now=SystemClock.elapsedRealtime();
+      long now=android.os.SystemClock.elapsedRealtime();
       long position=player.getCurrentPosition();
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
         watchdogLastPosition=position;
