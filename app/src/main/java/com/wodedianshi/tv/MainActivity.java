@@ -58,8 +58,11 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService posterWorker = Executors.newFixedThreadPool(3);
-  private final ExecutorService vodWorker = Executors.newFixedThreadPool(6);
+  // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
+  private final ExecutorService vodWorker = Executors.newFixedThreadPool(2);
+  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(10);
   private int vodRequestId=0;
+  private boolean adultUnlockedThisSession=false;
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
   private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
@@ -443,6 +446,11 @@ public class MainActivity extends Activity {
   private String vodCacheKey(String category){
     return "vod_cache_v2_"+Integer.toHexString(category.hashCode());
   }
+  private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
+  private boolean isVodCacheFresh(String category){
+    long saved=getSharedPreferences("mytv",0).getLong(vodCacheTimeKey(category),0L);
+    return saved>0L&&System.currentTimeMillis()-saved<6L*60L*60L*1000L;
+  }
   private ArrayList<VodItem> readVodCache(String category){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
@@ -463,7 +471,7 @@ public class MainActivity extends Activity {
       for(VodItem item:items){
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);a.put(o);
       }
-      getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).apply();
+      getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).putLong(vodCacheTimeKey(category),System.currentTimeMillis()).apply();
     }catch(Exception ignored){}
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
@@ -579,6 +587,12 @@ public class MainActivity extends Activity {
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
     else{status.setText("正在快速检索「"+category+"」…");results.removeAllViews();}
+    // A fresh cache is already a complete result: show it immediately and avoid
+    // repeating dozens of metadata requests every time the user reopens this category.
+    if(!cached.isEmpty()&&isVodCacheFresh(category)){
+      status.setText("「"+category+"」 · "+cached.size()+" 部（高速缓存，稍后可重新检索）");
+      return;
+    }
     vodWorker.execute(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       try{
@@ -599,27 +613,29 @@ public class MainActivity extends Activity {
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
         else if(!category.equals("世界公版电影")&&!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page=1&output=json&sort[]=downloads+desc";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=64&page=1&output=json&sort[]=downloads+desc";
         org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-        ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodWorker);
-        int submitted=0;
+        // Metadata lookups run on their own bounded pool (10 parallel requests).
+        // The UI/catalogue workers never wait on tasks queued behind themselves.
+        ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
+        int submitted=0,completed=0;
         ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
-        for(int i=0;i<docs.length()&&submitted<100;i++){
+        for(int i=0;i<docs.length()&&submitted<64;i++){
           final org.json.JSONObject doc=docs.getJSONObject(i);
           pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(doc)));submitted++;
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+65000;
-        while(submitted>0&&found.size()<36){
+        long deadline=android.os.SystemClock.elapsedRealtime()+22000L;
+        while(completed<submitted&&found.size()<30){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
-          Future<VodItem> future=completion.poll(Math.min(4000,remaining),TimeUnit.MILLISECONDS);
+          Future<VodItem> future=completion.poll(Math.min(1200L,remaining),TimeUnit.MILLISECONDS);
           if(future==null)continue;
+          completed++;
           try{VodItem item=future.get();if(item!=null)found.add(item);}catch(Exception ignored){}
-          submitted--;
         }
         for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
-        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<36){
+        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<8){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
           HashSet<String> seen=new HashSet<>();for(VodItem item:found)seen.add(item.identifier);
           for(VodItem item:commons)if(seen.add(item.identifier)&&found.size()<48)found.add(item);
@@ -843,9 +859,10 @@ public class MainActivity extends Activity {
     return saved.isEmpty()?"0000".equals(value):saved.equals(adultPasswordHash(value));
   }
   private void requestAdultUnlock(){
+    if(adultUnlockedThisSession){showAdultCategories();return;}
     EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);input.setHint("请输入成人频道密码");
     new AlertDialog.Builder(this).setTitle("成人频道 · 密码验证").setMessage("默认密码：0000").setView(input)
-      .setPositiveButton("进入",(d,w)->{String p=input.getText().toString();if(adultPasswordMatches(p))showAdultCategories();else new AlertDialog.Builder(this).setTitle("密码错误").setMessage("密码不正确，请重试。").setPositiveButton("确定",null).show();})
+      .setPositiveButton("进入",(d,w)->{String p=input.getText().toString();if(adultPasswordMatches(p)){adultUnlockedThisSession=true;showAdultCategories();}else new AlertDialog.Builder(this).setTitle("密码错误").setMessage("密码不正确，请重试。").setPositiveButton("确定",null).show();})
       .setNegativeButton("取消",null).show();
   }
   private void showAdultCategories(){
@@ -1697,5 +1714,5 @@ public class MainActivity extends Activity {
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){super.onStart();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
   protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();}
+  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
 }
