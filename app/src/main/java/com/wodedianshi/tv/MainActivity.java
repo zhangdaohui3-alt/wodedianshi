@@ -95,14 +95,41 @@ public class MainActivity extends Activity {
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
-      channelsByUrl.clear(); channelsByIdentity.clear();
+      // Collapse existing duplicates as well as newly imported entries. Preserve every
+      // distinct URL as a backup source and carry favorites to the surviving row.
+      LinkedHashMap<String,Channel> compact=new LinkedHashMap<>();
+      for(Channel c:channels){
+        if(c.backups==null)c.backups=new ArrayList<>();
+        if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
+        String key=identity(c.name,c.group);
+        Channel keep=compact.get(key);
+        if(keep==null){compact.put(key,c);}
+        else{
+          for(String source:c.backups)if(source!=null&&!source.isEmpty()&&!keep.backups.contains(source))keep.backups.add(source);
+          if(favorites.contains(c.key()))favorites.add(keep.key());
+        }
+      }
+      channels.clear();channels.addAll(compact.values());
+      channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
         channelsByIdentity.put(identity(c.name,c.group),c);
       }
     }
   }
-  private String identity(String name,String group){return (name==null?"":name.trim().toLowerCase(Locale.ROOT))+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));}
+  private String canonicalChannelName(String name){
+    String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–]","");
+    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
+    if(m.find())return "CCTV-"+m.group(1);
+    String[] chinese={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
+    for(int i=1;i<chinese.length;i++)if(value.contains("中央"+chinese[i]+"套"))return "CCTV-"+i;
+    return value;
+  }
+  private String identity(String name,String group){
+    String canonical=canonicalChannelName(name);
+    if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
+    return canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+  }
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
@@ -258,7 +285,7 @@ public class MainActivity extends Activity {
     for(String province:provinceNames)if(cat.equals(province))return x.contains(province.toLowerCase(Locale.ROOT));
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
-    if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视")||g.equals("cctv");
+    if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
     if(cat.equals("卫视"))return x.contains("卫视")||g.equals("卫视")||g.contains("satellite");
     if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台")||g.equals("hong kong")||g.equals("macau")||g.equals("taiwan");
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
@@ -702,6 +729,34 @@ public class MainActivity extends Activity {
   }
   private int automaticSwitchCount=0;
   private Runnable bufferingFallback;
+  private Runnable playbackWatchdog;
+  private long watchdogLastPosition=-1L;
+  private long watchdogLastAdvanceAt=0L;
+  private void cancelPlaybackWatchdog(){
+    if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
+  }
+  private void schedulePlaybackWatchdog(){
+    cancelPlaybackWatchdog();
+    if(player==null||player.getPlaybackState()!=Player.STATE_READY)return;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    playbackWatchdog=()->{
+      playbackWatchdog=null;
+      if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId))return;
+      if(player.getPlaybackState()!=Player.STATE_READY||!player.isPlaying())return;
+      long now=SystemClock.elapsedRealtime();
+      long position=player.getCurrentPosition();
+      if(watchdogLastPosition<0||position>watchdogLastPosition+250){
+        watchdogLastPosition=position;
+        watchdogLastAdvanceAt=now;
+      }else if(now-watchdogLastAdvanceAt>=25000L){
+        advanceToNextSourceAutomatically("检测到画面播放停滞超过 25 秒");
+        return;
+      }
+      schedulePlaybackWatchdog();
+    };
+    uiHandler.postDelayed(playbackWatchdog,10000L);
+  }
   private void cancelBufferingFallback(){
     if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
   }
@@ -722,6 +777,7 @@ public class MainActivity extends Activity {
   }
   private void advanceToNextSourceAutomatically(String reason){
     cancelBufferingFallback();
+    cancelPlaybackWatchdog();
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
     if(automaticSwitchCount>=c.backups.size()-1){
@@ -746,6 +802,9 @@ public class MainActivity extends Activity {
     Channel c=channels.get(selected);
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
     cancelBufferingFallback();
+    cancelPlaybackWatchdog();
+    watchdogLastPosition=-1L;
+    watchdogLastAdvanceAt=SystemClock.elapsedRealtime();
     saveLastChannel();
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
@@ -774,13 +833,19 @@ public class MainActivity extends Activity {
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             cancelBufferingFallback();
-            automaticSwitchCount=0;
+            // Do not reset automaticSwitchCount here: a source that starts and then
+            // freezes must not create an endless source-switch loop.
+            watchdogLastPosition=player.getCurrentPosition();
+            watchdogLastAdvanceAt=SystemClock.elapsedRealtime();
+            schedulePlaybackWatchdog();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
               info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
             }
-          }else if(st==Player.STATE_IDLE){
-            cancelBufferingFallback();
+          }else if(st==Player.STATE_IDLE||st==Player.STATE_BUFFERING||st==Player.STATE_ENDED){
+            cancelPlaybackWatchdog();
+            if(st==Player.STATE_IDLE)cancelBufferingFallback();
+            if(st==Player.STATE_ENDED)advanceToNextSourceAutomatically("当前播放流已结束");
           }
         }
       });
@@ -805,6 +870,6 @@ public class MainActivity extends Activity {
       }).setNegativeButton("关闭",null).show();
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-  protected void onStop(){super.onStop();saveLastChannel();cancelBufferingFallback();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);worker.shutdownNow();}
+  protected void onStop(){super.onStop();saveLastChannel();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
+  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();}
 }
