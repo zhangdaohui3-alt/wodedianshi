@@ -176,7 +176,10 @@ public class MainActivity extends Activity {
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
-        "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u"
+        "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u",
+        "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
+        "https://iptv-org.github.io/iptv/countries/cn.m3u",
+        "https://iptv-cn.github.io/IPTV/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
       for(String address:feeds){HttpURLConnection c=null;try{
