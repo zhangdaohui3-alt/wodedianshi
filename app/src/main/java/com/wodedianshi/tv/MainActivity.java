@@ -109,10 +109,8 @@ public class MainActivity extends Activity {
     refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
-  @Override public boolean dispatchKeyEvent(KeyEvent event){
-    if(video!=null && video.dispatchKeyEvent(event))return true;
-    return super.dispatchKeyEvent(event);
-  }
+  // Do not forward every remote-control key to PlayerView.
+  // Doing so steals DPAD focus from AlertDialog lists on Android TV.
   private void vodDialog(){
     String[] names={"Tubi · 免费电影/电视剧","Pluto TV · 直播电影台+点播","Plex · 免费电影与直播","The Roku Channel · 电影/剧集","YouTube Movies · 免费电影专区","Internet Archive · 公版经典电影","Kanopy · 电影/纪录片（需图书馆资格）","Hoopla · 电影/纪录片（需图书馆资格）","Rakuten TV · 免费广告电影（地区有限）","Xumo Play · 电影直播与点播（地区有限）"};
     String[] urls={"https://tubitv.com/","https://pluto.tv/","https://www.plex.tv/watch-free/","https://therokuchannel.roku.com/","https://www.youtube.com/movies","https://archive.org/details/feature_films","https://www.kanopy.com/","https://www.hoopladigital.com/","https://www.rakuten.tv/","https://play.xumo.com/"};
@@ -256,15 +254,23 @@ public class MainActivity extends Activity {
       runOnUiThread(()->{persist();refresh();chinaLoading=false;info.setText("国内频道补充完成：新增 "+total+" 个条目，来源包含央视、卫视、地方台及多源检测列表。频道可用性受地区、版权和网络影响。"+(err.isEmpty()?"":"部分来源暂不可用："+err));});
     });
   }
+  private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setItems(items,listener).setNegativeButton("返回",null).create();
+    dialog.setOnShowListener(d->{
+      ListView choices=dialog.getListView();
+      if(choices!=null){choices.setFocusable(true);choices.setFocusableInTouchMode(true);choices.setItemsCanFocus(false);choices.requestFocus();choices.setSelection(0);}
+    });
+    dialog.show();
+  }
   private void showCountryDialog(){
     String[] labels={"美国","加拿大","英国","澳大利亚","日本","韩国","法国","德国","意大利","西班牙","葡萄牙","荷兰","比利时","瑞士","奥地利","瑞典","挪威","芬兰","丹麦","爱尔兰","巴西","墨西哥","阿根廷","智利","印度","新加坡","马来西亚","泰国","印度尼西亚","菲律宾","越南","俄罗斯","土耳其","南非","国际频道"};
     String[] codes={"us","ca","gb","au","jp","kr","fr","de","it","es","pt","nl","be","ch","at","se","no","fi","dk","ie","br","mx","ar","cl","in","sg","my","th","id","ph","vn","ru","tr","za","int"};
-    new AlertDialog.Builder(this).setTitle("选择国家/地区").setItems(labels,(d,w)->{
+    showChoiceDialog("选择国家/地区",labels,(d,w)->{
       if(codes[w].equals("us"))showUsStateDialog();
       else if(codes[w].equals("ca"))showSubdivisionDialog("加拿大",new String[]{"安大略","魁北克","不列颠哥伦比亚","阿尔伯塔","曼尼托巴","萨斯喀彻温","新斯科舍","新不伦瑞克","纽芬兰与拉布拉多","爱德华王子岛"},new String[]{"ca-on","ca-qc","ca-bc","ca-ab","ca-mb","ca-sk","ca-ns","ca-nb","ca-nl","ca-pe"});
       else if(codes[w].equals("au"))showSubdivisionDialog("澳大利亚",new String[]{"新南威尔士","维多利亚","昆士兰","西澳大利亚","南澳大利亚","塔斯马尼亚","首都领地","北领地"},new String[]{"au-nsw","au-vic","au-qld","au-wa","au-sa","au-tas","au-act","au-nt"});
       else loadGeoPlaylist(labels[w],"https://iptv-org.github.io/iptv/countries/"+codes[w]+".m3u");
-    }).setNegativeButton("取消",null).show();
+    });
   }
   private void showUsStateDialog(){
     String[] names={"亚利桑那","加利福尼亚","内华达","纽约","新泽西","德克萨斯","佛罗里达","华盛顿州","伊利诺伊","马萨诸塞","夏威夷","科罗拉多","俄勒冈","宾夕法尼亚","佐治亚","北卡罗来纳","密歇根","俄亥俄","弗吉尼亚","犹他","新墨西哥","阿拉斯加"};
@@ -272,7 +278,7 @@ public class MainActivity extends Activity {
     showSubdivisionDialog("美国州",names,codes);
   }
   private void showSubdivisionDialog(String title,String[] names,String[] codes){
-    new AlertDialog.Builder(this).setTitle(title+" · 选择州/省").setItems(names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w])).setNegativeButton("返回",null).show();
+    showChoiceDialog(title+" · 选择州/省",names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w]));
   }
   private void showCityPlaylistDialog(String country,String region,String subdivisionCode){
     String[] data;
@@ -299,10 +305,10 @@ public class MainActivity extends Activity {
     }
     String[] choices=new String[data.length+1];choices[0]="整个"+region+"（州/省频道）";
     for(int i=0;i<data.length;i++)choices[i+1]=data[i].split("\\|")[0];
-    new AlertDialog.Builder(this).setTitle(country+" · "+region+" · 选择城市").setItems(choices,(d,w)->{
+    showChoiceDialog(country+" · "+region+" · 选择城市",choices,(d,w)->{
       if(w==0)loadGeoPlaylist(country+" · "+region,"https://iptv-org.github.io/iptv/subdivisions/"+subdivisionCode+".m3u");
       else{String[] pair=data[w-1].split("\\|");loadGeoPlaylist(country+" · "+region+" · "+pair[0],"https://iptv-org.github.io/iptv/cities/"+pair[1]+".m3u");}
-    }).setNegativeButton("返回",null).show();
+    });
   }
   private void loadGeoPlaylist(String label,String address){
     info.setText("正在载入 "+label+" 频道目录…");
