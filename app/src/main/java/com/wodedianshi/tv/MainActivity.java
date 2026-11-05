@@ -1249,13 +1249,16 @@ public class MainActivity extends Activity {
     int label=sourceQualityScore(url);
     try{
       String key=Integer.toHexString(url.hashCode())+":"+url.length();
-      org.json.JSONObject m=new org.json.JSONObject(getSharedPreferences("mytv",0).getString("source_qoe_v1","{}")).optJSONObject(key);
-      if(m==null||m.optInt("attempts",0)<2)return label*0.01;
+      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+      org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
+      double probeScore=measured.optDouble(key,0.0);
+      org.json.JSONObject m=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}")).optJSONObject(key);
+      if(m==null||m.optInt("attempts",0)<2)return probeScore+label*0.01;
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
       double readyPenalty=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
-      return successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+label*0.01;
+      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+label*0.01;
     }catch(Exception ignored){return label*0.01;}
   }
   private void sortSourcesByObservedQuality(Channel c){
