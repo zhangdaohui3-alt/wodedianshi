@@ -203,11 +203,20 @@ public class SourceUpdateWorker extends Worker {
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
-      if(!(ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac")))return result;
+      boolean knownExtension=ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac");
+      if(!knownExtension&&!looksLikeMediaPayload(sample))return result;
       result.valid=true;
       result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
       return result;
     }catch(Exception e){return result;}
+  }
+  private boolean looksLikeMediaPayload(byte[] b){
+    if(b==null||b.length<12)return false;
+    if(b.length>188&&(b[0]&255)==0x47&&(b[188]&255)==0x47)return true; // MPEG-TS sync
+    if(b.length>8&&b[4]=='f'&&b[5]=='t'&&b[6]=='y'&&b[7]=='p')return true; // MP4
+    if(b[0]=='F'&&b[1]=='L'&&b[2]=='V')return true; // FLV
+    if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0)return true; // ADTS AAC
+    return false;
   }
   private byte[] fetchSample(String address,int maxBytes)throws Exception{
     HttpURLConnection c=null;
