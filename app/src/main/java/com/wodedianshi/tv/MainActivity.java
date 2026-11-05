@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final ExecutorService posterWorker = Executors.newFixedThreadPool(3);
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
   private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
@@ -406,7 +407,7 @@ public class MainActivity extends Activity {
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
-    worker.execute(()->{
+    posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
         connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
@@ -1126,5 +1127,5 @@ public class MainActivity extends Activity {
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStop(){super.onStop();saveLastChannel();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();}
+  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();}
 }
