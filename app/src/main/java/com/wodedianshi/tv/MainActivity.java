@@ -706,9 +706,16 @@ public class MainActivity extends Activity {
     final Runnable[] hideVodSeekTask=new Runnable[1];
     FrameLayout stage=new FrameLayout(this){
       private void revealVodSeekBar(){
+        boolean controlsWereHidden=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()!=View.VISIBLE;
         if(vodControlsHolder[0]!=null){vodControlsHolder[0].setVisibility(View.VISIBLE);vodControlsHolder[0].bringToFront();}
-        if(vodSeekHolder[0]!=null){vodSeekHolder[0].setVisibility(View.VISIBLE);if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);};postDelayed(hideVodSeekTask[0],5000);}
-        View focused=findFocus();if((focused==null||(focused==vodSeekHolder[0]&&!vodSeekHolder[0].isShown()))&&vodRewindHolder[0]!=null)vodRewindHolder[0].requestFocus();
+        if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.VISIBLE);
+        if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
+        hideVodSeekTask[0]=()->{
+          if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+          if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+        };
+        postDelayed(hideVodSeekTask[0],5000);
+        if(controlsWereHidden&&vodRewindHolder[0]!=null)vodRewindHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(event.getAction()==KeyEvent.ACTION_DOWN)revealVodSeekBar();
@@ -774,7 +781,7 @@ public class MainActivity extends Activity {
     for(int i=0;i<controls.getChildCount();i++){View child=controls.getChildAt(i);if(child instanceof Button){child.setFocusable(true);child.setClickable(true);child.setEnabled(true);}}
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
-    hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);};stage.postDelayed(hideVodSeekTask[0],5000);
+    hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);};stage.postDelayed(hideVodSeekTask[0],5000);
     rewind.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.max(0L,vodPlayer.getCurrentPosition()-15000L));});
     forward.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.min(vodPlayer.getDuration(),vodPlayer.getCurrentPosition()+15000L));});
     vodPlayPauseButton.setOnClickListener(v->{if(vodPlayer==null)return;if(vodPlayer.isPlaying()){vodPlayer.pause();vodPlayPauseButton.setText("播放");}else{vodPlayer.play();vodPlayPauseButton.setText("暂停");}});
