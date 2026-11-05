@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: my-tv-apk-build
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
