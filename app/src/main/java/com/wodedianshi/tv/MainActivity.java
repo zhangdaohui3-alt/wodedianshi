@@ -1184,7 +1184,8 @@ public class MainActivity extends Activity {
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
-            if(lastVideoFrameAt<=0L)lastVideoFrameAt=watchdogLastAdvanceAt;
+            // Start the frame-stall timer only after the player reports READY.
+            lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
