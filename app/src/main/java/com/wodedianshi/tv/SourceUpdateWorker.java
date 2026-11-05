@@ -57,19 +57,25 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
-      // Examine explicitly advertised HD/high-bitrate candidates first; stable order keeps feed priority for ties.
-      candidates.sort((a,b)->Integer.compare(sourceQualityScore(b.url),sourceQualityScore(a.url)));
+      // Rotate through the complete candidate pool across update runs. This avoids permanently
+      // favoring URLs with HD labels and ensures older known sources are periodically re-probed.
       // Bound each update run so a slow public directory cannot keep WorkManager busy indefinitely.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+6L*60L*1000L;
-      for(Entry e:candidates){
-        if(added>=MAX_NEW_SOURCES||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
+      int scanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
+      int scanned=0;
+      HashSet<String> visitedUrls=new HashSet<>();
+      for(int offset=0;offset<candidates.size();offset++){
+        if(checked>=MAX_NEW_SOURCES||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
+        scanned=offset+1;
+        Entry e=candidates.get((scanStart+offset)%candidates.size());
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(knownUrls.contains(e.url))continue;
-        if(checked>=MAX_NEW_SOURCES)break;
+        if(!visitedUrls.add(e.url))continue;
         checked++;
         ProbeResult measured=probe(e.url);
         if(!measured.valid)continue;
         measuredScores.put(scoreKey(e.url),measured.score);
+        // Known sources are re-tested and re-scored, but never inserted twice.
+        if(knownUrls.contains(e.url))continue;
         String key=identity(e.name,e.group);JSONObject target=byIdentity.get(key);
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
@@ -85,9 +91,10 @@ public class SourceUpdateWorker extends Worker {
       if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by real HLS/segment reachability, resolution and response speed.
-      prefs.edit().putString("source_probe_scores_v1",measuredScores.toString())
+      prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(scanStart+scanned)%candidates.size())
+          .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；实测 "+checked+" 个新地址；新增 "+added+" 个备用/频道地址；目录失败 "+feedsFailed+" 个。评分包含清单、分片、清晰度和响应速度；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；复测/实测 "+checked+" 个候选地址；新增 "+added+" 个备用/频道地址；目录失败 "+feedsFailed+" 个。评分包含清单、分片、清晰度和响应速度；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
