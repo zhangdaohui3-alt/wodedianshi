@@ -5,6 +5,8 @@ import android.os.*;
 import android.content.*;
 import android.net.Uri;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
 import android.view.*;
 import android.widget.*;
@@ -40,6 +42,7 @@ public class MainActivity extends Activity {
   private TextView fullscreenMenuButton;
   private TextView channelZapOverlay;
   private Runnable hideChannelZapOverlay;
+  private boolean manualSourceSwitch = false;
   private LinearLayout list;
   private TextView info;
   private EditText search;
@@ -310,41 +313,57 @@ public class MainActivity extends Activity {
   private Dialog vodPlayerDialog;
   private ExoPlayer vodPlayer;
   private void vodDialog(){
-    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(14),dp(10),dp(14),dp(8));panel.setBackgroundColor(Color.rgb(17,27,43));
-    TextView intro=new TextView(this);intro.setText("正版/开放授权影片 · 直接在《我的电视》内播放\\n仅展示具有可识别授权声明且提供 MP4 文件的影片；片源受网络、地区及原始档案状态影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);panel.addView(intro);
-    LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);
-    String[] categories={"经典电影","纪录片","动画"};
-    for(String category:categories){Button b=new Button(this);b.setText(category);styleTvButton(b,Color.rgb(35,55,78));filters.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));b.setOnClickListener(v->loadVodCatalogue(category,panel));}
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
+    TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
+    LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
+    String[] categories={"精选电影","纪录片","动画","喜剧","科幻","剧情"};
+    for(String category:categories){
+      Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
+      filters.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));
+      b.setOnClickListener(v->loadVodCatalogue(category,panel));
+    }
     panel.addView(filters);
-    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索影片名称（英文/原名）");panel.addView(query,new LinearLayout.LayoutParams(-1,dp(48)));
-    Button searchButton=new Button(this);searchButton.setText("搜索开放授权影片");styleTvButton(searchButton,Color.rgb(26,100,160));panel.addView(searchButton);
-    TextView status=new TextView(this);status.setText("正在载入可在应用内播放的影片…");status.setTextColor(Color.LTGRAY);status.setPadding(0,dp(8),0,dp(8));panel.addView(status);
-    LinearLayout results=new LinearLayout(this);results.setOrientation(1);ScrollView scroll=new ScrollView(this);scroll.addView(results);panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 影片点播").setView(panel).setNegativeButton("关闭",null).create();
-    searchButton.setOnClickListener(v->loadVodCatalogue(query.getText().toString().trim(),panel,status,results));
-    for(int i=0;i<categories.length;i++){final String cat=categories[i];if(i==0)loadVodCatalogue(cat,panel,status,results);}
-    dialog.setOnShowListener(d->{dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.88),(int)(getResources().getDisplayMetrics().heightPixels*0.86));});
+    LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
+    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索影片名称（英文或原名）");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(48),1));
+    Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(100),dp(48)));
+    panel.addView(searchRow);
+    TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(13);status.setPadding(dp(4),dp(8),dp(4),dp(8));panel.addView(status);
+    LinearLayout results=new LinearLayout(this);results.setOrientation(1);
+    ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);scroll.addView(results);panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 点播").setView(panel).setNegativeButton("关闭",null).create();
+    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
+    loadVodCatalogue("精选电影",panel,status,results);
+    dialog.setOnShowListener(d->{if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.94),(int)(getResources().getDisplayMetrics().heightPixels*0.90));});
     dialog.show();
   }
-  private void loadVodCatalogue(String term,LinearLayout panel){
-    if(panel.getChildCount()<6)return;
-    View statusView=panel.getChildAt(4);View scrollView=panel.getChildAt(5);
+  private void loadVodCatalogue(String category,LinearLayout panel){
+    if(panel.getChildCount()<5)return;
+    View statusView=panel.getChildAt(2);
+    View scrollView=panel.getChildAt(3);
+    // Current layout uses intro, category row, search row, status, results scroll.
+    statusView=panel.getChildAt(3);scrollView=panel.getChildAt(4);
     if(statusView instanceof TextView && scrollView instanceof ScrollView){
       View child=((ScrollView)scrollView).getChildAt(0);
-      if(child instanceof LinearLayout)loadVodCatalogue(term,panel,(TextView)statusView,(LinearLayout)child);
+      if(child instanceof LinearLayout)loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)child);
     }
   }
-  private void loadVodCatalogue(String term,LinearLayout panel,TextView status,LinearLayout results){
-    status.setText("正在从 Internet Archive 检索授权影片并检查可播放文件…");results.removeAllViews();
+  private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
+    status.setText("正在检索「"+category+"」并核对开放授权与视频文件…");results.removeAllViews();
     worker.execute(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       try{
-        String q="collection:feature_films AND mediatype:movies";
-        if(term!=null&&!term.isEmpty()&&!term.equals("经典电影"))q+=" AND title:("+term.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&fl[]=licenseurl&rows=35&page=1&output=json&sort[]=downloads+desc";
+        String q="mediatype:movies";
+        if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
+        else if("纪录片".equals(category))q+=" AND subject:documentary";
+        else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
+        else if("喜剧".equals(category))q+=" AND subject:comedy";
+        else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
+        else if("剧情".equals(category))q+=" AND subject:drama";
+        else if(!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=60&page=1&output=json&sort[]=downloads+desc";
         org.json.JSONObject root=new org.json.JSONObject(httpGet(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-        for(int i=0;i<docs.length()&&found.size()<16;i++){
+        for(int i=0;i<docs.length()&&found.size()<24;i++){
           org.json.JSONObject doc=docs.getJSONObject(i);String id=doc.optString("identifier","");String title=doc.optString("title",id);
           if(id.isEmpty())continue;
           try{
@@ -359,31 +378,49 @@ public class MainActivity extends Activity {
             for(int j=0;j<files.length();j++){
               org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
               String name=file.optString("name","");String format=file.optString("format","").toLowerCase(Locale.US);
-              if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))) {fileName=name;break;}
+              if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))){fileName=name;break;}
             }
             if(fileName==null)continue;
-            String encodedPath=encodeArchivePath(fileName);
-            found.add(new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodedPath,license));
+            found.add(new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license));
           }catch(Exception ignored){}
         }
       }catch(Exception e){error=e.getMessage();}
       final String err=error;
       uiHandler.post(()->{
         if(isFinishing())return;
-        if(found.isEmpty()){status.setText(err==null?"暂未找到同时具备可识别开放授权和 MP4 文件的影片。可换英文片名搜索，或稍后重试。":"影片目录暂时无法连接："+err);return;}
-        status.setText("找到 "+found.size()+" 部可直接播放的开放授权影片（授权信息来自档案元数据；请留意原始上传者声明）");
+        if(found.isEmpty()){status.setText(err==null?"这个分类暂时没有找到符合授权条件且有 MP4 文件的影片。可以换分类或使用英文片名搜索。":"点播目录暂时无法连接："+err);return;}
+        status.setText("「"+category+"」 · 找到 "+found.size()+" 部符合当前筛选条件的开放授权影片");
+        LinearLayout row=null;int count=0;
         for(VodItem item:found){
-          Button b=new Button(this);b.setText(item.title+"\\n开放授权 · 应用内播放");b.setTextSize(14);b.setAllCaps(false);b.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);styleTvButton(b,Color.rgb(28,43,64));results.addView(b,new LinearLayout.LayoutParams(-1,dp(62)));
-          b.setOnClickListener(v->playVodInside(item));
+          if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
+          LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
+          ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
+          TextView title=new TextView(this);title.setText(item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
+          TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
+          row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));count++;
         }
+        if(row!=null&&count%3!=0){for(int i=count%3;i<3;i++)row.addView(new View(this),new LinearLayout.LayoutParams(0,dp(10),1));}
       });
     });
+  }
+  private void loadVodPoster(ImageView target,String identifier){
+    target.setTag(identifier);
+    new Thread(()->{
+      Bitmap bitmap=null;HttpURLConnection connection=null;
+      try{
+        connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
+        connection.setConnectTimeout(5000);connection.setReadTimeout(7000);connection.setInstanceFollowRedirects(true);
+        try(InputStream in=connection.getInputStream()){bitmap=BitmapFactory.decodeStream(in);}
+      }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();}
+      final Bitmap image=bitmap;
+      if(image!=null)uiHandler.post(()->{if(identifier.equals(target.getTag()))target.setImageBitmap(image);});
+    }).start();
   }
   private String encodeArchivePath(String path){
     try{String[] parts=path.split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(out.length()>0)out.append("/");out.append(URLEncoder.encode(p,"UTF-8").replace("+","%20"));}return out.toString();}catch(Exception e){return path;}
   }
   private String httpGet(String address)throws Exception{
-    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.17 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
+    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.19 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
   }
   private void playVodInside(VodItem item){
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
@@ -912,19 +949,26 @@ public class MainActivity extends Activity {
     showChannelZapOverlay();
   }
   private void showChannelZapOverlay(){
-    if(channelZapOverlay==null||selected<0||selected>=channels.size())return;
+    if(selected<0||selected>=channels.size())return;
+    showChannelZapMessage(channels.get(selected).name);
+  }
+  private void showChannelZapMessage(String message){
+    if(channelZapOverlay==null)return;
     if(hideChannelZapOverlay!=null)uiHandler.removeCallbacks(hideChannelZapOverlay);
-    channelZapOverlay.setText(channels.get(selected).name);
+    channelZapOverlay.setText(message);
+    channelZapOverlay.setGravity(Gravity.CENTER);
     channelZapOverlay.setVisibility(View.VISIBLE);
     hideChannelZapOverlay=()->{if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);hideChannelZapOverlay=null;};
-    uiHandler.postDelayed(hideChannelZapOverlay,2800L);
+    uiHandler.postDelayed(hideChannelZapOverlay,3000L);
   }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
-    if(c.backups.size()<2){toast("当前频道没有其他播放源");return;}
+    if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
     c.activeSource=(c.activeSource+delta+c.backups.size())%c.backups.size();
+    manualSourceSwitch=true;
     play(selected);
+    showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
   @Override public void onBackPressed(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
@@ -996,6 +1040,7 @@ public class MainActivity extends Activity {
   private void play(int ix){
     if(ix<0||ix>=channels.size())return;
     automaticSwitchCount=0;
+    manualSourceSwitch=false;
     selected=ix;
     startCurrentSource();
   }
@@ -1045,6 +1090,10 @@ public class MainActivity extends Activity {
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
               info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
+              if(manualSourceSwitch){
+                showChannelZapMessage(channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
+                manualSourceSwitch=false;
+              }
             }
           }else if(st==Player.STATE_IDLE||st==Player.STATE_BUFFERING||st==Player.STATE_ENDED){
             cancelPlaybackWatchdog();
