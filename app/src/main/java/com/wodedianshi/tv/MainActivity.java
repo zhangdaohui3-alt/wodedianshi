@@ -544,7 +544,7 @@ public class MainActivity extends Activity {
   private void playVodInside(VodItem item){
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
-    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setControllerShowTimeoutMs(5000);
+    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(true);pv.setShowFastForwardButton(true);pv.setControllerShowTimeoutMs(5000);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
