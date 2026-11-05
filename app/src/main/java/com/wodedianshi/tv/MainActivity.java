@@ -351,15 +351,15 @@ public class MainActivity extends Activity {
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
-    String[] categories={"精选电影","纪录片","动画","喜剧","科幻","剧情"};
-    for(String category:categories){
+    String[] categories={"精选电影","中国电影","华语经典","中国动画","中国纪录片","国产短片","纪录片","动画","喜剧","科幻","剧情"};
+    HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);\n    for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
       filters.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));
       b.setOnClickListener(v->loadVodCatalogue(category,panel));
     }
-    panel.addView(filters);
+    panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(50)));
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
-    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索影片名称（英文或原名）");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(48),1));
+    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(48),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(100),dp(48)));
     panel.addView(searchRow);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(13);status.setPadding(dp(4),dp(8),dp(4),dp(8));panel.addView(status);
@@ -405,13 +405,18 @@ public class MainActivity extends Activity {
       try{
         String q="mediatype:movies";
         if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
+        else if("中国电影".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR subject:Chinese OR subject:China)";
+        else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (title:中国 OR title:中文 OR title:华语 OR subject:Chinese)";
+        else if("中国动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:animation OR subject:cartoons OR title:动画)";
+        else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:documentary OR title:纪录片)";
+        else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
         else if("纪录片".equals(category))q+=" AND subject:documentary";
         else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
         else if("喜剧".equals(category))q+=" AND subject:comedy";
         else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
         else if("剧情".equals(category))q+=" AND subject:drama";
         else if(!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=60&page=1&output=json&sort[]=downloads+desc";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page=1&output=json&sort[]=downloads+desc";
         org.json.JSONObject root=new org.json.JSONObject(httpGet(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
         for(int i=0;i<docs.length()&&found.size()<24;i++){
@@ -439,8 +444,8 @@ public class MainActivity extends Activity {
       final String err=error;
       uiHandler.post(()->{
         if(isFinishing())return;
-        if(found.isEmpty()){status.setText(err==null?"这个分类暂时没有找到符合授权条件且有 MP4 文件的影片。可以换分类或使用英文片名搜索。":"点播目录暂时无法连接："+err);return;}
-        status.setText("「"+category+"」 · 找到 "+found.size()+" 部符合当前筛选条件的开放授权影片");
+        if(found.isEmpty()){status.setText(err==null?"暂时没有检索到符合授权条件且有 MP4 文件的影片。中国电影类公开授权作品数量有限，可尝试中文片名搜索或稍后刷新。":"点播目录暂时无法连接："+err);return;}
+        status.setText("「"+category+"」 · 找到 "+found.size()+" 部符合当前筛选条件的开放授权影片（目录持续扩充中）");
         LinearLayout row=null;int count=0;
         for(VodItem item:found){
           if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
@@ -476,17 +481,19 @@ public class MainActivity extends Activity {
   }
   private void playVodInside(VodItem item){
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
-    LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setBackgroundColor(Color.BLACK);
-    TextView heading=new TextView(this);heading.setText(item.title+"\\n开放授权影片 · Internet Archive");heading.setTextColor(Color.WHITE);heading.setTextSize(16);heading.setPadding(dp(16),dp(10),dp(16),dp(8));layout.addView(heading);
-    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);layout.addView(pv,new LinearLayout.LayoutParams(-1,0,1));
-    Button back=new Button(this);back.setText("返回影片目录");layout.addView(back,new LinearLayout.LayoutParams(-1,dp(52)));back.setOnClickListener(v->d.dismiss());
-    d.setContentView(layout);d.setOnDismissListener(x->{if(vodPlayer!=null){vodPlayer.release();vodPlayer=null;}getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+    FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
+    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
+    stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
+    TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
+    FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
+    Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
+    d.setContentView(stage);d.setOnDismissListener(x->{if(vodPlayer!=null){vodPlayer.release();vodPlayer=null;}getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 MyTV/1.17").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(30000);
       vodPlayer=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http)).build();
       pv.setPlayer(vodPlayer);MediaItem media=MediaItem.fromUri(item.url);vodPlayer.setMediaItem(media);vodPlayer.prepare();vodPlayer.play();
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-      d.show();d.getWindow().setLayout(-1,-1);
+      d.show();d.getWindow().setLayout(-1,-1);d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
   }
   private void officialDialog(){
@@ -936,7 +943,11 @@ public class MainActivity extends Activity {
     categoryPane.setVisibility(View.GONE);
     channelPane.setVisibility(View.GONE);
     playbackInfo.setVisibility(View.GONE);
+    if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
+    if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
     rootLayout.setPadding(0,0,0,0);
+    mainPane.setPadding(0,0,0,0);
+    mainPane.setLayoutParams(new LinearLayout.LayoutParams(-1,-1));
     LinearLayout.LayoutParams videoParams=new LinearLayout.LayoutParams(-1,0,1f);
     video.setLayoutParams(videoParams);
     fullscreenMenuButton.setVisibility(isTouchDevice()?View.VISIBLE:View.GONE);
@@ -952,10 +963,14 @@ public class MainActivity extends Activity {
     fullScreenPlayback=false;
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     fullscreenMenuButton.setVisibility(View.GONE);
+    if(categoryPane.getParent()!=rootLayout)rootLayout.addView(categoryPane,0,new LinearLayout.LayoutParams(dp(104),-1));
+    if(channelPane.getParent()!=rootLayout)rootLayout.addView(channelPane,1,new LinearLayout.LayoutParams(dp(250),-1));
     categoryPane.setVisibility(View.VISIBLE);
     channelPane.setVisibility(View.VISIBLE);
     playbackInfo.setVisibility(View.VISIBLE);
     rootLayout.setPadding(dp(10),dp(8),dp(10),dp(8));
+    mainPane.setPadding(dp(10),0,0,0);
+    mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
     video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     View restoreFocus=list.getChildAt(0);
