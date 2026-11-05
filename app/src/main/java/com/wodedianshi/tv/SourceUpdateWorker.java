@@ -102,12 +102,38 @@ public class SourceUpdateWorker extends Worker {
       }
     }
   }
+  private int sourceQualityScore(String address){
+    if(address==null)return 0;
+    String u=address.toLowerCase(Locale.ROOT);
+    if(u.matches(".*(?:1080p|1080i|fullhd|full-hd).*"))return 1200;
+    if(u.contains("master_5000")||u.contains("5000k")||u.contains("5000kbps"))return 1150;
+    if(u.matches(".*(?:720p|720i|hd720).*"))return 1000;
+    if(u.contains("master_4000")||u.contains("4000k")||u.contains("4000kbps"))return 950;
+    if(u.contains("master_3000")||u.contains("3000k")||u.contains("3000kbps"))return 900;
+    if(u.contains("master_2300")||u.contains("2300k")||u.contains("2300kbps"))return 850;
+    if(u.matches(".*(?:576p|576i|480p|480i).*"))return 600;
+    if(u.matches(".*(?:360p|240p).*"))return 300;
+    return 0;
+  }
+  // GET is used instead of HEAD because some live hosts reject HEAD requests.
+  // HLS candidates must return an actual M3U playlist header.
   private boolean probe(String address){
     HttpURLConnection c=null;
     try{
-      c=(HttpURLConnection)new URL(address).openConnection();c.setRequestMethod("HEAD");c.setConnectTimeout(2500);c.setReadTimeout(2500);
-      c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","Mozilla/5.0 MyTV/1.19");
-      int code=c.getResponseCode();return code>=200&&code<400;
+      c=(HttpURLConnection)new URL(address).openConnection();
+      c.setConnectTimeout(3500);c.setReadTimeout(4500);c.setInstanceFollowRedirects(true);
+      c.setRequestProperty("User-Agent","Mozilla/5.0 MyTV/1.22");
+      c.setRequestProperty("Range","bytes=0-65535");
+      int code=c.getResponseCode();if(code<200||code>=400)return false;
+      String path=address.toLowerCase(Locale.ROOT);
+      if(path.contains(".m3u8")||path.contains("m3u8?")){
+        try(InputStream in=c.getInputStream()){
+          byte[] b=new byte[4096];int n=in.read(b);if(n<=0)return false;
+          String head=new String(b,0,n,"UTF-8").replace("\uFEFF","");
+          return head.contains("#EXTM3U");
+        }
+      }
+      return true;
     }catch(Exception e){return false;}finally{if(c!=null)c.disconnect();}
   }
   private String read(InputStream in,int max)throws Exception{
