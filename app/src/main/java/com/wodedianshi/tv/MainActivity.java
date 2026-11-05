@@ -55,7 +55,33 @@ public class MainActivity extends Activity {
   public void onCreate(Bundle b) {
     super.onCreate(b);
     restore();
+    loadBundledHdBackups();
     makeUi();
+  }
+  // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
+  // including for users whose channel list was already saved by an older build.
+  private void loadBundledHdBackups(){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    if(prefs.getBoolean("hd_sources_v1_loaded",false))return;
+    try(InputStream in=getAssets().open("default_channels.m3u")){
+      parse(read(in));
+      synchronized(channels){
+        for(Channel c:channels){
+          String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
+          ArrayList<String> ordered=new ArrayList<>();
+          for(String source:c.backups)if(isKnown1080pSource(source))ordered.add(source);
+          for(String source:c.backups)if(!isKnown1080pSource(source))ordered.add(source);
+          if(!ordered.equals(c.backups)){c.backups.clear();c.backups.addAll(ordered);int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;}
+        }
+      }
+      persist();
+      prefs.edit().putBoolean("hd_sources_v1_loaded",true).apply();
+    }catch(Exception ignored){}
+  }
+  private boolean isKnown1080pSource(String source){
+    if(source==null)return false;
+    String u=source.toLowerCase(Locale.ROOT);
+    return u.contains("/master_5000.m3u8")||u.contains("/1080p.m3u8");
   }
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   private void styleTvButton(Button b,int normalColor){
