@@ -96,7 +96,7 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else officialDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else vodDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -112,6 +112,13 @@ public class MainActivity extends Activity {
   @Override public boolean dispatchKeyEvent(KeyEvent event){
     if(video!=null && video.dispatchKeyEvent(event))return true;
     return super.dispatchKeyEvent(event);
+  }
+  private void vodDialog(){
+    String[] names={"Tubi · 免费电影/电视剧","Pluto TV · 直播电影台+点播","Plex · 免费电影与直播","The Roku Channel · 电影/剧集","YouTube Movies · 免费电影专区","Internet Archive · 公版经典电影","Kanopy · 电影/纪录片（需图书馆资格）","Hoopla · 电影/纪录片（需图书馆资格）","Rakuten TV · 免费广告电影（地区有限）","Xumo Play · 电影直播与点播（地区有限）"};
+    String[] urls={"https://tubitv.com/","https://pluto.tv/","https://www.plex.tv/watch-free/","https://therokuchannel.roku.com/","https://www.youtube.com/movies","https://archive.org/details/feature_films","https://www.kanopy.com/","https://www.hoopladigital.com/","https://www.rakuten.tv/","https://play.xumo.com/"};
+    new AlertDialog.Builder(this).setTitle("全球正版免费电影点播入口").setMessage("以下为官方平台入口，点击后在浏览器或官方应用打开。可用片库、语言、账号要求和地区限制以平台当地规则为准；这些入口不是内置破解源。")
+      .setItems(names,(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(urls[w])));}catch(Exception e){toast("无法打开，请检查浏览器或官方应用");}})
+      .setNegativeButton("关闭",null).show();
   }
   private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
