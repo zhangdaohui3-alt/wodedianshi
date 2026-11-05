@@ -237,9 +237,9 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
-    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","中国","收藏"};
+    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","中国","收藏","成人频道"};
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}if(name.equals("成人频道")){requestAdultUnlock();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else showSourceUpdateStatus();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -569,9 +569,57 @@ public class MainActivity extends Activity {
       refresh();
     }).setNegativeButton("返回",null).show();
   }
+  private String adultPasswordHash(String value){
+    try{
+      java.security.MessageDigest md=java.security.MessageDigest.getInstance("SHA-256");
+      byte[] bytes=md.digest(value.getBytes("UTF-8"));StringBuilder out=new StringBuilder();
+      for(byte b:bytes)out.append(String.format(Locale.US,"%02x",b&0xff));
+      return out.toString();
+    }catch(Exception e){return value;}
+  }
+  private boolean adultPasswordMatches(String value){
+    String saved=getSharedPreferences("mytv",0).getString("adult_password_hash","");
+    return saved.isEmpty()?"0000".equals(value):saved.equals(adultPasswordHash(value));
+  }
+  private void requestAdultUnlock(){
+    EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);input.setHint("请输入成人频道密码");
+    new AlertDialog.Builder(this).setTitle("成人频道 · 密码验证").setMessage("默认密码：0000").setView(input)
+      .setPositiveButton("进入",(d,w)->{String p=input.getText().toString();if(adultPasswordMatches(p))showAdultCategories();else new AlertDialog.Builder(this).setTitle("密码错误").setMessage("密码不正确，请重试。").setPositiveButton("确定",null).show();})
+      .setNegativeButton("取消",null).show();
+  }
+  private void showAdultCategories(){
+    String[] categories={"全部成人频道","成人电影","成人纪录片","成人动画","其他成人内容"};
+    new AlertDialog.Builder(this).setTitle("成人频道分类").setItems(categories,(d,w)->{
+      activeCategory=categories[w];favoriteMode=false;
+      if(search!=null)search.setText("");
+      refresh();focusFirstChannelInMenu();
+    }).setNeutralButton("修改密码",(d,w)->changeAdultPassword()).setNegativeButton("关闭",null).show();
+  }
+  private void changeAdultPassword(){
+    LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
+    EditText oldPass=new EditText(this);oldPass.setSingleLine(true);oldPass.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);oldPass.setHint("当前密码");box.addView(oldPass);
+    EditText newPass=new EditText(this);newPass.setSingleLine(true);newPass.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);newPass.setHint("新密码（4-12位数字）");box.addView(newPass);
+    EditText confirm=new EditText(this);confirm.setSingleLine(true);confirm.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);confirm.setHint("再次输入新密码");box.addView(confirm);
+    new AlertDialog.Builder(this).setTitle("修改成人频道密码").setView(box).setPositiveButton("保存", (d,w)->{
+      String old=oldPass.getText().toString(),next=newPass.getText().toString();
+      if(!adultPasswordMatches(old)){toast("当前密码错误");return;}
+      if(!next.matches("[0-9]{4,12}")){toast("新密码必须为4至12位数字");return;}
+      if(!next.equals(confirm.getText().toString())){toast("两次输入的新密码不一致");return;}
+      getSharedPreferences("mytv",0).edit().putString("adult_password_hash",adultPasswordHash(next)).apply();toast("成人频道密码已修改");
+    }).setNegativeButton("取消",null).show();
+  }
+  private boolean isAdultChannel(Channel c){
+    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
+    return x.contains("成人")||x.contains("情色")||x.contains("成人电影")||x.contains("成人频道")||x.contains("18+")||x.contains("18plus")||x.contains("r18")||x.contains("xxx")||x.contains("adult")||x.contains("erotic");
+  }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
+    if(cat.equals("成人频道")||cat.equals("全部成人频道"))return isAdultChannel(c);
+    if(cat.equals("成人电影"))return isAdultChannel(c)&&(x.contains("电影")||x.contains("movie")||x.contains("film"));
+    if(cat.equals("成人纪录片"))return isAdultChannel(c)&&(x.contains("纪录")||x.contains("documentary"));
+    if(cat.equals("成人动画"))return isAdultChannel(c)&&(x.contains("动画")||x.contains("anime")||x.contains("animation"));
+    if(cat.equals("其他成人内容"))return isAdultChannel(c)&&!(x.contains("电影")||x.contains("movie")||x.contains("film")||x.contains("纪录")||x.contains("documentary")||x.contains("动画")||x.contains("anime")||x.contains("animation"));
     if(cat.startsWith("城市:"))return x.contains(cat.substring(3).toLowerCase(Locale.ROOT));
     String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     for(String province:provinceNames)if(cat.equals(province))return x.contains(province.toLowerCase(Locale.ROOT));
