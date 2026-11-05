@@ -653,7 +653,7 @@ public class MainActivity extends Activity {
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
-    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setControllerShowTimeoutMs(5000);
+    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setTimeBarScrubbingEnabled(true);pv.setControllerShowTimeoutMs(8000);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
     LinearLayout seekBar=new LinearLayout(this);seekBar.setOrientation(0);seekBar.setGravity(Gravity.CENTER);seekBar.setPadding(dp(10),dp(6),dp(10),dp(6));seekBar.setBackgroundColor(0xAA101820);
     Button rewind15=new Button(this);rewind15.setText("⏪ 15秒");rewind15.setAllCaps(false);rewind15.setTextColor(Color.WHITE);rewind15.setFocusable(true);rewind15.setOnClickListener(v->seekVodBy(-15000));
