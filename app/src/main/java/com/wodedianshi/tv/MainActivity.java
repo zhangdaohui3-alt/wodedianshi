@@ -966,8 +966,9 @@ public class MainActivity extends Activity {
     Channel c=channels.get(selected);
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
     c.activeSource=(c.activeSource+delta+c.backups.size())%c.backups.size();
+    automaticSwitchCount=0;
     manualSourceSwitch=true;
-    play(selected);
+    startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
   @Override public void onBackPressed(){
