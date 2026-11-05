@@ -313,7 +313,13 @@ public class MainActivity extends Activity {
   }
   private Dialog vodPlayerDialog;
   private ExoPlayer vodPlayer;
+  private boolean resumeLiveAfterVod=false;
   private void vodDialog(){
+    // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
+    resumeLiveAfterVod=player!=null&&player.isPlaying();
+    cancelBufferingFallback();
+    cancelPlaybackWatchdog();
+    if(player!=null)player.pause();
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
@@ -334,7 +340,23 @@ public class MainActivity extends Activity {
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 点播").setView(panel).setNegativeButton("关闭",null).create();
     searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
     loadVodCatalogue("精选电影",panel,status,results);
-    dialog.setOnShowListener(d->{if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.94),(int)(getResources().getDisplayMetrics().heightPixels*0.90));});
+    dialog.setOnDismissListener(d->{
+      if(resumeLiveAfterVod&&player!=null){
+        player.play();
+        if(player.getPlaybackState()==Player.STATE_BUFFERING)scheduleBufferingFallback();
+        else if(player.getPlaybackState()==Player.STATE_READY){watchdogLastPosition=player.getCurrentPosition();watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();schedulePlaybackWatchdog();}
+      }
+      resumeLiveAfterVod=false;
+    });
+    dialog.setOnShowListener(d->{
+      if(dialog.getWindow()!=null){
+        dialog.getWindow().setLayout(-1,-1);
+        dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.rgb(12,20,34)));
+        dialog.getWindow().getDecorView().setSystemUiVisibility(
+          View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
+          View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+      }
+    });
     dialog.show();
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
@@ -988,13 +1010,17 @@ public class MainActivity extends Activity {
   }
   private void schedulePlaybackWatchdog(){
     cancelPlaybackWatchdog();
-    if(player==null||player.getPlaybackState()!=Player.STATE_READY)return;
+    if(player==null||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     playbackWatchdog=()->{
       playbackWatchdog=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId))return;
-      if(player.getPlaybackState()!=Player.STATE_READY||!player.isPlaying())return;
+      if(!player.getPlayWhenReady())return;
+      int state=player.getPlaybackState();
+      // 缓冲由独立计时器处理；READY 但没有真正推进时间轴也必须继续监测。
+      if(state==Player.STATE_BUFFERING){scheduleBufferingFallback();return;}
+      if(state!=Player.STATE_READY)return;
       long now=android.os.SystemClock.elapsedRealtime();
       long position=player.getCurrentPosition();
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
@@ -1031,6 +1057,7 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
+    if(c.backups.size()<2){info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
     if(automaticSwitchCount>=c.backups.size()-1){
       info.setText(reason+"；当前频道的播放源已全部尝试，请手动选择其他频道或稍后重试");
       return;
