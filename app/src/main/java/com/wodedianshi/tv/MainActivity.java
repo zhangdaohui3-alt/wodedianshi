@@ -27,7 +27,12 @@ public class MainActivity extends Activity {
   private final ArrayList<Channel> channels = new ArrayList<>();
   private final HashSet<String> favorites = new HashSet<>();
   private final ArrayList<Button> menuButtons = new ArrayList<>();
+  // Fast indexes prevent quadratic duplicate scans as channel lists grow.
+  private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
+  private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  private final Handler uiHandler = new Handler(Looper.getMainLooper());
+  private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
   private int selected = -1;
   private long playbackGeneration = 0;
@@ -69,6 +74,7 @@ public class MainActivity extends Activity {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
       for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}channels.add(c);}
     } catch(Exception ignored) {}
+    rebuildChannelIndexes();
     if(!p.getBoolean("defaults_loaded",false)){
       if(channels.isEmpty()){
         try(InputStream in=getAssets().open("default_channels.m3u")){
@@ -80,6 +86,16 @@ public class MainActivity extends Activity {
       p.edit().putBoolean("defaults_loaded",true).apply();
     }
   }
+  private void rebuildChannelIndexes(){
+    synchronized(channels){
+      channelsByUrl.clear(); channelsByIdentity.clear();
+      for(Channel c:channels){
+        for(String u:c.backups)channelsByUrl.put(u,c);
+        channelsByIdentity.put(identity(c.name,c.group),c);
+      }
+    }
+  }
+  private String identity(String name,String group){return (name==null?"":name.trim().toLowerCase(Locale.ROOT))+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));}
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
@@ -105,7 +121,7 @@ public class MainActivity extends Activity {
     info=new TextView(this);info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);video.setUseController(true);video.setFocusable(false);video.setBackgroundColor(Color.BLACK);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
-    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){refresh();}public void afterTextChanged(android.text.Editable e){}});
+    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
@@ -216,11 +232,17 @@ public class MainActivity extends Activity {
     return true;
   }
   private void refresh(){
-    if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
+    if(list==null||search==null)return;
+    list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
+    final int maxRows=260;int shown=0,totalMatches=0;
+    synchronized(channels){
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
+      totalMatches++;if(shown>=maxRows)continue;shown++;
       Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));styleTvButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());}persist();refresh();}).show();return true;});list.addView(b);
+      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});list.addView(b);
     }
+    }
+    if(totalMatches>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+totalMatches+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
@@ -258,9 +280,15 @@ public class MainActivity extends Activity {
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setItems(items,listener).setNegativeButton("返回",null).create();
     dialog.setOnShowListener(d->{
       ListView choices=dialog.getListView();
-      if(choices!=null){choices.setFocusable(true);choices.setFocusableInTouchMode(true);choices.setItemsCanFocus(false);choices.requestFocus();choices.setSelection(0);}
+      if(choices!=null){
+        choices.setFocusable(true);choices.setFocusableInTouchMode(true);choices.setItemsCanFocus(false);
+        choices.setChoiceMode(ListView.CHOICE_MODE_NONE);
+        choices.setOnItemClickListener((parent,view,position,id)->{if(position>=0&&position<items.length){dialog.dismiss();listener.onClick(dialog,position);}});
+        choices.setSelection(0);choices.requestFocus();
+      }
     });
     dialog.show();
+    dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.72),-2);
   }
   private void showCountryDialog(){
     String[] labels={"美国","加拿大","英国","澳大利亚","日本","韩国","法国","德国","意大利","西班牙","葡萄牙","荷兰","比利时","瑞士","奥地利","瑞典","挪威","芬兰","丹麦","爱尔兰","巴西","墨西哥","阿根廷","智利","印度","新加坡","马来西亚","泰国","印度尼西亚","菲律宾","越南","俄罗斯","土耳其","南非","国际频道"};
@@ -429,13 +457,12 @@ public class MainActivity extends Activity {
       if(line.startsWith("#"))continue;
       if(line.startsWith("http://")||line.startsWith("https://")){
         if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
-        boolean exists=false;
-        for(Channel c:channels)if(c.url.equals(line)){exists=true;break;}
-        if(!exists){
-          Channel same=null;
-          for(Channel c:channels)if(c.name.equalsIgnoreCase(name)&&c.group.equalsIgnoreCase(group)){same=c;break;}
-          if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);added++;}}
-          else{channels.add(new Channel(name,line,group));added++;}
+        synchronized(channels){
+          if(!channelsByUrl.containsKey(line)){
+            String key=identity(name,group);Channel same=channelsByIdentity.get(key);
+            if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
+            else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
+          }
         }
         name=null;group="";
       }
@@ -448,5 +475,5 @@ public class MainActivity extends Activity {
   private void play(int ix){if(ix<0||ix>=channels.size())return;selected=ix;Channel c=channels.get(ix);if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;final long generation=++playbackGeneration;currentMediaId=generation+":"+ix+":"+c.activeSource;info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");if(player==null){DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);player=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();video.setPlayer(player);player.addListener(new Player.Listener(){private boolean isCurrent(){MediaItem item=player==null?null:player.getCurrentMediaItem();return item!=null&&currentMediaId.equals(item.mediaId);}public void onPlayerError(PlaybackException e){if(!isCurrent())return;if(selected>=0&&selected<channels.size()){Channel ch=channels.get(selected);if(ch.activeSource+1<ch.backups.size()){ch.activeSource++;info.setText("当前源失败，自动切换备用源 "+(ch.activeSource+1)+"/"+ch.backups.size());play(selected);}else info.setText("所有已配置播放源均失败，请稍后重试或检查网络");}}public void onPlaybackStateChanged(int st){if(st==Player.STATE_READY&&isCurrent()&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");}});}MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();player.setMediaItem(item);player.prepare();player.play();}
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStop(){super.onStop();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();worker.shutdown();}
+  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);worker.shutdownNow();}
 }
