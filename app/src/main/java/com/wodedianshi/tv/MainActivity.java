@@ -355,7 +355,7 @@ public class MainActivity extends Activity {
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
-    String[] categories={"播放记录","精选电影","中国电影","华语经典","中国动画","中国纪录片","国产短片","纪录片","动画","喜剧","科幻","剧情"};
+    String[] categories={"播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
@@ -508,6 +508,35 @@ public class MainActivity extends Activity {
       return new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license);
     }catch(Exception ignored){return null;}
   }
+  private ArrayList<VodItem> fetchCommonsPublicDomainVod(boolean chineseOnly){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      String category="Category:Videos_of_films_in_the_public_domain";
+      String api="https://commons.wikimedia.org/w/api.php?action=query&generator=categorymembers&gcmtitle="+URLEncoder.encode(category,"UTF-8")+"&gcmtype=file&gcmlimit=100&prop=imageinfo&iiprop=url|extmetadata&iiextmetadatalanguage=en&format=json";
+      org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+      org.json.JSONObject query=root.optJSONObject("query");
+      org.json.JSONObject pages=query==null?null:query.optJSONObject("pages");
+      if(pages==null)return items;
+      java.util.Iterator<String> keys=pages.keys();
+      while(keys.hasNext()&&items.size()<36){
+        org.json.JSONObject page=pages.optJSONObject(keys.next());if(page==null)continue;
+        String title=page.optString("title","");String lower=title.toLowerCase(Locale.ROOT);
+        if(!(lower.endsWith(".mp4")||lower.endsWith(".webm")))continue;
+        if(chineseOnly&&!title.matches(".*[\\u3400-\\u9fff].*"))continue;
+        org.json.JSONArray info=page.optJSONArray("imageinfo");if(info==null||info.length()==0)continue;
+        org.json.JSONObject ii=info.optJSONObject(0);if(ii==null)continue;
+        org.json.JSONObject ext=ii.optJSONObject("extmetadata");if(ext==null)continue;
+        org.json.JSONObject license=ext.optJSONObject("LicenseShortName");
+        String licenseName=license==null?"":android.text.Html.fromHtml(license.optString("value",""),android.text.Html.FROM_HTML_MODE_LEGACY).toString();
+        String l=licenseName.toLowerCase(Locale.ROOT);
+        if(!(l.contains("public domain")||l.equals("cc0")||l.contains("cc by")||l.contains("cc-by")))continue;
+        String url=ii.optString("url","");if(!url.startsWith("https://"))continue;
+        String clean=title.substring(title.lastIndexOf(':')+1).replaceAll("\\.(mp4|webm)$","");
+        items.add(new VodItem(clean,"commons:"+title,url,licenseName));
+      }
+    }catch(Exception ignored){}
+    return items;
+  }
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
@@ -518,30 +547,43 @@ public class MainActivity extends Activity {
       try{
         String q="mediatype:movies";
         if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
-        else if("中国电影".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR subject:Chinese OR subject:China)";
-        else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (title:中国 OR title:中文 OR title:华语 OR subject:Chinese)";
+        else if("中国电影".equals(category)||"中国经典影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR subject:Chinese OR subject:China)";
+        else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR subject:Chinese)";
         else if("中国动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:animation OR subject:cartoons OR title:动画)";
         else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:documentary OR title:纪录片)";
         else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
-        else if("纪录片".equals(category))q+=" AND subject:documentary";
+        else if("纪录片".equals(category)||"科学纪录片".equals(category))q+=" AND subject:documentary";
+        else if("NASA影像".equals(category))q="mediatype:movies AND (collection:nasa OR creator:NASA)";
         else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
         else if("喜剧".equals(category))q+=" AND subject:comedy";
         else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
         else if("剧情".equals(category))q+=" AND subject:drama";
-        else if(!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=48&page=1&output=json&sort[]=downloads+desc";
+        else if("欧美经典".equals(category))q+=" AND (language:English OR language:eng) AND (collection:feature_films OR subject:classic)";
+        else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
+        else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
+        else if(!category.equals("世界公版电影")&&!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page=1&output=json&sort[]=downloads+desc";
         org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodWorker);
         int submitted=0;
-        for(int i=0;i<docs.length()&&submitted<48;i++){
+        for(int i=0;i<docs.length()&&submitted<100;i++){
           final org.json.JSONObject doc=docs.getJSONObject(i);
           completion.submit(()->fetchAuthorizedVod(doc));submitted++;
         }
-        for(int i=0;i<submitted&&found.size()<24;i++){
-          Future<VodItem> f=completion.poll(9,TimeUnit.SECONDS);
-          if(f==null)break;
-          try{VodItem item=f.get();if(item!=null)found.add(item);}catch(Exception ignored){}
+        long deadline=android.os.SystemClock.elapsedRealtime()+65000;
+        while(submitted>0&&found.size()<36){
+          long remaining=deadline-android.os.SystemClock.elapsedRealtime();
+          if(remaining<=0)break;
+          Future<VodItem> future=completion.poll(Math.min(4000,remaining),TimeUnit.MILLISECONDS);
+          if(future==null)continue;
+          try{VodItem item=future.get();if(item!=null)found.add(item);}catch(Exception ignored){}
+          submitted--;
+        }
+        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<36){
+          ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
+          HashSet<String> seen=new HashSet<>();for(VodItem item:found)seen.add(item.identifier);
+          for(VodItem item:commons)if(seen.add(item.identifier)&&found.size()<48)found.add(item);
         }
       }catch(Exception e){error=e.getMessage();}
       final String err=error;
@@ -592,12 +634,30 @@ public class MainActivity extends Activity {
     if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
     startVodPlayback(item,0);
   }
+  private void seekVodBy(long deltaMs){
+    ExoPlayer p=vodPlayer;
+    if(p==null){toast("播放器尚未准备好");return;}
+    if(p.getPlaybackState()==Player.STATE_IDLE||p.getPlaybackState()==Player.STATE_BUFFERING||p.getCurrentTimeline().isEmpty()){
+      toast("影片正在载入，请稍候再快进或快退");return;
+    }
+    if(!p.isCurrentMediaItemSeekable()){
+      toast("当前影片源不支持时间定位，无法快进/快退；可换一部支持定位的影片");return;
+    }
+    long duration=p.getDuration(),position=p.getCurrentPosition();
+    if(duration==C.TIME_UNSET||duration<=0){toast("影片尚未提供可定位的总时长");return;}
+    p.seekTo(Math.max(0,Math.min(duration,position+deltaMs)));
+  }
   private void startVodPlayback(VodItem item,long startPosition){
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
-    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(true);pv.setShowFastForwardButton(true);pv.setControllerShowTimeoutMs(5000);
+    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setControllerShowTimeoutMs(5000);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
+    LinearLayout seekBar=new LinearLayout(this);seekBar.setOrientation(0);seekBar.setGravity(Gravity.CENTER);seekBar.setPadding(dp(10),dp(6),dp(10),dp(6));seekBar.setBackgroundColor(0xAA101820);
+    Button rewind15=new Button(this);rewind15.setText("⏪ 15秒");rewind15.setAllCaps(false);rewind15.setTextColor(Color.WHITE);rewind15.setFocusable(true);rewind15.setOnClickListener(v->seekVodBy(-15000));
+    Button forward15=new Button(this);forward15.setText("⏩ 15秒");forward15.setAllCaps(false);forward15.setTextColor(Color.WHITE);forward15.setFocusable(true);forward15.setOnClickListener(v->seekVodBy(15000));
+    seekBar.addView(rewind15,new LinearLayout.LayoutParams(dp(132),dp(48)));seekBar.addView(forward15,new LinearLayout.LayoutParams(dp(132),dp(48)));
+    FrameLayout.LayoutParams seekParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);seekParams.bottomMargin=dp(22);stage.addView(seekBar,seekParams);
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
