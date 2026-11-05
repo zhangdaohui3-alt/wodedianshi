@@ -12,7 +12,7 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_NEW_SOURCES = 60;
+  private static final int MAX_NEW_SOURCES = 100;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -37,6 +37,7 @@ public class SourceUpdateWorker extends Worker {
       JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
+      JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group")),c);
         JSONArray src=c.optJSONArray("sources");
@@ -64,7 +65,9 @@ public class SourceUpdateWorker extends Worker {
         if(knownUrls.contains(e.url))continue;
         if(checked>=MAX_NEW_SOURCES)break;
         checked++;
-        if(!probe(e.url))continue;
+        ProbeResult measured=probe(e.url);
+        if(!measured.valid)continue;
+        measuredScores.put(scoreKey(e.url),measured.score);
         String key=identity(e.name,e.group);JSONObject target=byIdentity.get(key);
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
@@ -78,8 +81,11 @@ public class SourceUpdateWorker extends Worker {
         knownUrls.add(e.url);
       }
       if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
-      prefs.edit().putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；检测 "+checked+" 个新地址；新增 "+added+" 个备用/频道地址；目录失败 "+feedsFailed+" 个。"+(errors.length()>0?"部分目录失败。":""))
+      // Persist measured quality independently from URL labels so the player can rank
+      // candidates by real HLS/segment reachability, resolution and response speed.
+      prefs.edit().putString("source_probe_scores_v1",measuredScores.toString())
+          .putString("channels",saved.toString()).putString("source_update_time",now())
+          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；实测 "+checked+" 个新地址；新增 "+added+" 个备用/频道地址；目录失败 "+feedsFailed+" 个。评分包含清单、分片、清晰度和响应速度；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
@@ -117,26 +123,109 @@ public class SourceUpdateWorker extends Worker {
     if(u.matches(".*(?:360p|240p).*"))return 300;
     return 0;
   }
-  // GET is used instead of HEAD because some live hosts reject HEAD requests.
-  // HLS candidates must return an actual M3U playlist header.
-  private boolean probe(String address){
+  private static class ProbeResult {
+    boolean valid;
+    int score;
+    int width,height;
+    long latencyMs;
+    long bitrate;
+  }
+  private String scoreKey(String url){return Integer.toHexString(url.hashCode())+":"+url.length();}
+  // GET rather than HEAD: many public IPTV hosts reject HEAD. HLS is accepted only
+  // after its media playlist and a real media segment can both be reached.
+  private ProbeResult probe(String address){
+    ProbeResult result=new ProbeResult();
+    long started=android.os.SystemClock.elapsedRealtime();
+    try{
+      String lower=address.toLowerCase(Locale.ROOT);
+      if(lower.contains(".m3u8")||lower.contains("m3u8?")){
+        byte[] manifestBytes=fetchSample(address,65536);
+        if(manifestBytes==null||manifestBytes.length==0)return result;
+        String manifest=new String(manifestBytes,"UTF-8").replace("\uFEFF","");
+        if(!manifest.contains("#EXTM3U"))return result;
+        String mediaUrl=address;
+        long bestBandwidth=0L;
+        int bestWidth=0,bestHeight=0;
+        String[] lines=manifest.replace("\r","").split("\n");
+        for(int i=0;i<lines.length;i++){
+          String line=lines[i].trim();
+          if(!line.startsWith("#EXT-X-STREAM-INF:"))continue;
+          long bw=0L;int w=0,h=0;
+          java.util.regex.Matcher bm=java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(line);
+          if(bm.find())try{bw=Long.parseLong(bm.group(1));}catch(Exception ignored){}
+          java.util.regex.Matcher rm=java.util.regex.Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(line);
+          if(rm.find())try{w=Integer.parseInt(rm.group(1));h=Integer.parseInt(rm.group(2));}catch(Exception ignored){}
+          String child="";
+          for(int j=i+1;j<lines.length;j++){String candidate=lines[j].trim();if(!candidate.isEmpty()&&!candidate.startsWith("#")){child=candidate;break;}}
+          if(!child.isEmpty()&&bw>=bestBandwidth){
+            bestBandwidth=bw;bestWidth=w;bestHeight=h;
+            mediaUrl=new URL(new URL(address),child).toString();
+          }
+        }
+        if(!mediaUrl.equals(address)){
+          byte[] variant=fetchSample(mediaUrl,65536);
+          if(variant==null||variant.length==0)return result;
+          String variantText=new String(variant,"UTF-8").replace("\uFEFF","");
+          if(!variantText.contains("#EXTM3U"))return result;
+          manifest=variantText;
+        }
+        String segment="";
+        String[] mediaLines=manifest.replace("\r","").split("\n");
+        for(int i=0;i<mediaLines.length;i++){
+          if(mediaLines[i].trim().startsWith("#EXTINF:")){
+            for(int j=i+1;j<mediaLines.length;j++){
+              String candidate=mediaLines[j].trim();
+              if(!candidate.isEmpty()&&!candidate.startsWith("#")){segment=candidate;break;}
+            }
+            if(!segment.isEmpty())break;
+          }
+        }
+        if(segment.isEmpty())return result;
+        String segmentUrl=new URL(new URL(mediaUrl),segment).toString();
+        long segmentStart=android.os.SystemClock.elapsedRealtime();
+        byte[] sample=fetchSample(segmentUrl,32768);
+        if(sample==null||sample.length<188)return result;
+        long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
+        result.valid=true;result.width=bestWidth;result.height=bestHeight;
+        result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
+        int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
+        int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
+        int speed=(int)Math.min(300L,(sample.length*1000L/segmentMs)/2048L);
+        int latencyPenalty=(int)Math.min(250L,result.latencyMs/20L);
+        result.score=500+resolution+bandwidth+speed-latencyPenalty+300;
+        return result;
+      }
+      long before=android.os.SystemClock.elapsedRealtime();
+      byte[] sample=fetchSample(address,32768);
+      if(sample==null||sample.length<188)return result;
+      result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
+      URL url=new URL(address);
+      String ext=url.getPath().toLowerCase(Locale.ROOT);
+      if(!(ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac")))return result;
+      result.valid=true;
+      result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
+      return result;
+    }catch(Exception e){return result;}
+  }
+  private byte[] fetchSample(String address,int maxBytes)throws Exception{
     HttpURLConnection c=null;
     try{
       c=(HttpURLConnection)new URL(address).openConnection();
-      c.setConnectTimeout(3500);c.setReadTimeout(4500);c.setInstanceFollowRedirects(true);
-      c.setRequestProperty("User-Agent","Mozilla/5.0 MyTV/1.22");
-      c.setRequestProperty("Range","bytes=0-65535");
-      int code=c.getResponseCode();if(code<200||code>=400)return false;
-      String path=address.toLowerCase(Locale.ROOT);
-      if(path.contains(".m3u8")||path.contains("m3u8?")){
-        try(InputStream in=c.getInputStream()){
-          byte[] b=new byte[4096];int n=in.read(b);if(n<=0)return false;
-          String head=new String(b,0,n,"UTF-8").replace("\uFEFF","");
-          return head.contains("#EXTM3U");
+      c.setConnectTimeout(3000);c.setReadTimeout(3500);c.setInstanceFollowRedirects(true);
+      c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
+      c.setRequestProperty("Range","bytes=0-"+(maxBytes-1));
+      int code=c.getResponseCode();if(code<200||code>=400)return null;
+      String type=c.getContentType();
+      if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
+      try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+        byte[] buffer=new byte[4096];int n,total=0;
+        while((n=in.read(buffer))!=-1&&total<maxBytes){
+          int take=Math.min(n,maxBytes-total);out.write(buffer,0,take);total+=take;
+          if(total>=maxBytes)break;
         }
+        return out.toByteArray();
       }
-      return true;
-    }catch(Exception e){return false;}finally{if(c!=null)c.disconnect();}
+    }finally{if(c!=null)c.disconnect();}
   }
   private String read(InputStream in,int max)throws Exception{
     ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
