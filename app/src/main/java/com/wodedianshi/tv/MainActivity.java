@@ -122,7 +122,7 @@ public class MainActivity extends Activity {
     list=new LinearLayout(this);list.setOrientation(1);ScrollView sc=new ScrollView(this);sc.addView(list);channelPane.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
-    video=new PlayerView(this);video.setUseController(true);video.setFocusable(false);video.setBackgroundColor(Color.BLACK);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    video=new PlayerView(this);video.setUseController(true);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
@@ -241,7 +241,7 @@ public class MainActivity extends Activity {
     synchronized(channels){
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
       totalMatches++;if(shown>=maxRows)continue;shown++;
-      Button b=new Button(this);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));styleTvButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
+      Button b=new Button(this);b.setTag(ix);b.setText((favorites.contains(c.key())?"★ ":"")+c.name+(c.group.isEmpty()?"":" · "+c.group));b.setTextSize(16);b.setMinHeight(dp(52));styleTvButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
       b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});list.addView(b);
     }
     }
@@ -280,18 +280,21 @@ public class MainActivity extends Activity {
     });
   }
   private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setItems(items,listener).setNegativeButton("返回",null).create();
+    ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,items);
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setAdapter(adapter,listener).setNegativeButton("返回",null).create();
     dialog.setOnShowListener(d->{
       ListView choices=dialog.getListView();
       if(choices!=null){
-        choices.setFocusable(true);choices.setFocusableInTouchMode(true);choices.setClickable(true);choices.setItemsCanFocus(false);
+        choices.setFocusable(true);
+        choices.setFocusableInTouchMode(true);
+        choices.setItemsCanFocus(false);
         choices.setChoiceMode(ListView.CHOICE_MODE_NONE);
-        choices.setOnItemClickListener((parent,view,position,id)->{if(position>=0&&position<items.length){dialog.dismiss();listener.onClick(dialog,position);}});
-        choices.setSelection(0);choices.requestFocus();
+        choices.setSelection(0);
+        choices.post(()->choices.requestFocus());
       }
     });
     dialog.show();
-    dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.72),-2);
+    if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.72),-2);
   }
   private void showCountryDialog(){
     String[] labels={"美国","加拿大","英国","澳大利亚","日本","韩国","法国","德国","意大利","西班牙","葡萄牙","荷兰","比利时","瑞士","奥地利","瑞典","挪威","芬兰","丹麦","爱尔兰","巴西","墨西哥","阿根廷","智利","印度","新加坡","马来西亚","泰国","印度尼西亚","菲律宾","越南","俄罗斯","土耳其","南非","国际频道"};
@@ -489,6 +492,7 @@ public class MainActivity extends Activity {
       View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|
       View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     video.requestFocus();
+    if(player!=null)video.showController();
   }
   private void exitFullScreenPlayback(){
     if(!fullScreenPlayback||rootLayout==null)return;
@@ -499,7 +503,14 @@ public class MainActivity extends Activity {
     rootLayout.setPadding(dp(10),dp(8),dp(10),dp(8));
     video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-    channelPane.requestFocus();
+    View restoreFocus=list.getChildAt(0);
+    if(selected>=0){
+      for(int i=0;i<list.getChildCount();i++){
+        View child=list.getChildAt(i);
+        if(child.getTag() instanceof Integer && ((Integer)child.getTag())==selected){restoreFocus=child;break;}
+      }
+    }
+    if(restoreFocus!=null)restoreFocus.requestFocus();
   }
   @Override public void onBackPressed(){
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
