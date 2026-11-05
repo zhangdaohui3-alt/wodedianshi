@@ -1155,8 +1155,19 @@ public class MainActivity extends Activity {
           .setLoadControl(loadControl)
           .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
       video.setPlayer(player);
-      player.addVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->
-          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime());
+      VideoFrameMetadataListener frameListener=(presentationTimeUs,releaseTimeNs,format,mediaFormat)->
+          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
+      // Use reflection to remain compatible with the Media3 API surface shipped by
+      // the app while still enabling per-frame monitoring when the runtime exposes it.
+      try{
+        java.lang.reflect.Method addFrameListener=player.getClass().getMethod("addVideoFrameMetadataListener",VideoFrameMetadataListener.class);
+        addFrameListener.invoke(player,frameListener);
+      }catch(Exception unavailable){
+        try{
+          java.lang.reflect.Method setFrameListener=player.getClass().getMethod("setVideoFrameMetadataListener",VideoFrameMetadataListener.class);
+          setFrameListener.invoke(player,frameListener);
+        }catch(Exception ignored){}
+      }
       player.addListener(new Player.Listener(){
         private boolean isCurrent(){
           MediaItem item=player==null?null:player.getCurrentMediaItem();
