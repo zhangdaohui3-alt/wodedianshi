@@ -159,6 +159,18 @@ public class MainActivity extends Activity {
       runOnUiThread(()->{int before=channels.size();int added=parse(data);persist();refresh();globalLoading=false;info.setText("全球频道载入完成：新增 "+added+" 个，当前共 "+channels.size()+" 个频道。频道可用性受地区和网络影响。");});
     }catch(Exception e){runOnUiThread(()->{globalLoading=false;info.setText("全球频道载入失败："+e.getMessage()+"。请检查网络后重试。");});}});
   }
+  private void loadEntertainmentChannels(){
+    if(entertainmentLoading){info.setText("全球娱乐频道列表正在载入，请稍候…");return;}
+    entertainmentLoading=true;info.setText("正在载入全球娱乐频道（综艺、音乐、喜剧、影视、生活等）…");
+    worker.execute(()->{try{
+      HttpURLConnection c=(HttpURLConnection)new URL("https://iptv-org.github.io/iptv/index.category.m3u").openConnection();
+      c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
+      c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
+      int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+      String data;try(InputStream in=c.getInputStream()){data=read(in);}finally{c.disconnect();}
+      runOnUiThread(()->{int added=parse(data);persist();refresh();entertainmentLoading=false;info.setText("娱乐频道载入完成：新增 "+added+" 个。已合并娱乐、喜剧、音乐、电影、剧集、动画、生活、文化、家庭等分类；可播放性受地区和网络影响。");});
+    }catch(Exception e){runOnUiThread(()->{entertainmentLoading=false;info.setText("娱乐频道载入失败："+e.getMessage()+"。请检查网络后重试。");});}});
+  }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setHint("https://.../playlist.m3u");new AlertDialog.Builder(this).setTitle("播放列表网址").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->download(e.getText().toString().trim())).show();}
   private void download(String address){
     if(!address.startsWith("https://")&&!address.startsWith("http://")){toast("网址格式不正确");return;}info.setText("正在下载播放列表…");
