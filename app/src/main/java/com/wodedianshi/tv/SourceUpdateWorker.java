@@ -72,8 +72,10 @@ public class SourceUpdateWorker extends Worker {
         if(!visitedUrls.add(e.url))continue;
         checked++;
         ProbeResult measured=probe(e.url);
+        // A previously good source that now fails its probe must lose its old high score.
+        // Keep the URL as a fallback, but rank it below sources that still pass validation.
+        measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
         if(!measured.valid)continue;
-        measuredScores.put(scoreKey(e.url),measured.score);
         // Known sources are re-tested and re-scored, but never inserted twice.
         if(knownUrls.contains(e.url))continue;
         String key=identity(e.name,e.group);JSONObject target=byIdentity.get(key);
