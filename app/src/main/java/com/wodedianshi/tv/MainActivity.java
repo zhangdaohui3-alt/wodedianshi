@@ -225,9 +225,12 @@ public class MainActivity extends Activity {
     dialog.show();
   }
   private void loadVodCatalogue(String term,LinearLayout panel){
-    TextView status=null;LinearLayout results=null;
-    for(int i=0;i<panel.getChildCount();i++){View v=panel.getChildAt(i);if(v instanceof TextView && ((TextView)v).getText().toString().startsWith("正在载入"))status=(TextView)v;if(v instanceof ScrollView){View child=((ScrollView)v).getChildAt(0);if(child instanceof LinearLayout)results=(LinearLayout)child;}}
-    if(status!=null&&results!=null)loadVodCatalogue(term,panel,status,results);
+    if(panel.getChildCount()<6)return;
+    View statusView=panel.getChildAt(4);View scrollView=panel.getChildAt(5);
+    if(statusView instanceof TextView && scrollView instanceof ScrollView){
+      View child=((ScrollView)scrollView).getChildAt(0);
+      if(child instanceof LinearLayout)loadVodCatalogue(term,panel,(TextView)statusView,(LinearLayout)child);
+    }
   }
   private void loadVodCatalogue(String term,LinearLayout panel,TextView status,LinearLayout results){
     status.setText("正在从 Internet Archive 检索授权影片并检查可播放文件…");results.removeAllViews();
