@@ -115,7 +115,7 @@ public class MainActivity extends Activity {
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
     String[] names={"央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","中国","收藏"};
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else vodDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -239,6 +239,9 @@ public class MainActivity extends Activity {
   }
   private void refresh(){
     if(list==null||search==null)return;
+    int previousFocusedIndex=-1;
+    View currentFocus=findFocus();
+    if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
     list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     final int maxRows=120;int shown=0,totalMatches=0;
     synchronized(channels){
@@ -249,6 +252,18 @@ public class MainActivity extends Activity {
     }
     }
     if(totalMatches>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+totalMatches+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
+    final int restoreIndex=previousFocusedIndex;
+    if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())list.post(()->{
+      if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+      View target=null;
+      if(restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
+      if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
+      if(target!=null)target.requestFocus();
+    });
+  }
+  private void focusFirstChannelInMenu(){
+    if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+    list.post(()->{if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()&&list.getChildCount()>0)list.getChildAt(0).requestFocus();});
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
@@ -528,6 +543,8 @@ public class MainActivity extends Activity {
   private void enterFullScreenPlayback(){
     if(fullScreenPlayback||rootLayout==null)return;
     fullScreenPlayback=true;
+    // 播放期间阻止系统自动熄屏，避免手机锁屏后直播被系统挂起。
+    getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     categoryPane.setVisibility(View.GONE);
     channelPane.setVisibility(View.GONE);
     playbackInfo.setVisibility(View.GONE);
@@ -545,6 +562,7 @@ public class MainActivity extends Activity {
     if(!fullScreenPlayback||rootLayout==null)return;
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
+    getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     fullscreenMenuButton.setVisibility(View.GONE);
     categoryPane.setVisibility(View.VISIBLE);
     channelPane.setVisibility(View.VISIBLE);
