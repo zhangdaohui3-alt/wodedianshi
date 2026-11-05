@@ -260,7 +260,18 @@ public class MainActivity extends Activity {
     worker.execute(()->{
       int added=0;StringBuilder errors=new StringBuilder();
       String[] feeds={
-        "https://iptv-org.github.io/iptv/index.category.m3u",
+        "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+        "https://iptv-org.github.io/iptv/categories/movies.m3u",
+        "https://iptv-org.github.io/iptv/categories/series.m3u",
+        "https://iptv-org.github.io/iptv/categories/music.m3u",
+        "https://iptv-org.github.io/iptv/categories/kids.m3u",
+        "https://iptv-org.github.io/iptv/categories/animation.m3u",
+        "https://iptv-org.github.io/iptv/categories/comedy.m3u",
+        "https://iptv-org.github.io/iptv/categories/documentary.m3u",
+        "https://iptv-org.github.io/iptv/categories/family.m3u",
+        "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
+        "https://iptv-org.github.io/iptv/categories/culture.m3u",
+        "https://iptv-org.github.io/iptv/languages/zho.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u"
       };
       for(String address:feeds){HttpURLConnection c=null;try{
