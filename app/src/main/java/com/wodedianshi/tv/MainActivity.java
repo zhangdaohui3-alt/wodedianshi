@@ -12,6 +12,8 @@ import android.view.*;
 import android.widget.*;
 import androidx.media3.common.*;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
+import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -32,6 +34,7 @@ import androidx.work.Data;
 import androidx.work.WorkInfo;
 import java.util.concurrent.TimeUnit;
 
+@UnstableApi
 public class MainActivity extends Activity {
   private ExoPlayer player;
   private PlayerView video;
@@ -1006,6 +1009,7 @@ public class MainActivity extends Activity {
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
     c.activeSource=(c.activeSource+delta+c.backups.size())%c.backups.size();
     automaticSwitchCount=0;
+    sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
@@ -1020,6 +1024,10 @@ public class MainActivity extends Activity {
   private Runnable playbackWatchdog;
   private long watchdogLastPosition=-1L;
   private long watchdogLastAdvanceAt=0L;
+  // Updated from the decoder playback thread whenever a video frame is about to render.
+  private volatile long lastVideoFrameAt=0L;
+  // One same-source recovery per selected channel before moving to its backup.
+  private int sameSourceRecoveryCount=0;
   private long sourceAttemptStartedAt=0L;
   private boolean sourceReadyRecorded=false;
   private boolean sourceWasBuffering=false;
@@ -1045,12 +1053,29 @@ public class MainActivity extends Activity {
         watchdogLastPosition=position;
         watchdogLastAdvanceAt=now;
       }else if(now-watchdogLastAdvanceAt>=25000L){
-        advanceToNextSourceAutomatically("检测到画面播放停滞超过 25 秒");
+        recoverFromSilentFreeze("播放时间轴连续 25 秒没有推进");
+        return;
+      }
+      // A live source can leave ExoPlayer in READY while its audio/video output has
+      // silently stopped. Monitor actual video-frame callbacks, not only position.
+      if(player.getVideoFormat()!=null && lastVideoFrameAt>0L
+          && now-lastVideoFrameAt>=20000L){
+        recoverFromSilentFreeze("检测到视频帧连续 20 秒没有输出");
         return;
       }
       schedulePlaybackWatchdog();
     };
     uiHandler.postDelayed(playbackWatchdog,10000L);
+  }
+  private void recoverFromSilentFreeze(String reason){
+    if(sameSourceRecoveryCount<1){
+      sameSourceRecoveryCount++;
+      info.setText(reason+"，正在重新连接当前频道…");
+      startCurrentSource();
+    }else{
+      sameSourceRecoveryCount=0;
+      advanceToNextSourceAutomatically(reason+"，当前源重连无效");
+    }
   }
   private void cancelBufferingFallback(){
     if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
@@ -1091,6 +1116,7 @@ public class MainActivity extends Activity {
   private void play(int ix){
     if(ix<0||ix>=channels.size())return;
     automaticSwitchCount=0;
+    sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
     selected=ix;
     sortSourcesByObservedQuality(channels.get(ix));
@@ -1107,6 +1133,7 @@ public class MainActivity extends Activity {
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
+    lastVideoFrameAt=sourceAttemptStartedAt;
     sourceReadyRecorded=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
@@ -1128,6 +1155,8 @@ public class MainActivity extends Activity {
           .setLoadControl(loadControl)
           .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
       video.setPlayer(player);
+      player.addVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->
+          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime());
       player.addListener(new Player.Listener(){
         private boolean isCurrent(){
           MediaItem item=player==null?null:player.getCurrentMediaItem();
@@ -1155,6 +1184,7 @@ public class MainActivity extends Activity {
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
+            if(lastVideoFrameAt<=0L)lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
