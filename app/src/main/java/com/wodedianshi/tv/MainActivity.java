@@ -554,21 +554,38 @@ public class MainActivity extends Activity {
     }
     if(restoreFocus!=null)restoreFocus.requestFocus();
   }
-  // 在全屏播放状态下，将遥控器确认键优先用于打开频道菜单。
-  // 菜单弹出后不拦截按键，确保上下左右和确认键由菜单控件正常处理。
+  // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
-    if(fullScreenPlayback
-        && (event.getKeyCode()==KeyEvent.KEYCODE_DPAD_CENTER
-            || event.getKeyCode()==KeyEvent.KEYCODE_ENTER
-            || event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER)){
-      if(fullscreenMenuPopup==null || !fullscreenMenuPopup.isShowing()){
+    if(fullScreenPlayback && (fullscreenMenuPopup==null || !fullscreenMenuPopup.isShowing())){
+      int key=event.getKeyCode();
+      boolean ok=key==KeyEvent.KEYCODE_DPAD_CENTER
+          ||key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_NUMPAD_ENTER;
+      boolean direction=key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_DPAD_DOWN
+          ||key==KeyEvent.KEYCODE_DPAD_LEFT||key==KeyEvent.KEYCODE_DPAD_RIGHT;
+      if(ok||direction){
         if(event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0){
-          showFullscreenChannelMenu();
+          if(ok)showFullscreenChannelMenu();
+          else if(key==KeyEvent.KEYCODE_DPAD_UP)stepChannel(-1);
+          else if(key==KeyEvent.KEYCODE_DPAD_DOWN)stepChannel(1);
+          else if(key==KeyEvent.KEYCODE_DPAD_LEFT)stepSource(-1);
+          else if(key==KeyEvent.KEYCODE_DPAD_RIGHT)stepSource(1);
         }
         return true;
       }
     }
     return super.dispatchKeyEvent(event);
+  }
+  private void stepChannel(int delta){
+    if(channels.isEmpty()){toast("当前没有可播放频道");return;}
+    int next=selected<0?(delta>0?0:channels.size()-1):(selected+delta+channels.size())%channels.size();
+    play(next);
+  }
+  private void stepSource(int delta){
+    if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
+    Channel c=channels.get(selected);
+    if(c.backups.size()<2){toast("当前频道没有其他播放源");return;}
+    c.activeSource=(c.activeSource+delta+c.backups.size())%c.backups.size();
+    play(selected);
   }
   @Override public void onBackPressed(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
