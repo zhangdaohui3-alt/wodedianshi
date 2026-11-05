@@ -831,6 +831,19 @@ public class MainActivity extends Activity {
       b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(c.name+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});list.addView(b);
     }
     }
+    if(totalMatches==0){
+      TextView empty=new TextView(this);
+      boolean adult=activeCategory.startsWith("成人");
+      empty.setText(adult
+        ?"这个分类目前没有已导入且匹配的频道。\n\n请导入你有权使用的 M3U/M3U8 播放列表。频道名称或分组包含“成人”“电影”等标识后，应用会自动分类显示。"
+        :"这个分类暂时没有匹配的频道。你可以导入播放列表，或更换分类/搜索关键词。");
+      empty.setTextColor(Color.LTGRAY);empty.setTextSize(15);empty.setGravity(Gravity.CENTER);
+      empty.setPadding(dp(18),dp(22),dp(18),dp(22));list.addView(empty,new LinearLayout.LayoutParams(-1,dp(180)));
+      if(adult){
+        Button importUrl=new Button(this);importUrl.setText("导入授权播放列表网址");importUrl.setAllCaps(false);styleTvButton(importUrl,Color.rgb(26,100,160));importUrl.setOnClickListener(v->urlDialog());list.addView(importUrl);
+        Button importFile=new Button(this);importFile.setText("导入 M3U 文件");importFile.setAllCaps(false);styleTvButton(importFile,Color.rgb(35,55,78));importFile.setOnClickListener(v->chooseFile());list.addView(importFile);
+      }
+    }
     if(totalMatches>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+totalMatches+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
     final int restoreIndex=previousFocusedIndex;
     if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())list.post(()->{
