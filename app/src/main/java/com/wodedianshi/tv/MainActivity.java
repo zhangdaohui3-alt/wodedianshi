@@ -162,7 +162,7 @@ public class MainActivity extends Activity {
       for(Channel c:channels){
         if(c.backups==null)c.backups=new ArrayList<>();
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
-        String key=identity(c.name,c.group);
+        String key=identity(c.name,c.group,c.url);
         Channel keep=compact.get(key);
         if(keep==null){compact.put(key,c);}
         else{
@@ -174,7 +174,7 @@ public class MainActivity extends Activity {
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
-        channelsByIdentity.put(identity(c.name,c.group),c);
+        channelsByIdentity.put(identity(c.name,c.group,c.url),c);
       }
     }
   }
@@ -190,6 +190,16 @@ public class MainActivity extends Activity {
     String canonical=canonicalChannelName(name);
     if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
     return canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+  }
+  // For non-CCTV channels, require the same source host before merging entries.
+  // Generic names such as News, Movies or Sports are not globally unique.
+  private String identity(String name,String group,String url){
+    String canonical=canonicalChannelName(name);
+    if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
+    String base=canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+    try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}
+    catch(Exception ignored){}
+    return base+"|url:"+(url==null?"":url.trim());
   }
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
@@ -297,7 +307,7 @@ public class MainActivity extends Activity {
       favorites.clear();favorites.addAll(p.getStringSet("fav",new HashSet<>()));
       rebuildChannelIndexes();
       selected=-1;
-      if(!keepIdentity.isEmpty())for(int i=0;i<channels.size();i++)if(identity(channels.get(i).name,channels.get(i).group).equals(keepIdentity)){selected=i;break;}
+      if(!keepIdentity.isEmpty())for(int i=0;i<channels.size();i++)if(identity(channels.get(i).name,channels.get(i).group,channels.get(i).url).equals(keepIdentity)){selected=i;break;}
       refresh();
       if(selected>=0)info.setText("频道源更新完成，当前仍保留原播放画面："+channels.get(selected).name+"。如需使用新备用源，可在卡顿时自动切换或手动切换。");
     }catch(Exception e){info.setText("更新已完成，但刷新频道列表失败："+e.getMessage());}
@@ -844,7 +854,7 @@ public class MainActivity extends Activity {
         if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
         synchronized(channels){
           if(!channelsByUrl.containsKey(line)){
-            String key=identity(name,group);Channel same=channelsByIdentity.get(key);
+            String key=identity(name,group,line);Channel same=channelsByIdentity.get(key);
             if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
             else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
           }
