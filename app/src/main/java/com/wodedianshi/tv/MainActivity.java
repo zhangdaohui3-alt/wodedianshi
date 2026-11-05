@@ -94,7 +94,7 @@ public class MainActivity extends Activity {
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
     String[] names={"央视","卫视","地方","港澳台","全部","全球频道","娱乐频道","国际新闻","体育","天气","教育","中国","收藏"};
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else vodDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -137,9 +137,18 @@ public class MainActivity extends Activity {
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
   }
+  private void showProvinceDialog(){
+    String[] provinces={"全部地方台","北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    new AlertDialog.Builder(this).setTitle("选择省级地区").setItems(provinces,(dialog,which)->{
+      activeCategory=which==0?"地方":provinces[which];favoriteMode=false;refresh();
+      info.setText(which==0?"显示全部地方台":"正在显示："+activeCategory+" 地方频道");
+    }).setNegativeButton("取消",null).show();
+  }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
+    String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    for(String province:provinceNames)if(cat.equals(province))return x.contains(province.toLowerCase(Locale.ROOT));
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活");
     if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视")||g.equals("cctv");
@@ -226,15 +235,23 @@ public class MainActivity extends Activity {
   }
   private void loadEntertainmentChannels(){
     if(entertainmentLoading){info.setText("全球娱乐频道列表正在载入，请稍候…");return;}
-    entertainmentLoading=true;info.setText("正在载入全球娱乐频道（综艺、音乐、喜剧、影视、生活等）…");
-    worker.execute(()->{try{
-      HttpURLConnection c=(HttpURLConnection)new URL("https://iptv-org.github.io/iptv/index.category.m3u").openConnection();
-      c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
-      c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-      int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-      String data;try(InputStream in=c.getInputStream()){data=read(in);}finally{c.disconnect();}
-      runOnUiThread(()->{int added=parse(data);persist();refresh();entertainmentLoading=false;info.setText("娱乐频道载入完成：新增 "+added+" 个。已合并娱乐、喜剧、音乐、电影、剧集、动画、生活、文化、家庭等分类；可播放性受地区和网络影响。");});
-    }catch(Exception e){runOnUiThread(()->{entertainmentLoading=false;info.setText("娱乐频道载入失败："+e.getMessage()+"。请检查网络后重试。");});}});
+    entertainmentLoading=true;info.setText("正在载入全球娱乐频道（电影、音乐、动画、儿童、喜剧及生活）…");
+    worker.execute(()->{
+      int added=0;StringBuilder errors=new StringBuilder();
+      String[] feeds={
+        "https://iptv-org.github.io/iptv/index.category.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u"
+      };
+      for(String address:feeds){HttpURLConnection c=null;try{
+        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
+        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+        String data;try(InputStream in=c.getInputStream()){data=read(in);}
+        synchronized(channels){added+=parse(data);}
+      }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
+      final int total=added;final String err=errors.toString();
+      runOnUiThread(()->{persist();refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
+    });
   }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setHint("https://.../playlist.m3u");new AlertDialog.Builder(this).setTitle("播放列表网址").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->download(e.getText().toString().trim())).show();}
   private void download(String address){
