@@ -683,7 +683,44 @@ public class MainActivity extends Activity {
     Button rewind=new Button(this);rewind.setText("⏪ 15秒");rewind.setAllCaps(false);rewind.setTextSize(13);styleTvButton(rewind,Color.rgb(35,55,78));
     vodPlayPauseButton=new Button(this);vodPlayPauseButton.setText("暂停");vodPlayPauseButton.setAllCaps(false);vodPlayPauseButton.setTextSize(13);styleTvButton(vodPlayPauseButton,Color.rgb(26,100,160));
     vodPositionLabel=new TextView(this);vodPositionLabel.setText("00:00");vodPositionLabel.setTextColor(Color.WHITE);vodPositionLabel.setTextSize(12);vodPositionLabel.setGravity(Gravity.CENTER);vodPositionLabel.setPadding(dp(6),0,dp(6),0);
-    vodSeekBar=new SeekBar(this);vodSeekBar.setMax(1000);vodSeekBar.setFocusable(true);
+    vodSeekBar=new SeekBar(this){
+      private int remoteDirection=0;
+      private Runnable remoteRepeat;
+      private void seekBy(long delta){
+        if(vodPlayer==null)return;
+        long duration=vodPlayer.getDuration();
+        if(duration<=0)return;
+        long target=Math.max(0L,Math.min(duration,vodPlayer.getCurrentPosition()+delta));
+        vodPlayer.seekTo(target);
+        setProgress((int)Math.max(0,Math.min(1000,target*1000L/duration)));
+        if(vodPositionLabel!=null)vodPositionLabel.setText(formatVodTime(target));
+      }
+      @Override public boolean onKeyDown(int keyCode,KeyEvent event){
+        int direction=keyCode==KeyEvent.KEYCODE_DPAD_LEFT?-1:keyCode==KeyEvent.KEYCODE_DPAD_RIGHT?1:0;
+        if(direction==0)return super.onKeyDown(keyCode,event);
+        if(event.getRepeatCount()==0){
+          remoteDirection=direction;
+          seekBy(direction*5000L);
+          if(remoteRepeat!=null)removeCallbacks(remoteRepeat);
+          remoteRepeat=()->{
+            if(remoteDirection!=0){
+              seekBy(remoteDirection*15000L);
+              postDelayed(remoteRepeat,220L);
+            }
+          };
+          postDelayed(remoteRepeat,450L);
+        }
+        return true;
+      }
+      @Override public boolean onKeyUp(int keyCode,KeyEvent event){
+        if(keyCode==KeyEvent.KEYCODE_DPAD_LEFT||keyCode==KeyEvent.KEYCODE_DPAD_RIGHT){
+          remoteDirection=0;
+          if(remoteRepeat!=null){removeCallbacks(remoteRepeat);remoteRepeat=null;}
+          return true;
+        }
+        return super.onKeyUp(keyCode,event);
+      }
+    };vodSeekBar.setMax(1000);vodSeekBar.setFocusable(true);vodSeekBar.setFocusableInTouchMode(true);
     vodDurationLabel=new TextView(this);vodDurationLabel.setText("--:--");vodDurationLabel.setTextColor(Color.WHITE);vodDurationLabel.setTextSize(12);vodDurationLabel.setGravity(Gravity.CENTER);vodDurationLabel.setPadding(dp(6),0,dp(6),0);
     Button forward=new Button(this);forward.setText("15秒 ⏩");forward.setAllCaps(false);forward.setTextSize(13);styleTvButton(forward,Color.rgb(35,55,78));
     controls.addView(rewind,new LinearLayout.LayoutParams(dp(88),dp(48)));
