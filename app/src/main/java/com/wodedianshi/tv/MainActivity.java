@@ -888,7 +888,6 @@ public class MainActivity extends Activity {
         list.addView(b);
       }
     }
-    }
     if(totalMatches==0){
       TextView empty=new TextView(this);
       empty.setText(adultCategory
