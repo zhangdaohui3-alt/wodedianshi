@@ -93,7 +93,7 @@ public class MainActivity extends Activity {
         String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
         ArrayList<String> ordered=new ArrayList<>(c.backups);
         // Stable sort: known HD/bitrate sources first; unknown sources keep their relative order.
-        java.util.Collections.sort(ordered,(a,b)->Integer.compare(sourceQualityScore(b),sourceQualityScore(a)));
+        ordered.sort((a,b)->Double.compare(observedSourceScore(b),observedSourceScore(a)));
         if(!ordered.equals(c.backups)){
           c.backups.clear();c.backups.addAll(ordered);
           int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;
@@ -1026,6 +1026,8 @@ public class MainActivity extends Activity {
   private long watchdogLastAdvanceAt=0L;
   // Updated from the decoder playback thread whenever a video frame is about to render.
   private volatile long lastVideoFrameAt=0L;
+  private volatile boolean videoFrameMonitoringActive=false;
+  private volatile boolean hasReceivedVideoFrame=false;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   private long sourceAttemptStartedAt=0L;
@@ -1058,7 +1060,7 @@ public class MainActivity extends Activity {
       }
       // A live source can leave ExoPlayer in READY while its audio/video output has
       // silently stopped. Monitor actual video-frame callbacks, not only position.
-      if(player.getVideoFormat()!=null && lastVideoFrameAt>0L
+      if(videoFrameMonitoringActive && hasReceivedVideoFrame && player.getVideoFormat()!=null
           && now-lastVideoFrameAt>=20000L){
         recoverFromSilentFreeze("检测到视频帧连续 20 秒没有输出");
         return;
@@ -1133,7 +1135,9 @@ public class MainActivity extends Activity {
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
-    lastVideoFrameAt=sourceAttemptStartedAt;
+    lastVideoFrameAt=0L;
+    hasReceivedVideoFrame=false;
+    videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
@@ -1155,17 +1159,21 @@ public class MainActivity extends Activity {
           .setLoadControl(loadControl)
           .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
       video.setPlayer(player);
-      VideoFrameMetadataListener frameListener=(presentationTimeUs,releaseTimeNs,format,mediaFormat)->
+      VideoFrameMetadataListener frameListener=(presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
           lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
+          hasReceivedVideoFrame=true;
+        };
       // Use reflection to remain compatible with the Media3 API surface shipped by
       // the app while still enabling per-frame monitoring when the runtime exposes it.
       try{
-        java.lang.reflect.Method addFrameListener=player.getClass().getMethod("addVideoFrameMetadataListener",VideoFrameMetadataListener.class);
-        addFrameListener.invoke(player,frameListener);
+        java.lang.reflect.Method setFrameListener=player.getClass().getMethod("setVideoFrameMetadataListener",VideoFrameMetadataListener.class);
+        setFrameListener.invoke(player,frameListener);
+        videoFrameMonitoringActive=true;
       }catch(Exception unavailable){
         try{
-          java.lang.reflect.Method setFrameListener=player.getClass().getMethod("setVideoFrameMetadataListener",VideoFrameMetadataListener.class);
-          setFrameListener.invoke(player,frameListener);
+          java.lang.reflect.Method addFrameListener=player.getClass().getMethod("addVideoFrameMetadataListener",VideoFrameMetadataListener.class);
+          addFrameListener.invoke(player,frameListener);
+          videoFrameMonitoringActive=true;
         }catch(Exception ignored){}
       }
       player.addListener(new Player.Listener(){
