@@ -49,7 +49,7 @@ public class SourceUpdateWorker extends Worker {
         if(isStopped())return Result.retry();
         HttpURLConnection c=null;
         try{
-          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(9000);c.setReadTimeout(25000);
+          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
           c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
           int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
           String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
@@ -59,8 +59,10 @@ public class SourceUpdateWorker extends Worker {
       }
       // Examine explicitly advertised HD/high-bitrate candidates first; stable order keeps feed priority for ties.
       candidates.sort((a,b)->Integer.compare(sourceQualityScore(b.url),sourceQualityScore(a.url)));
+      // Bound each update run so a slow public directory cannot keep WorkManager busy indefinitely.
+      long probeDeadline=android.os.SystemClock.elapsedRealtime()+6L*60L*1000L;
       for(Entry e:candidates){
-        if(added>=MAX_NEW_SOURCES||isStopped())break;
+        if(added>=MAX_NEW_SOURCES||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         if(knownUrls.contains(e.url))continue;
         if(checked>=MAX_NEW_SOURCES)break;
@@ -211,7 +213,7 @@ public class SourceUpdateWorker extends Worker {
     HttpURLConnection c=null;
     try{
       c=(HttpURLConnection)new URL(address).openConnection();
-      c.setConnectTimeout(3000);c.setReadTimeout(3500);c.setInstanceFollowRedirects(true);
+      c.setConnectTimeout(2500);c.setReadTimeout(3000);c.setInstanceFollowRedirects(true);
       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
       c.setRequestProperty("Range","bytes=0-"+(maxBytes-1));
       int code=c.getResponseCode();if(code<200||code>=400)return null;
