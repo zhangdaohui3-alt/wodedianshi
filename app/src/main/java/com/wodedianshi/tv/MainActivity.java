@@ -23,6 +23,7 @@ public class MainActivity extends Activity {
   private ExoPlayer player;
   private PlayerView video;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
+  private ScrollView channelScroll;
   private TextView playbackInfo;
   private boolean fullScreenPlayback = false;
   private PopupWindow fullscreenMenuPopup;
@@ -143,7 +144,7 @@ public class MainActivity extends Activity {
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
-    list=new LinearLayout(this);list.setOrientation(1);ScrollView sc=new ScrollView(this);sc.addView(list);channelPane.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+    list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);// 直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
@@ -299,9 +300,30 @@ public class MainActivity extends Activity {
       if(target!=null)target.requestFocus();
     });
   }
-  private void focusFirstChannelInMenu(){
+  private View findChannelRow(int channelIndex){
+    if(channelIndex<0)return null;
+    for(int i=0;i<list.getChildCount();i++){
+      View child=list.getChildAt(i);
+      if(child.getTag() instanceof Integer&&((Integer)child.getTag())==channelIndex)return child;
+    }
+    return null;
+  }
+  private void focusSelectedChannelInMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
-    list.post(()->{if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;View target=null;if(selected>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==selected){target=child;break;}}}if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);if(target!=null)target.requestFocus();});
+    channelPane.post(()->{
+      if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+      View target=findChannelRow(selected);
+      if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
+      if(target==null)return;
+      final View focusTarget=target;
+      channelScroll.post(()->{
+        channelScroll.scrollTo(0,Math.max(0,focusTarget.getTop()-dp(72)));
+        focusTarget.requestFocus();
+      });
+    });
+  }
+  private void focusFirstChannelInMenu(){
+    focusSelectedChannelInMenu();
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
@@ -586,17 +608,8 @@ public class MainActivity extends Activity {
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
     fullscreenMenuButton.setVisibility(View.GONE);
-    // 等弹出层完成挂载后，把遥控器焦点放到第一个可选分类按钮，
-    // 不要落在顶部不可选的 Logo 文本上。
-    menu.post(()->{
-      View scroll=categoryPane.getChildAt(1);
-      if(scroll instanceof ScrollView){
-        View items=((ScrollView)scroll).getChildAt(0);
-        if(items instanceof ViewGroup&&((ViewGroup)items).getChildCount()>0){
-          View selectedRow=null;for(int i=0;i<list.getChildCount();i++){View row=list.getChildAt(i);if(row.getTag() instanceof Integer&&((Integer)row.getTag())==selected){selectedRow=row;break;}}if(selectedRow!=null)selectedRow.requestFocus();else ((ViewGroup)items).getChildAt(0).requestFocus();
-        }
-      }
-    });
+    // 弹出层挂载后，直接滚动到当前正在播放的频道，并把遥控器焦点放在该行。
+    focusSelectedChannelInMenu();
   }
   private boolean isTouchDevice(){
     return getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN);
@@ -641,7 +654,13 @@ public class MainActivity extends Activity {
         if(child.getTag() instanceof Integer && ((Integer)child.getTag())==selected){restoreFocus=child;break;}
       }
     }
-    if(restoreFocus!=null)restoreFocus.requestFocus();
+    if(restoreFocus!=null){
+      final View target=restoreFocus;
+      channelScroll.post(()->{
+        channelScroll.scrollTo(0,Math.max(0,target.getTop()-dp(72)));
+        target.requestFocus();
+      });
+    }
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
