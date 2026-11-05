@@ -79,26 +79,40 @@ public class MainActivity extends Activity {
   // including for users whose channel list was already saved by an older build.
   private void loadBundledHdBackups(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    if(prefs.getBoolean("hd_sources_v1_loaded",false))return;
     try(InputStream in=getAssets().open("default_channels.m3u")){
       parse(read(in));
-      synchronized(channels){
-        for(Channel c:channels){
-          String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
-          ArrayList<String> ordered=new ArrayList<>();
-          for(String source:c.backups)if(isKnown1080pSource(source))ordered.add(source);
-          for(String source:c.backups)if(!isKnown1080pSource(source))ordered.add(source);
-          if(!ordered.equals(c.backups)){c.backups.clear();c.backups.addAll(ordered);int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;}
+    }catch(Exception ignored){}
+    boolean changed=false;
+    synchronized(channels){
+      for(Channel c:channels){
+        if(c.backups==null||c.backups.size()<2)continue;
+        String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
+        ArrayList<String> ordered=new ArrayList<>(c.backups);
+        // Stable sort: known HD/bitrate sources first; unknown sources keep their relative order.
+        java.util.Collections.sort(ordered,(a,b)->Integer.compare(sourceQualityScore(b),sourceQualityScore(a)));
+        if(!ordered.equals(c.backups)){
+          c.backups.clear();c.backups.addAll(ordered);
+          int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;
+          changed=true;
         }
       }
-      persist();
-      prefs.edit().putBoolean("hd_sources_v1_loaded",true).apply();
-    }catch(Exception ignored){}
+    }
+    if(changed)persist();
+    prefs.edit().putBoolean("source_quality_order_v2",true).apply();
   }
-  private boolean isKnown1080pSource(String source){
-    if(source==null)return false;
+  private int sourceQualityScore(String source){
+    if(source==null)return 0;
     String u=source.toLowerCase(Locale.ROOT);
-    return u.contains("/master_5000.m3u8")||u.contains("/1080p.m3u8");
+    // Prefer explicitly labelled resolution, then known high-bitrate public streams.
+    if(u.matches(".*(?:1080p|1080i|fullhd|full-hd).*"))return 1200;
+    if(u.contains("master_5000")||u.contains("5000k")||u.contains("5000kbps"))return 1150;
+    if(u.matches(".*(?:720p|720i|hd720).*"))return 1000;
+    if(u.contains("master_4000")||u.contains("4000k")||u.contains("4000kbps"))return 950;
+    if(u.contains("master_3000")||u.contains("3000k")||u.contains("3000kbps"))return 900;
+    if(u.contains("master_2300")||u.contains("2300k")||u.contains("2300kbps"))return 850;
+    if(u.matches(".*(?:576p|576i|480p|480i).*"))return 600;
+    if(u.matches(".*(?:360p|240p).*"))return 300;
+    return 0;
   }
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   private void styleTvButton(Button b,int normalColor){
