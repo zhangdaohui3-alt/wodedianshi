@@ -137,7 +137,27 @@ public class MainActivity extends Activity {
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
   }
-  private boolean categoryMatch(Channel c,String cat){String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);String g=c.group.toLowerCase(Locale.ROOT);if(cat.equals("全球频道"))return true;if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活");if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视");if(cat.equals("卫视"))return x.contains("卫视");if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台");if(cat.equals("国际新闻"))return g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");if(cat.equals("体育"))return g.contains("体育");if(cat.equals("天气"))return g.contains("天气")||x.contains("气象");if(cat.equals("教育"))return g.contains("教育");if(cat.equals("中国"))return g.equals("中国")||x.contains("中国");if(cat.equals("地方"))return !(x.contains("cctv")||x.contains("央视")||x.contains("卫视")||x.contains("香港")||x.contains("澳门")||x.contains("台湾")||g.contains("国际新闻")||g.contains("体育")||g.contains("天气")||g.contains("教育")||g.equals("中国"));return true;}
+  private boolean categoryMatch(Channel c,String cat){
+    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
+    String g=c.group.toLowerCase(Locale.ROOT);
+    if(cat.equals("全球频道"))return true;
+    if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活");
+    if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视")||g.equals("cctv");
+    if(cat.equals("卫视"))return x.contains("卫视")||g.equals("卫视")||g.contains("satellite");
+    if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台")||g.equals("hong kong")||g.equals("macau")||g.equals("taiwan");
+    if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
+    if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
+    if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
+    if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
+    if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
+    if(cat.equals("地方")){
+      String[] regions={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆","beijing","tianjin","hebei","shanxi","inner mongolia","liaoning","jilin","heilongjiang","shanghai","jiangsu","zhejiang","anhui","fujian","jiangxi","shandong","henan","hubei","hunan","guangdong","guangxi","hainan","chongqing","sichuan","guizhou","yunnan","tibet","shaanxi","gansu","qinghai","ningxia","xinjiang"};
+      if(g.contains("地方")||g.contains("local"))return true;
+      for(String region:regions)if(x.contains(region))return true;
+      return false;
+    }
+    return true;
+  }
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
@@ -152,9 +172,8 @@ public class MainActivity extends Activity {
     chinaLoading=true;info.setText("正在从多个公开频道目录补充央视、卫视和各省地方台…");
     worker.execute(()->{
       int added=0;String[] feeds={
-        "https://iptv-cn.github.io/IPTV/categories/cctv.m3u",
-        "https://iptv-cn.github.io/IPTV/categories/%E5%8D%AB%E8%A7%86.m3u",
-        "https://iptv-cn.github.io/IPTV/categories/%E5%9C%B0%E6%96%B9.m3u",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u"
       };
       StringBuilder errors=new StringBuilder();
