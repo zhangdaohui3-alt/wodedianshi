@@ -215,7 +215,7 @@ public class SourceUpdateWorker extends Worker {
     if(b.length>188&&(b[0]&255)==0x47&&(b[188]&255)==0x47)return true; // MPEG-TS sync
     if(b.length>8&&b[4]=='f'&&b[5]=='t'&&b[6]=='y'&&b[7]=='p')return true; // MP4
     if(b[0]=='F'&&b[1]=='L'&&b[2]=='V')return true; // FLV
-    if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0)return true; // ADTS AAC
+    if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0))return true; // ADTS AAC
     return false;
   }
   private byte[] fetchSample(String address,int maxBytes)throws Exception{
