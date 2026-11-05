@@ -39,7 +39,7 @@ public class SourceUpdateWorker extends Worker {
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       for(int i=0;i<saved.length();i++){
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group")),c);
+        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
         JSONArray src=c.optJSONArray("sources");
         if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
         knownUrls.add(c.optString("url"));
@@ -78,7 +78,7 @@ public class SourceUpdateWorker extends Worker {
         if(!measured.valid)continue;
         // Known sources are re-tested and re-scored, but never inserted twice.
         if(knownUrls.contains(e.url))continue;
-        String key=identity(e.name,e.group);JSONObject target=byIdentity.get(key);
+        String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
           target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
@@ -251,13 +251,16 @@ public class SourceUpdateWorker extends Worker {
     ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
     while((n=in.read(b))!=-1){total+=n;if(total>max)throw new IOException("频道目录过大");out.write(b,0,n);}return out.toString("UTF-8");
   }
-  private String identity(String name,String group){
+  private String identity(String name,String group,String url){
     String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–]","");
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)-?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(v);
     if(m.find())v="CCTV-"+m.group(1);
     String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六"};
     for(int i=1;i<cn.length;i++)if(v.contains("中央"+cn[i]+"套"))v="CCTV-"+i;
-    return v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+    if(v.startsWith("CCTV-"))return v.toLowerCase(Locale.ROOT)+"|cctv";
+    String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+    try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}catch(Exception ignored){}
+    return base+"|url:"+(url==null?"":url.trim());
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
   private void saveStatus(SharedPreferences p,String result,int added){p.edit().putString("source_update_time",now()).putString("source_update_result",result).apply();}
