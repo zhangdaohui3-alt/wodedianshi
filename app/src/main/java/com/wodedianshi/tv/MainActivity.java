@@ -400,12 +400,12 @@ public class MainActivity extends Activity {
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
-    String[] categories={"播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
+    String[] categories={"我的收藏","播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
       filters.addView(b,new LinearLayout.LayoutParams(dp(112),dp(48)));
-      b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(panel);else loadVodCatalogue(category,panel);});
+      b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(50)));
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
@@ -488,11 +488,40 @@ public class MainActivity extends Activity {
       LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
       card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
       ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
-      TextView title=new TextView(this);title.setText(item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
+      TextView title=new TextView(this);title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
       TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
-      row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));count++;
+      row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));card.setOnLongClickListener(v->{toggleVodFavorite(item);title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");return true;});count++;
     }
     if(row!=null&&count%3!=0){for(int i=count%3;i<3;i++)row.addView(new View(this),new LinearLayout.LayoutParams(0,dp(10),1));}
+  }
+  private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
+  private ArrayList<VodItem> readVodFavorites(){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_FAVORITES_KEY,"[]"));
+      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");if(!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));}
+    }catch(Exception ignored){}
+    return items;
+  }
+  private boolean isVodFavorite(VodItem item){
+    if(item==null)return false;
+    for(VodItem saved:readVodFavorites())if(item.identifier.equals(saved.identifier))return true;
+    return false;
+  }
+  private void toggleVodFavorite(VodItem item){
+    if(item==null)return;
+    ArrayList<VodItem> items=readVodFavorites();boolean removed=false;
+    org.json.JSONArray out=new org.json.JSONArray();
+    try{
+      for(VodItem saved:items){if(item.identifier.equals(saved.identifier)){removed=true;continue;}org.json.JSONObject o=new org.json.JSONObject();o.put("title",saved.title);o.put("id",saved.identifier);o.put("url",saved.url);o.put("license",saved.license);out.put(o);}
+      if(!removed){org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);out.put(o);}
+      getSharedPreferences("mytv",0).edit().putString(VOD_FAVORITES_KEY,out.toString()).apply();
+    }catch(Exception ignored){}
+  }
+  private void loadVodFavorites(LinearLayout panel){
+    if(panel==null||panel.getChildCount()<5)return;
+    View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
+    if(statusView instanceof TextView&&scrollView instanceof ScrollView){View child=((ScrollView)scrollView).getChildAt(0);if(child instanceof LinearLayout){TextView status=(TextView)statusView;LinearLayout results=(LinearLayout)child;ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");}}
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
