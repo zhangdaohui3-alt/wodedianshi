@@ -636,30 +636,12 @@ public class MainActivity extends Activity {
     if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
     startVodPlayback(item,0);
   }
-  private void seekVodBy(long deltaMs){
-    ExoPlayer p=vodPlayer;
-    if(p==null){toast("播放器尚未准备好");return;}
-    if(p.getPlaybackState()==Player.STATE_IDLE||p.getPlaybackState()==Player.STATE_BUFFERING||p.getCurrentTimeline().isEmpty()){
-      toast("影片正在载入，请稍候再快进或快退");return;
-    }
-    if(!p.isCurrentMediaItemSeekable()){
-      toast("当前影片源不支持时间定位，无法快进/快退；可换一部支持定位的影片");return;
-    }
-    long duration=p.getDuration(),position=p.getCurrentPosition();
-    if(duration==C.TIME_UNSET||duration<=0){toast("影片尚未提供可定位的总时长");return;}
-    p.seekTo(Math.max(0,Math.min(duration,position+deltaMs)));
-  }
   private void startVodPlayback(VodItem item,long startPosition){
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
     PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setTimeBarScrubbingEnabled(true);pv.setControllerShowTimeoutMs(8000);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
-    LinearLayout seekBar=new LinearLayout(this);seekBar.setOrientation(0);seekBar.setGravity(Gravity.CENTER);seekBar.setPadding(dp(10),dp(6),dp(10),dp(6));seekBar.setBackgroundColor(0xAA101820);
-    Button rewind15=new Button(this);rewind15.setText("⏪ 15秒");rewind15.setAllCaps(false);rewind15.setTextColor(Color.WHITE);rewind15.setFocusable(true);rewind15.setOnClickListener(v->seekVodBy(-15000));
-    Button forward15=new Button(this);forward15.setText("⏩ 15秒");forward15.setAllCaps(false);forward15.setTextColor(Color.WHITE);forward15.setFocusable(true);forward15.setOnClickListener(v->seekVodBy(15000));
-    seekBar.addView(rewind15,new LinearLayout.LayoutParams(dp(132),dp(48)));seekBar.addView(forward15,new LinearLayout.LayoutParams(dp(132),dp(48)));
-    FrameLayout.LayoutParams seekParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);seekParams.bottomMargin=dp(22);stage.addView(seekBar,seekParams);
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
@@ -784,8 +766,12 @@ public class MainActivity extends Activity {
     }).setNegativeButton("取消",null).show();
   }
   private boolean isAdultChannel(Channel c){
-    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
-    return x.contains("成人")||x.contains("情色")||x.contains("成人电影")||x.contains("成人频道")||x.contains("18+")||x.contains("18plus")||x.contains("r18")||x.contains("xxx")||x.contains("adult")||x.contains("erotic");
+    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT).replace(" ","").replace("_","").replace("-","");
+    // Imported playlist labels only; never fabricate channel entries or URLs.
+    String[] markers={"成人","成人电影","成人频道","成人台","成人专区","限制级","情色","午夜","深夜",
+        "18+","18plus","r18","nc17","tvma","ratedr","xxx","adult","mature","erotic","成人向","大人向"};
+    for(String marker:markers)if(x.contains(marker.replace(" ","")))return true;
+    return false;
   }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
@@ -823,6 +809,20 @@ public class MainActivity extends Activity {
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
     list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
+    final boolean adultCategory=activeCategory.startsWith("成人");
+    if(adultCategory){
+      TextView adultHeader=new TextView(this);
+      adultHeader.setText("成人频道 · "+activeCategory+"\\n只显示你导入且有权使用的播放源；可在这里直接添加或更新列表。");
+      adultHeader.setTextColor(Color.WHITE);adultHeader.setTextSize(14);
+      adultHeader.setPadding(dp(10),dp(10),dp(10),dp(10));
+      list.addView(adultHeader,new LinearLayout.LayoutParams(-1,-2));
+      LinearLayout adultActions=new LinearLayout(this);adultActions.setOrientation(0);
+      Button adultUrl=new Button(this);adultUrl.setText("添加播放列表网址");adultUrl.setAllCaps(false);styleTvButton(adultUrl,Color.rgb(26,100,160));adultUrl.setOnClickListener(v->urlDialog());
+      Button adultFile=new Button(this);adultFile.setText("导入 M3U 文件");adultFile.setAllCaps(false);styleTvButton(adultFile,Color.rgb(35,55,78));adultFile.setOnClickListener(v->chooseFile());
+      adultActions.addView(adultUrl,new LinearLayout.LayoutParams(0,dp(52),1));
+      adultActions.addView(adultFile,new LinearLayout.LayoutParams(0,dp(52),1));
+      list.addView(adultActions,new LinearLayout.LayoutParams(-1,dp(56)));
+    }
     final int maxRows=120;int shown=0,totalMatches=0;
     synchronized(channels){
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
@@ -833,16 +833,11 @@ public class MainActivity extends Activity {
     }
     if(totalMatches==0){
       TextView empty=new TextView(this);
-      boolean adult=activeCategory.startsWith("成人");
-      empty.setText(adult
-        ?"这个分类目前没有已导入且匹配的频道。\n\n请导入你有权使用的 M3U/M3U8 播放列表。频道名称或分组包含“成人”“电影”等标识后，应用会自动分类显示。"
+      empty.setText(adultCategory
+        ?"当前分类还没有匹配到已导入的频道。\\n\\n上方可以直接添加播放列表网址或导入 M3U 文件。导入后会按频道名称和分组自动识别成人分类。"
         :"这个分类暂时没有匹配的频道。你可以导入播放列表，或更换分类/搜索关键词。");
       empty.setTextColor(Color.LTGRAY);empty.setTextSize(15);empty.setGravity(Gravity.CENTER);
       empty.setPadding(dp(18),dp(22),dp(18),dp(22));list.addView(empty,new LinearLayout.LayoutParams(-1,dp(180)));
-      if(adult){
-        Button importUrl=new Button(this);importUrl.setText("导入授权播放列表网址");importUrl.setAllCaps(false);styleTvButton(importUrl,Color.rgb(26,100,160));importUrl.setOnClickListener(v->urlDialog());list.addView(importUrl);
-        Button importFile=new Button(this);importFile.setText("导入 M3U 文件");importFile.setAllCaps(false);styleTvButton(importFile,Color.rgb(35,55,78));importFile.setOnClickListener(v->chooseFile());list.addView(importFile);
-      }
     }
     if(totalMatches>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+totalMatches+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
     final int restoreIndex=previousFocusedIndex;
