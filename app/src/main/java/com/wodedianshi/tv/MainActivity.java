@@ -769,7 +769,7 @@ public class MainActivity extends Activity {
       }
     };vodSeekBar.setMax(1000);vodSeekBar.setFocusable(true);vodSeekBar.setFocusableInTouchMode(true);
     vodDurationLabel=new TextView(this);vodDurationLabel.setText("--:--");vodDurationLabel.setTextColor(Color.WHITE);vodDurationLabel.setTextSize(12);vodDurationLabel.setGravity(Gravity.CENTER);vodDurationLabel.setPadding(dp(6),0,dp(6),0);
-    FrameLayout seekContainer=new FrameLayout(this);seekContainer.addView(vodSeekBar,new FrameLayout.LayoutParams(-1,dp(48)));FrameLayout.LayoutParams indicatorParams=new FrameLayout.LayoutParams(-2,dp(28),Gravity.CENTER);seekContainer.addView(playPauseIndicator,indicatorParams);
+    LinearLayout seekContainer=new LinearLayout(this);seekContainer.setOrientation(LinearLayout.HORIZONTAL);seekContainer.setGravity(Gravity.CENTER_VERTICAL);seekContainer.addView(playPauseIndicator,new LinearLayout.LayoutParams(dp(38),dp(44)));seekContainer.addView(vodSeekBar,new LinearLayout.LayoutParams(0,dp(48),1));
     controls.addView(vodPositionLabel,new LinearLayout.LayoutParams(dp(52),-2));
     controls.addView(seekContainer,new LinearLayout.LayoutParams(0,dp(48),1));
     controls.addView(vodDurationLabel,new LinearLayout.LayoutParams(dp(52),-2));
