@@ -145,6 +145,9 @@ public class MainActivity extends Activity {
     int found=-1;
     for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)&&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}}
     if(found<0){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)){found=i;break;}}}
+    // Older builds stored the pre-normalized identity; use the saved primary URL
+    // as a migration fallback after duplicate channels have been consolidated.
+    if(found<0&&!savedUrl.isEmpty()){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}}}
     if(found<0)return;
     Channel c=channels.get(found);
     if(!savedSource.isEmpty()){int source=c.backups.indexOf(savedSource);if(source>=0)c.activeSource=source;else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));}
