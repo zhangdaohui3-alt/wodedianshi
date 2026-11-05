@@ -201,12 +201,99 @@ public class MainActivity extends Activity {
       toast(which==0?"已切换为自动解码":"已切换为兼容解码；如果仍无声音，可能是音频格式或音轨不兼容");
     }).setNegativeButton("关闭",null).show();
   }
+  private static class VodItem {
+    String title,identifier,url,license;
+    VodItem(String t,String id,String u,String l){title=t;identifier=id;url=u;license=l;}
+  }
+  private Dialog vodPlayerDialog;
+  private ExoPlayer vodPlayer;
   private void vodDialog(){
-    String[] names={"Tubi · 免费电影/电视剧","Pluto TV · 直播电影台+点播","Plex · 免费电影与直播","The Roku Channel · 电影/剧集","YouTube Movies · 免费电影专区","Internet Archive · 公版经典电影","Kanopy · 电影/纪录片（需图书馆资格）","Hoopla · 电影/纪录片（需图书馆资格）","Rakuten TV · 免费广告电影（地区有限）","Xumo Play · 电影直播与点播（地区有限）"};
-    String[] urls={"https://tubitv.com/","https://pluto.tv/","https://www.plex.tv/watch-free/","https://therokuchannel.roku.com/","https://www.youtube.com/movies","https://archive.org/details/feature_films","https://www.kanopy.com/","https://www.hoopladigital.com/","https://www.rakuten.tv/","https://play.xumo.com/"};
-    new AlertDialog.Builder(this).setTitle("全球正版免费电影点播入口").setMessage("以下为官方平台入口，点击后在浏览器或官方应用打开。可用片库、语言、账号要求和地区限制以平台当地规则为准；这些入口不是内置破解源。")
-      .setItems(names,(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(urls[w])));}catch(Exception e){toast("无法打开，请检查浏览器或官方应用");}})
-      .setNegativeButton("关闭",null).show();
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(14),dp(10),dp(14),dp(8));panel.setBackgroundColor(Color.rgb(17,27,43));
+    TextView intro=new TextView(this);intro.setText("正版/开放授权影片 · 直接在《我的电视》内播放\\n仅展示具有可识别授权声明且提供 MP4 文件的影片；片源受网络、地区及原始档案状态影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);panel.addView(intro);
+    LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);
+    String[] categories={"经典电影","纪录片","动画"};
+    for(String category:categories){Button b=new Button(this);b.setText(category);styleTvButton(b,Color.rgb(35,55,78));filters.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));b.setOnClickListener(v->loadVodCatalogue(category,panel));}
+    panel.addView(filters);
+    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索影片名称（英文/原名）");panel.addView(query,new LinearLayout.LayoutParams(-1,dp(48)));
+    Button searchButton=new Button(this);searchButton.setText("搜索开放授权影片");styleTvButton(searchButton,Color.rgb(26,100,160));panel.addView(searchButton);
+    TextView status=new TextView(this);status.setText("正在载入可在应用内播放的影片…");status.setTextColor(Color.LTGRAY);status.setPadding(0,dp(8),0,dp(8));panel.addView(status);
+    LinearLayout results=new LinearLayout(this);results.setOrientation(1);ScrollView scroll=new ScrollView(this);scroll.addView(results);panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 影片点播").setView(panel).setNegativeButton("关闭",null).create();
+    searchButton.setOnClickListener(v->loadVodCatalogue(query.getText().toString().trim(),panel,status,results));
+    for(int i=0;i<categories.length;i++){final String cat=categories[i];if(i==0)loadVodCatalogue(cat,panel,status,results);}
+    dialog.setOnShowListener(d->{dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.88),(int)(getResources().getDisplayMetrics().heightPixels*0.86));});
+    dialog.show();
+  }
+  private void loadVodCatalogue(String term,LinearLayout panel){
+    TextView status=null;LinearLayout results=null;
+    for(int i=0;i<panel.getChildCount();i++){View v=panel.getChildAt(i);if(v instanceof TextView && ((TextView)v).getText().toString().startsWith("正在载入"))status=(TextView)v;if(v instanceof ScrollView){View child=((ScrollView)v).getChildAt(0);if(child instanceof LinearLayout)results=(LinearLayout)child;}}
+    if(status!=null&&results!=null)loadVodCatalogue(term,panel,status,results);
+  }
+  private void loadVodCatalogue(String term,LinearLayout panel,TextView status,LinearLayout results){
+    status.setText("正在从 Internet Archive 检索授权影片并检查可播放文件…");results.removeAllViews();
+    worker.execute(()->{
+      ArrayList<VodItem> found=new ArrayList<>();String error=null;
+      try{
+        String q="collection:feature_films AND mediatype:movies";
+        if(term!=null&&!term.isEmpty()&&!term.equals("经典电影"))q+=" AND title:("+term.replace(" "," AND ")+")";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&fl[]=licenseurl&rows=35&page=1&output=json&sort[]=downloads+desc";
+        org.json.JSONObject root=new org.json.JSONObject(httpGet(api));
+        org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
+        for(int i=0;i<docs.length()&&found.size()<16;i++){
+          org.json.JSONObject doc=docs.getJSONObject(i);String id=doc.optString("identifier","");String title=doc.optString("title",id);
+          if(id.isEmpty())continue;
+          try{
+            org.json.JSONObject meta=new org.json.JSONObject(httpGet("https://archive.org/metadata/"+URLEncoder.encode(id,"UTF-8")));
+            org.json.JSONObject md=meta.optJSONObject("metadata");if(md==null)continue;
+            String license=md.optString("licenseurl",md.optString("rights",""));
+            String low=license.toLowerCase(Locale.US);
+            boolean allowed=low.contains("creativecommons.org/licenses/by/")||low.contains("creativecommons.org/licenses/by-sa/")||low.contains("creativecommons.org/publicdomain/")||low.contains("creativecommons.org/zero/")||low.contains("public domain");
+            if(!allowed)continue;
+            org.json.JSONArray files=meta.optJSONArray("files");if(files==null)continue;
+            String fileName=null;
+            for(int j=0;j<files.length();j++){
+              org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
+              String name=file.optString("name","");String format=file.optString("format","").toLowerCase(Locale.US);
+              if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))) {fileName=name;break;}
+            }
+            if(fileName==null)continue;
+            String encodedPath=encodeArchivePath(fileName);
+            found.add(new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodedPath,license));
+          }catch(Exception ignored){}
+        }
+      }catch(Exception e){error=e.getMessage();}
+      final String err=error;
+      uiHandler.post(()->{
+        if(isFinishing())return;
+        if(found.isEmpty()){status.setText(err==null?"暂未找到同时具备可识别开放授权和 MP4 文件的影片。可换英文片名搜索，或稍后重试。":"影片目录暂时无法连接："+err);return;}
+        status.setText("找到 "+found.size()+" 部可直接播放的开放授权影片（授权信息来自档案元数据；请留意原始上传者声明）");
+        for(VodItem item:found){
+          Button b=new Button(this);b.setText(item.title+"\\n开放授权 · 应用内播放");b.setTextSize(14);b.setAllCaps(false);b.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);styleTvButton(b,Color.rgb(28,43,64));results.addView(b,new LinearLayout.LayoutParams(-1,dp(62)));
+          b.setOnClickListener(v->playVodInside(item));
+        }
+      });
+    });
+  }
+  private String encodeArchivePath(String path){
+    try{String[] parts=path.split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(out.length()>0)out.append("/");out.append(URLEncoder.encode(p,"UTF-8").replace("+","%20"));}return out.toString();}catch(Exception e){return path;}
+  }
+  private String httpGet(String address)throws Exception{
+    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.17 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
+  }
+  private void playVodInside(VodItem item){
+    Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
+    LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setBackgroundColor(Color.BLACK);
+    TextView heading=new TextView(this);heading.setText(item.title+"\\n开放授权影片 · Internet Archive");heading.setTextColor(Color.WHITE);heading.setTextSize(16);heading.setPadding(dp(16),dp(10),dp(16),dp(8));layout.addView(heading);
+    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);layout.addView(pv,new LinearLayout.LayoutParams(-1,0,1));
+    Button back=new Button(this);back.setText("返回影片目录");layout.addView(back,new LinearLayout.LayoutParams(-1,dp(52)));back.setOnClickListener(v->d.dismiss());
+    d.setContentView(layout);d.setOnDismissListener(x->{if(vodPlayer!=null){vodPlayer.release();vodPlayer=null;}getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+    try{
+      DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 MyTV/1.17").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(30000);
+      vodPlayer=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http)).build();
+      pv.setPlayer(vodPlayer);MediaItem media=MediaItem.fromUri(item.url);vodPlayer.setMediaItem(media);vodPlayer.prepare();vodPlayer.play();
+      getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      d.show();d.getWindow().setLayout(-1,-1);
+    }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
   }
   private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
