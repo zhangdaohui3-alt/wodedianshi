@@ -18,6 +18,8 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
+import androidx.work.*;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
   private ExoPlayer player;
@@ -56,6 +58,7 @@ public class MainActivity extends Activity {
     super.onCreate(b);
     restore();
     loadBundledHdBackups();
+    scheduleAutomaticSourceUpdates();
     makeUi();
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
@@ -196,7 +199,7 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else bufferingSwitchSettingsDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else showSourceUpdateStatus();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -212,6 +215,69 @@ public class MainActivity extends Activity {
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
   // Do not forward every remote-control key to PlayerView.
   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
+  private void scheduleAutomaticSourceUpdates(){
+    WorkManager wm=WorkManager.getInstance(this);
+    boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+    if(!enabled){wm.cancelUniqueWork("mytv_periodic_source_update");return;}
+    Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+    PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
+        .setConstraints(constraints).build();
+    wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+  }
+  private void toggleAutomaticSourceUpdates(){
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    boolean enabled=!p.getBoolean("auto_source_update",true);
+    p.edit().putBoolean("auto_source_update",enabled).apply();
+    if(enabled)scheduleAutomaticSourceUpdates();else WorkManager.getInstance(this).cancelUniqueWork("mytv_periodic_source_update");
+    toast(enabled?"后台自动更新已开启（有网络时约每 24 小时检查）":"后台自动更新已关闭；仍可在设置中手动更新");
+  }
+  private void startManualSourceUpdate(){
+    Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).build();
+    WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
+    toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
+    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
+      try{
+        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
+        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
+          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
+        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
+          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
+        }
+      }catch(Exception ignored){}
+    },worker);
+  }
+  private void reloadChannelsAfterSourceUpdate(){
+    String keepIdentity="";
+    if(selected>=0&&selected<channels.size())keepIdentity=identity(channels.get(selected).name,channels.get(selected).group);
+    try{
+      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+      org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
+      ArrayList<Channel> updated=new ArrayList<>();
+      for(int i=0;i<a.length();i++){
+        org.json.JSONObject o=a.getJSONObject(i);
+        Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group",""));
+        org.json.JSONArray src=o.optJSONArray("sources");
+        if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
+        updated.add(c);
+      }
+      synchronized(channels){channels.clear();channels.addAll(updated);}
+      favorites.clear();favorites.addAll(p.getStringSet("fav",new HashSet<>()));
+      rebuildChannelIndexes();
+      selected=-1;
+      if(!keepIdentity.isEmpty())for(int i=0;i<channels.size();i++)if(identity(channels.get(i).name,channels.get(i).group).equals(keepIdentity)){selected=i;break;}
+      refresh();
+      if(selected>=0)info.setText("频道源更新完成，当前仍保留原播放画面："+channels.get(selected).name+"。如需使用新备用源，可在卡顿时自动切换或手动切换。");
+    }catch(Exception e){info.setText("更新已完成，但刷新频道列表失败："+e.getMessage());}
+  }
+  private void showSourceUpdateStatus(){
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    String time=p.getString("source_update_time","尚未更新");
+    String result=p.getString("source_update_result","尚无更新记录");
+    new AlertDialog.Builder(this).setTitle("频道源更新状态")
+      .setMessage("后台自动更新："+(p.getBoolean("auto_source_update",true)?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
+      .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
+  }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
     int current=prefs.getInt("decoder_mode",1);
