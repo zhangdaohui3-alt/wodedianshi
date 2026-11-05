@@ -56,7 +56,7 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
-      for(Entry e:candidates){
+      // Examine explicitly advertised HD/high-bitrate candidates first; stable order keeps feed priority for ties.\n      candidates.sort((a,b)->Integer.compare(sourceQualityScore(b.url),sourceQualityScore(a.url)));\n      for(Entry e:candidates){
         if(added>=MAX_NEW_SOURCES||isStopped())break;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         if(knownUrls.contains(e.url))continue;
