@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId 'com.wodedianshi.tv'
-        minSdk 21
+        minSdk 23
         targetSdk 28
         versionCode 3
         versionName '1.2'
