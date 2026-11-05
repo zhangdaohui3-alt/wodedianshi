@@ -545,7 +545,24 @@ public class MainActivity extends Activity {
     }
     if(restoreFocus!=null)restoreFocus.requestFocus();
   }
+  // 在全屏播放状态下，将遥控器确认键优先用于打开频道菜单。
+  // 菜单弹出后不拦截按键，确保上下左右和确认键由菜单控件正常处理。
+  @Override public boolean dispatchKeyEvent(KeyEvent event){
+    if(fullScreenPlayback
+        && (event.getKeyCode()==KeyEvent.KEYCODE_DPAD_CENTER
+            || event.getKeyCode()==KeyEvent.KEYCODE_ENTER
+            || event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER)){
+      if(fullscreenMenuPopup==null || !fullscreenMenuPopup.isShowing()){
+        if(event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0){
+          showFullscreenChannelMenu();
+        }
+        return true;
+      }
+    }
+    return super.dispatchKeyEvent(event);
+  }
   @Override public void onBackPressed(){
+    if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
     super.onBackPressed();
   }
