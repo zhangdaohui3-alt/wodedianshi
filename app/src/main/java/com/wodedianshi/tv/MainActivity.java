@@ -176,7 +176,7 @@ public class MainActivity extends Activity {
     }
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
-  private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false;
+  private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
   private void loadChinaChannels(){
     if(chinaLoading){info.setText("国内频道列表正在载入，请稍候…");return;}
     chinaLoading=true;info.setText("正在从多个公开频道目录补充央视、卫视和各省地方台…");
