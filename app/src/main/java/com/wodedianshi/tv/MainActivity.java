@@ -382,7 +382,6 @@ public class MainActivity extends Activity {
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
   private TextView vodPositionLabel,vodDurationLabel;
-  private Button vodPlayPauseButton;
   private VodItem activeVodItem;
   private Runnable vodProgressSaver;
   private boolean resumeLiveAfterVod=false;
@@ -702,7 +701,6 @@ public class MainActivity extends Activity {
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     final SeekBar[] vodSeekHolder=new SeekBar[1];
     final LinearLayout[] vodControlsHolder=new LinearLayout[1];
-    final Button[] vodRewindHolder=new Button[1];
     final Runnable[] hideVodSeekTask=new Runnable[1];
     FrameLayout stage=new FrameLayout(this){
       private void revealVodSeekBar(){
@@ -715,7 +713,7 @@ public class MainActivity extends Activity {
           if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
         };
         postDelayed(hideVodSeekTask[0],5000);
-        if(controlsWereHidden&&vodRewindHolder[0]!=null)vodRewindHolder[0].requestFocus();
+        if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(event.getAction()==KeyEvent.ACTION_DOWN)revealVodSeekBar();
@@ -729,8 +727,7 @@ public class MainActivity extends Activity {
     PlayerView pv=new PlayerView(this);pv.setUseController(false);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);pv.setFocusable(false);pv.setFocusableInTouchMode(false);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
-    Button rewind=new Button(this);rewind.setText("⏪ 15秒");rewind.setAllCaps(false);rewind.setTextSize(13);rewind.setFocusable(true);rewind.setClickable(true);styleTvButton(rewind,Color.rgb(35,55,78));vodRewindHolder[0]=rewind;
-    vodPlayPauseButton=new Button(this);vodPlayPauseButton.setText("暂停");vodPlayPauseButton.setAllCaps(false);vodPlayPauseButton.setTextSize(13);styleTvButton(vodPlayPauseButton,Color.rgb(26,100,160));
+    TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(14);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(dp(7),dp(2),dp(7),dp(2));playPauseIndicator.setBackgroundColor(0x99000000);playPauseIndicator.setFocusable(false);
     vodPositionLabel=new TextView(this);vodPositionLabel.setText("00:00");vodPositionLabel.setTextColor(Color.WHITE);vodPositionLabel.setTextSize(12);vodPositionLabel.setGravity(Gravity.CENTER);vodPositionLabel.setPadding(dp(6),0,dp(6),0);
     vodSeekBar=new SeekBar(this){
       private int remoteDirection=0;
@@ -745,6 +742,7 @@ public class MainActivity extends Activity {
         if(vodPositionLabel!=null)vodPositionLabel.setText(formatVodTime(target));
       }
       @Override public boolean onKeyDown(int keyCode,KeyEvent event){
+        if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER||keyCode==KeyEvent.KEYCODE_ENTER||keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0&&vodPlayer!=null){if(vodPlayer.isPlaying())vodPlayer.pause();else vodPlayer.play();playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");}return true;}
         int direction=keyCode==KeyEvent.KEYCODE_DPAD_LEFT?-1:keyCode==KeyEvent.KEYCODE_DPAD_RIGHT?1:0;
         if(direction==0)return super.onKeyDown(keyCode,event);
         if(event.getRepeatCount()==0){
@@ -771,20 +769,13 @@ public class MainActivity extends Activity {
       }
     };vodSeekBar.setMax(1000);vodSeekBar.setFocusable(true);vodSeekBar.setFocusableInTouchMode(true);
     vodDurationLabel=new TextView(this);vodDurationLabel.setText("--:--");vodDurationLabel.setTextColor(Color.WHITE);vodDurationLabel.setTextSize(12);vodDurationLabel.setGravity(Gravity.CENTER);vodDurationLabel.setPadding(dp(6),0,dp(6),0);
-    Button forward=new Button(this);forward.setText("15秒 ⏩");forward.setAllCaps(false);forward.setTextSize(13);styleTvButton(forward,Color.rgb(35,55,78));
-    controls.addView(rewind,new LinearLayout.LayoutParams(dp(88),dp(48)));
-    controls.addView(vodPlayPauseButton,new LinearLayout.LayoutParams(dp(76),dp(48)));
+    FrameLayout seekContainer=new FrameLayout(this);seekContainer.addView(vodSeekBar,new FrameLayout.LayoutParams(-1,dp(48)));FrameLayout.LayoutParams indicatorParams=new FrameLayout.LayoutParams(-2,dp(28),Gravity.CENTER);seekContainer.addView(playPauseIndicator,indicatorParams);
     controls.addView(vodPositionLabel,new LinearLayout.LayoutParams(dp(52),-2));
-    controls.addView(vodSeekBar,new LinearLayout.LayoutParams(0,dp(48),1));
+    controls.addView(seekContainer,new LinearLayout.LayoutParams(0,dp(48),1));
     controls.addView(vodDurationLabel,new LinearLayout.LayoutParams(dp(52),-2));
-    controls.addView(forward,new LinearLayout.LayoutParams(dp(88),dp(48)));
-    for(int i=0;i<controls.getChildCount();i++){View child=controls.getChildAt(i);if(child instanceof Button){child.setFocusable(true);child.setClickable(true);child.setEnabled(true);}}
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
     hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);};stage.postDelayed(hideVodSeekTask[0],5000);
-    rewind.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.max(0L,vodPlayer.getCurrentPosition()-15000L));});
-    forward.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.min(vodPlayer.getDuration(),vodPlayer.getCurrentPosition()+15000L));});
-    vodPlayPauseButton.setOnClickListener(v->{if(vodPlayer==null)return;if(vodPlayer.isPlaying()){vodPlayer.pause();vodPlayPauseButton.setText("播放");}else{vodPlayer.play();vodPlayPauseButton.setText("暂停");}});
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
       public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(vodPlayer.getDuration()*bar.getProgress()/1000L);}
@@ -795,19 +786,19 @@ public class MainActivity extends Activity {
       long duration=vodPlayer.getDuration(),position=vodPlayer.getCurrentPosition();
       if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress((int)Math.max(0,Math.min(1000,position*1000L/duration)));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
       if(!vodSeekBar.isPressed())vodPositionLabel.setText(formatVodTime(position));
-      vodPlayPauseButton.setText(vodPlayer.isPlaying()?"暂停":"播放");
+      playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");
       uiHandler.postDelayed(this,500);
     }};
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
-    d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;vodRewindHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;vodPlayPauseButton=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+    d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 MyTV/1.17").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(30000);
       vodPlayer=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http)).build();
       pv.setPlayer(vodPlayer);MediaItem media=MediaItem.fromUri(item.url);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null)saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-      d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();rewind.setEnabled(true);rewind.setClickable(true);vodPlayPauseButton.setEnabled(true);vodPlayPauseButton.setClickable(true);forward.setEnabled(true);forward.setClickable(true);rewind.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
+      d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
   }
   private void officialDialog(){
