@@ -376,6 +376,10 @@ public class MainActivity extends Activity {
   }
   private Dialog vodPlayerDialog;
   private ExoPlayer vodPlayer;
+  private Runnable vodUiUpdater;
+  private SeekBar vodSeekBar;
+  private TextView vodPositionLabel,vodDurationLabel;
+  private Button vodPlayPauseButton;
   private VodItem activeVodItem;
   private Runnable vodProgressSaver;
   private boolean resumeLiveAfterVod=false;
@@ -673,18 +677,48 @@ public class MainActivity extends Activity {
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);
-    PlayerView pv=new PlayerView(this);pv.setUseController(true);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);pv.setShowRewindButton(false);pv.setShowFastForwardButton(false);pv.setTimeBarScrubbingEnabled(true);pv.setControllerShowTimeoutMs(8000);
+    PlayerView pv=new PlayerView(this);pv.setUseController(false);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
+    LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
+    Button rewind=new Button(this);rewind.setText("⏪ 15秒");rewind.setAllCaps(false);rewind.setTextSize(13);styleTvButton(rewind,Color.rgb(35,55,78));
+    vodPlayPauseButton=new Button(this);vodPlayPauseButton.setText("暂停");vodPlayPauseButton.setAllCaps(false);vodPlayPauseButton.setTextSize(13);styleTvButton(vodPlayPauseButton,Color.rgb(26,100,160));
+    vodPositionLabel=new TextView(this);vodPositionLabel.setText("00:00");vodPositionLabel.setTextColor(Color.WHITE);vodPositionLabel.setTextSize(12);vodPositionLabel.setGravity(Gravity.CENTER);vodPositionLabel.setPadding(dp(6),0,dp(6),0);
+    vodSeekBar=new SeekBar(this);vodSeekBar.setMax(1000);vodSeekBar.setFocusable(true);
+    vodDurationLabel=new TextView(this);vodDurationLabel.setText("--:--");vodDurationLabel.setTextColor(Color.WHITE);vodDurationLabel.setTextSize(12);vodDurationLabel.setGravity(Gravity.CENTER);vodDurationLabel.setPadding(dp(6),0,dp(6),0);
+    Button forward=new Button(this);forward.setText("15秒 ⏩");forward.setAllCaps(false);forward.setTextSize(13);styleTvButton(forward,Color.rgb(35,55,78));
+    controls.addView(rewind,new LinearLayout.LayoutParams(dp(88),dp(48)));
+    controls.addView(vodPlayPauseButton,new LinearLayout.LayoutParams(dp(76),dp(48)));
+    controls.addView(vodPositionLabel,new LinearLayout.LayoutParams(dp(52),-2));
+    controls.addView(vodSeekBar,new LinearLayout.LayoutParams(0,dp(48),1));
+    controls.addView(vodDurationLabel,new LinearLayout.LayoutParams(dp(52),-2));
+    controls.addView(forward,new LinearLayout.LayoutParams(dp(88),dp(48)));
+    FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);
+    rewind.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.max(0L,vodPlayer.getCurrentPosition()-15000L));});
+    forward.setOnClickListener(v->{if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(Math.min(vodPlayer.getDuration(),vodPlayer.getCurrentPosition()+15000L));});
+    vodPlayPauseButton.setOnClickListener(v->{if(vodPlayer==null)return;if(vodPlayer.isPlaying()){vodPlayer.pause();vodPlayPauseButton.setText("播放");}else{vodPlayer.play();vodPlayPauseButton.setText("暂停");}});
+    vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+      public void onStartTrackingTouch(SeekBar bar){}
+      public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(vodPlayer.getDuration()*bar.getProgress()/1000L);}
+      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser&&vodPlayer!=null&&vodPlayer.getDuration()>0)vodPositionLabel.setText(formatVodTime(vodPlayer.getDuration()*progress/1000L));}
+    });
+    vodUiUpdater=new Runnable(){public void run(){
+      if(vodPlayer==null||vodPlayerDialog!=d||!d.isShowing())return;
+      long duration=vodPlayer.getDuration(),position=vodPlayer.getCurrentPosition();
+      if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress((int)Math.max(0,Math.min(1000,position*1000L/duration)));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
+      if(!vodSeekBar.isPressed())vodPositionLabel.setText(formatVodTime(position));
+      vodPlayPauseButton.setText(vodPlayer.isPlaying()?"暂停":"播放");
+      uiHandler.postDelayed(this,500);
+    }};
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
-    d.setContentView(stage);d.setOnDismissListener(x->{if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+    d.setContentView(stage);d.setOnDismissListener(x->{if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;vodPlayPauseButton=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 MyTV/1.17").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(30000);
       vodPlayer=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http)).build();
       pv.setPlayer(vodPlayer);MediaItem media=MediaItem.fromUri(item.url);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null)saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-      d.show();d.getWindow().setLayout(-1,-1);d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+      d.show();d.getWindow().setLayout(-1,-1);d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
   }
   private void officialDialog(){
@@ -778,7 +812,7 @@ public class MainActivity extends Activity {
       .setNegativeButton("取消",null).show();
   }
   private void showAdultCategories(){
-    String[] categories={"全部成人频道","成人电影","成人纪录片","成人动画","其他成人内容"};
+    String[] categories={"全部成人频道","成人电影","午夜频道","成人纪录片","成人动画","其他成人内容"};
     new AlertDialog.Builder(this).setTitle("成人频道分类").setItems(categories,(d,w)->{
       activeCategory=categories[w];favoriteMode=false;
       if(search!=null)search.setText("");
@@ -810,10 +844,11 @@ public class MainActivity extends Activity {
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
     if(cat.equals("成人频道")||cat.equals("全部成人频道"))return isAdultChannel(c);
+    if(cat.equals("午夜频道"))return isAdultChannel(c)&&(x.contains("午夜")||x.contains("深夜")||x.contains("midnight")||x.contains("late night")||x.contains("after dark"));
     if(cat.equals("成人电影"))return isAdultChannel(c)&&(x.contains("电影")||x.contains("movie")||x.contains("film"));
     if(cat.equals("成人纪录片"))return isAdultChannel(c)&&(x.contains("纪录")||x.contains("documentary"));
     if(cat.equals("成人动画"))return isAdultChannel(c)&&(x.contains("动画")||x.contains("anime")||x.contains("animation"));
-    if(cat.equals("其他成人内容"))return isAdultChannel(c)&&!(x.contains("电影")||x.contains("movie")||x.contains("film")||x.contains("纪录")||x.contains("documentary")||x.contains("动画")||x.contains("anime")||x.contains("animation"));
+    if(cat.equals("其他成人内容"))return isAdultChannel(c)&&!(x.contains("电影")||x.contains("movie")||x.contains("film")||x.contains("午夜")||x.contains("深夜")||x.contains("midnight")||x.contains("late night")||x.contains("after dark")||x.contains("纪录")||x.contains("documentary")||x.contains("动画")||x.contains("anime")||x.contains("animation"));
     if(cat.startsWith("城市:"))return x.contains(cat.substring(3).toLowerCase(Locale.ROOT));
     String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     for(String province:provinceNames)if(cat.equals(province))return x.contains(province.toLowerCase(Locale.ROOT));
