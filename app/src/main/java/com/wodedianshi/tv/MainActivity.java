@@ -125,7 +125,7 @@ public class MainActivity extends Activity {
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);// 直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
@@ -489,8 +489,11 @@ public class MainActivity extends Activity {
     LinearLayout menu=new LinearLayout(this);menu.setOrientation(0);menu.setBackgroundColor(Color.rgb(8,13,24));
     menu.addView(categoryPane,new LinearLayout.LayoutParams(dp(104),-1));
     menu.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));
-    fullscreenMenuPopup=new PopupWindow(menu,-1,-1,true);
-    fullscreenMenuPopup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.rgb(8,13,24)));
+    int screenWidth=getResources().getDisplayMetrics().widthPixels;
+    int menuWidth=Math.min(screenWidth,dp(354));
+    fullscreenMenuPopup=new PopupWindow(menu,menuWidth,-1,true);
+    // 弹出层只占左侧菜单宽度，背景透明；播放器仍在其后持续显示。
+    fullscreenMenuPopup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
     fullscreenMenuPopup.setOutsideTouchable(true);
     fullscreenMenuPopup.setOnDismissListener(()->{
       if(categoryPane.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)categoryPane.getParent()).removeView(categoryPane);
@@ -499,10 +502,10 @@ public class MainActivity extends Activity {
       rootLayout.addView(channelPane,1,new LinearLayout.LayoutParams(dp(250),-1));
       categoryPane.setVisibility(View.GONE);channelPane.setVisibility(View.GONE);
       fullscreenMenuPopup=null;
-      if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
-      if(video!=null)video.requestFocus();
+      if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(fullScreenPlayback&&isTouchDevice()?View.VISIBLE:View.GONE);
+      if(video!=null&&!isTouchDevice())video.requestFocus();
     });
-    fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.CENTER,0,0);
+    fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
     fullscreenMenuButton.setVisibility(View.GONE);
     // 等弹出层完成挂载后，把遥控器焦点放到第一个可选分类按钮，
     // 不要落在顶部不可选的 Logo 文本上。
@@ -516,6 +519,9 @@ public class MainActivity extends Activity {
       }
     });
   }
+  private boolean isTouchDevice(){
+    return getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN);
+  }
   private void closeFullscreenChannelMenu(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())fullscreenMenuPopup.dismiss();
   }
@@ -528,7 +534,7 @@ public class MainActivity extends Activity {
     rootLayout.setPadding(0,0,0,0);
     LinearLayout.LayoutParams videoParams=new LinearLayout.LayoutParams(-1,0,1f);
     video.setLayoutParams(videoParams);
-    fullscreenMenuButton.setVisibility(View.GONE);
+    fullscreenMenuButton.setVisibility(isTouchDevice()?View.VISIBLE:View.GONE);
     getWindow().getDecorView().setSystemUiVisibility(
       View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
       View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|
