@@ -101,6 +101,27 @@ public class MainActivity extends Activity {
     }
   }
   private String identity(String name,String group){return (name==null?"":name.trim().toLowerCase(Locale.ROOT))+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));}
+  private void saveLastChannel(){
+    if(selected<0||selected>=channels.size())return;
+    Channel c=channels.get(selected);
+    String source=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
+    getSharedPreferences("mytv",0).edit().putString("last_channel_identity",identity(c.name,c.group)).putString("last_channel_url",c.url).putString("last_source_url",source).putInt("last_source_index",c.activeSource).apply();
+  }
+  private void restoreLastChannel(){
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    String savedIdentity=p.getString("last_channel_identity","");
+    if(savedIdentity.isEmpty())return;
+    String savedUrl=p.getString("last_channel_url","");
+    String savedSource=p.getString("last_source_url","");
+    int found=-1;
+    for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)&&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}}
+    if(found<0){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)){found=i;break;}}}
+    if(found<0)return;
+    Channel c=channels.get(found);
+    if(!savedSource.isEmpty()){int source=c.backups.indexOf(savedSource);if(source>=0)c.activeSource=source;else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));}
+    else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));
+    play(found);
+  }
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
@@ -128,7 +149,7 @@ public class MainActivity extends Activity {
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
-    refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+    refresh();if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");restoreLastChannel();
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
   // Do not forward every remote-control key to PlayerView.
@@ -257,13 +278,14 @@ public class MainActivity extends Activity {
       if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
       View target=null;
       if(restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
+      if(target==null&&selected>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==selected){target=child;break;}}}
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
   }
   private void focusFirstChannelInMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
-    list.post(()->{if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()&&list.getChildCount()>0)list.getChildAt(0).requestFocus();});
+    list.post(()->{if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;View target=null;if(selected>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==selected){target=child;break;}}}if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);if(target!=null)target.requestFocus();});
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
@@ -529,7 +551,7 @@ public class MainActivity extends Activity {
       if(scroll instanceof ScrollView){
         View items=((ScrollView)scroll).getChildAt(0);
         if(items instanceof ViewGroup&&((ViewGroup)items).getChildCount()>0){
-          ((ViewGroup)items).getChildAt(0).requestFocus();
+          View selectedRow=null;for(int i=0;i<list.getChildCount();i++){View row=list.getChildAt(i);if(row.getTag() instanceof Integer&&((Integer)row.getTag())==selected){selectedRow=row;break;}}if(selectedRow!=null)selectedRow.requestFocus();else ((ViewGroup)items).getChildAt(0).requestFocus();
         }
       }
     });
@@ -617,8 +639,8 @@ public class MainActivity extends Activity {
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
     super.onBackPressed();
   }
-  private void play(int ix){if(ix<0||ix>=channels.size())return;closeFullscreenChannelMenu();enterFullScreenPlayback();selected=ix;Channel c=channels.get(ix);if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;final long generation=++playbackGeneration;currentMediaId=generation+":"+ix+":"+c.activeSource;info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");if(player==null){DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);player=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();video.setPlayer(player);player.addListener(new Player.Listener(){private boolean isCurrent(){MediaItem item=player==null?null:player.getCurrentMediaItem();return item!=null&&currentMediaId.equals(item.mediaId);}public void onPlayerError(PlaybackException e){if(!isCurrent())return;if(selected>=0&&selected<channels.size()){Channel ch=channels.get(selected);if(ch.activeSource+1<ch.backups.size()){ch.activeSource++;info.setText("当前源失败，自动切换备用源 "+(ch.activeSource+1)+"/"+ch.backups.size());play(selected);}else info.setText("所有已配置播放源均失败，请稍后重试或检查网络");}}public void onPlaybackStateChanged(int st){if(st==Player.STATE_READY&&isCurrent()&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");}});}MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();player.setMediaItem(item);player.prepare();player.play();}
+  private void play(int ix){if(ix<0||ix>=channels.size())return;closeFullscreenChannelMenu();enterFullScreenPlayback();selected=ix;Channel c=channels.get(ix);if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;saveLastChannel();final long generation=++playbackGeneration;currentMediaId=generation+":"+ix+":"+c.activeSource;info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");if(player==null){DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);player=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();video.setPlayer(player);player.addListener(new Player.Listener(){private boolean isCurrent(){MediaItem item=player==null?null:player.getCurrentMediaItem();return item!=null&&currentMediaId.equals(item.mediaId);}public void onPlayerError(PlaybackException e){if(!isCurrent())return;if(selected>=0&&selected<channels.size()){Channel ch=channels.get(selected);if(ch.activeSource+1<ch.backups.size()){ch.activeSource++;info.setText("当前源失败，自动切换备用源 "+(ch.activeSource+1)+"/"+ch.backups.size());play(selected);}else info.setText("所有已配置播放源均失败，请稍后重试或检查网络");}}public void onPlaybackStateChanged(int st){if(st==Player.STATE_READY&&isCurrent()&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");}});}MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();player.setMediaItem(item);player.prepare();player.play();}
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-  protected void onStop(){super.onStop();if(player!=null){player.release();player=null;}}
+  protected void onStop(){super.onStop();saveLastChannel();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);worker.shutdownNow();}
 }
