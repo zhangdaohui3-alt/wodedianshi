@@ -205,7 +205,7 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
     String source=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
-    getSharedPreferences("mytv",0).edit().putString("last_channel_identity",identity(c.name,c.group)).putString("last_channel_url",c.url).putString("last_source_url",source).putInt("last_source_index",c.activeSource).apply();
+    getSharedPreferences("mytv",0).edit().putString("last_channel_identity",identity(c.name,c.group,c.url)).putString("last_channel_url",c.url).putString("last_source_url",source).putInt("last_source_index",c.activeSource).apply();
   }
   private void restoreLastChannel(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -214,8 +214,8 @@ public class MainActivity extends Activity {
     String savedUrl=p.getString("last_channel_url","");
     String savedSource=p.getString("last_source_url","");
     int found=-1;
-    for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)&&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}}
-    if(found<0){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group).equals(savedIdentity)){found=i;break;}}}
+    for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group,c.url).equals(savedIdentity)&&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}}
+    if(found<0){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group,c.url).equals(savedIdentity)){found=i;break;}}}
     // Older builds stored the pre-normalized identity; use the saved primary URL
     // as a migration fallback after duplicate channels have been consolidated.
     if(found<0&&!savedUrl.isEmpty()){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}}}
@@ -291,7 +291,7 @@ public class MainActivity extends Activity {
   }
   private void reloadChannelsAfterSourceUpdate(){
     String keepIdentity="";
-    if(selected>=0&&selected<channels.size())keepIdentity=identity(channels.get(selected).name,channels.get(selected).group);
+    if(selected>=0&&selected<channels.size())keepIdentity=identity(channels.get(selected).name,channels.get(selected).group,channels.get(selected).url);
     try{
       android.content.SharedPreferences p=getSharedPreferences("mytv",0);
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
