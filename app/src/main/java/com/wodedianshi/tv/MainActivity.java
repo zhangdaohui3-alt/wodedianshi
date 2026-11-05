@@ -542,14 +542,14 @@ public class MainActivity extends Activity {
     if(req==11&&result==RESULT_OK&&data!=null){
       Uri target=data.getData();
       worker.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(target)){
-        StringBuilder b=new StringBuilder("#EXTM3U\\n");
+        StringBuilder b=new StringBuilder("#EXTM3U\n");
         synchronized(channels){
           for(Channel c:channels){
-            String group=c.group.replace("\\","\\\\").replace("\\\"","\\\\\\\"");
-            String name=c.name.replace("\\n"," ").replace("\\r"," ").replace("\\","\\\\").replace("\\\"","\\\\\\\"");
+            String group=c.group.replace("\"","'");
+            String name=c.name.replace("\n"," ").replace("\r"," ").replace("\"","'");
             for(String source:c.backups){
-              b.append("#EXTINF:-1 group-title=\\\"").append(group).append("\\",").append(name).append("\\n")
-                .append(source).append("\\n");
+              b.append("#EXTINF:-1 group-title=\"").append(group).append("\",").append(name).append("\n")
+                .append(source).append("\n");
             }
           }
         }
