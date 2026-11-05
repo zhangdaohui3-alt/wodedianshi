@@ -31,7 +31,11 @@ public class SourceUpdateWorker extends Worker {
       "https://iptv-org.github.io/iptv/categories/movies.m3u",
       "https://iptv-org.github.io/iptv/categories/music.m3u",
       "https://iptv-org.github.io/iptv/categories/kids.m3u",
-      "https://iptv-org.github.io/iptv/categories/documentary.m3u"
+      "https://iptv-org.github.io/iptv/categories/documentary.m3u",
+      // Additional curated public/free directories; candidates must still pass
+      // the existing playlist and real media-segment probe before being added.
+      "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
+      "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u"
     };
     try{
       JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
