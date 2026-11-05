@@ -520,9 +520,17 @@ public class MainActivity extends Activity {
     for(org.json.JSONObject o:history){
       String title=o.optString("title","未命名影片"),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
       long pos=o.optLong("position",0),duration=o.optLong("duration",0);
-      LinearLayout itemRow=new LinearLayout(this);itemRow.setOrientation(1);itemRow.setPadding(dp(12),dp(10),dp(12),dp(10));itemRow.setFocusable(true);itemRow.setClickable(true);itemRow.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+      LinearLayout itemRow=new LinearLayout(this);itemRow.setOrientation(1);itemRow.setPadding(dp(12),dp(10),dp(12),dp(10));itemRow.setFocusable(true);itemRow.setFocusableInTouchMode(true);itemRow.setClickable(true);itemRow.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
       TextView name=new TextView(this);name.setText(title);name.setTextColor(Color.WHITE);name.setTextSize(16);itemRow.addView(name);
       TextView detail=new TextView(this);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");detail.setTextColor(Color.rgb(154,190,220));detail.setTextSize(12);itemRow.addView(detail);
+      // Strong D-pad focus feedback: blue fill, yellow outline, slight scale and elevation.
+      itemRow.setOnFocusChangeListener((v,focused)->{
+        itemRow.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));
+        itemRow.setScaleX(focused?1.025f:1f);itemRow.setScaleY(focused?1.025f:1f);
+        itemRow.setElevation(focused?dp(7):0);
+        name.setTextColor(focused?Color.rgb(255,235,170):Color.WHITE);
+        detail.setTextColor(focused?Color.WHITE:Color.rgb(154,190,220));
+      });
       itemRow.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
       itemRow.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
       LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);results.addView(itemRow,lp);
