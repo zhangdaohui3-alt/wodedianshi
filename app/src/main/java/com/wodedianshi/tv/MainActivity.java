@@ -139,7 +139,7 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else decoderSettingsDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else bufferingSwitchSettingsDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -531,7 +531,33 @@ public class MainActivity extends Activity {
     }
     return added;
   }
-  protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(req==10&&result==RESULT_OK&&data!=null){Uri u=data.getData();worker.execute(()->{try(InputStream in=getContentResolver().openInputStream(u)){String s=read(in);runOnUiThread(()->finishImport(s));}catch(Exception e){runOnUiThread(()->toast("读取失败"));}});}if(req==11&&result==RESULT_OK&&data!=null){worker.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(data.getData())){StringBuilder b=new StringBuilder("#EXTM3U\n");for(Channel c:channels)b.append("#EXTINF:-1 group-title=\"").append(c.group).append("\",").append(c.name).append("\n").append(c.url).append("\n");o.write(b.toString().getBytes("UTF-8"));runOnUiThread(()->toast("已导出"));}catch(Exception e){runOnUiThread(()->toast("导出失败"));}});}}
+  protected void onActivityResult(int req,int result,Intent data){
+    super.onActivityResult(req,result,data);
+    if(req==10&&result==RESULT_OK&&data!=null){
+      Uri u=data.getData();
+      worker.execute(()->{try(InputStream in=getContentResolver().openInputStream(u)){
+        String content=read(in);runOnUiThread(()->finishImport(content));
+      }catch(Exception e){runOnUiThread(()->toast("读取失败"));}});
+    }
+    if(req==11&&result==RESULT_OK&&data!=null){
+      Uri target=data.getData();
+      worker.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(target)){
+        StringBuilder b=new StringBuilder("#EXTM3U\\n");
+        synchronized(channels){
+          for(Channel c:channels){
+            String group=c.group.replace("\\","\\\\").replace("\\\"","\\\\\\\"");
+            String name=c.name.replace("\\n"," ").replace("\\r"," ").replace("\\","\\\\").replace("\\\"","\\\\\\\"");
+            for(String source:c.backups){
+              b.append("#EXTINF:-1 group-title=\\\"").append(group).append("\\",").append(name).append("\\n")
+                .append(source).append("\\n");
+            }
+          }
+        }
+        o.write(b.toString().getBytes("UTF-8"));
+        runOnUiThread(()->toast("已导出，包含全部备用播放源"));
+      }catch(Exception e){runOnUiThread(()->toast("导出失败："+e.getMessage()));}});
+    }
+  }
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("http(s)://...m3u8");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String url=u.getText().toString().trim();if(url.startsWith("http://")||url.startsWith("https://")){channels.add(new Channel(n.getText().toString().trim(),url,"自定义"));rebuildChannelIndexes();persist();refresh();play(channels.size()-1);}else toast("请输入有效网址");}).show();}
   private void showFullscreenChannelMenu(){
@@ -655,8 +681,111 @@ public class MainActivity extends Activity {
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
     super.onBackPressed();
   }
-  private void play(int ix){if(ix<0||ix>=channels.size())return;closeFullscreenChannelMenu();enterFullScreenPlayback();selected=ix;Channel c=channels.get(ix);if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;saveLastChannel();final long generation=++playbackGeneration;currentMediaId=generation+":"+ix+":"+c.activeSource;info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");if(player==null){DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory().setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3").setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);DefaultRenderersFactory renderersFactory=new DefaultRenderersFactory(this).setEnableDecoderFallback(getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1);player=new ExoPlayer.Builder(this,renderersFactory).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();video.setPlayer(player);player.addListener(new Player.Listener(){private boolean isCurrent(){MediaItem item=player==null?null:player.getCurrentMediaItem();return item!=null&&currentMediaId.equals(item.mediaId);}public void onPlayerError(PlaybackException e){if(!isCurrent())return;if(selected>=0&&selected<channels.size()){Channel ch=channels.get(selected);if(ch.activeSource+1<ch.backups.size()){ch.activeSource++;info.setText("当前源失败，自动切换备用源 "+(ch.activeSource+1)+"/"+ch.backups.size());play(selected);}else info.setText("所有已配置播放源均失败，请稍后重试或检查网络");}}public void onPlaybackStateChanged(int st){if(st==Player.STATE_READY&&isCurrent()&&selected>=0&&selected<channels.size())info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");}});}MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();player.setMediaItem(item);player.prepare();player.play();}
+  private int automaticSwitchCount=0;
+  private Runnable bufferingFallback;
+  private void cancelBufferingFallback(){
+    if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
+  }
+  private void scheduleBufferingFallback(){
+    cancelBufferingFallback();
+    int seconds=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",5);
+    if(seconds<=0)return;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    bufferingFallback=()->{
+      bufferingFallback=null;
+      if(player!=null&&selected==expectedChannel&&currentMediaId.equals(expectedMediaId)
+          &&player.getPlaybackState()==Player.STATE_BUFFERING){
+        advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
+      }
+    };
+    uiHandler.postDelayed(bufferingFallback,seconds*1000L);
+  }
+  private void advanceToNextSourceAutomatically(String reason){
+    cancelBufferingFallback();
+    if(selected<0||selected>=channels.size())return;
+    Channel c=channels.get(selected);
+    if(automaticSwitchCount>=c.backups.size()-1){
+      info.setText(reason+"；当前频道的播放源已全部尝试，请手动选择其他频道或稍后重试");
+      return;
+    }
+    automaticSwitchCount++;
+    c.activeSource=(c.activeSource+1)%c.backups.size();
+    info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
+    startCurrentSource();
+  }
+  private void play(int ix){
+    if(ix<0||ix>=channels.size())return;
+    automaticSwitchCount=0;
+    selected=ix;
+    startCurrentSource();
+  }
+  private void startCurrentSource(){
+    if(selected<0||selected>=channels.size())return;
+    closeFullscreenChannelMenu();
+    enterFullScreenPlayback();
+    Channel c=channels.get(selected);
+    if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
+    cancelBufferingFallback();
+    saveLastChannel();
+    final long generation=++playbackGeneration;
+    currentMediaId=generation+":"+selected+":"+c.activeSource;
+    info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
+    if(player==null){
+      DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory()
+          .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3")
+          .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);
+      DefaultRenderersFactory renderersFactory=new DefaultRenderersFactory(this)
+          .setEnableDecoderFallback(getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1);
+      player=new ExoPlayer.Builder(this,renderersFactory)
+          .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
+      video.setPlayer(player);
+      player.addListener(new Player.Listener(){
+        private boolean isCurrent(){
+          MediaItem item=player==null?null:player.getCurrentMediaItem();
+          return item!=null&&currentMediaId.equals(item.mediaId);
+        }
+        public void onPlayerError(PlaybackException e){
+          if(!isCurrent())return;
+          advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
+        }
+        public void onPlaybackStateChanged(int st){
+          if(!isCurrent())return;
+          if(st==Player.STATE_BUFFERING){
+            scheduleBufferingFallback();
+          }else if(st==Player.STATE_READY){
+            cancelBufferingFallback();
+            automaticSwitchCount=0;
+            if(selected>=0&&selected<channels.size()){
+              saveLastChannel();
+              info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
+            }
+          }else if(st==Player.STATE_IDLE){
+            cancelBufferingFallback();
+          }
+        }
+      });
+    }
+    MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();
+    player.setMediaItem(item);
+    player.prepare();
+    player.play();
+  }
+  private void bufferingSwitchSettingsDialog(){
+    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",5);
+    String[] labels={"3 秒后切换备用源","5 秒后切换备用源（推荐）","10 秒后切换备用源","关闭自动卡顿切换"};
+    int[] values={3,5,10,0};
+    int checked=current==3?0:current==10?2:current==0?3:1;
+    new AlertDialog.Builder(this).setTitle("卡顿自动切换备用源")
+      .setSingleChoiceItems(labels,checked,(dialog,which)->{
+        getSharedPreferences("mytv",0).edit().putInt("buffer_switch_seconds",values[which]).apply();
+        cancelBufferingFallback();
+        if(player!=null&&player.getPlaybackState()==Player.STATE_BUFFERING)scheduleBufferingFallback();
+        dialog.dismiss();
+        toast(values[which]==0?"已关闭卡顿自动切换":"已设置为卡顿 "+values[which]+" 秒后尝试下一个播放源");
+      }).setNegativeButton("关闭",null).show();
+  }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-  protected void onStop(){super.onStop();saveLastChannel();if(player!=null){player.release();player=null;}}
+  protected void onStop(){super.onStop();saveLastChannel();cancelBufferingFallback();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);worker.shutdownNow();}
 }
