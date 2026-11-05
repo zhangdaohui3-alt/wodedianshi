@@ -394,6 +394,7 @@ public class MainActivity extends Activity {
         for(VodItem item:found){
           if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
           LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
+          card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
           ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
           TextView title=new TextView(this);title.setText(item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
           TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
@@ -405,7 +406,7 @@ public class MainActivity extends Activity {
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
-    new Thread(()->{
+    worker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
         connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
@@ -414,7 +415,7 @@ public class MainActivity extends Activity {
       }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();}
       final Bitmap image=bitmap;
       if(image!=null)uiHandler.post(()->{if(identifier.equals(target.getTag()))target.setImageBitmap(image);});
-    }).start();
+    });
   }
   private String encodeArchivePath(String path){
     try{String[] parts=path.split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(out.length()>0)out.append("/");out.append(URLEncoder.encode(p,"UTF-8").replace("+","%20"));}return out.toString();}catch(Exception e){return path;}
