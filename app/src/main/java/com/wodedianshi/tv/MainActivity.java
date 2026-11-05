@@ -567,9 +567,10 @@ public class MainActivity extends Activity {
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodWorker);
         int submitted=0;
+        ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
         for(int i=0;i<docs.length()&&submitted<100;i++){
           final org.json.JSONObject doc=docs.getJSONObject(i);
-          completion.submit(()->fetchAuthorizedVod(doc));submitted++;
+          pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(doc)));submitted++;
         }
         long deadline=android.os.SystemClock.elapsedRealtime()+65000;
         while(submitted>0&&found.size()<36){
@@ -580,6 +581,7 @@ public class MainActivity extends Activity {
           try{VodItem item=future.get();if(item!=null)found.add(item);}catch(Exception ignored){}
           submitted--;
         }
+        for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
         if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<36){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
           HashSet<String> seen=new HashSet<>();for(VodItem item:found)seen.add(item.identifier);
