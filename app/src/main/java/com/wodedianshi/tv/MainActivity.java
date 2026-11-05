@@ -503,8 +503,17 @@ public class MainActivity extends Activity {
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.CENTER,0,0);
     fullscreenMenuButton.setVisibility(View.GONE);
-    View first=categoryPane.getChildAt(0);
-    if(first!=null)first.requestFocus();
+    // 等弹出层完成挂载后，把遥控器焦点放到第一个可选分类按钮，
+    // 不要落在顶部不可选的 Logo 文本上。
+    menu.post(()->{
+      View scroll=categoryPane.getChildAt(1);
+      if(scroll instanceof ScrollView){
+        View items=((ScrollView)scroll).getChildAt(0);
+        if(items instanceof ViewGroup&&((ViewGroup)items).getChildCount()>0){
+          ((ViewGroup)items).getChildAt(0).requestFocus();
+        }
+      }
+    });
   }
   private void closeFullscreenChannelMenu(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())fullscreenMenuPopup.dismiss();
