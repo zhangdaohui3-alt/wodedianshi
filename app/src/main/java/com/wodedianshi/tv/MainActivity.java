@@ -63,7 +63,6 @@ public class MainActivity extends Activity {
   private final ExecutorService vodWorker = Executors.newFixedThreadPool(2);
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(10);
   private int vodRequestId=0;
-  private boolean adultUnlockedThisSession=false;
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
   private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
@@ -873,54 +872,6 @@ public class MainActivity extends Activity {
       else{activeCategory="城市:"+cities[w-1];info.setText("正在筛选："+province+" · "+cities[w-1]+" 频道");}
       refresh();
     }).setNegativeButton("返回",null).show();
-  }
-  private String adultPasswordHash(String value){
-    try{
-      java.security.MessageDigest md=java.security.MessageDigest.getInstance("SHA-256");
-      byte[] bytes=md.digest(value.getBytes("UTF-8"));StringBuilder out=new StringBuilder();
-      for(byte b:bytes)out.append(String.format(Locale.US,"%02x",b&0xff));
-      return out.toString();
-    }catch(Exception e){return value;}
-  }
-  private boolean adultPasswordMatches(String value){
-    String saved=getSharedPreferences("mytv",0).getString("adult_password_hash","");
-    return saved.isEmpty()?"0000".equals(value):saved.equals(adultPasswordHash(value));
-  }
-  private void requestAdultUnlock(){
-    if(adultUnlockedThisSession){showAdultCategories();return;}
-    EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);input.setHint("请输入成人频道密码");
-    new AlertDialog.Builder(this).setTitle("成人频道 · 密码验证").setMessage("默认密码：0000").setView(input)
-      .setPositiveButton("进入",(d,w)->{String p=input.getText().toString();if(adultPasswordMatches(p)){adultUnlockedThisSession=true;showAdultCategories();}else new AlertDialog.Builder(this).setTitle("密码错误").setMessage("密码不正确，请重试。").setPositiveButton("确定",null).show();})
-      .setNegativeButton("取消",null).show();
-  }
-  private void showAdultCategories(){
-    String[] categories={"全部成人频道","成人电影","午夜频道","成人纪录片","成人动画","其他成人内容"};
-    new AlertDialog.Builder(this).setTitle("成人频道分类").setItems(categories,(d,w)->{
-      activeCategory=categories[w];favoriteMode=false;
-      if(search!=null)search.setText("");
-      refresh();focusFirstChannelInMenu();
-    }).setNeutralButton("修改密码",(d,w)->changeAdultPassword()).setNegativeButton("关闭",null).show();
-  }
-  private void changeAdultPassword(){
-    LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
-    EditText oldPass=new EditText(this);oldPass.setSingleLine(true);oldPass.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);oldPass.setHint("当前密码");box.addView(oldPass);
-    EditText newPass=new EditText(this);newPass.setSingleLine(true);newPass.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);newPass.setHint("新密码（4-12位数字）");box.addView(newPass);
-    EditText confirm=new EditText(this);confirm.setSingleLine(true);confirm.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);confirm.setHint("再次输入新密码");box.addView(confirm);
-    new AlertDialog.Builder(this).setTitle("修改成人频道密码").setView(box).setPositiveButton("保存", (d,w)->{
-      String old=oldPass.getText().toString(),next=newPass.getText().toString();
-      if(!adultPasswordMatches(old)){toast("当前密码错误");return;}
-      if(!next.matches("[0-9]{4,12}")){toast("新密码必须为4至12位数字");return;}
-      if(!next.equals(confirm.getText().toString())){toast("两次输入的新密码不一致");return;}
-      getSharedPreferences("mytv",0).edit().putString("adult_password_hash",adultPasswordHash(next)).apply();toast("成人频道密码已修改");
-    }).setNegativeButton("取消",null).show();
-  }
-  private boolean isAdultChannel(Channel c){
-    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT).replace(" ","").replace("_","").replace("-","");
-    // Imported playlist labels only; never fabricate channel entries or URLs.
-    String[] markers={"成人","成人电影","成人频道","成人台","成人专区","限制级","情色","午夜","深夜",
-        "18+","18plus","r18","nc17","tvma","ratedr","xxx","adult","mature","erotic","成人向","大人向"};
-    for(String marker:markers)if(x.contains(marker.replace(" ","")))return true;
-    return false;
   }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
