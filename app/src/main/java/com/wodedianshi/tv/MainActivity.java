@@ -92,9 +92,9 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
-    String[] names={"全部","央视","卫视","地方","港澳台","国际新闻","体育","天气","教育","中国","收藏"};
+    String[] names={"全部","全球频道","央视","卫视","地方","港澳台","国际新闻","体育","天气","教育","中国","收藏"};
     LinearLayout catItems=new LinearLayout(this);catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else officialDialog();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -130,7 +130,7 @@ public class MainActivity extends Activity {
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
   }
-  private boolean categoryMatch(Channel c,String cat){String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);String g=c.group.toLowerCase(Locale.ROOT);if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视");if(cat.equals("卫视"))return x.contains("卫视");if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台");if(cat.equals("国际新闻"))return g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");if(cat.equals("体育"))return g.contains("体育");if(cat.equals("天气"))return g.contains("天气")||x.contains("气象");if(cat.equals("教育"))return g.contains("教育");if(cat.equals("中国"))return g.equals("中国")||x.contains("中国");if(cat.equals("地方"))return !(x.contains("cctv")||x.contains("央视")||x.contains("卫视")||x.contains("香港")||x.contains("澳门")||x.contains("台湾")||g.contains("国际新闻")||g.contains("体育")||g.contains("天气")||g.contains("教育")||g.equals("中国"));return true;}
+  private boolean categoryMatch(Channel c,String cat){String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);String g=c.group.toLowerCase(Locale.ROOT);if(cat.equals("全球频道"))return true;if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视");if(cat.equals("卫视"))return x.contains("卫视");if(cat.equals("港澳台"))return x.contains("香港")||x.contains("澳门")||x.contains("台湾")||x.contains("港")||x.contains("澳")||x.contains("台");if(cat.equals("国际新闻"))return g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");if(cat.equals("体育"))return g.contains("体育");if(cat.equals("天气"))return g.contains("天气")||x.contains("气象");if(cat.equals("教育"))return g.contains("教育");if(cat.equals("中国"))return g.equals("中国")||x.contains("中国");if(cat.equals("地方"))return !(x.contains("cctv")||x.contains("央视")||x.contains("卫视")||x.contains("香港")||x.contains("澳门")||x.contains("台湾")||g.contains("国际新闻")||g.contains("体育")||g.contains("天气")||g.contains("教育")||g.equals("中国"));return true;}
   private void refresh(){
     if(list==null)return;list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
     for(int i=0;i<channels.size();i++){final int ix=i;Channel c=channels.get(i);if(favoriteMode&&!favorites.contains(c.key()))continue;if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q))continue;
@@ -139,12 +139,25 @@ public class MainActivity extends Activity {
     }
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
+  private boolean globalLoading=false;
+  private void loadGlobalChannels(){
+    if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
+    globalLoading=true;info.setText("正在连接全球公开频道库，首次载入可能需要一些时间…");
+    worker.execute(()->{try{
+      HttpURLConnection c=(HttpURLConnection)new URL("https://iptv-org.github.io/iptv/index.m3u").openConnection();
+      c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
+      c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
+      int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+      String data;try(InputStream in=c.getInputStream()){data=read(in);}finally{c.disconnect();}
+      runOnUiThread(()->{int before=channels.size();int added=parse(data);persist();refresh();globalLoading=false;info.setText("全球频道载入完成：新增 "+added+" 个，当前共 "+channels.size()+" 个频道。频道可用性受地区和网络影响。");});
+    }catch(Exception e){runOnUiThread(()->{globalLoading=false;info.setText("全球频道载入失败："+e.getMessage()+"。请检查网络后重试。");});}});
+  }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setHint("https://.../playlist.m3u");new AlertDialog.Builder(this).setTitle("播放列表网址").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->download(e.getText().toString().trim())).show();}
   private void download(String address){
     if(!address.startsWith("https://")&&!address.startsWith("http://")){toast("网址格式不正确");return;}info.setText("正在下载播放列表…");
     worker.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(25000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.2 Android");c.setRequestProperty("Accept","*/*");int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);try(InputStream in=c.getInputStream()){String data=read(in);runOnUiThread(()->finishImport(data));}finally{c.disconnect();}}catch(Exception e){runOnUiThread(()->info.setText("导入失败："+e.getMessage()));}});
   }
-  private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>8*1024*1024)throw new IOException("播放列表超过 8 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
+  private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>50*1024*1024)throw new IOException("播放列表超过 8 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
