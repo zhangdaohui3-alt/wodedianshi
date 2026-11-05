@@ -360,7 +360,7 @@ public class MainActivity extends Activity {
     for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
       filters.addView(b,new LinearLayout.LayoutParams(dp(112),dp(48)));
-      b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(status,results);else loadVodCatalogue(category,panel,status,results);});
+      b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(panel);else loadVodCatalogue(category,panel);});
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(50)));
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
@@ -458,6 +458,11 @@ public class MainActivity extends Activity {
       for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
       getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,out.toString()).apply();
     }catch(Exception ignored){}
+  }
+  private void loadVodHistory(LinearLayout panel){
+    if(panel==null||panel.getChildCount()<5)return;
+    View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
+    if(statusView instanceof TextView&&scrollView instanceof ScrollView){View child=((ScrollView)scrollView).getChildAt(0);if(child instanceof LinearLayout)loadVodHistory((TextView)statusView,(LinearLayout)child);}
   }
   private void loadVodHistory(TextView status,LinearLayout results){
     ArrayList<org.json.JSONObject> history=readVodHistory();results.removeAllViews();
