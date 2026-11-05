@@ -1008,7 +1008,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     watchdogLastPosition=-1L;
-    watchdogLastAdvanceAt=SystemClock.elapsedRealtime();
+    watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     saveLastChannel();
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
@@ -1040,7 +1040,7 @@ public class MainActivity extends Activity {
             // Do not reset automaticSwitchCount here: a source that starts and then
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
-            watchdogLastAdvanceAt=SystemClock.elapsedRealtime();
+            watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             schedulePlaybackWatchdog();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
