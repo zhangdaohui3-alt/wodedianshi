@@ -751,6 +751,17 @@ public class MainActivity extends Activity {
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(event.getKeyCode()==KeyEvent.KEYCODE_MENU||event.getKeyCode()==KeyEvent.KEYCODE_SETTINGS){
+          if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
+            boolean visible=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()==View.VISIBLE;
+            if(visible){
+              if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
+              if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+              if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+            }else revealVodSeekBar();
+          }
+          return true;
+        }
         if(event.getAction()==KeyEvent.ACTION_DOWN)revealVodSeekBar();
         return super.dispatchKeyEvent(event);
       }
@@ -826,6 +837,7 @@ public class MainActivity extends Activity {
     }};
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);
+    Button favorite=new Button(this);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");favorite.setAllCaps(false);favorite.setTextSize(14);favorite.setFocusable(true);favorite.setOnClickListener(v->{toggleVodFavorite(item);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");});FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(4);favoriteParams.rightMargin=dp(116);stage.addView(favorite,favoriteParams);
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);
     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
@@ -1382,10 +1394,33 @@ public class MainActivity extends Activity {
       });
     }
   }
+  private void toggleCurrentLiveFavorite(){
+    if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
+    Channel c=channels.get(selected);
+    if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
+    else{favorites.add(c.key());toast("已加入收藏："+c.name);}
+    persist();
+  }
+  private void showLivePlaybackActions(){
+    if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
+    Channel c=channels.get(selected);
+    boolean saved=favorites.contains(c.key());
+    String[] actions={saved?"取消收藏当前频道":"收藏当前频道","选择播放源","打开频道列表"};
+    new AlertDialog.Builder(this).setTitle(c.name+" · 播放操作")
+      .setItems(actions,(dialog,which)->{
+        if(which==0)toggleCurrentLiveFavorite();
+        else if(which==1)showSourcePicker();
+        else if(which==2)showFullscreenChannelMenu();
+      }).setNegativeButton("关闭",null).show();
+  }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
     if(fullScreenPlayback && (fullscreenMenuPopup==null || !fullscreenMenuPopup.isShowing())){
       int key=event.getKeyCode();
+      if(key==KeyEvent.KEYCODE_MENU||key==KeyEvent.KEYCODE_SETTINGS){
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0)showLivePlaybackActions();
+        return true;
+      }
       boolean ok=key==KeyEvent.KEYCODE_DPAD_CENTER
           ||key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_NUMPAD_ENTER;
       boolean direction=key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_DPAD_DOWN
