@@ -1019,6 +1019,9 @@ public class MainActivity extends Activity {
   private Runnable playbackWatchdog;
   private long watchdogLastPosition=-1L;
   private long watchdogLastAdvanceAt=0L;
+  private long sourceAttemptStartedAt=0L;
+  private boolean sourceReadyRecorded=false;
+  private boolean sourceWasBuffering=false;
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
   }
@@ -1086,6 +1089,7 @@ public class MainActivity extends Activity {
     automaticSwitchCount=0;
     manualSourceSwitch=false;
     selected=ix;
+    sortSourcesByObservedQuality(channels.get(ix));
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -1098,6 +1102,10 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
+    sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
+    sourceReadyRecorded=false;
+    sourceWasBuffering=false;
+    recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
     saveLastChannel();
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
@@ -1118,13 +1126,21 @@ public class MainActivity extends Activity {
         }
         public void onPlayerError(PlaybackException e){
           if(!isCurrent())return;
+          if(!sourceReadyRecorded)recordSourceMetric(currentSourceUrl(),"failure",0L);
           advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
         }
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
           if(st==Player.STATE_BUFFERING){
+            if(sourceReadyRecorded&&!sourceWasBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
+            sourceWasBuffering=true;
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
+            sourceWasBuffering=false;
+            if(!sourceReadyRecorded){
+              sourceReadyRecorded=true;
+              recordSourceMetric(currentSourceUrl(),"ready",android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+            }
             cancelBufferingFallback();
             // Do not reset automaticSwitchCount here: a source that starts and then
             // freezes must not create an endless source-switch loop.
@@ -1151,6 +1167,54 @@ public class MainActivity extends Activity {
     player.setMediaItem(item);
     player.prepare();
     player.play();
+  }
+  private String currentSourceUrl(){
+    if(selected<0||selected>=channels.size())return "";
+    Channel c=channels.get(selected);
+    return c.activeSource>=0&&c.activeSource<c.backups.size()?c.backups.get(c.activeSource):c.url;
+  }
+  // Persistent playback observations. READY latency is not the same as a rendered first frame;
+  // buffering/error events come from the actual ExoPlayer session, not a URL probe.
+  private void recordSourceMetric(String url,String event,long readyMs){
+    if(url==null||url.isEmpty())return;
+    try{
+      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+      org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
+      String key=Integer.toHexString(url.hashCode())+":"+url.length();
+      org.json.JSONObject m=all.optJSONObject(key);if(m==null)m=new org.json.JSONObject();
+      if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
+      else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
+      else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
+      else if("ready".equals(event)){
+        int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
+        m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+        m.put("lastSuccess",System.currentTimeMillis());
+      }
+      m.put("updated",System.currentTimeMillis());all.put(key,m);
+      p.edit().putString("source_qoe_v1",all.toString()).apply();
+    }catch(Exception ignored){}
+  }
+  private double observedSourceScore(String url){
+    int label=sourceQualityScore(url);
+    try{
+      String key=Integer.toHexString(url.hashCode())+":"+url.length();
+      org.json.JSONObject m=new org.json.JSONObject(getSharedPreferences("mytv",0).getString("source_qoe_v1","{}")).optJSONObject(key);
+      if(m==null||m.optInt("attempts",0)<2)return label*0.01;
+      int attempts=Math.max(1,m.optInt("attempts",0));
+      int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
+      double successRate=(double)ready/attempts;
+      double readyPenalty=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      return successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+label*0.01;
+    }catch(Exception ignored){return label*0.01;}
+  }
+  private void sortSourcesByObservedQuality(Channel c){
+    if(c==null||c.backups==null||c.backups.size()<2)return;
+    String active=c.activeSource>=0&&c.activeSource<c.backups.size()?c.backups.get(c.activeSource):c.url;
+    ArrayList<String> ordered=new ArrayList<>(c.backups);
+    ordered.sort((a,b)->Double.compare(observedSourceScore(b),observedSourceScore(a)));
+    c.backups.clear();c.backups.addAll(ordered);
+    int ix=c.backups.indexOf(active);c.activeSource=ix>=0?ix:0;
+    persist();
   }
   private void bufferingSwitchSettingsDialog(){
     int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",5);
