@@ -272,7 +272,37 @@ public class MainActivity extends Activity {
     showSubdivisionDialog("美国州",names,codes);
   }
   private void showSubdivisionDialog(String title,String[] names,String[] codes){
-    new AlertDialog.Builder(this).setTitle(title+" · 选择州/省").setItems(names,(d,w)->loadGeoPlaylist(title+" · "+names[w],"https://iptv-org.github.io/iptv/subdivisions/"+codes[w]+".m3u")).setNegativeButton("返回",null).show();
+    new AlertDialog.Builder(this).setTitle(title+" · 选择州/省").setItems(names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w])).setNegativeButton("返回",null).show();
+  }
+  private void showCityPlaylistDialog(String country,String region,String subdivisionCode){
+    String[] data;
+    switch(subdivisionCode){
+      case "us-az":data=new String[]{"Bullhead City|usifp","Glendale|usgda","Phoenix|usphx","Scottsdale|usstz","Tucson|ustuz","Yuma|usyum"};break;
+      case "us-ca":data=new String[]{"Bakersfield|usbfl","Beverly Hills|usbvh","Burbank|usbur","Fresno|usfat","Los Angeles|uslax","Sacramento|ussac","San Diego|ussan","San Francisco|ussfo","San Jose|ussjc","Stockton|ussck"};break;
+      case "us-nv":data=new String[]{"Las Vegas|uslas"};break;
+      case "us-ny":data=new String[]{"Albany|usalb","New York City|usnyc","Rochester|usroc","Southampton|usssk"};break;
+      case "us-nj":data=new String[]{"Newark|usewr","Paterson|uspat","Trenton|usttn"};break;
+      case "us-tx":data=new String[]{"Austin|usaus","Dallas|usdal","Houston|ushou","San Antonio|ussat","El Paso|uselp","Fort Worth|usfwt","Waco|usact"};break;
+      case "us-fl":data=new String[]{"Jacksonville|usjax","Miami|usmia","Orlando|usorl","Tampa|ustpa","Tallahassee|ustlh","West Palm Beach|uspbi"};break;
+      case "us-wa":data=new String[]{"Seattle|ussea","Tacoma|ustiw"};break;
+      case "ca-ab":data=new String[]{"Calgary|cacal","Edmonton|caedm"};break;
+      case "ca-bc":data=new String[]{"Vancouver|cavan","Victoria|cavic","Langley|calng"};break;
+      case "ca-mb":data=new String[]{"Winnipeg|cawnp","Neepawa|canee"};break;
+      case "ca-nb":data=new String[]{"Fredericton|cafre","Moncton|camnt"};break;
+      case "ca-nl":data=new String[]{"St. John's|casjf"};break;
+      case "ca-ns":data=new String[]{"Halifax|cahal"};break;
+      case "ca-on":data=new String[]{"Ottawa|caott","Toronto|cator","Windsor|cawnd"};break;
+      case "ca-pe":data=new String[]{"Charlottetown|cacha"};break;
+      case "ca-qc":data=new String[]{"Montréal|camtr"};break;
+      case "au-nsw":data=new String[]{"Sydney|ausyd"};break;
+      default:data=new String[0];break;
+    }
+    String[] choices=new String[data.length+1];choices[0]="整个"+region+"（州/省频道）";
+    for(int i=0;i<data.length;i++)choices[i+1]=data[i].split("\\|")[0];
+    new AlertDialog.Builder(this).setTitle(country+" · "+region+" · 选择城市").setItems(choices,(d,w)->{
+      if(w==0)loadGeoPlaylist(country+" · "+region,"https://iptv-org.github.io/iptv/subdivisions/"+subdivisionCode+".m3u");
+      else{String[] pair=data[w-1].split("\\|");loadGeoPlaylist(country+" · "+region+" · "+pair[0],"https://iptv-org.github.io/iptv/cities/"+pair[1]+".m3u");}
+    }).setNegativeButton("返回",null).show();
   }
   private void loadGeoPlaylist(String label,String address){
     info.setText("正在载入 "+label+" 频道目录…");
