@@ -183,7 +183,8 @@ public class MainActivity extends Activity {
         "https://m3u.ibert.me/o_s_cn.m3u",
         "https://m3u.ibert.me/o_cn.m3u",
         "https://m3u.ibert.me/cn.m3u",
-        "https://m3u.ibert.me/cn_p.m3u"
+        "https://m3u.ibert.me/cn_p.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
       for(String address:feeds){HttpURLConnection c=null;try{
@@ -199,15 +200,29 @@ public class MainActivity extends Activity {
   }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
-    globalLoading=true;info.setText("正在连接全球公开频道库，首次载入可能需要一些时间…");
-    worker.execute(()->{try{
-      HttpURLConnection c=(HttpURLConnection)new URL("https://iptv-org.github.io/iptv/index.m3u").openConnection();
-      c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
-      c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-      int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-      String data;try(InputStream in=c.getInputStream()){data=read(in);}finally{c.disconnect();}
-      runOnUiThread(()->{int before=channels.size();int added=parse(data);persist();refresh();globalLoading=false;info.setText("全球频道载入完成：新增 "+added+" 个，当前共 "+channels.size()+" 个频道。频道可用性受地区和网络影响。");});
-    }catch(Exception e){runOnUiThread(()->{globalLoading=false;info.setText("全球频道载入失败："+e.getMessage()+"。请检查网络后重试。");});}});
+    globalLoading=true;info.setText("正在连接全球公开频道目录（含国家、地区及合规公开目录）…");
+    worker.execute(()->{
+      int added=0;StringBuilder errors=new StringBuilder();
+      String[] feeds={
+        "https://iptv-org.github.io/iptv/index.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/jp.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
+        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
+      };
+      for(String address:feeds){HttpURLConnection c=null;try{
+        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
+        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+        String data;try(InputStream in=c.getInputStream()){data=read(in);}
+        synchronized(channels){added+=parse(data);}
+      }catch(Exception e){errors.append(address.substring(address.lastIndexOf('/')+1)).append(": ").append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
+      final int total=added;final String err=errors.toString();
+      runOnUiThread(()->{persist();refresh();globalLoading=false;info.setText("全球频道补充完成：新增 "+total+" 个频道条目（已去重并合并备用地址）。地区限制、版权和网络状况可能影响播放。"+(err.isEmpty()?"":"部分目录暂不可用："+err));});
+    });
   }
   private void loadEntertainmentChannels(){
     if(entertainmentLoading){info.setText("全球娱乐频道列表正在载入，请稍候…");return;}
