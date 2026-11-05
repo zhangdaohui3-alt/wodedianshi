@@ -352,9 +352,10 @@ public class MainActivity extends Activity {
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"精选电影","中国电影","华语经典","中国动画","中国纪录片","国产短片","纪录片","动画","喜剧","科幻","剧情"};
-    HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);\n    for(String category:categories){
+    HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
+    for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
-      filters.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));
+      filters.addView(b,new LinearLayout.LayoutParams(dp(112),dp(48)));
       b.setOnClickListener(v->loadVodCatalogue(category,panel));
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(50)));
