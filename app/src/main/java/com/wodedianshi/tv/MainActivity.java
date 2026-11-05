@@ -207,7 +207,7 @@ public class MainActivity extends Activity {
     if(found<0&&!savedUrl.isEmpty()){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}}}
     if(found<0)return;
     Channel c=channels.get(found);
-    if(!savedSource.isEmpty()){int source=c.backups.indexOf(savedSource);if(source>=0)c.activeSource=(isKnown1080pSource(c.backups.get(0))&&!isKnown1080pSource(savedSource))?0:source;else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));}
+    if(!savedSource.isEmpty()){int source=c.backups.indexOf(savedSource);if(source>=0)c.activeSource=(sourceQualityScore(c.backups.get(0))>sourceQualityScore(savedSource))?0:source;else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));}
     else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));
     play(found);
   }
