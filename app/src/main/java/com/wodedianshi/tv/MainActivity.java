@@ -58,6 +58,8 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService posterWorker = Executors.newFixedThreadPool(3);
+  private final ExecutorService vodWorker = Executors.newFixedThreadPool(6);
+  private int vodRequestId=0;
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
   private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
@@ -399,9 +401,74 @@ public class MainActivity extends Activity {
       if(child instanceof LinearLayout)loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)child);
     }
   }
+  private String vodCacheKey(String category){
+    return "vod_cache_v2_"+Integer.toHexString(category.hashCode());
+  }
+  private ArrayList<VodItem> readVodCache(String category){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      String raw=getSharedPreferences("mytv",0).getString(vodCacheKey(category),"");
+      if(raw.isEmpty())return items;
+      org.json.JSONArray a=new org.json.JSONArray(raw);
+      for(int i=0;i<a.length();i++){
+        org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
+        String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
+        if(!title.isEmpty()&&!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));
+      }
+    }catch(Exception ignored){}
+    return items;
+  }
+  private void writeVodCache(String category,ArrayList<VodItem> items){
+    try{
+      org.json.JSONArray a=new org.json.JSONArray();
+      for(VodItem item:items){
+        org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);a.put(o);
+      }
+      getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).apply();
+    }catch(Exception ignored){}
+  }
+  private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
+    results.removeAllViews();
+    status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
+    LinearLayout row=null;int count=0;
+    for(VodItem item:items){
+      if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
+      LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
+      card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
+      ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
+      TextView title=new TextView(this);title.setText(item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
+      TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
+      row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));count++;
+    }
+    if(row!=null&&count%3!=0){for(int i=count%3;i<3;i++)row.addView(new View(this),new LinearLayout.LayoutParams(0,dp(10),1));}
+  }
+  private VodItem fetchAuthorizedVod(org.json.JSONObject doc){
+    String id=doc.optString("identifier",""),title=doc.optString("title",id);
+    if(id.isEmpty())return null;
+    try{
+      org.json.JSONObject meta=new org.json.JSONObject(httpGetFast("https://archive.org/metadata/"+URLEncoder.encode(id,"UTF-8")));
+      org.json.JSONObject md=meta.optJSONObject("metadata");if(md==null)return null;
+      String license=md.optString("licenseurl",md.optString("rights",""));
+      String low=license.toLowerCase(Locale.US);
+      boolean allowed=low.contains("creativecommons.org/licenses/by/")||low.contains("creativecommons.org/licenses/by-sa/")||low.contains("creativecommons.org/publicdomain/")||low.contains("creativecommons.org/zero/")||low.contains("public domain");
+      if(!allowed)return null;
+      org.json.JSONArray files=meta.optJSONArray("files");if(files==null)return null;
+      String fileName=null;
+      for(int j=0;j<files.length();j++){
+        org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
+        String name=file.optString("name",""),format=file.optString("format","").toLowerCase(Locale.US);
+        if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))){fileName=name;break;}
+      }
+      if(fileName==null)return null;
+      return new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license);
+    }catch(Exception ignored){return null;}
+  }
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
-    status.setText("正在检索「"+category+"」并核对开放授权与视频文件…");results.removeAllViews();
-    worker.execute(()->{
+    final int request=++vodRequestId;
+    ArrayList<VodItem> cached=readVodCache(category);
+    if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
+    else{status.setText("正在快速检索「"+category+"」…");results.removeAllViews();}
+    vodWorker.execute(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       try{
         String q="mediatype:movies";
@@ -417,49 +484,43 @@ public class MainActivity extends Activity {
         else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
         else if("剧情".equals(category))q+=" AND subject:drama";
         else if(!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page=1&output=json&sort[]=downloads+desc";
-        org.json.JSONObject root=new org.json.JSONObject(httpGet(api));
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=48&page=1&output=json&sort[]=downloads+desc";
+        org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-        for(int i=0;i<docs.length()&&found.size()<24;i++){
-          org.json.JSONObject doc=docs.getJSONObject(i);String id=doc.optString("identifier","");String title=doc.optString("title",id);
-          if(id.isEmpty())continue;
-          try{
-            org.json.JSONObject meta=new org.json.JSONObject(httpGet("https://archive.org/metadata/"+URLEncoder.encode(id,"UTF-8")));
-            org.json.JSONObject md=meta.optJSONObject("metadata");if(md==null)continue;
-            String license=md.optString("licenseurl",md.optString("rights",""));
-            String low=license.toLowerCase(Locale.US);
-            boolean allowed=low.contains("creativecommons.org/licenses/by/")||low.contains("creativecommons.org/licenses/by-sa/")||low.contains("creativecommons.org/publicdomain/")||low.contains("creativecommons.org/zero/")||low.contains("public domain");
-            if(!allowed)continue;
-            org.json.JSONArray files=meta.optJSONArray("files");if(files==null)continue;
-            String fileName=null;
-            for(int j=0;j<files.length();j++){
-              org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
-              String name=file.optString("name","");String format=file.optString("format","").toLowerCase(Locale.US);
-              if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))){fileName=name;break;}
-            }
-            if(fileName==null)continue;
-            found.add(new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license));
-          }catch(Exception ignored){}
+        ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodWorker);
+        int submitted=0;
+        for(int i=0;i<docs.length()&&submitted<48;i++){
+          final org.json.JSONObject doc=docs.getJSONObject(i);
+          completion.submit(()->fetchAuthorizedVod(doc));submitted++;
+        }
+        for(int i=0;i<submitted&&found.size()<24;i++){
+          Future<VodItem> f=completion.poll(9,TimeUnit.SECONDS);
+          if(f==null)break;
+          try{VodItem item=f.get();if(item!=null)found.add(item);}catch(Exception ignored){}
         }
       }catch(Exception e){error=e.getMessage();}
       final String err=error;
+      final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
-        if(isFinishing())return;
-        if(found.isEmpty()){status.setText(err==null?"暂时没有检索到符合授权条件且有 MP4 文件的影片。中国电影类公开授权作品数量有限，可尝试中文片名搜索或稍后刷新。":"点播目录暂时无法连接："+err);return;}
-        status.setText("「"+category+"」 · 找到 "+found.size()+" 部符合当前筛选条件的开放授权影片（目录持续扩充中）");
-        LinearLayout row=null;int count=0;
-        for(VodItem item:found){
-          if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
-          LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
-          card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
-          ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
-          TextView title=new TextView(this);title.setText(item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
-          TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
-          row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));count++;
+        if(isFinishing()||request!=vodRequestId)return;
+        if(!result.isEmpty()){
+          writeVodCache(category,result);
+          renderVodItems(category,result,status,results,false);
+        }else if(cached.isEmpty()){
+          status.setText(err==null?"暂时没有检索到符合授权条件且有 MP4 文件的影片。可稍后重试。":"点播目录暂时无法连接："+err);
+        }else{
+          status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次网络更新暂不可用。");
         }
-        if(row!=null&&count%3!=0){for(int i=count%3;i<3;i++)row.addView(new View(this),new LinearLayout.LayoutParams(0,dp(10),1));}
       });
     });
+  }
+  private String httpGetFast(String address)throws Exception{
+    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
+    c.setConnectTimeout(4500);c.setReadTimeout(7000);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
+    c.setRequestProperty("Accept","application/json,*/*");
+    try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+      byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");
+    }finally{c.disconnect();}
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
@@ -467,7 +528,7 @@ public class MainActivity extends Activity {
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
         connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
-        connection.setConnectTimeout(5000);connection.setReadTimeout(7000);connection.setInstanceFollowRedirects(true);
+        connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
         try(InputStream in=connection.getInputStream()){bitmap=BitmapFactory.decodeStream(in);}
       }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();}
       final Bitmap image=bitmap;
@@ -1385,5 +1446,5 @@ public class MainActivity extends Activity {
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){super.onStart();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
   protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();}
+  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();}
 }
