@@ -484,6 +484,7 @@ public class MainActivity extends Activity {
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
     if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
+    categoryPane.setVisibility(View.VISIBLE);channelPane.setVisibility(View.VISIBLE);
     LinearLayout menu=new LinearLayout(this);menu.setOrientation(0);menu.setBackgroundColor(Color.rgb(8,13,24));
     menu.addView(categoryPane,new LinearLayout.LayoutParams(dp(104),-1));
     menu.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));
@@ -495,6 +496,7 @@ public class MainActivity extends Activity {
       if(channelPane.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)channelPane.getParent()).removeView(channelPane);
       rootLayout.addView(categoryPane,0,new LinearLayout.LayoutParams(dp(104),-1));
       rootLayout.addView(channelPane,1,new LinearLayout.LayoutParams(dp(250),-1));
+      categoryPane.setVisibility(View.GONE);channelPane.setVisibility(View.GONE);
       fullscreenMenuPopup=null;
       if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.VISIBLE);
       if(video!=null)video.requestFocus();
