@@ -420,6 +420,9 @@ public class MainActivity extends Activity {
     VodItem(String t,String id,String u,String l){title=t;identifier=id;url=u;license=l;}
   }
   private Dialog vodPlayerDialog;
+  // Keep explicit references to the active VOD view model; never infer controls by child index.
+  private LinearLayout currentVodPanel,currentVodResults;
+  private TextView currentVodStatus;
   private ExoPlayer vodPlayer;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
@@ -464,6 +467,7 @@ public class MainActivity extends Activity {
     GridView vodGrid=new GridView(this);vodGrid.setNumColumns(3);vodGrid.setVerticalSpacing(dp(10));vodGrid.setHorizontalSpacing(dp(8));vodGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);vodGrid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));vodGrid.setFocusable(true);vodGrid.setFocusableInTouchMode(true);vodGrid.setVerticalScrollBarEnabled(true);vodGrid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
     results.addView(vodGrid,new LinearLayout.LayoutParams(-1,0,1));
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
+    currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
     dialog.setContentView(panel);
@@ -482,6 +486,7 @@ public class MainActivity extends Activity {
       }
       resumeLiveAfterVod=false;
       setSourceUpdatePlaybackActive(player!=null&&player.isPlaying());
+      if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
     });
     dialog.setOnShowListener(d->{
       if(dialog.getWindow()!=null){
@@ -500,12 +505,8 @@ public class MainActivity extends Activity {
     dialog.show();
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
-    // Child order: title bar, categories, search, status, results.
-    if(panel.getChildCount()<5)return;
-    View statusView=panel.getChildAt(3);
-    View resultsView=panel.getChildAt(4);
-    if(statusView instanceof TextView && resultsView instanceof LinearLayout)
-      loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)resultsView);
+    if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
+    loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
   private String vodCacheKey(String category){
     return "vod_cache_v2_"+Integer.toHexString(category.hashCode());
@@ -610,9 +611,10 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private void loadVodFavorites(LinearLayout panel){
-    if(panel==null||panel.getChildCount()<6)return;
-    View statusView=panel.getChildAt(4),scrollView=panel.getChildAt(5);
-    if(statusView instanceof TextView&&scrollView instanceof LinearLayout){TextView status=(TextView)statusView;LinearLayout results=(LinearLayout)scrollView;ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");}
+    if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
+    TextView status=currentVodStatus;LinearLayout results=currentVodResults;
+    ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);
+    status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
@@ -630,9 +632,8 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private void loadVodHistory(LinearLayout panel){
-    if(panel==null||panel.getChildCount()<6)return;
-    View statusView=panel.getChildAt(4),scrollView=panel.getChildAt(5);
-    if(statusView instanceof TextView&&scrollView instanceof LinearLayout)loadVodHistory((TextView)statusView,(LinearLayout)scrollView);
+    if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
+    loadVodHistory(currentVodStatus,currentVodResults);
   }
   private class VodHistoryAdapter extends BaseAdapter{
     private final ArrayList<org.json.JSONObject> history;private final TextView status;private final LinearLayout results;
