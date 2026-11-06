@@ -13,6 +13,7 @@ import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
   private static final int MAX_NEW_SOURCES = 100;
+  private static final int MAX_SOURCES_PER_CHANNEL = 5;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -88,19 +89,46 @@ public class SourceUpdateWorker extends Worker {
           target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
-          JSONArray sources=target.optJSONArray("sources");if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
+          JSONArray sources=target.optJSONArray("sources");
+          if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
           boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
-          if(!duplicate){sources.put(e.url);added++;}
+          if(!duplicate){
+            if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);added++;}
+            else{
+              int worstIndex=-1,worstScore=Integer.MAX_VALUE;
+              for(int i=0;i<sources.length();i++){
+                String old=sources.optString(i);
+                int oldScore=measuredScores.optInt(scoreKey(old),sourceQualityScore(old)/100);
+                if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
+              }
+              if(worstIndex>=0&&measured.score>worstScore){sources.put(worstIndex,e.url);added++;}
+            }
+          }
         }
         knownUrls.add(e.url);
       }
       if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
+      // Keep each channel's best few distinct sources together, ranked by measured
+      // reachability/speed/resolution. Generic names remain host-separated; recognized
+      // CCTV and satellite channels merge across source hosts.
+      for(int i=0;i<saved.length();i++){
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        JSONArray sourceArray=channel.optJSONArray("sources");
+        if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
+        ArrayList<String> ordered=new ArrayList<>();
+        for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
+        ordered.sort((a,b)->Integer.compare(measuredScores.optInt(scoreKey(b),sourceQualityScore(b)/100),measuredScores.optInt(scoreKey(a),sourceQualityScore(a)/100)));
+        while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
+        JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
+        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
+      }
       // Persist measured quality independently from URL labels so the player can rank
-      // candidates by real HLS/segment reachability, resolution and response speed.
+      // candidates by reachability, estimated speed and manifest resolution. This is
+      // a preflight score, not a guarantee of audio/video playback.
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(scanStart+scanned)%candidates.size())
           .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；复测/实测 "+checked+" 个候选地址；新增 "+added+" 个备用/频道地址；目录失败 "+feedsFailed+" 个。评分包含清单、分片、清晰度和响应速度；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；目录失败 "+feedsFailed+" 个。评分包含清单、分片可达性、清晰度和响应速度，但仍需播放器实际验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
@@ -255,13 +283,31 @@ public class SourceUpdateWorker extends Worker {
     ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
     while((n=in.read(b))!=-1){total+=n;if(total>max)throw new IOException("频道目录过大");out.write(b,0,n);}return out.toString("UTF-8");
   }
-  private String identity(String name,String group,String url){
-    String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–]","");
+  private String canonicalName(String name){
+    String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)-?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(v);
-    if(m.find())v="CCTV-"+m.group(1);
-    String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六"};
-    for(int i=1;i<cn.length;i++)if(v.contains("中央"+cn[i]+"套"))v="CCTV-"+i;
+    if(m.find())return "CCTV-"+m.group(1);
+    String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
+    for(int i=1;i<cn.length;i++)if(v.matches(".*中央(?:电视台)?"+cn[i]+"套.*"))return "CCTV-"+i;
+    if(v.contains("中央电视台综合频道"))return "CCTV-1";
+    if(v.contains("中央电视台财经频道"))return "CCTV-2";
+    if(v.contains("中央电视台综艺频道"))return "CCTV-3";
+    if(v.contains("中央电视台中文国际频道"))return "CCTV-4";
+    if(v.contains("中央电视台体育频道"))return "CCTV-5";
+    if(v.contains("中央电视台电影频道"))return "CCTV-6";
+    v=v.replace("超高清","").replace("高清","").replace("超清","").replace("1080P","").replace("720P","").replace("HD","").replace("FHD","").replace("直播","");
+    if(v.endsWith("湖南台"))return "湖南卫视";
+    if(v.endsWith("浙江台"))return "浙江卫视";
+    if(v.endsWith("江苏台"))return "江苏卫视";
+    if(v.endsWith("东方台"))return "东方卫视";
+    if(v.endsWith("北京台"))return "北京卫视";
+    if(v.endsWith("广东台"))return "广东卫视";
+    return v;
+  }
+  private String identity(String name,String group,String url){
+    String v=canonicalName(name);
     if(v.startsWith("CCTV-"))return v.toLowerCase(Locale.ROOT)+"|cctv";
+    if(v.contains("卫视"))return v.toLowerCase(Locale.ROOT)+"|satellite";
     String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
     try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}catch(Exception ignored){}
     return base+"|url:"+(url==null?"":url.trim());
