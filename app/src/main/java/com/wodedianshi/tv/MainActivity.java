@@ -595,6 +595,7 @@ public class MainActivity extends Activity {
     TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
     pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(40)));
+    previousPageButton.setId(View.generateViewId());nextPageButton.setId(View.generateViewId());
     previousPageButton.setNextFocusRightId(nextPageButton.getId());
     nextPageButton.setNextFocusLeftId(previousPageButton.getId());
     previousPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,-1);previousPageButton.requestFocus();});
