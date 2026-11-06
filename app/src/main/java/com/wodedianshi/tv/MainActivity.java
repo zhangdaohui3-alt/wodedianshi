@@ -1459,7 +1459,7 @@ public class MainActivity extends Activity {
           for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
           this.requestFocus();
         };
-        postDelayed(hideVodSeekTask[0],2200);
+        postDelayed(hideVodSeekTask[0],3500);
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
@@ -1533,7 +1533,7 @@ public class MainActivity extends Activity {
           videoTouchX=event.getX();videoTouchY=event.getY();
         }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
           float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
-          if(dx<18&&dy<18){toggleVodControls();videoTapCandidate=false;return true;}
+          if(dx<dp(28)&&dy<dp(28)){toggleVodControls();videoTapCandidate=false;return true;}
           videoTapCandidate=false;
         }else if(action==android.view.MotionEvent.ACTION_CANCEL)videoTapCandidate=false;
         return super.dispatchTouchEvent(event);
