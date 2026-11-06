@@ -450,7 +450,7 @@ public class MainActivity extends Activity {
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
-    String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
+    String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
     EditText query=new EditText(this);
@@ -989,6 +989,9 @@ public class MainActivity extends Activity {
         else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
         else if("纪录片".equals(category)||"科学纪录片".equals(category)||"历史纪录片".equals(category)||"自然纪录片".equals(category))q+=" AND subject:documentary";
         else if("NASA影像".equals(category))q="mediatype:movies AND (collection:nasa OR creator:NASA)";
+        else if("战争片".equals(category))q="mediatype:movies AND (subject:war OR subject:military OR title:war)";
+        else if("恐怖片".equals(category))q="mediatype:movies AND (subject:horror OR title:horror)";
+        else if("动作片".equals(category))q="mediatype:movies AND (subject:action OR title:action)";
         else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
         else if("喜剧".equals(category))q+=" AND subject:comedy";
         else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
@@ -1106,6 +1109,9 @@ public class MainActivity extends Activity {
         else if("中国动画".equals(category)||"中文动画".equals(category))commonsQuery="Chinese animation";
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
+        else if("战争片".equals(category))commonsQuery="war film";
+        else if("恐怖片".equals(category))commonsQuery="horror film";
+        else if("动作片".equals(category))commonsQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
         if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
         String locQuery=null;
@@ -1117,6 +1123,9 @@ public class MainActivity extends Activity {
         else if("自然纪录片".equals(category)||"科学纪录片".equals(category))locQuery="nature science documentary";
         else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
+        else if("战争片".equals(category))locQuery="war film";
+        else if("恐怖片".equals(category))locQuery="horror film";
+        else if("动作片".equals(category))locQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
         if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
