@@ -1393,15 +1393,15 @@ public class MainActivity extends Activity {
           boolean topFocused=false;
           int topIndex=-1;
           for(int i:new int[]{3,1,2})if(vodTopControls[i]!=null&&vodTopControls[i]==focused){topFocused=true;topIndex=i;break;}
-          if(keyCode==KeyEvent.KEYCODE_DPAD_UP&&focused==vodSeekHolder[0]&&vodTopControls[3]!=null){
+          if(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_UP&&focused==vodSeekHolder[0]&&vodTopControls[3]!=null){
             revealVodSeekBar();vodTopControls[3].requestFocus();return true;
           }
-          if(keyCode==KeyEvent.KEYCODE_DPAD_DOWN&&topFocused&&vodSeekHolder[0]!=null){
+          if(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_DOWN&&topFocused&&vodSeekHolder[0]!=null){
             revealVodSeekBar();vodSeekHolder[0].requestFocus();return true;
           }
-          if(topFocused&&(keyCode==KeyEvent.KEYCODE_DPAD_LEFT||keyCode==KeyEvent.KEYCODE_DPAD_RIGHT)){
+          if(topFocused&&(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_LEFT||event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT)){
             int[] order={3,1,2};int pos=0;for(int i=0;i<order.length;i++)if(order[i]==topIndex)pos=i;
-            int next=pos+(keyCode==KeyEvent.KEYCODE_DPAD_RIGHT?1:-1);
+            int next=pos+(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT?1:-1);
             if(next>=0&&next<order.length&&vodTopControls[order[next]]!=null){revealVodSeekBar();vodTopControls[order[next]].requestFocus();return true;}
           }
         }
