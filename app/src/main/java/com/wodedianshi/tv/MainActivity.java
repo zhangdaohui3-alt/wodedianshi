@@ -193,11 +193,25 @@ public class MainActivity extends Activity {
     }
   }
   private String canonicalChannelName(String name){
-    String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–]","");
+    String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
     String[] chinese={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
-    for(int i=1;i<chinese.length;i++)if(value.contains("中央"+chinese[i]+"套"))return "CCTV-"+i;
+    for(int i=1;i<chinese.length;i++)if(value.matches(".*中央(?:电视台)?"+chinese[i]+"套.*"))return "CCTV-"+i;
+    if(value.contains("中央电视台综合频道"))return "CCTV-1";
+    if(value.contains("中央电视台财经频道"))return "CCTV-2";
+    if(value.contains("中央电视台综艺频道"))return "CCTV-3";
+    if(value.contains("中央电视台中文国际频道"))return "CCTV-4";
+    if(value.contains("中央电视台体育频道"))return "CCTV-5";
+    if(value.contains("中央电视台电影频道"))return "CCTV-6";
+    // Strip quality/live suffixes before matching the same satellite channel across hosts.
+    value=value.replace("超高清","").replace("高清","").replace("超清","").replace("1080P","").replace("720P","").replace("4K高清","").replace("HD","").replace("FHD","").replace("直播","").replace("频道直播","");
+    if(value.endsWith("湖南台"))return "湖南卫视";
+    if(value.endsWith("浙江台"))return "浙江卫视";
+    if(value.endsWith("江苏台"))return "江苏卫视";
+    if(value.endsWith("东方台"))return "东方卫视";
+    if(value.endsWith("北京台"))return "北京卫视";
+    if(value.endsWith("广东台"))return "广东卫视";
     return value;
   }
   private boolean isCctvChannel(Channel c){
@@ -238,11 +252,12 @@ public class MainActivity extends Activity {
     if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
     return canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
   }
-  // For non-CCTV channels, require the same source host before merging entries.
-  // Generic names such as News, Movies or Sports are not globally unique.
+  // Satellite channels have a stable canonical identity across different source hosts.
+  // Generic/local names retain host separation to avoid merging unrelated "News" channels.
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
     if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
+    if(canonical.contains("卫视"))return canonical.toLowerCase(Locale.ROOT)+"|satellite";
     String base=canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
     try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}
     catch(Exception ignored){}
@@ -502,6 +517,11 @@ public class MainActivity extends Activity {
     }
     grid.setNumColumns(columns);return grid;
   }
+  private GridView resetVodGrid(LinearLayout host,int columns){
+    GridView grid=ensureVodGrid(host,columns);
+    for(int i=host.getChildCount()-1;i>=0;i--)if(host.getChildAt(i)!=grid)host.removeViewAt(i);
+    return grid;
+  }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
@@ -529,7 +549,7 @@ public class MainActivity extends Activity {
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
     status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
-    GridView grid=ensureVodGrid(results,3);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
+    GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
@@ -671,7 +691,7 @@ public class MainActivity extends Activity {
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
-    else{status.setText("正在快速检索「"+category+"」…");GridView grid=ensureVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
+    else{status.setText("正在快速检索「"+category+"」…");GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
     // A fresh cache is already a complete result: show it immediately and avoid
     // repeating dozens of metadata requests every time the user reopens this category.
     if(!cached.isEmpty()&&isVodCacheFresh(category)){
