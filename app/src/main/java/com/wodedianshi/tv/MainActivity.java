@@ -5,6 +5,8 @@ import android.os.*;
 import android.content.*;
 import android.net.Uri;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
