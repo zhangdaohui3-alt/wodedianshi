@@ -1047,6 +1047,7 @@ public class MainActivity extends Activity {
         }
         for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
         long metadataDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
+        int lastProgressCount=0;
         while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
           long remaining=metadataDeadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
@@ -1056,6 +1057,17 @@ public class MainActivity extends Activity {
           try{
             VodItem item=future.get();
             if(item!=null&&foundIds.add(item.identifier))found.add(item);
+            if(found.size()>=6&&found.size()-lastProgressCount>=4){
+              lastProgressCount=found.size();
+              ArrayList<VodItem> partialBatch=new ArrayList<>(found);
+              uiHandler.post(()->{
+                if(!isFinishing()&&request==vodRequestId){
+                  writeVodCache(category,partialBatch);
+                  renderVodItems(category,partialBatch,status,results,false);
+                  status.setText("「"+category+"」 · 已找到 "+partialBatch.size()+" 部，继续搜索其他结果…");
+                }
+              });
+            }
           }catch(Exception ignored){}
         }
         for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
