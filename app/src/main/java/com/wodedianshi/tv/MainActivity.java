@@ -1009,32 +1009,48 @@ public class MainActivity extends Activity {
         }
 
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
+        ExecutorCompletionService<org.json.JSONArray> pageCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+        ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
         int submitted=0,completed=0;
-        // Harvest multiple result pages instead of sampling only the first 32 hits.
-        // Bound the candidate queue and wall-clock time to protect Android TV memory/network.
-        outer:
+        // Start independent catalogue pages together. The slowest page no longer blocks
+        // the next query; only four HTTP page requests run at once on low-memory TV boxes.
         for(String query:queries){
           for(int page=1;page<=3;page++){
-            if(Thread.currentThread().isInterrupted())break outer;
-            String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(query,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+page+"&output=json&sort[]=downloads+desc";
-            org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
-            org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
+            if(Thread.currentThread().isInterrupted())break;
+            final String pageQuery=query;final int pageNumber=page;
+            pageTasks.add(pageCompletion.submit(()->{
+              String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(pageQuery,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+pageNumber+"&output=json&sort[]=downloads+desc";
+              org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+              return root.getJSONObject("response").getJSONArray("docs");
+            }));
+          }
+        }
+        long pageDeadline=android.os.SystemClock.elapsedRealtime()+12000L;
+        int pagesRemaining=pageTasks.size();
+        while(pagesRemaining>0&&submitted<150&&!Thread.currentThread().isInterrupted()){
+          long remaining=pageDeadline-android.os.SystemClock.elapsedRealtime();
+          if(remaining<=0)break;
+          Future<org.json.JSONArray> pageFuture=pageCompletion.poll(Math.min(500L,remaining),TimeUnit.MILLISECONDS);
+          if(pageFuture==null)continue;
+          pagesRemaining--;
+          try{
+            org.json.JSONArray docs=pageFuture.get();
             for(int i=0;i<docs.length()&&submitted<150;i++){
-              org.json.JSONObject doc=docs.getJSONObject(i);
+              org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
               final org.json.JSONObject candidate=doc;
               pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate)));
               submitted++;
             }
-            if(docs.length()<100)break;
-          }
+          }catch(Exception ignored){}
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+30000L;
+        for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
+        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
         while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
-          long remaining=deadline-android.os.SystemClock.elapsedRealtime();
+          long remaining=metadataDeadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
-          Future<VodItem> future=completion.poll(Math.min(1000L,remaining),TimeUnit.MILLISECONDS);
+          Future<VodItem> future=completion.poll(Math.min(500L,remaining),TimeUnit.MILLISECONDS);
           if(future==null)continue;
           completed++;
           try{
@@ -1043,12 +1059,27 @@ public class MainActivity extends Activity {
           }catch(Exception ignored){}
         }
         for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
+        // Publish the first usable batch before optional catalogues finish.
+        if(!found.isEmpty()){
+          ArrayList<VodItem> firstBatch=new ArrayList<>(found);
+          uiHandler.post(()->{
+            if(!isFinishing()&&request==vodRequestId){
+              writeVodCache(category,firstBatch);
+              renderVodItems(category,firstBatch,status,results,false);
+              status.setText("「"+category+"」 · 已先显示 "+firstBatch.size()+" 部，其他片库继续检索…");
+            }
+          });
+        }
 
         // Wikimedia Commons is an independent open-media catalogue. Use it as a
         // secondary provider only for categories where its public-domain film set fits.
         if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<48){
-          ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
-          for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          // Run the second provider independently; its latency cannot stall Archive results.
+          Future<ArrayList<VodItem>> commonsFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
+          try{
+            ArrayList<VodItem> commons=commonsFuture.get(6500L,TimeUnit.MILLISECONDS);
+            for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          }catch(Exception ignored){commonsFuture.cancel(true);}
         }
       }catch(Exception e){
         error=e.getMessage();
@@ -1065,8 +1096,11 @@ public class MainActivity extends Activity {
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
         if(commonsQuery!=null&&found.size()<80){
-          ArrayList<VodItem> commonsSearch=fetchCommonsSearchVod(commonsQuery);
-          for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          Future<ArrayList<VodItem>> commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(commonsQuery));
+          try{
+            ArrayList<VodItem> commonsSearch=commonsSearchFuture.get(5500L,TimeUnit.MILLISECONDS);
+            for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          }catch(Exception ignored){commonsSearchFuture.cancel(true);}
         }
 
         String locQuery=null;
@@ -1080,8 +1114,11 @@ public class MainActivity extends Activity {
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(locQuery!=null&&found.size()<80){
-          ArrayList<VodItem> locItems=fetchLocPublicDomainVod(locQuery);
-          for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          Future<ArrayList<VodItem>> locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(locQuery));
+          try{
+            ArrayList<VodItem> locItems=locFuture.get(6500L,TimeUnit.MILLISECONDS);
+            for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          }catch(Exception ignored){locFuture.cancel(true);}
         }
 
       final String err=error;
