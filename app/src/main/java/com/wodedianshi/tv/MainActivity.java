@@ -1950,8 +1950,9 @@ public class MainActivity extends Activity {
     dialog.show();
   }
   private int findNextUnblockedSource(Channel c,int from,int direction){
-    if(c==null||c.backups==null||c.backups.isEmpty())return -1;
-    for(int step=1;step<=c.backups.size();step++){
+    if(c==null||c.backups==null||c.backups.size()<2)return -1;
+    // Never wrap back to the source that just failed or was reported as an ad.
+    for(int step=1;step<c.backups.size();step++){
       int ix=(from+direction*step)%c.backups.size();
       if(ix<0)ix+=c.backups.size();
       if(!isSourceBlocked(c.backups.get(ix)))return ix;
@@ -2108,6 +2109,11 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
     if(c.backups.size()<2){setSourceUpdatePlaybackActive(false);info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
+    if(automaticSwitchCount>=c.backups.size()-1){
+      setSourceUpdatePlaybackActive(false);
+      info.setText(reason+"；本频道未屏蔽的备用源已尝试完，请手动换台或恢复已屏蔽源");
+      return;
+    }
     int next=findNextUnblockedSource(c,c.activeSource,1);
     if(next<0){
       setSourceUpdatePlaybackActive(false);
