@@ -1534,16 +1534,22 @@ public class MainActivity extends Activity {
     Channel c=channels.get(selected);
     boolean saved=favorites.contains(c.key());
     String[] actions={saved?"取消收藏当前频道":"收藏当前频道","选择播放源","打开频道列表"};
-    new AlertDialog.Builder(this).setTitle(c.name+" · 播放操作")
-      .setItems(actions,(dialog,which)->{
-        if(which==0)toggleCurrentLiveFavorite();
-        else if(which==1)showSourcePicker();
-        else if(which==2)showFullscreenChannelMenu();
-      }).setNegativeButton("关闭",null).show();
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 播放操作")
+      .setItems(actions,(d,which)->{
+        d.dismiss();
+        uiHandler.post(()->{
+          if(which==0)toggleCurrentLiveFavorite();
+          else if(which==1)showSourcePicker();
+          else if(which==2)showFullscreenChannelMenu();
+        });
+      }).setNegativeButton("关闭",null).create();
+    fullscreenRemoteDialogOpen=true;
+    dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
+    dialog.show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
-    if(fullScreenPlayback && (fullscreenMenuPopup==null || !fullscreenMenuPopup.isShowing())){
+    if(fullScreenPlayback&&!fullscreenRemoteDialogOpen&&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())){
       int key=event.getKeyCode();
       if(key==KeyEvent.KEYCODE_MENU||key==KeyEvent.KEYCODE_SETTINGS){
         if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0)showLivePlaybackActions();
@@ -1551,13 +1557,15 @@ public class MainActivity extends Activity {
       }
       boolean ok=key==KeyEvent.KEYCODE_DPAD_CENTER
           ||key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_NUMPAD_ENTER;
+      boolean channelUp=key==KeyEvent.KEYCODE_CHANNEL_UP;
+      boolean channelDown=key==KeyEvent.KEYCODE_CHANNEL_DOWN;
       boolean direction=key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_DPAD_DOWN
           ||key==KeyEvent.KEYCODE_DPAD_LEFT||key==KeyEvent.KEYCODE_DPAD_RIGHT;
-      if(ok||direction){
-        if(event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0){
+      if(ok||direction||channelUp||channelDown){
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
           if(ok)showFullscreenChannelMenu();
-          else if(key==KeyEvent.KEYCODE_DPAD_UP)stepChannel(-1);
-          else if(key==KeyEvent.KEYCODE_DPAD_DOWN)stepChannel(1);
+          else if(key==KeyEvent.KEYCODE_DPAD_UP||channelUp)stepChannel(-1);
+          else if(key==KeyEvent.KEYCODE_DPAD_DOWN||channelDown)stepChannel(1);
           else if(key==KeyEvent.KEYCODE_DPAD_LEFT)stepSource(-1);
           else if(key==KeyEvent.KEYCODE_DPAD_RIGHT)stepSource(1);
         }
@@ -1566,10 +1574,35 @@ public class MainActivity extends Activity {
     }
     return super.dispatchKeyEvent(event);
   }
+  private ArrayList<Integer> currentRemoteChannelOrder(){
+    ArrayList<Integer> order=new ArrayList<>();
+    String q=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    synchronized(channels){
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(favoriteMode&&!favorites.contains(c.key()))continue;
+        if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+        order.add(i);
+      }
+      if(activeCategory.equals("央视")){
+        order.sort((x,y)->{
+          Channel cx=channels.get(x),cy=channels.get(y);
+          int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
+          if(ox!=oy)return Integer.compare(ox,oy);
+          return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
+        });
+      }
+    }
+    return order;
+  }
   private void stepChannel(int delta){
-    if(channels.isEmpty()){toast("当前没有可播放频道");return;}
-    int next=selected<0?(delta>0?0:channels.size()-1):(selected+delta+channels.size())%channels.size();
-    play(next);
+    ArrayList<Integer> order=currentRemoteChannelOrder();
+    if(order.isEmpty()){toast("当前栏目没有可切换的频道");return;}
+    int current=order.indexOf(selected);
+    int nextPosition=current<0?(delta>0?0:order.size()-1):Math.floorMod(current+delta,order.size());
+    play(order.get(nextPosition));
     showChannelZapOverlay();
   }
   private void showChannelZapOverlay(){
@@ -1591,9 +1624,14 @@ public class MainActivity extends Activity {
     if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
     String[] options=new String[c.backups.size()];
     for(int i=0;i<options.length;i++)options[i]="播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源");
-    new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源").setItems(options,(dialog,which)->{
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源").setItems(options,(d,which)->{
       c.activeSource=which;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
-    }).setNegativeButton("取消",null).show();
+    }).setNegativeButton("取消",null).create();
+    if(fullScreenPlayback){
+      fullscreenRemoteDialogOpen=true;
+      dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
+    }
+    dialog.show();
   }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
