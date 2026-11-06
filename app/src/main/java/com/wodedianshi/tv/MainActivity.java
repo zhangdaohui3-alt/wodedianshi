@@ -995,7 +995,7 @@ public class MainActivity extends Activity {
           }
         }
         long deadline=android.os.SystemClock.elapsedRealtime()+30000L;
-        while(completed<submitted&&found.size()<60&&!Thread.currentThread().isInterrupted()){
+        while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
           Future<VodItem> future=completion.poll(Math.min(1000L,remaining),TimeUnit.MILLISECONDS);
@@ -1012,7 +1012,7 @@ public class MainActivity extends Activity {
         // secondary provider only for categories where its public-domain film set fits.
         if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<48){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
-          for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+          for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
       }catch(Exception e){
         error=e.getMessage();
@@ -1028,9 +1028,9 @@ public class MainActivity extends Activity {
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
-        if(commonsQuery!=null&&found.size()<60){
+        if(commonsQuery!=null&&found.size()<80){
           ArrayList<VodItem> commonsSearch=fetchCommonsSearchVod(commonsQuery);
-          for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+          for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
 
         String locQuery=null;
@@ -1043,9 +1043,9 @@ public class MainActivity extends Activity {
         else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
-        if(locQuery!=null&&found.size()<60){
+        if(locQuery!=null&&found.size()<80){
           ArrayList<VodItem> locItems=fetchLocPublicDomainVod(locQuery);
-          for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+          for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
 
       final String err=error;
