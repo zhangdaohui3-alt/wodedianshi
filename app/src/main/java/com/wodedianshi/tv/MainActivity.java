@@ -1126,7 +1126,7 @@ public class MainActivity extends Activity {
           if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
           for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
         };
-        postDelayed(hideVodSeekTask[0],5000);
+        postDelayed(hideVodSeekTask[0],2200);
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
@@ -1145,8 +1145,30 @@ public class MainActivity extends Activity {
         if(event.getAction()==KeyEvent.ACTION_DOWN)revealVodSeekBar();
         return super.dispatchKeyEvent(event);
       }
+      private float videoTouchX,videoTouchY;
+      private boolean videoTapCandidate=false;
+      private void hideVodControlsNow(){
+        if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
+        if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+        if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+        for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+      }
+      private void toggleVodControls(){
+        boolean visible=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()==View.VISIBLE;
+        if(visible)hideVodControlsNow();else revealVodSeekBar();
+      }
       @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
-        if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)revealVodSeekBar();
+        int action=event.getActionMasked();
+        if(action==android.view.MotionEvent.ACTION_DOWN){
+          android.graphics.Rect videoRect=new android.graphics.Rect();
+          pv.getHitRect(videoRect);
+          videoTapCandidate=videoRect.contains((int)event.getX(),(int)event.getY());
+          videoTouchX=event.getX();videoTouchY=event.getY();
+        }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
+          float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
+          if(dx<18&&dy<18){toggleVodControls();videoTapCandidate=false;return true;}
+          videoTapCandidate=false;
+        }else if(action==android.view.MotionEvent.ACTION_CANCEL)videoTapCandidate=false;
         return super.dispatchTouchEvent(event);
       }
     };stage.setBackgroundColor(Color.BLACK);stage.setFocusable(true);stage.setFocusableInTouchMode(true);stage.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
@@ -1201,7 +1223,7 @@ public class MainActivity extends Activity {
     controls.addView(vodDurationLabel,new LinearLayout.LayoutParams(dp(52),-2));
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
-    hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);};stage.postDelayed(hideVodSeekTask[0],5000);
+    hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);};stage.postDelayed(hideVodSeekTask[0],2500);
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
       public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(vodPlayer.getDuration()*bar.getProgress()/1000L);}
