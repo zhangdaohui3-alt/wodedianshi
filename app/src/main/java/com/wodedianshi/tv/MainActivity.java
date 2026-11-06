@@ -461,7 +461,7 @@ public class MainActivity extends Activity {
     EditText query=new EditText(this);
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
       String category=categories[categoryIndex];
-      Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
+      Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleVodCategoryButton(b);
       categoryButtons.put(category,b);
       filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
       b.setOnClickListener(v->{activeVodCategory=category;updateVodCategoryHighlight(categoryButtons,category);if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
@@ -605,13 +605,37 @@ public class MainActivity extends Activity {
     for(int i=host.getChildCount()-1;i>=0;i--)if(host.getChildAt(i)!=grid)host.removeViewAt(i);
     return grid;
   }
+  // Category tabs use a persistent blue selected state. Avoid the shared yellow
+  // focus stroke here: Android mouse double-clicks can leave stale focus outlines.
+  private void styleVodCategoryButton(Button button){
+    button.setFocusable(true);
+    button.setFocusableInTouchMode(true);
+    button.setTextColor(Color.WHITE);
+    button.setSelected(false);
+    button.setBackground(makeVodCategoryBg(false,false));
+    button.setOnFocusChangeListener((v,focused)->{
+      button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
+      button.setScaleX(1f);
+      button.setScaleY(1f);
+      button.setElevation(0f);
+    });
+  }
+  private GradientDrawable makeVodCategoryBg(boolean selected,boolean focused){
+    int fill=selected?Color.rgb(26,100,160):(focused?Color.rgb(48,70,96):Color.rgb(35,55,78));
+    GradientDrawable drawable=new GradientDrawable();
+    drawable.setColor(fill);
+    drawable.setCornerRadius(dp(7));
+    drawable.setStroke(dp(selected?2:1),selected?Color.rgb(105,180,235):Color.rgb(76,91,112));
+    return drawable;
+  }
   // Keep the active VOD category visibly selected across mouse and D-pad input.
   private void updateVodCategoryHighlight(java.util.Map<String,Button> buttons,String selected){
     if(buttons==null)return;
     for(java.util.Map.Entry<String,Button> entry:buttons.entrySet()){
       boolean active=selected!=null&&selected.equals(entry.getKey());
-      styleTvButton(entry.getValue(),active?Color.rgb(26,100,160):Color.rgb(35,55,78));
-      entry.getValue().setSelected(active);
+      Button button=entry.getValue();
+      button.setSelected(active);
+      button.setBackground(makeVodCategoryBg(active,button.isFocused()));
     }
   }
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
