@@ -64,12 +64,12 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
-  private final ExecutorService posterWorker = Executors.newFixedThreadPool(3);
+  private final ExecutorService posterWorker = Executors.newFixedThreadPool(2);
   // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
   private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
-  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(4);
+  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(2);
   private volatile Future<?> activeVodCatalogueTask;
-  private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(Math.max(1024,(int)(Runtime.getRuntime().maxMemory()/1024/8))) {
+  private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(Math.max(1024,(int)(Runtime.getRuntime().maxMemory()/1024/16))) {
     protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
   };
   private final Set<String> vodPosterRequests = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
@@ -161,7 +161,7 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private DefaultRenderersFactory createCompatibleRenderersFactory(){
-    boolean fallback=getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1;
+    boolean fallback=getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
     return new DefaultRenderersFactory(this).setEnableDecoderFallback(fallback);
   }
   private void restore(){
@@ -436,7 +436,7 @@ public class MainActivity extends Activity {
     setSourceUpdatePlaybackActive(true);
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(player!=null)player.pause();
+    if(player!=null){player.release();player=null;if(video!=null)video.setPlayer(null);}
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(64),dp(30)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(32)));
@@ -479,10 +479,9 @@ public class MainActivity extends Activity {
       Future<?> pending=activeVodCatalogueTask;
       if(pending!=null)pending.cancel(true);
       activeVodCatalogueTask=null;
-      if(resumeLiveAfterVod&&player!=null){
-        player.play();
-        if(player.getPlaybackState()==Player.STATE_BUFFERING)scheduleBufferingFallback();
-        else if(player.getPlaybackState()==Player.STATE_READY){watchdogLastPosition=player.getCurrentPosition();watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();schedulePlaybackWatchdog();}
+      if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()){
+        // Recreate the live player only after VOD releases its decoder resources.
+        startCurrentSource();
       }
       resumeLiveAfterVod=false;
       setSourceUpdatePlaybackActive(player!=null&&player.isPlaying());
@@ -780,7 +779,7 @@ public class MainActivity extends Activity {
             String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(query,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+page+"&output=json&sort[]=downloads+desc";
             org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
             org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-            for(int i=0;i<docs.length()&&submitted<160;i++){
+            for(int i=0;i<docs.length()&&submitted<80;i++){
               org.json.JSONObject doc=docs.getJSONObject(i);
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
@@ -791,7 +790,7 @@ public class MainActivity extends Activity {
             if(docs.length()<100)break;
           }
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+35000L;
+        long deadline=android.os.SystemClock.elapsedRealtime()+25000L;
         while(completed<submitted&&found.size()<48&&!Thread.currentThread().isInterrupted()){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
@@ -834,10 +833,12 @@ public class MainActivity extends Activity {
   }
   private String httpGetFast(String address)throws Exception{
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-    c.setConnectTimeout(3500);c.setReadTimeout(5000);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
+    c.setConnectTimeout(2500);c.setReadTimeout(3500);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
     c.setRequestProperty("Accept","application/json,*/*");
     try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-      byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");
+      byte[] buf=new byte[8192];int n,total=0;final int maxBytes=2*1024*1024;
+      while((n=in.read(buf))!=-1){total+=n;if(total>maxBytes)throw new IOException("点播目录响应超过2MB，已停止读取以保护设备内存");out.write(buf,0,n);}
+      return out.toString("UTF-8");
     }finally{c.disconnect();}
   }
   private void loadVodPoster(ImageView target,String identifier){
@@ -1877,8 +1878,8 @@ public class MainActivity extends Activity {
           .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(20000);
       DefaultRenderersFactory renderersFactory=createCompatibleRenderersFactory();
       DefaultLoadControl loadControl=new DefaultLoadControl.Builder()
-          .setBufferDurationsMs(25000,55000,1500,5000)
-          .setPrioritizeTimeOverSizeThresholds(true)
+          .setBufferDurationsMs(12000,30000,1500,3000)
+          .setPrioritizeTimeOverSizeThresholds(false)
           .build();
       player=new ExoPlayer.Builder(this,renderersFactory)
           .setLoadControl(loadControl)
@@ -2063,6 +2064,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(player!=null){player.release();player=null;}}
-  protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
+  protected void onStop(){resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(vodPlayer!=null){vodPlayer.release();vodPlayer=null;}if(player!=null){player.release();player=null;}if(video!=null)video.setPlayer(null);}
+  protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(vodPlayer!=null){vodPlayer.release();vodPlayer=null;}if(player!=null){player.release();player=null;}super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
 }
