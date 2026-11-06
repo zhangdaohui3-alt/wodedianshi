@@ -61,6 +61,8 @@ public class MainActivity extends Activity {
   private Runnable networkSpeedUpdater;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
+  private Button hoveredLiveChannelButton;
+  private final java.util.WeakHashMap<Button,Integer> liveChannelBaseColors=new java.util.WeakHashMap<>();
   private LinearLayout list;
   private TextView info;
   private EditText search;
@@ -150,6 +152,37 @@ public class MainActivity extends Activity {
     return 0;
   }
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
+  private void styleLiveChannelButton(Button b,int normalColor){
+    liveChannelBaseColors.put(b,normalColor);
+    b.setFocusable(true);b.setFocusableInTouchMode(true);
+    b.setTextColor(Color.WHITE);
+    b.setBackground(makeButtonBg(normalColor,false));
+    b.setOnFocusChangeListener((v,focused)->{
+      if(hoveredLiveChannelButton!=b)b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
+      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
+      b.setElevation(focused?dp(8):0);
+    });
+    b.setOnHoverListener((v,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        if(hoveredLiveChannelButton!=null&&hoveredLiveChannelButton!=b){
+          Button old=hoveredLiveChannelButton;
+          int oldBase=liveChannelBaseColors.containsKey(old)?liveChannelBaseColors.get(old):Color.rgb(35,45,62);
+          old.setBackground(makeButtonBg(old.hasFocus()?Color.rgb(38,82,125):oldBase,old.hasFocus()));
+        }
+        hoveredLiveChannelButton=b;
+        GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));hover.setCornerRadius(dp(7));
+        hover.setStroke(dp(2),Color.rgb(105,185,245));b.setBackground(hover);
+        return true;
+      }
+      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        if(hoveredLiveChannelButton==b)hoveredLiveChannelButton=null;
+        b.setBackground(makeButtonBg(b.hasFocus()?Color.rgb(38,82,125):normalColor,b.hasFocus()));
+        return true;
+      }
+      return false;
+    });
+  }
   private void styleTvButton(Button b,int normalColor){
     b.setFocusable(true); b.setFocusableInTouchMode(true);
     b.setTextColor(Color.WHITE);
@@ -1752,7 +1785,7 @@ public class MainActivity extends Activity {
         String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
         String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
         b.setText((favorites.contains(c.key())?"★ ":"")+title+group);
-        b.setTextSize(16);b.setMinHeight(dp(52));styleTvButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
+        b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
         b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
       }
