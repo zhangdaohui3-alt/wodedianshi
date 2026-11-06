@@ -445,10 +445,10 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     if(player!=null){player.pause();player.stop();player.clearMediaItems();if(video!=null)video.setPlayer(null);player.release();player=null;}
-    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
-    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(44)));
+    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
@@ -465,16 +465,15 @@ public class MainActivity extends Activity {
         searchTab.setOnClickListener(v->{searchRow.setVisibility(searchRow.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);if(searchRow.getVisibility()==View.VISIBLE){query.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(query,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);}});
       }
     }
-    panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(42)));
+    panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
     query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));searchRow.setVisibility(View.GONE);
-    TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(26)));
+    TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
     // GridView owns vertical touch scrolling and D-pad focus navigation, and
     // recycles off-screen cards instead of laying out every poster in a ScrollView.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
-    GridView vodGrid=new GridView(this);vodGrid.setNumColumns(3);vodGrid.setVerticalSpacing(dp(10));vodGrid.setHorizontalSpacing(dp(8));vodGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);vodGrid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));vodGrid.setFocusable(true);vodGrid.setFocusableInTouchMode(true);vodGrid.setVerticalScrollBarEnabled(true);vodGrid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
-    results.addView(vodGrid,new LinearLayout.LayoutParams(-1,0,1));
+    GridView vodGrid=ensureVodGrid(results,3);
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
@@ -548,23 +547,32 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).putLong(vodCacheTimeKey(category),System.currentTimeMillis()).apply();
     }catch(Exception ignored){}
   }
+  // Mouse-wheel events are often dispatched to the card/image under the pointer,
+  // not to the GridView. Forward them so users can scroll without moving to the edge.
+  private boolean handleVodGridScroll(View source,android.view.MotionEvent event){
+    if(event==null||event.getAction()!=android.view.MotionEvent.ACTION_SCROLL)return false;
+    boolean pointer=event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)
+        ||event.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+        ||event.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD);
+    if(!pointer)return false;
+    float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
+    if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
+    if(wheel==0f)return false;
+    ViewParent p=source;
+    while(p!=null&&!(p instanceof GridView))p=p.getParent();
+    if(!(p instanceof GridView))return false;
+    GridView grid=(GridView)p;
+    int step=Math.max(dp(150),(grid.getHeight()*2)/3);
+    grid.smoothScrollBy((int)(-Math.signum(wheel)*step),160);
+    return true;
+  }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
     for(int i=0;i<host.getChildCount();i++)if(host.getChildAt(i) instanceof GridView){grid=(GridView)host.getChildAt(i);break;}
     if(grid==null){
       grid=new GridView(this){
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
-          if(event.getAction()==android.view.MotionEvent.ACTION_SCROLL &&
-             (event.isFromSource(android.view.InputDevice.SOURCE_MOUSE) ||
-              event.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))){
-            float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
-            if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
-            if(wheel!=0f){
-              int step=Math.max(dp(180),(getHeight()*2)/3);
-              smoothScrollBy((int)(-Math.signum(wheel)*step),180);
-              return true;
-            }
-          }
+          if(handleVodGridScroll(this,event))return true;
           return super.onGenericMotionEvent(event);
         }
       };
@@ -594,7 +602,7 @@ public class MainActivity extends Activity {
       if(convertView instanceof LinearLayout&&convertView.getTag() instanceof VodCardHolder){card=(LinearLayout)convertView;holder=(VodCardHolder)card.getTag();}
       else{
         card=new LinearLayout(MainActivity.this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
-        ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(84)));
+        ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);poster.setAdjustViewBounds(false);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));
         TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
         TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
@@ -608,6 +616,10 @@ public class MainActivity extends Activity {
         });
       }
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
+      card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
+      holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
+      holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
+      holder.meta.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
       loadVodPoster(holder.poster,item.identifier,item.title);
       card.setOnHoverListener((v,event)->{
@@ -1187,7 +1199,7 @@ public class MainActivity extends Activity {
     try{
       String title=identifier.substring(identifier.indexOf(':')+1);
       String api="https://commons.wikimedia.org/w/api.php?action=query&titles="+URLEncoder.encode(title,"UTF-8")+
-        "&prop=pageimages&piprop=thumbnail&pithumbsize=480&format=json";
+        "&prop=pageimages&piprop=thumbnail&pithumbsize=800&format=json";
       c=(HttpURLConnection)new URL(api).openConnection();c.setConnectTimeout(2200);c.setReadTimeout(2800);
       c.setRequestProperty("User-Agent","MyTV/1.81 (Android TV)");
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -1219,7 +1231,7 @@ public class MainActivity extends Activity {
           connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
           connection.setRequestProperty("User-Agent","MyTV/1.81 Android TV");
           try(InputStream in=connection.getInputStream()){
-            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;bitmap=BitmapFactory.decodeStream(in,null,options);
+            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;options.inPreferredConfig=Bitmap.Config.RGB_565;bitmap=BitmapFactory.decodeStream(in,null,options);
           }
         }
       }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();vodPosterRequests.remove(identifier);}
