@@ -402,7 +402,7 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",1);
+    int current=prefs.getInt("decoder_mode",0);
     String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
@@ -1762,7 +1762,7 @@ public class MainActivity extends Activity {
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
         watchdogLastPosition=position;
         watchdogLastAdvanceAt=now;
-      }else if(now-watchdogLastAdvanceAt>=25000L){
+      }else if(now-watchdogLastAdvanceAt>=45000L){
         recoverFromSilentFreeze("播放时间轴连续 25 秒没有推进");
         return;
       }
@@ -1804,11 +1804,11 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",20);
     if(configured<=0)return;
     // Initial live startup can legitimately take longer than a mid-stream rebuffer.
     // Do not abandon a healthy but slow-to-start source after only 3-5 seconds.
-    int seconds=sourceReadyRecorded?configured:25;
+    int seconds=sourceReadyRecorded?configured:30;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
@@ -1885,23 +1885,8 @@ public class MainActivity extends Activity {
           .setLoadControl(loadControl)
           .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory)).build();
       video.setPlayer(player);
-      VideoFrameMetadataListener frameListener=(presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
-          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
-          hasReceivedVideoFrame=true;
-        };
-      // Use reflection to remain compatible with the Media3 API surface shipped by
-      // the app while still enabling per-frame monitoring when the runtime exposes it.
-      try{
-        java.lang.reflect.Method setFrameListener=player.getClass().getMethod("setVideoFrameMetadataListener",VideoFrameMetadataListener.class);
-        setFrameListener.invoke(player,frameListener);
-        videoFrameMonitoringActive=true;
-      }catch(Exception unavailable){
-        try{
-          java.lang.reflect.Method addFrameListener=player.getClass().getMethod("addVideoFrameMetadataListener",VideoFrameMetadataListener.class);
-          addFrameListener.invoke(player,frameListener);
-          videoFrameMonitoringActive=true;
-        }catch(Exception ignored){}
-      }
+      // Avoid per-frame reflection callbacks on older TV firmware; the playback
+      // watchdog below monitors the player timeline without touching codec callbacks.
       player.addAnalyticsListener(new AnalyticsListener(){
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           audioPositionAdvancing=true;
@@ -1959,7 +1944,7 @@ public class MainActivity extends Activity {
               recordSourceMetric(currentSourceUrl(),"ready",android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
             }
             cancelBufferingFallback();
-            scheduleAudioTrackCheck();
+            // Avoid automatic source switching based on a short audio-startup window on older TV SoCs.
             // Do not reset automaticSwitchCount here: a source that starts and then
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
