@@ -602,9 +602,9 @@ public class MainActivity extends Activity {
       if(convertView instanceof LinearLayout&&convertView.getTag() instanceof VodCardHolder){card=(LinearLayout)convertView;holder=(VodCardHolder)card.getTag();}
       else{
         card=new LinearLayout(MainActivity.this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
-        ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);poster.setAdjustViewBounds(false);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));
-        TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
-        TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
+        ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);poster.setAdjustViewBounds(false);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(78)));
+        TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(12);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
+        TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(10);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
         card.setOnFocusChangeListener((v,focused)->{
           card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
@@ -638,7 +638,7 @@ public class MainActivity extends Activity {
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
     status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
-    GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
+    GridView grid=resetVodGrid(results,4);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
@@ -960,7 +960,7 @@ public class MainActivity extends Activity {
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
-    else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
+    else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,4);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
     // Show fresh cache immediately. A manual refresh is still possible by reopening
     // the category after its cache expires; stale cache never blocks a new harvest.
     if(!forceRefresh&&!cached.isEmpty()&&isVodCacheFresh(category)){
@@ -1037,9 +1037,9 @@ public class MainActivity extends Activity {
             }));
           }
         }
-        long pageDeadline=android.os.SystemClock.elapsedRealtime()+12000L;
+        long pageDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
         int pagesRemaining=pageTasks.size();
-        while(pagesRemaining>0&&submitted<150&&!Thread.currentThread().isInterrupted()){
+        while(pagesRemaining>0&&submitted<180&&!Thread.currentThread().isInterrupted()){
           long remaining=pageDeadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
           Future<org.json.JSONArray> pageFuture=pageCompletion.poll(Math.min(500L,remaining),TimeUnit.MILLISECONDS);
@@ -1047,7 +1047,7 @@ public class MainActivity extends Activity {
           pagesRemaining--;
           try{
             org.json.JSONArray docs=pageFuture.get();
-            for(int i=0;i<docs.length()&&submitted<150;i++){
+            for(int i=0;i<docs.length()&&submitted<180;i++){
               org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
@@ -1058,7 +1058,7 @@ public class MainActivity extends Activity {
           }catch(Exception ignored){}
         }
         for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
-        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
+        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+16000L;
         int lastProgressCount=0;
         while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
           long remaining=metadataDeadline-android.os.SystemClock.elapsedRealtime();
@@ -1095,23 +1095,11 @@ public class MainActivity extends Activity {
           });
         }
 
-        // Wikimedia Commons is an independent open-media catalogue. Use it as a
-        // secondary provider only for categories where its public-domain film set fits.
-        if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<48){
-          // Run the second provider independently; its latency cannot stall Archive results.
-          Future<ArrayList<VodItem>> commonsFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
-          try{
-            ArrayList<VodItem> commons=commonsFuture.get(6500L,TimeUnit.MILLISECONDS);
-            for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
-          }catch(Exception ignored){commonsFuture.cancel(true);}
-        }
-      }catch(Exception e){
-        error=e.getMessage();
-        for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
-        if(e instanceof InterruptedException)Thread.currentThread().interrupt();
-      }
-      
-        
+        // Start independent open catalogues together after the first Archive batch.
+        // Waiting is bounded by the slowest provider rather than the sum of their delays.
+        Future<ArrayList<VodItem>> commonsPublicFuture=null,commonsSearchFuture=null,locFuture=null;
+        boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","多源精选","中国电影","中国经典影像","中国老电影","中国历史影像","华语经典","中国动画","中文动画","中国纪录片","中文纪录片").contains(category)&&found.size()<48;
+        if(useCommonsPublic)commonsPublicFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
         String commonsQuery=null;
         if("中国电影".equals(category)||"中国老电影".equals(category)||"中国经典影像".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
         else if("中国历史影像".equals(category))commonsQuery="Chinese historical documentary";
@@ -1119,15 +1107,7 @@ public class MainActivity extends Activity {
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
-        if(commonsQuery!=null&&found.size()<80){
-          final String commonsSearchTerm=commonsQuery;
-          Future<ArrayList<VodItem>> commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(commonsSearchTerm));
-          try{
-            ArrayList<VodItem> commonsSearch=commonsSearchFuture.get(5500L,TimeUnit.MILLISECONDS);
-            for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
-          }catch(Exception ignored){commonsSearchFuture.cancel(true);}
-        }
-
+        if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
         else if("中国经典影像".equals(category)||"中国历史影像".equals(category))locQuery="China historical film";
@@ -1138,14 +1118,10 @@ public class MainActivity extends Activity {
         else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
-        if(locQuery!=null&&found.size()<80){
-          final String locSearchTerm=locQuery;
-          Future<ArrayList<VodItem>> locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(locSearchTerm));
-          try{
-            ArrayList<VodItem> locItems=locFuture.get(6500L,TimeUnit.MILLISECONDS);
-            for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
-          }catch(Exception ignored){locFuture.cancel(true);}
-        }
+        if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
+        if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
+        if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
+        if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){locFuture.cancel(true);}}
 
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
@@ -1599,11 +1575,44 @@ public class MainActivity extends Activity {
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
+  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors){
+    ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(vodSourceWorker);
+    ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
+    for(String address:feeds){
+      tasks.add(completion.submit(()->{
+        HttpURLConnection c=null;
+        try{
+          c=(HttpURLConnection)new URL(address).openConnection();
+          c.setConnectTimeout(8000);c.setReadTimeout(timeoutMs);c.setInstanceFollowRedirects(true);
+          c.setRequestProperty("User-Agent","MyTV/1.84 Android TV");c.setRequestProperty("Accept","*/*");
+          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+          try(InputStream in=c.getInputStream()){return new PlaylistFetchResult(address,read(in),null);}
+        }catch(Exception e){return new PlaylistFetchResult(address,null,e.getMessage());}
+        finally{if(c!=null)c.disconnect();}
+      }));
+    }
+    int added=0,remaining=tasks.size();long deadline=android.os.SystemClock.elapsedRealtime()+Math.max(20000L,timeoutMs+12000L);
+    while(remaining>0&&!Thread.currentThread().isInterrupted()){
+      long wait=deadline-android.os.SystemClock.elapsedRealtime();if(wait<=0)break;
+      try{
+        Future<PlaylistFetchResult> done=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);if(done==null)continue;
+        remaining--;PlaylistFetchResult result=done.get();
+        if(result.error!=null){if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");continue;}
+        if(result.data!=null){synchronized(channels){added+=parse(result.data);}}
+      }catch(Exception e){if(errors!=null)errors.append(e.getMessage()).append("; ");}
+    }
+    for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
+    return added;
+  }
+  private static class PlaylistFetchResult{
+    final String address,data,error;
+    PlaylistFetchResult(String a,String d,String e){address=a;data=d;error=e;}
+  }
   private void loadChinaChannels(){
     if(chinaLoading){info.setText("国内频道列表正在载入，请稍候…");return;}
     chinaLoading=true;info.setText("正在从多个公开频道目录补充央视、卫视和各省地方台…");
     worker.execute(()->{
-      int added=0;String[] feeds={
+      String[] feeds={
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
@@ -1618,13 +1627,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
-      for(String address:feeds){HttpURLConnection c=null;try{
-        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-        String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        synchronized(channels){added+=parse(data);}
-      }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
+      int added=fetchAndMergePlaylists(feeds,22000,errors);
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();chinaLoading=false;info.setText("国内频道补充完成：新增 "+total+" 个条目，来源包含央视、卫视、地方台及多源检测列表。频道可用性受地区、版权和网络影响。"+(err.isEmpty()?"":"部分来源暂不可用："+err));});
     });
