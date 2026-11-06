@@ -43,6 +43,7 @@ public class SourceUpdateWorker extends Worker {
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
+      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
         JSONArray src=c.optJSONArray("sources");
@@ -98,10 +99,11 @@ public class SourceUpdateWorker extends Worker {
               int worstIndex=-1,worstScore=Integer.MAX_VALUE;
               for(int i=0;i<sources.length();i++){
                 String old=sources.optString(i);
-                int oldScore=measuredScores.optInt(scoreKey(old),sourceQualityScore(old)/100);
+                int oldScore=(int)Math.round(combinedScore(old,measuredScores,observedQoe));
                 if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
               }
-              if(worstIndex>=0&&measured.score>worstScore){sources.put(worstIndex,e.url);added++;}
+              int candidateScore=(int)Math.round(combinedScore(e.url,measuredScores,observedQoe));
+              if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);added++;}
             }
           }
         }
@@ -117,7 +119,7 @@ public class SourceUpdateWorker extends Worker {
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
         ArrayList<String> ordered=new ArrayList<>();
         for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
-        ordered.sort((a,b)->Integer.compare(measuredScores.optInt(scoreKey(b),sourceQualityScore(b)/100),measuredScores.optInt(scoreKey(a),sourceQualityScore(a)/100)));
+        ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
         JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
         if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
@@ -128,7 +130,7 @@ public class SourceUpdateWorker extends Worker {
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(scanStart+scanned)%candidates.size())
           .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；目录失败 "+feedsFailed+" 个。评分包含清单、分片可达性、清晰度和响应速度，但仍需播放器实际验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
@@ -174,6 +176,17 @@ public class SourceUpdateWorker extends Worker {
     long bitrate;
   }
   private String scoreKey(String url){return Integer.toHexString(url.hashCode())+":"+url.length();}
+  private double combinedScore(String url,JSONObject probes,JSONObject qoe){
+    double score=probes.optDouble(scoreKey(url),0.0)+sourceQualityScore(url)*0.01;
+    JSONObject m=qoe.optJSONObject(scoreKey(url));
+    if(m!=null&&m.optInt("attempts",0)>=2){
+      int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
+      score+=(double)ready/attempts*1000.0;
+      score-=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      score-=fail*90.0+buffers*55.0;
+    }
+    return score;
+  }
   // GET rather than HEAD: many public IPTV hosts reject HEAD. HLS is accepted only
   // after its media playlist and a real media segment can both be reached.
   private ProbeResult probe(String address){
@@ -212,30 +225,35 @@ public class SourceUpdateWorker extends Worker {
           if(!variantText.contains("#EXTM3U"))return result;
           manifest=variantText;
         }
-        String segment="";
+        ArrayList<String> segments=new ArrayList<>();
         String[] mediaLines=manifest.replace("\r","").split("\n");
-        for(int i=0;i<mediaLines.length;i++){
+        for(int i=0;i<mediaLines.length&&segments.size()<2;i++){
           if(mediaLines[i].trim().startsWith("#EXTINF:")){
             for(int j=i+1;j<mediaLines.length;j++){
               String candidate=mediaLines[j].trim();
-              if(!candidate.isEmpty()&&!candidate.startsWith("#")){segment=candidate;break;}
+              if(!candidate.isEmpty()&&!candidate.startsWith("#")){segments.add(candidate);break;}
             }
-            if(!segment.isEmpty())break;
           }
         }
-        if(segment.isEmpty())return result;
-        String segmentUrl=new URL(new URL(mediaUrl),segment).toString();
+        if(segments.isEmpty())return result;
+        String segmentUrl=new URL(new URL(mediaUrl),segments.get(0)).toString();
         long segmentStart=android.os.SystemClock.elapsedRealtime();
         byte[] sample=fetchSample(segmentUrl,32768);
         if(sample==null||sample.length<188)return result;
         long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
+        boolean secondSegmentOk=true;
+        if(segments.size()>1){
+          String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
+          byte[] second=fetchSample(secondUrl,8192);
+          secondSegmentOk=second!=null&&second.length>=188;
+        }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
         int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
         int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
         int speed=(int)Math.min(300L,(sample.length*1000L/segmentMs)/2048L);
         int latencyPenalty=(int)Math.min(250L,result.latencyMs/20L);
-        result.score=500+resolution+bandwidth+speed-latencyPenalty+300;
+        result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
         return result;
       }
       long before=android.os.SystemClock.elapsedRealtime();
