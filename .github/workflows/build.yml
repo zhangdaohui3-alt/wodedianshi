@@ -55,3 +55,5 @@ jobs:
         with:
           name: My-TV-APK
           path: app/build/outputs/apk/debug/*.apk
+
+# Build the latest committed source for the current release.
