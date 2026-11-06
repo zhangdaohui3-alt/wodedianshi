@@ -89,6 +89,7 @@ public class MainActivity extends Activity {
   }
   public void onCreate(Bundle b) {
     super.onCreate(b);
+    setSourceUpdatePlaybackActive(false); // Clear stale state if Android previously killed the process.
     restore();
     loadBundledHdBackups();
     scheduleAutomaticSourceUpdates();
