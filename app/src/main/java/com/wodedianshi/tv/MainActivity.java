@@ -454,6 +454,7 @@ public class MainActivity extends Activity {
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
+    java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
     String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
@@ -461,8 +462,9 @@ public class MainActivity extends Activity {
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
       String category=categories[categoryIndex];
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
+      categoryButtons.put(category,b);
       filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
-      b.setOnClickListener(v->{activeVodCategory=category;if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
+      b.setOnClickListener(v->{activeVodCategory=category;updateVodCategoryHighlight(categoryButtons,category);if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
         filters.addView(searchTab,new LinearLayout.LayoutParams(dp(84),dp(40)));
@@ -470,6 +472,7 @@ public class MainActivity extends Activity {
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
+    updateVodCategoryHighlight(categoryButtons,"多源精选");
     query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));searchRow.setVisibility(View.GONE);
@@ -485,7 +488,7 @@ public class MainActivity extends Activity {
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
     refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodCategory,panel,status,results,true));
-    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty()){activeVodCategory=q;loadVodCatalogue(q,panel,status,results,true);}});
+    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty()){activeVodCategory=q;updateVodCategoryHighlight(categoryButtons,null);loadVodCatalogue(q,panel,status,results,true);}});
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
       ++vodRequestId;
@@ -601,6 +604,15 @@ public class MainActivity extends Activity {
     GridView grid=ensureVodGrid(host,columns);
     for(int i=host.getChildCount()-1;i>=0;i--)if(host.getChildAt(i)!=grid)host.removeViewAt(i);
     return grid;
+  }
+  // Keep the active VOD category visibly selected across mouse and D-pad input.
+  private void updateVodCategoryHighlight(java.util.Map<String,Button> buttons,String selected){
+    if(buttons==null)return;
+    for(java.util.Map.Entry<String,Button> entry:buttons.entrySet()){
+      boolean active=selected!=null&&selected.equals(entry.getKey());
+      styleTvButton(entry.getValue(),active?Color.rgb(26,100,160):Color.rgb(35,55,78));
+      entry.getValue().setSelected(active);
+    }
   }
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
   // card surface prevents GridView's default hover selection from moving focus
