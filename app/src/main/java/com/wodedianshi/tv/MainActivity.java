@@ -727,23 +727,24 @@ public class MainActivity extends Activity {
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
-    else{status.setText("正在快速检索「"+category+"」…");GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
-    // A fresh cache is already a complete result: show it immediately and avoid
-    // repeating dozens of metadata requests every time the user reopens this category.
+    else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
+    // Show fresh cache immediately. A manual refresh is still possible by reopening
+    // the category after its cache expires; stale cache never blocks a new harvest.
     if(!cached.isEmpty()&&isVodCacheFresh(category)){
-      status.setText("「"+category+"」 · "+cached.size()+" 部（高速缓存，稍后可重新检索）");
+      status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
       return;
     }
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
+      HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>();
       try{
         String q="mediatype:movies";
         if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
-        else if("中国电影".equals(category)||"中国经典影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR subject:Chinese OR subject:China)";
-        else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR subject:Chinese)";
-        else if("中国动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:animation OR subject:cartoons OR title:动画)";
-        else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文) AND (subject:documentary OR title:纪录片)";
+        else if("中国电影".equals(category)||"中国经典影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
+        else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:Mandarin OR title:Chinese OR subject:Chinese)";
+        else if("中国动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:animation OR subject:cartoons OR title:动画)";
+        else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:documentary OR title:纪录片)";
         else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
         else if("纪录片".equals(category)||"科学纪录片".equals(category))q+=" AND subject:documentary";
         else if("NASA影像".equals(category))q="mediatype:movies AND (collection:nasa OR creator:NASA)";
@@ -755,33 +756,66 @@ public class MainActivity extends Activity {
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
         else if(!category.equals("世界公版电影")&&!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=32&page=1&output=json&sort[]=downloads+desc";
-        org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
-        org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-        // Metadata lookups run on their own bounded pool (10 parallel requests).
-        // The UI/catalogue workers never wait on tasks queued behind themselves.
+
+        ArrayList<String> queries=new ArrayList<>();queries.add(q);
+        // China-language searches are notoriously inconsistent in archive metadata.
+        // A second, broader query catches English-indexed Chinese/Mandarin records.
+        if("中国电影".equals(category)||"中国经典影像".equals(category)||"华语经典".equals(category)){
+          String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
+          if(!queries.contains(broad))queries.add(broad);
+        }
+        if("精选电影".equals(category)){
+          String broad="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain)";
+          queries.add(broad);
+        }
+
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
         int submitted=0,completed=0;
-        for(int i=0;i<docs.length()&&submitted<32;i++){
-          final org.json.JSONObject doc=docs.getJSONObject(i);
-          pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(doc)));submitted++;
+        // Harvest multiple result pages instead of sampling only the first 32 hits.
+        // Bound the candidate queue and wall-clock time to protect Android TV memory/network.
+        outer:
+        for(String query:queries){
+          for(int page=1;page<=2;page++){
+            if(Thread.currentThread().isInterrupted())break outer;
+            String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(query,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+page+"&output=json&sort[]=downloads+desc";
+            org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+            org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
+            for(int i=0;i<docs.length()&&submitted<160;i++){
+              org.json.JSONObject doc=docs.getJSONObject(i);
+              String id=doc.optString("identifier","");
+              if(id.isEmpty()||!submittedIds.add(id))continue;
+              final org.json.JSONObject candidate=doc;
+              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate)));
+              submitted++;
+            }
+            if(docs.length()<100)break;
+          }
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+12000L;
-        while(completed<submitted&&found.size()<20&&!Thread.currentThread().isInterrupted()){
+        long deadline=android.os.SystemClock.elapsedRealtime()+35000L;
+        while(completed<submitted&&found.size()<48&&!Thread.currentThread().isInterrupted()){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
-          Future<VodItem> future=completion.poll(Math.min(1200L,remaining),TimeUnit.MILLISECONDS);
+          Future<VodItem> future=completion.poll(Math.min(1000L,remaining),TimeUnit.MILLISECONDS);
           if(future==null)continue;
           completed++;
-          try{VodItem item=future.get();if(item!=null)found.add(item);}catch(Exception ignored){}
+          try{
+            VodItem item=future.get();
+            if(item!=null&&foundIds.add(item.identifier))found.add(item);
+          }catch(Exception ignored){}
         }
         for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
-        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<8){
+
+        // Wikimedia Commons is an independent open-media catalogue. Use it as a
+        // secondary provider only for categories where its public-domain film set fits.
+        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<36){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
-          HashSet<String> seen=new HashSet<>();for(VodItem item:found)seen.add(item.identifier);
-          for(VodItem item:commons)if(seen.add(item.identifier)&&found.size()<48)found.add(item);
+          for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
         }
-      }catch(Exception e){error=e.getMessage();for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);if(e instanceof InterruptedException)Thread.currentThread().interrupt();}
+      }catch(Exception e){
+        error=e.getMessage();
+        for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
+        if(e instanceof InterruptedException)Thread.currentThread().interrupt();
+      }
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
@@ -789,10 +823,11 @@ public class MainActivity extends Activity {
         if(!result.isEmpty()){
           writeVodCache(category,result);
           renderVodItems(category,result,status,results,false);
+          status.setText("「"+category+"」 · 找到 "+result.size()+" 部授权视频（多页聚合；文件链接待实际播放验证）");
         }else if(cached.isEmpty()){
-          status.setText(err==null?"暂时没有检索到符合授权条件且有 MP4 文件的影片。可稍后重试。":"点播目录暂时无法连接："+err);
+          status.setText(err==null?"暂时没有检索到符合授权条件且包含 MP4 文件的影片。可稍后重试。":"点播目录暂时无法连接："+err);
         }else{
-          status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次网络更新暂不可用。");
+          status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
       });
     });
