@@ -1722,13 +1722,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
       };
-      for(String address:feeds){HttpURLConnection c=null;try{
-        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-        String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        synchronized(channels){added+=parse(data);}
-      }catch(Exception e){errors.append(address.substring(address.lastIndexOf('/')+1)).append(": ").append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
+      added=fetchAndMergePlaylists(feeds,22000,errors);
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();globalLoading=false;info.setText("全球频道补充完成：新增 "+total+" 个频道条目（已去重并合并备用地址）。地区限制、版权和网络状况可能影响播放。"+(err.isEmpty()?"":"部分目录暂不可用："+err));});
     });
@@ -1743,13 +1737,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      for(String address:feeds){HttpURLConnection c=null;try{
-        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-        String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        synchronized(channels){added+=parse(data);}
-      }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
+      added=fetchAndMergePlaylists(feeds,22000,errors);
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
