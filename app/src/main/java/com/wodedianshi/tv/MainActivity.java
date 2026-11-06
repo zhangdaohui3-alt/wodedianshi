@@ -1160,9 +1160,8 @@ public class MainActivity extends Activity {
       @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
         int action=event.getActionMasked();
         if(action==android.view.MotionEvent.ACTION_DOWN){
-          android.graphics.Rect videoRect=new android.graphics.Rect();
-          pv.getHitRect(videoRect);
-          videoTapCandidate=videoRect.contains((int)event.getX(),(int)event.getY());
+          float y=event.getY();
+          videoTapCandidate=y>dp(56)&&y<getHeight()-dp(90);
           videoTouchX=event.getX();videoTouchY=event.getY();
         }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
           float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
