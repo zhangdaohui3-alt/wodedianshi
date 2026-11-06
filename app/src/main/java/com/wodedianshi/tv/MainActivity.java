@@ -415,7 +415,7 @@ public class MainActivity extends Activity {
     panel.addView(searchRow);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(13);status.setPadding(dp(4),dp(8),dp(4),dp(8));panel.addView(status);
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);
-    ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);scroll.addView(results);panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setSmoothScrollingEnabled(true);scroll.setVerticalScrollBarEnabled(true);scroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);scroll.setNestedScrollingEnabled(false);scroll.setFocusable(false);scroll.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);results.setFocusable(false);scroll.addView(results,new ScrollView.LayoutParams(-1,-2));panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 点播").setView(panel).setNegativeButton("关闭",null).create();
     searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
     loadVodCatalogue("精选电影",panel,status,results);
