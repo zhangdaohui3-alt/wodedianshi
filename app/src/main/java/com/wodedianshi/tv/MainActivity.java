@@ -13,6 +13,7 @@ import android.widget.*;
 import androidx.media3.common.*;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
@@ -442,12 +443,21 @@ public class MainActivity extends Activity {
         dialog.getWindow().getDecorView().setSystemUiVisibility(
           View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
           View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        // Measure the weighted results viewport against the actual full-screen window.
-        // AlertDialog custom views may otherwise be measured at their content height.
+        // Give the weighted ScrollView a real, bounded viewport. A minimum height
+        // does not constrain a LinearLayout's weighted child when the dialog wraps content.
+        scroll.setFillViewport(false);
+        scroll.setNestedScrollingEnabled(false);
         scroll.post(()->{
-          if(dialog.isShowing()&&dialog.getWindow()!=null){
-            int available=dialog.getWindow().getDecorView().getHeight();
-            if(available>0){panel.setMinimumHeight(available);panel.requestLayout();scroll.requestLayout();}
+          if(!dialog.isShowing()||dialog.getWindow()==null)return;
+          View parent=panel.getParent() instanceof View?(View)panel.getParent():null;
+          int available=parent==null?0:parent.getHeight();
+          if(available<=0)available=dialog.getWindow().getDecorView().getHeight()-dp(64);
+          if(available>0){
+            ViewGroup.LayoutParams panelParams=panel.getLayoutParams();
+            if(panelParams!=null){panelParams.width=ViewGroup.LayoutParams.MATCH_PARENT;panelParams.height=available;panel.setLayoutParams(panelParams);}
+            scroll.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f));
+            panel.requestLayout();
+            scroll.requestLayout();
           }
         });
       }
@@ -1546,6 +1556,31 @@ public class MainActivity extends Activity {
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
   private boolean sourceWasBuffering=false;
+  private boolean audioTrackPresent=false;
+  private boolean audioTrackSupported=false;
+  private boolean audioTrackSelected=false;
+  private boolean audioPositionAdvancing=false;
+  private boolean videoTrackSelected=false;
+  private Runnable audioTrackCheck;
+  private void cancelAudioTrackCheck(){
+    if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
+  }
+  private void scheduleAudioTrackCheck(){
+    cancelAudioTrackCheck();
+    if(player==null||player.getPlaybackState()!=Player.STATE_READY)return;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    audioTrackCheck=()->{
+      audioTrackCheck=null;
+      if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
+          ||player.getPlaybackState()!=Player.STATE_READY)return;
+      if(!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing){
+        recordSourceMetric(currentSourceUrl(),"audio_output_missing",0L);
+        advanceToNextSourceAutomatically("检测到当前源没有有效声音输出");
+      }
+    };
+    uiHandler.postDelayed(audioTrackCheck,12000L);
+  }
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
   }
@@ -1573,7 +1608,7 @@ public class MainActivity extends Activity {
       }
       // A live source can leave ExoPlayer in READY while its audio/video output has
       // silently stopped. Monitor actual video-frame callbacks, not only position.
-      if(videoFrameMonitoringActive && player.getVideoFormat()!=null){
+      if(videoFrameMonitoringActive && videoTrackSelected){
         if(!hasReceivedVideoFrame && sourceReadyAt>0L && now-sourceReadyAt>=20000L){
           recoverFromSilentFreeze("播放器已连接，但 20 秒内没有输出视频画面");
           return;
@@ -1658,6 +1693,8 @@ public class MainActivity extends Activity {
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
+    cancelAudioTrackCheck();
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -1702,7 +1739,34 @@ public class MainActivity extends Activity {
           videoFrameMonitoringActive=true;
         }catch(Exception ignored){}
       }
+      player.addAnalyticsListener(new AnalyticsListener(){
+        @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
+          audioPositionAdvancing=true;
+        }
+        @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          recordSourceMetric(currentSourceUrl(),"audio_codec_error",0L);
+        }
+        @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
+          recordSourceMetric(currentSourceUrl(),"audio_sink_error",0L);
+        }
+      });
       player.addListener(new Player.Listener(){
+        public void onTracksChanged(Tracks tracks){
+          boolean audioPresent=false,audioSupported=false,audioSelected=false,videoSelected=false;
+          for(Tracks.Group group:tracks.getGroups()){
+            if(group.getType()==C.TRACK_TYPE_AUDIO){
+              audioPresent=true;
+              if(group.isSupported())audioSupported=true;
+              if(group.isSelected())audioSelected=true;
+            }else if(group.getType()==C.TRACK_TYPE_VIDEO&&group.isSelected()){
+              videoSelected=true;
+            }
+          }
+          audioTrackPresent=audioPresent;
+          audioTrackSupported=audioSupported;
+          audioTrackSelected=audioSelected;
+          videoTrackSelected=videoSelected;
+        }
         private boolean isCurrent(){
           MediaItem item=player==null?null:player.getCurrentMediaItem();
           return item!=null&&currentMediaId.equals(item.mediaId);
@@ -1725,6 +1789,7 @@ public class MainActivity extends Activity {
               recordSourceMetric(currentSourceUrl(),"ready",android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
             }
             cancelBufferingFallback();
+            scheduleAudioTrackCheck();
             // Do not reset automaticSwitchCount here: a source that starts and then
             // freezes must not create an endless source-switch loop.
             watchdogLastPosition=player.getCurrentPosition();
@@ -1821,6 +1886,6 @@ public class MainActivity extends Activity {
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){super.onStart();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
-  protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();if(player!=null){player.release();player=null;}}
+  protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
 }
