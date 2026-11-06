@@ -79,28 +79,11 @@ public class MainActivity extends Activity {
     Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
   }
-  // Explicit vertical swipe handling for the VOD result list.
+  // Use Android's native ScrollView gesture/fling implementation.
+  // A hand-written touch interceptor can cancel child gestures before ScrollView
+  // has initialized its own drag state, making swipe appear completely dead.
   private static class VodScrollView extends ScrollView {
-    private float downX,downY,lastY;
-    private final int touchSlop;
-    private boolean dragging;
-    VodScrollView(Context context){super(context);touchSlop=android.view.ViewConfiguration.get(context).getScaledTouchSlop();}
-    @Override public boolean onInterceptTouchEvent(android.view.MotionEvent event){
-      int action=event.getActionMasked();
-      if(action==android.view.MotionEvent.ACTION_DOWN){downX=event.getX();downY=lastY=event.getY();dragging=false;}
-      else if(action==android.view.MotionEvent.ACTION_MOVE){
-        float dx=Math.abs(event.getX()-downX),dy=Math.abs(event.getY()-downY);
-        if(dy>touchSlop&&dy>dx){dragging=true;requestDisallowInterceptTouchEvent(true);return true;}
-      }else if(action==android.view.MotionEvent.ACTION_UP||action==android.view.MotionEvent.ACTION_CANCEL){dragging=false;}
-      return super.onInterceptTouchEvent(event);
-    }
-    @Override public boolean onTouchEvent(android.view.MotionEvent event){
-      if(event.getActionMasked()==android.view.MotionEvent.ACTION_MOVE&&dragging){
-        float y=event.getY();int delta=(int)(lastY-y);lastY=y;scrollBy(0,delta);return true;
-      }
-      if(event.getActionMasked()==android.view.MotionEvent.ACTION_UP||event.getActionMasked()==android.view.MotionEvent.ACTION_CANCEL)dragging=false;
-      return super.onTouchEvent(event);
-    }
+    VodScrollView(Context context){super(context);setFillViewport(false);setSmoothScrollingEnabled(true);setVerticalScrollBarEnabled(true);setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);setNestedScrollingEnabled(false);}
   }
 
   public void onCreate(Bundle b) {
