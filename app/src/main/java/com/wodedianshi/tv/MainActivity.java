@@ -515,7 +515,7 @@ public class MainActivity extends Activity {
     loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
   private String vodCacheKey(String category){
-    return "vod_cache_v4_"+Integer.toHexString(category.hashCode());
+    return "vod_cache_v5_"+Integer.toHexString(category.hashCode());
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
