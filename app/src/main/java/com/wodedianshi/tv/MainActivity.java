@@ -550,7 +550,23 @@ public class MainActivity extends Activity {
     GridView grid=null;
     for(int i=0;i<host.getChildCount();i++)if(host.getChildAt(i) instanceof GridView){grid=(GridView)host.getChildAt(i);break;}
     if(grid==null){
-      grid=new GridView(this);grid.setVerticalSpacing(dp(10));grid.setHorizontalSpacing(dp(8));
+      grid=new GridView(this){
+        @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
+          if(event.getAction()==android.view.MotionEvent.ACTION_SCROLL &&
+             (event.isFromSource(android.view.InputDevice.SOURCE_MOUSE) ||
+              event.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))){
+            float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
+            if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
+            if(wheel!=0f){
+              int step=Math.max(dp(180),(getHeight()*2)/3);
+              smoothScrollBy((int)(-Math.signum(wheel)*step),180);
+              return true;
+            }
+          }
+          return super.onGenericMotionEvent(event);
+        }
+      };
+      grid.setVerticalSpacing(dp(10));grid.setHorizontalSpacing(dp(8));
       grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
       grid.setFocusable(true);grid.setFocusableInTouchMode(true);
       grid.setVerticalScrollBarEnabled(true);grid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
@@ -580,10 +596,27 @@ public class MainActivity extends Activity {
         TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
         TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
-        card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
+        card.setOnFocusChangeListener((v,focused)->{
+          card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+          if(focused && parent instanceof GridView){
+            GridView owner=(GridView)parent;
+            int p=owner.getPositionForView(card);
+            if(p>=0)owner.setSelection(p);
+          }
+        });
       }
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
-      holder.poster.setImageResource(android.R.drawable.ic_media_play);loadVodPoster(holder.poster,item.identifier);
+      holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
+      loadVodPoster(holder.poster,item.identifier,item.title);
+      card.setOnHoverListener((v,event)->{
+        if(event.getAction()==android.view.MotionEvent.ACTION_HOVER_ENTER && parent instanceof GridView){
+          card.requestFocus();
+          GridView owner=(GridView)parent;
+          int p=owner.getPositionForView(card);
+          if(p>=0)owner.setSelection(p);
+        }
+        return false;
+      });
       card.setOnClickListener(v->playVodInside(item));
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
@@ -1075,24 +1108,75 @@ public class MainActivity extends Activity {
       return out.toString("UTF-8");
     }finally{c.disconnect();}
   }
-  private void loadVodPoster(ImageView target,String identifier){
+  private Bitmap createVodFallbackPoster(String title,String identifier){
+    int w=360,h=240;Bitmap b=Bitmap.createBitmap(w,h,Bitmap.Config.RGB_565);Canvas c=new Canvas(b);
+    int seed=identifier==null?0:identifier.hashCode();int[] colors={
+      Color.rgb(20,55,91),Color.rgb(72,42,84),Color.rgb(25,78,75),Color.rgb(86,54,32),Color.rgb(38,48,88)};
+    int base=colors[Math.floorMod(seed,colors.length)];
+    Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    c.drawColor(Color.rgb(14,25,42));
+    p.setShader(new android.graphics.LinearGradient(0,0,w,h,base,Color.rgb(12,20,34),android.graphics.Shader.TileMode.CLAMP));
+    c.drawRect(0,0,w,h,p);p.setShader(null);
+    p.setColor(Color.argb(38,255,255,255));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2);
+    for(int x=14;x<w;x+=24){c.drawRoundRect(x,12,x+9,h-12,3,3,p);}
+    p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(85,255,255,255));c.drawCircle(w-48,48,25,p);
+    p.setColor(Color.WHITE);p.setTextAlign(Paint.Align.CENTER);p.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));
+    p.setTextSize(20);c.drawText("MY TV",w/2f,h*0.38f,p);
+    String text=android.text.TextUtils.isEmpty(title)?"暂无海报":title.trim();
+    p.setTextSize(text.length()>15?19:25);p.setColor(Color.rgb(255,238,190));
+    if(text.length()>18)text=text.substring(0,18)+"…";
+    c.drawText(text,w/2f,h*0.66f,p);
+    p.setTextSize(13);p.setColor(Color.rgb(190,210,230));c.drawText("影片封面",w/2f,h*0.84f,p);
+    return b;
+  }
+  private String fetchCommonsPosterUrl(String identifier){
+    HttpURLConnection c=null;
+    try{
+      String title=identifier.substring(identifier.indexOf(':')+1);
+      String api="https://commons.wikimedia.org/w/api.php?action=query&titles="+URLEncoder.encode(title,"UTF-8")+
+        "&prop=pageimages&piprop=thumbnail&pithumbsize=480&format=json";
+      c=(HttpURLConnection)new URL(api).openConnection();c.setConnectTimeout(2200);c.setReadTimeout(2800);
+      c.setRequestProperty("User-Agent","MyTV/1.81 (Android TV)");
+      try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+        byte[] buf=new byte[4096];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);
+        org.json.JSONObject root=new org.json.JSONObject(out.toString("UTF-8"));
+        org.json.JSONObject pages=root.optJSONObject("query")==null?null:root.optJSONObject("query").optJSONObject("pages");
+        if(pages!=null){java.util.Iterator<String> it=pages.keys();while(it.hasNext()){
+          org.json.JSONObject page=pages.optJSONObject(it.next());if(page==null)continue;
+          org.json.JSONObject thumb=page.optJSONObject("thumbnail");if(thumb!=null){String u=thumb.optString("source","");if(u.startsWith("https://"))return u;}
+        }}
+      }
+    }catch(Exception ignored){}finally{if(c!=null)c.disconnect();}
+    return "";
+  }
+  private void loadVodPoster(ImageView target,String identifier,String title){
     target.setTag(identifier);
-    if(identifier!=null&&(identifier.startsWith("loc:")||identifier.startsWith("cctv:"))){target.setImageResource(android.R.drawable.ic_media_play);return;}
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
-    target.setImageResource(android.R.drawable.ic_media_play);
     if(!vodPosterRequests.add(identifier))return;
     try{posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
-        connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
-        connection.setConnectTimeout(1800);connection.setReadTimeout(2500);connection.setInstanceFollowRedirects(true);
-        try(InputStream in=connection.getInputStream()){
-          BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;bitmap=BitmapFactory.decodeStream(in,null,options);
+        String imageUrl="";
+        if(identifier.startsWith("commons:")||identifier.startsWith("commons-search:"))imageUrl=fetchCommonsPosterUrl(identifier);
+        else if(!identifier.startsWith("loc:")&&!identifier.startsWith("cctv:"))
+          imageUrl="https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8");
+        if(!imageUrl.isEmpty()){
+          connection=(HttpURLConnection)new URL(imageUrl).openConnection();
+          connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
+          connection.setRequestProperty("User-Agent","MyTV/1.81 Android TV");
+          try(InputStream in=connection.getInputStream()){
+            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;bitmap=BitmapFactory.decodeStream(in,null,options);
+          }
         }
       }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();vodPosterRequests.remove(identifier);}
       final Bitmap image=bitmap;
-      if(image!=null){vodPosterCache.put(identifier,image);uiHandler.post(()->{if(identifier.equals(target.getTag()))target.setImageBitmap(image);});}
+      uiHandler.post(()->{
+        if(identifier.equals(target.getTag())){
+          if(image!=null){vodPosterCache.put(identifier,image);target.setImageBitmap(image);}
+          else target.setImageBitmap(createVodFallbackPoster(title,identifier));
+        }
+      });
     });}catch(RejectedExecutionException ignored){vodPosterRequests.remove(identifier);}
   }
   private String encodeArchivePath(String path){
