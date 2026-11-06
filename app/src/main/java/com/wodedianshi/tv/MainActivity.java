@@ -787,7 +787,7 @@ public class MainActivity extends Activity {
       org.json.JSONObject pages=query==null?null:query.optJSONObject("pages");
       if(pages==null)return items;
       java.util.Iterator<String> keys=pages.keys();
-      while(keys.hasNext()&&items.size()<36){
+      while(keys.hasNext()&&items.size()<48){
         org.json.JSONObject page=pages.optJSONObject(keys.next());if(page==null)continue;
         String title=page.optString("title","");String lower=title.toLowerCase(Locale.ROOT);
         if(!(lower.endsWith(".mp4")||lower.endsWith(".webm")))continue;
@@ -819,7 +819,7 @@ public class MainActivity extends Activity {
       org.json.JSONObject pages=queryObject==null?null:queryObject.optJSONObject("pages");
       if(pages==null)return items;
       java.util.Iterator<String> keys=pages.keys();
-      while(keys.hasNext()&&items.size()<24){
+      while(keys.hasNext()&&items.size()<32){
         org.json.JSONObject page=pages.optJSONObject(keys.next());if(page==null)continue;
         String title=page.optString("title",""),lower=title.toLowerCase(Locale.ROOT);
         if(!(lower.endsWith(".mp4")||lower.endsWith(".webm")||lower.endsWith(".ogv")||lower.endsWith(".mov")))continue;
@@ -928,7 +928,7 @@ public class MainActivity extends Activity {
         // Prefer official CCTV catalogue for Chinese documentary/animation categories.
         if(Arrays.asList("中国纪录片","中文纪录片","中国历史影像","中国经典影像","中国动画","中文动画","多源精选","精选电影").contains(category)){
           ArrayList<VodItem> cctvItems=fetchCctvVod(category);
-          for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+          for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
 
         String q="mediatype:movies";
@@ -951,13 +951,21 @@ public class MainActivity extends Activity {
         else if(!category.equals("世界公版电影")&&!category.equals("精选电影")&&!category.equals("多源精选"))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
-        // China-language searches are notoriously inconsistent in archive metadata.
-        // A second, broader query catches English-indexed Chinese/Mandarin records.
-        if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category)){
+        // Chinese film records are inconsistently catalogued; search several independent
+        // title/language/region vocabularies rather than trusting one query field.
+        if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)){
           String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
-          if(!queries.contains(broad))queries.add(broad);
           String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
-          if(!queries.contains(chineseTitle))queries.add(chineseTitle);
+          String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
+          String silent="mediatype:movies AND (title:Chinese silent OR subject:Chinese silent film OR title:China film)";
+          for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
+        }else if("中国动画".equals(category)||"中文动画".equals(category)){
+          queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
+        }else if("中国纪录片".equals(category)||"中文纪录片".equals(category)||"中国历史影像".equals(category)){
+          queries.add("mediatype:movies AND (title:China documentary OR title:Chinese documentary OR subject:Chinese documentary OR language:chi OR language:zho)");
+        }else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category)){
+          queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
+          queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema)");
         }
         if("精选电影".equals(category)){
           String broad="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain)";
@@ -975,7 +983,7 @@ public class MainActivity extends Activity {
             String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(query,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+page+"&output=json&sort[]=downloads+desc";
             org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
             org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-            for(int i=0;i<docs.length()&&submitted<120;i++){
+            for(int i=0;i<docs.length()&&submitted<150;i++){
               org.json.JSONObject doc=docs.getJSONObject(i);
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
@@ -1002,7 +1010,7 @@ public class MainActivity extends Activity {
 
         // Wikimedia Commons is an independent open-media catalogue. Use it as a
         // secondary provider only for categories where its public-domain film set fits.
-        if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<36){
+        if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<48){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
           for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
         }
@@ -1889,26 +1897,74 @@ public class MainActivity extends Activity {
     hideChannelZapOverlay=()->{if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);hideChannelZapOverlay=null;};
     uiHandler.postDelayed(hideChannelZapOverlay,1800L);
   }
+  private boolean isSourceBlocked(String url){
+    if(url==null||url.isEmpty())return false;
+    return getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",new HashSet<>()).contains(url);
+  }
+  private boolean blockSource(String url){
+    if(url==null||url.isEmpty())return false;
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    HashSet<String> blocked=new HashSet<>(p.getStringSet("blocked_ad_sources",new HashSet<>()));
+    boolean added=blocked.add(url);
+    p.edit().putStringSet("blocked_ad_sources",blocked).apply();
+    return added;
+  }
   private void showSourcePicker(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
-    String[] options=new String[c.backups.size()];
-    for(int i=0;i<options.length;i++)options[i]="播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源");
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源").setItems(options,(d,which)->{
-      c.activeSource=which;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
-    }).setNegativeButton("取消",null).create();
+    ArrayList<String> labels=new ArrayList<>();
+    ArrayList<Integer> indexes=new ArrayList<>();
+    for(int i=0;i<c.backups.size();i++){
+      String url=c.backups.get(i);
+      boolean blocked=isSourceBlocked(url);
+      labels.add("播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源")+(blocked?" · 已屏蔽（点此恢复）":""));
+      indexes.add(i);
+    }
+    labels.add("屏蔽当前播放源（广告、错台或异常内容）");
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源")
+      .setItems(labels.toArray(new String[0]),(d,which)->{
+        if(which==indexes.size()){
+          String bad=currentSourceUrl();
+          if(bad.isEmpty()){toast("当前播放源地址为空");return;}
+          blockSource(bad);
+          int next=findNextUnblockedSource(c,c.activeSource,1);
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          else{persist();setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
+          return;
+        }
+        int index=indexes.get(which);
+        String url=c.backups.get(index);
+        if(isSourceBlocked(url)){
+          android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+          HashSet<String> blocked=new HashSet<>(p.getStringSet("blocked_ad_sources",new HashSet<>()));
+          blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
+          toast("已恢复该播放源");
+        }
+        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
+      }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
       dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     }
     dialog.show();
   }
+  private int findNextUnblockedSource(Channel c,int from,int direction){
+    if(c==null||c.backups==null||c.backups.isEmpty())return -1;
+    for(int step=1;step<=c.backups.size();step++){
+      int ix=(from+direction*step)%c.backups.size();
+      if(ix<0)ix+=c.backups.size();
+      if(!isSourceBlocked(c.backups.get(ix)))return ix;
+    }
+    return -1;
+  }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
-    c.activeSource=(c.activeSource+delta+c.backups.size())%c.backups.size();
+    int next=findNextUnblockedSource(c,c.activeSource,delta>=0?1:-1);
+    if(next<0){toast("本频道备用源都已被屏蔽，请在换源菜单中恢复");return;}
+    c.activeSource=next;
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
@@ -2052,13 +2108,14 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
     if(c.backups.size()<2){setSourceUpdatePlaybackActive(false);info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
-    if(automaticSwitchCount>=c.backups.size()-1){
+    int next=findNextUnblockedSource(c,c.activeSource,1);
+    if(next<0){
       setSourceUpdatePlaybackActive(false);
-      info.setText(reason+"；当前频道的播放源已全部尝试，请手动选择其他频道或稍后重试");
+      info.setText(reason+"；其余播放源均已屏蔽或尝试，请打开换源菜单恢复合适的源");
       return;
     }
     automaticSwitchCount++;
-    c.activeSource=(c.activeSource+1)%c.backups.size();
+    c.activeSource=next;
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
