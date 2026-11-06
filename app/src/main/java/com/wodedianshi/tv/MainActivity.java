@@ -1021,7 +1021,7 @@ public class MainActivity extends Activity {
       try{
 
         // Prefer official CCTV catalogue for Chinese documentary/animation categories.
-        if(Arrays.asList("中国纪录片","中文纪录片","中国历史影像","中国经典影像","中国动画","中文动画","多源精选","精选电影").contains(category)){
+        if(Arrays.asList("中国纪录片","中国历史影像","中国经典影像","中国动画","中文动画","多源精选","精选电影").contains(category)){
           ArrayList<VodItem> cctvItems=fetchCctvVod(category);
           for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
@@ -1034,9 +1034,13 @@ public class MainActivity extends Activity {
         else if("中国电影".equals(category)||"中国老电影".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
         else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:Mandarin OR title:Chinese OR subject:Chinese)";
         else if("中国动画".equals(category)||"中文动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:animation OR subject:cartoons OR title:动画)";
-        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:documentary OR title:纪录片)";
+        else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:China OR title:Chinese OR subject:China) AND (subject:documentary OR title:documentary)";
+        else if("中文纪录片".equals(category))q+=" AND (language:chi OR language:zho OR title:中文 OR title:国语 OR title:华语) AND (subject:documentary OR title:documentary)";
         else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
-        else if("纪录片".equals(category)||"科学纪录片".equals(category)||"历史纪录片".equals(category)||"自然纪录片".equals(category))q+=" AND subject:documentary";
+        else if("纪录片".equals(category))q+=" AND subject:documentary AND NOT (language:chi OR language:zho OR title:China OR title:Chinese)";
+        else if("科学纪录片".equals(category))q+=" AND subject:documentary AND (subject:science OR title:science)";
+        else if("历史纪录片".equals(category))q+=" AND subject:documentary AND (subject:history OR title:history)";
+        else if("自然纪录片".equals(category))q+=" AND subject:documentary AND (subject:nature OR title:nature OR subject:wildlife)";
         else if("NASA影像".equals(category))q="mediatype:movies AND (collection:nasa OR creator:NASA)";
         else if("战争片".equals(category))q="mediatype:movies AND (subject:war OR subject:military OR title:war)";
         else if("恐怖片".equals(category))q="mediatype:movies AND (subject:horror OR title:horror)";
@@ -1064,7 +1068,7 @@ public class MainActivity extends Activity {
         }else if("中国历史影像".equals(category)){
           queries.add("mediatype:movies AND (title:Chinese history documentary OR title:China history documentary OR subject:Chinese history OR subject:Chinese historical documentary)");
           queries.add("mediatype:movies AND (title:China newsreel OR title:Chinese archive footage OR subject:China historical footage)");
-        }else if("中国纪录片".equals(category)||"中文纪录片".equals(category)){
+        }else if("中国纪录片".equals(category)){
           queries.add("mediatype:movies AND (title:China documentary OR title:Chinese documentary OR subject:Chinese documentary OR language:chi OR language:zho)");
         }else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category)){
           queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
@@ -1153,14 +1157,16 @@ public class MainActivity extends Activity {
         // Start independent open catalogues together after the first Archive batch.
         // Waiting is bounded by the slowest provider rather than the sum of their delays.
         Future<ArrayList<VodItem>> commonsPublicFuture=null,commonsSearchFuture=null,locFuture=null;
-        boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","多源精选","中国电影","中国经典影像","中国老电影","中国历史影像","华语经典","中国动画","中文动画","中国纪录片","中文纪录片").contains(category)&&found.size()<48;
+        boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","多源精选","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
         if(useCommonsPublic)commonsPublicFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
         String commonsQuery=null;
         if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
-        else if("中国经典影像".equals(category))commonsQuery="Chinese classic cinema film";
-        else if("中国历史影像".equals(category))commonsQuery="Chinese historical documentary archive footage";
+        else if("中国经典影像".equals(category))commonsQuery="Chinese classic feature film";
+        else if("中国历史影像".equals(category))commonsQuery="Chinese historical newsreel archive footage";
         else if("中国动画".equals(category)||"中文动画".equals(category))commonsQuery="Chinese animation";
-        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
+        else if("中国纪录片".equals(category))commonsQuery="China documentary";
+        else if("中文纪录片".equals(category))commonsQuery="Chinese language documentary";
+        else if("纪录片".equals(category))commonsQuery="documentary film";
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
         else if("战争片".equals(category))commonsQuery="war film";
         else if("恐怖片".equals(category))commonsQuery="horror film";
@@ -1172,7 +1178,9 @@ public class MainActivity extends Activity {
         else if("中国经典影像".equals(category))locQuery="Chinese classic feature film";
         else if("中国历史影像".equals(category))locQuery="China historical documentary newsreel";
         else if("中国动画".equals(category)||"中文动画".equals(category))locQuery="Chinese animation";
-        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))locQuery="China documentary";
+        else if("中国纪录片".equals(category))locQuery="China documentary";
+        else if("中文纪录片".equals(category))locQuery="Chinese language documentary";
+        else if("纪录片".equals(category))locQuery="documentary film";
         else if("历史纪录片".equals(category))locQuery="historical documentary";
         else if("自然纪录片".equals(category)||"科学纪录片".equals(category))locQuery="nature science documentary";
         else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
