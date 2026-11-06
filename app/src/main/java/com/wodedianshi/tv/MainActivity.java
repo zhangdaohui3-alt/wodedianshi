@@ -2180,6 +2180,29 @@ public class MainActivity extends Activity {
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
+  @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent event){
+    // Android TV may route USB/Bluetooth mouse-wheel events to the Activity,
+    // not the poster or GridView. Intercept centrally while the VOD list is open.
+    if(event!=null&&event.getAction()==android.view.MotionEvent.ACTION_SCROLL&&currentVodPanel!=null&&currentVodPanel.isShown()&&currentVodResults!=null){
+      GridView grid=null;
+      for(int i=0;i<currentVodResults.getChildCount();i++){
+        View child=currentVodResults.getChildAt(i);
+        if(child instanceof GridView){grid=(GridView)child;break;}
+      }
+      if(grid!=null&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0){
+        float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
+        if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
+        if(wheel!=0f){
+          int step=Math.max(dp(120),grid.getHeight()/2);
+          int delta=Math.round(-wheel*step);
+          if(delta==0)delta=wheel>0?-dp(120):dp(120);
+          grid.scrollListBy(delta);
+          return true;
+        }
+      }
+    }
+    return super.dispatchGenericMotionEvent(event);
+  }
   @Override public void onBackPressed(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
