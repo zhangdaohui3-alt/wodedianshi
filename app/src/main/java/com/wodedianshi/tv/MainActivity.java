@@ -580,7 +580,7 @@ public class MainActivity extends Activity {
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
         card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
       }
-      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText("开放授权 · 可尝试播放");
+      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
       holder.poster.setImageResource(android.R.drawable.ic_media_play);loadVodPoster(holder.poster,item.identifier);
       card.setOnClickListener(v->playVodInside(item));
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
@@ -677,6 +677,81 @@ public class MainActivity extends Activity {
     long seconds=Math.max(0,ms/1000),hours=seconds/3600,minutes=(seconds%3600)/60,remain=seconds%60;
     return hours>0?String.format(Locale.US,"%d:%02d:%02d",hours,minutes,remain):String.format(Locale.US,"%02d:%02d",minutes,remain);
   }
+
+  // China-first provider: CCTV/CNTV public programme catalogue.
+  private JSONArray cctvList(org.json.JSONObject root){
+    if(root==null)return new JSONArray();
+    org.json.JSONObject data=root.optJSONObject("data");
+    org.json.JSONArray list=data==null?null:data.optJSONArray("list");
+    if(list==null)list=root.optJSONArray("list");
+    return list==null?new JSONArray():list;
+  }
+  private org.json.JSONObject cctvGetJson(String address)throws Exception{
+    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
+    c.setConnectTimeout(3500);c.setReadTimeout(5000);c.setInstanceFollowRedirects(true);
+    c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android 9; Android TV) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36");
+    c.setRequestProperty("Referer","https://tv.cctv.com/");
+    c.setRequestProperty("Accept","application/json,text/plain,*/*");
+    try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+      byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>2*1024*1024)throw new IOException("央视目录响应过大");out.write(buf,0,n);}
+      return new org.json.JSONObject(out.toString("UTF-8"));
+    }finally{c.disconnect();}
+  }
+  private VodItem resolveCctvVideo(String guid,String fallbackTitle){
+    if(guid==null||guid.trim().isEmpty())return null;
+    try{
+      org.json.JSONObject info=cctvGetJson("https://vdn.apps.cntv.cn/api/getHttpVideoInfo.do?pid="+URLEncoder.encode(guid,"UTF-8"));
+      String status=info.optString("status","");
+      String stream=info.optString("hls_url","");
+      if(stream.isEmpty())stream=info.optString("hls_url_high","");
+      if(!stream.startsWith("https://")||(!status.isEmpty()&&!"001".equals(status)))return null;
+      String title=info.optString("title",fallbackTitle==null?"央视节目":fallbackTitle);
+      return new VodItem(title,"cctv:"+guid,stream,"央视网公开节目 · 官方播放地址");
+    }catch(Exception ignored){return null;}
+  }
+  private ArrayList<VodItem> fetchCctvVod(String category){
+    ArrayList<VodItem> found=new ArrayList<>();
+    String channelId=null;
+    if("中国纪录片".equals(category)||"中文纪录片".equals(category)||"中国历史影像".equals(category)||"中国经典影像".equals(category))
+      channelId="CHAL1460955924871139";
+    else if("中国动画".equals(category)||"中文动画".equals(category))
+      channelId="CHAL1460955899450127";
+    else if("多源精选".equals(category)||"精选电影".equals(category))
+      channelId="CHAL1460955924871139";
+    if(channelId==null)return found;
+    HashSet<String> ids=new HashSet<>();
+    try{
+      for(int page=1;page<=2&&found.size()<36;page++){
+        String endpoint="https://api.cntv.cn/list/getVideoAlbumList?channelid="+channelId+"&p="+page+"&n=24&serviceId=tvcctv&topv=1&t=json";
+        JSONArray albums=cctvList(cctvGetJson(endpoint));
+        if(albums.length()==0)break;
+        for(int i=0;i<albums.length()&&found.size()<36;i++){
+          if(Thread.currentThread().isInterrupted())return found;
+          org.json.JSONObject album=albums.optJSONObject(i);if(album==null)continue;
+          String albumId=album.optString("id",album.optString("albumId",""));
+          String albumTitle=album.optString("title","央视节目");
+          String directGuid=album.optString("guid",album.optString("pid",""));
+          if(!directGuid.isEmpty()&&ids.add(directGuid)){
+            VodItem direct=resolveCctvVideo(directGuid,albumTitle);if(direct!=null)found.add(direct);
+          }
+          if(albumId.isEmpty())continue;
+          try{
+            String episodeUrl="https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id="+URLEncoder.encode(albumId,"UTF-8")+"&serviceId=tvcctv&p=1&n=30&mode=0&pub=1";
+            JSONArray episodes=cctvList(cctvGetJson(episodeUrl));
+            for(int j=0;j<episodes.length()&&found.size()<36;j++){
+              if(Thread.currentThread().isInterrupted())return found;
+              org.json.JSONObject episode=episodes.optJSONObject(j);if(episode==null)continue;
+              String guid=episode.optString("guid",episode.optString("pid",""));
+              if(guid.isEmpty()||!ids.add(guid))continue;
+              VodItem item=resolveCctvVideo(guid,episode.optString("title",albumTitle));if(item!=null)found.add(item);
+            }
+          }catch(Exception ignored){}
+        }
+      }
+    }catch(Exception ignored){}
+    return found;
+  }
+
   private VodItem fetchAuthorizedVod(org.json.JSONObject doc){
     String id=doc.optString("identifier",""),title=doc.optString("title",id);
     if(id.isEmpty())return null;
@@ -845,6 +920,13 @@ public class MainActivity extends Activity {
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>();
       try{
+
+        // Prefer official CCTV catalogue for Chinese documentary/animation categories.
+        if(Arrays.asList("中国纪录片","中文纪录片","中国历史影像","中国经典影像","中国动画","中文动画","多源精选","精选电影").contains(category)){
+          ArrayList<VodItem> cctvItems=fetchCctvVod(category);
+          for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+        }
+
         String q="mediatype:movies";
         if("多源精选".equals(category))q="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain OR language:Chinese OR language:chi OR language:zho)";
         else if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
@@ -982,7 +1064,7 @@ public class MainActivity extends Activity {
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
-    if(identifier!=null&&identifier.startsWith("loc:")){target.setImageResource(android.R.drawable.ic_media_play);return;}
+    if(identifier!=null&&(identifier.startsWith("loc:")||identifier.startsWith("cctv:"))){target.setImageResource(android.R.drawable.ic_media_play);return;}
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
     target.setImageResource(android.R.drawable.ic_media_play);
