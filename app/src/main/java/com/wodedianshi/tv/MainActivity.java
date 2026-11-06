@@ -80,13 +80,6 @@ public class MainActivity extends Activity {
     Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
   }
-  // Use Android's native ScrollView gesture/fling implementation.
-  // A hand-written touch interceptor can cancel child gestures before ScrollView
-  // has initialized its own drag state, making swipe appear completely dead.
-  private static class VodScrollView extends ScrollView {
-    VodScrollView(Context context){super(context);setFillViewport(false);setSmoothScrollingEnabled(true);setVerticalScrollBarEnabled(true);setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);setNestedScrollingEnabled(false);}
-  }
-
   public void onCreate(Bundle b) {
     super.onCreate(b);
     restore();
@@ -423,8 +416,13 @@ public class MainActivity extends Activity {
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(100),dp(48)));
     panel.addView(searchRow);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(13);status.setPadding(dp(4),dp(8),dp(4),dp(8));panel.addView(status);
-    LinearLayout results=new LinearLayout(this);results.setOrientation(1);
-    VodScrollView scroll=new VodScrollView(this);scroll.setFillViewport(true);scroll.setSmoothScrollingEnabled(true);scroll.setVerticalScrollBarEnabled(true);scroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);scroll.setFocusable(false);scroll.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);results.setFocusable(false);scroll.addView(results,new ScrollView.LayoutParams(-1,-2));panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    // GridView owns vertical touch scrolling and D-pad focus navigation, and
+    // recycles off-screen cards instead of laying out every poster in a ScrollView.
+    LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
+    GridView vodGrid=new GridView(this);vodGrid.setNumColumns(3);vodGrid.setVerticalSpacing(dp(10));vodGrid.setHorizontalSpacing(dp(8));vodGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);vodGrid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));vodGrid.setFocusable(true);vodGrid.setFocusableInTouchMode(true);vodGrid.setItemsCanFocus(true);vodGrid.setVerticalScrollBarEnabled(true);vodGrid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+    results.addView(vodGrid,new LinearLayout.LayoutParams(-1,0,1));
+    panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
+    panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 点播").setView(panel).setNegativeButton("关闭",null).create();
     searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
     loadVodCatalogue("精选电影",panel,status,results);
@@ -443,23 +441,11 @@ public class MainActivity extends Activity {
         dialog.getWindow().getDecorView().setSystemUiVisibility(
           View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
           View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        // Give the weighted ScrollView a real, bounded viewport. A minimum height
-        // does not constrain a LinearLayout's weighted child when the dialog wraps content.
-        scroll.setFillViewport(false);
-        scroll.setNestedScrollingEnabled(false);
-        scroll.post(()->{
-          if(!dialog.isShowing()||dialog.getWindow()==null)return;
-          View parent=panel.getParent() instanceof View?(View)panel.getParent():null;
-          int available=parent==null?0:parent.getHeight();
-          if(available<=0)available=dialog.getWindow().getDecorView().getHeight()-dp(64);
-          if(available>0){
-            ViewGroup.LayoutParams panelParams=panel.getLayoutParams();
-            if(panelParams!=null){panelParams.width=ViewGroup.LayoutParams.MATCH_PARENT;panelParams.height=available;panel.setLayoutParams(panelParams);}
-            scroll.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f));
-            panel.requestLayout();
-            scroll.requestLayout();
-          }
-        });
+        // The dialog fills the window; the weighted GridView receives a finite
+        // height from the panel and performs its own native scrolling.
+        panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
+        panel.requestLayout();
+        vodGrid.requestFocus();
       }
     });
     dialog.show();
@@ -470,10 +456,8 @@ public class MainActivity extends Activity {
     View scrollView=panel.getChildAt(3);
     // Current layout uses intro, category row, search row, status, results scroll.
     statusView=panel.getChildAt(3);scrollView=panel.getChildAt(4);
-    if(statusView instanceof TextView && scrollView instanceof ScrollView){
-      View child=((ScrollView)scrollView).getChildAt(0);
-      if(child instanceof LinearLayout)loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)child);
-    }
+    if(statusView instanceof TextView && scrollView instanceof LinearLayout)
+      loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)scrollView);
   }
   private String vodCacheKey(String category){
     return "vod_cache_v2_"+Integer.toHexString(category.hashCode());
@@ -506,20 +490,46 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).putLong(vodCacheTimeKey(category),System.currentTimeMillis()).apply();
     }catch(Exception ignored){}
   }
-  private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
-    results.removeAllViews();
-    status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
-    LinearLayout row=null;int count=0;
-    for(VodItem item:items){
-      if(count%3==0){row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.TOP);results.addView(row,new LinearLayout.LayoutParams(-1,-2));}
-      LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
-      card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
-      ImageView poster=new ImageView(this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));loadVodPoster(poster,item.identifier);
-      TextView title=new TextView(this);title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
-      TextView meta=new TextView(this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
-      row.addView(card,new LinearLayout.LayoutParams(0,-2,1));card.setOnClickListener(v->playVodInside(item));card.setOnLongClickListener(v->{toggleVodFavorite(item);title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");return true;});count++;
+  private GridView ensureVodGrid(LinearLayout host,int columns){
+    GridView grid=null;
+    for(int i=0;i<host.getChildCount();i++)if(host.getChildAt(i) instanceof GridView){grid=(GridView)host.getChildAt(i);break;}
+    if(grid==null){
+      grid=new GridView(this);grid.setVerticalSpacing(dp(10));grid.setHorizontalSpacing(dp(8));
+      grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+      grid.setFocusable(true);grid.setFocusableInTouchMode(true);grid.setItemsCanFocus(true);
+      grid.setVerticalScrollBarEnabled(true);grid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+      host.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
     }
-    if(row!=null&&count%3!=0){for(int i=count%3;i<3;i++)row.addView(new View(this),new LinearLayout.LayoutParams(0,dp(10),1));}
+    grid.setNumColumns(columns);return grid;
+  }
+  private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
+  private class VodGridAdapter extends BaseAdapter{
+    private final ArrayList<VodItem> items;
+    VodGridAdapter(ArrayList<VodItem> data){items=data==null?new ArrayList<>():new ArrayList<>(data);}
+    public int getCount(){return items.size();}
+    public Object getItem(int position){return items.get(position);}
+    public long getItemId(int position){return position;}
+    public View getView(int position,View convertView,android.view.ViewGroup parent){
+      VodItem item=items.get(position);LinearLayout card;VodCardHolder holder;
+      if(convertView instanceof LinearLayout&&convertView.getTag() instanceof VodCardHolder){card=(LinearLayout)convertView;holder=(VodCardHolder)card.getTag();}
+      else{
+        card=new LinearLayout(MainActivity.this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
+        ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(112)));
+        TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(14);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
+        TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(11);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
+        holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
+        card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
+      }
+      holder.title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);holder.meta.setText("开放授权 · 可尝试播放");
+      holder.poster.setImageResource(android.R.drawable.ic_media_play);loadVodPoster(holder.poster,item.identifier);
+      card.setOnClickListener(v->playVodInside(item));
+      card.setOnLongClickListener(v->{toggleVodFavorite(item);holder.title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");return true;});
+      return card;
+    }
+  }
+  private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
+    status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
+    GridView grid=ensureVodGrid(results,3);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
@@ -548,7 +558,7 @@ public class MainActivity extends Activity {
   private void loadVodFavorites(LinearLayout panel){
     if(panel==null||panel.getChildCount()<5)return;
     View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
-    if(statusView instanceof TextView&&scrollView instanceof ScrollView){View child=((ScrollView)scrollView).getChildAt(0);if(child instanceof LinearLayout){TextView status=(TextView)statusView;LinearLayout results=(LinearLayout)child;ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");}}
+    if(statusView instanceof TextView&&scrollView instanceof LinearLayout){TextView status=(TextView)statusView;LinearLayout results=(LinearLayout)scrollView;ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");}
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
@@ -568,7 +578,31 @@ public class MainActivity extends Activity {
   private void loadVodHistory(LinearLayout panel){
     if(panel==null||panel.getChildCount()<5)return;
     View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
-    if(statusView instanceof TextView&&scrollView instanceof ScrollView){View child=((ScrollView)scrollView).getChildAt(0);if(child instanceof LinearLayout)loadVodHistory((TextView)statusView,(LinearLayout)child);}
+    if(statusView instanceof TextView&&scrollView instanceof LinearLayout)loadVodHistory((TextView)statusView,(LinearLayout)scrollView);
+  }
+  private class VodHistoryAdapter extends BaseAdapter{
+    private final ArrayList<org.json.JSONObject> history;private final TextView status;private final LinearLayout results;
+    VodHistoryAdapter(ArrayList<org.json.JSONObject> data,TextView st,LinearLayout host){history=data;status=st;results=host;}
+    public int getCount(){return history.size();}
+    public Object getItem(int position){return history.get(position);}
+    public long getItemId(int position){return position;}
+    public View getView(int position,View convertView,android.view.ViewGroup parent){
+      org.json.JSONObject o=history.get(position);
+      String title=o.optString("title","未命名影片"),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
+      long pos=o.optLong("position",0),duration=o.optLong("duration",0);
+      LinearLayout row;TextView name,detail;
+      if(convertView instanceof LinearLayout&&((LinearLayout)convertView).getChildCount()>=2){row=(LinearLayout)convertView;name=(TextView)row.getChildAt(0);detail=(TextView)row.getChildAt(1);}
+      else{
+        row=new LinearLayout(MainActivity.this);row.setOrientation(1);row.setPadding(dp(12),dp(10),dp(12),dp(10));row.setFocusable(true);row.setFocusableInTouchMode(true);row.setClickable(true);row.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+        name=new TextView(MainActivity.this);name.setTextColor(Color.WHITE);name.setTextSize(16);row.addView(name);
+        detail=new TextView(MainActivity.this);detail.setTextColor(Color.rgb(154,190,220));detail.setTextSize(12);row.addView(detail);
+        row.setOnFocusChangeListener((v,focused)->{row.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));row.setScaleX(focused?1.025f:1f);row.setScaleY(focused?1.025f:1f);row.setElevation(focused?dp(7):0);name.setTextColor(focused?Color.rgb(255,235,170):Color.WHITE);detail.setTextColor(focused?Color.WHITE:Color.rgb(154,190,220));});
+      }
+      name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
+      row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
+      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
+      return row;
+    }
   }
   private void loadVodHistory(TextView status,LinearLayout results){
     ArrayList<org.json.JSONObject> history=readVodHistory();results.removeAllViews();
@@ -577,25 +611,7 @@ public class MainActivity extends Activity {
     clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清空播放记录？").setMessage("将删除所有点播记录和续播进度。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->{getSharedPreferences("mytv",0).edit().remove(VOD_HISTORY_KEY).apply();loadVodHistory(status,results);}).show());
     results.addView(tools);
     status.setText(history.isEmpty()?"还没有点播记录。观看过的影片会自动保存在这里。":"最近观看 · "+history.size()+" 部（点击继续观看，长按删除）");
-    if(history.isEmpty())return;
-    for(org.json.JSONObject o:history){
-      String title=o.optString("title","未命名影片"),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
-      long pos=o.optLong("position",0),duration=o.optLong("duration",0);
-      LinearLayout itemRow=new LinearLayout(this);itemRow.setOrientation(1);itemRow.setPadding(dp(12),dp(10),dp(12),dp(10));itemRow.setFocusable(true);itemRow.setFocusableInTouchMode(true);itemRow.setClickable(true);itemRow.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
-      TextView name=new TextView(this);name.setText(title);name.setTextColor(Color.WHITE);name.setTextSize(16);itemRow.addView(name);
-      TextView detail=new TextView(this);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");detail.setTextColor(Color.rgb(154,190,220));detail.setTextSize(12);itemRow.addView(detail);
-      // Strong D-pad focus feedback: blue fill, yellow outline, slight scale and elevation.
-      itemRow.setOnFocusChangeListener((v,focused)->{
-        itemRow.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));
-        itemRow.setScaleX(focused?1.025f:1f);itemRow.setScaleY(focused?1.025f:1f);
-        itemRow.setElevation(focused?dp(7):0);
-        name.setTextColor(focused?Color.rgb(255,235,170):Color.WHITE);
-        detail.setTextColor(focused?Color.WHITE:Color.rgb(154,190,220));
-      });
-      itemRow.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
-      itemRow.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
-      LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);results.addView(itemRow,lp);
-    }
+    GridView grid=ensureVodGrid(results,1);grid.setAdapter(new VodHistoryAdapter(history,status,results));grid.setSelection(0);
   }
   private String formatVodTime(long ms){
     long seconds=Math.max(0,ms/1000),hours=seconds/3600,minutes=(seconds%3600)/60,remain=seconds%60;
@@ -655,7 +671,7 @@ public class MainActivity extends Activity {
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
-    else{status.setText("正在快速检索「"+category+"」…");results.removeAllViews();}
+    else{status.setText("正在快速检索「"+category+"」…");GridView grid=ensureVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
     // A fresh cache is already a complete result: show it immediately and avoid
     // repeating dozens of metadata requests every time the user reopens this category.
     if(!cached.isEmpty()&&isVodCacheFresh(category)){
