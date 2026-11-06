@@ -1420,12 +1420,29 @@ public class MainActivity extends Activity {
         boolean visible=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()==View.VISIBLE;
         if(visible)hideVodControlsNow();else revealVodSeekBar();
       }
+      private boolean isMouseEvent(android.view.MotionEvent event){
+        return event.getPointerCount()>0&&event.getToolType(0)==android.view.MotionEvent.TOOL_TYPE_MOUSE;
+      }
+      @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent event){
+        int action=event.getActionMasked();
+        if(isMouseEvent(event)&&(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE)){
+          revealVodSeekBar();
+        }
+        return super.dispatchGenericMotionEvent(event);
+      }
       @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
         int action=event.getActionMasked();
+        boolean mouse=isMouseEvent(event);
         if(action==android.view.MotionEvent.ACTION_DOWN){
-          float y=event.getY();
           boolean controlsHidden=vodControlsHolder[0]==null||vodControlsHolder[0].getVisibility()!=View.VISIBLE;
-          videoTapCandidate=controlsHidden||(y>dp(56)&&y<getHeight()-dp(90));
+          if(mouse&&controlsHidden){
+            // Reveal before child hit-testing so this very mouse click can land on a top control.
+            revealVodSeekBar();
+            videoTapCandidate=false;
+          }else{
+            float y=event.getY();
+            videoTapCandidate=controlsHidden||(y>dp(56)&&y<getHeight()-dp(90));
+          }
           videoTouchX=event.getX();videoTouchY=event.getY();
         }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
           float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
