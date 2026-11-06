@@ -458,7 +458,6 @@ public class MainActivity extends Activity {
           View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         // The dialog fills the window; the weighted GridView receives a finite
         // height from the panel and performs its own native scrolling.
-        panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
         panel.requestLayout();
         vodGrid.requestFocus();
       }
