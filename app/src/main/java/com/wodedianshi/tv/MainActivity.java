@@ -481,13 +481,12 @@ public class MainActivity extends Activity {
     dialog.show();
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
-    if(panel.getChildCount()<5)return;
-    View statusView=panel.getChildAt(2);
-    View scrollView=panel.getChildAt(3);
-    // Current layout uses intro, category row, search row, status, results scroll.
-    statusView=panel.getChildAt(3);scrollView=panel.getChildAt(4);
-    if(statusView instanceof TextView && scrollView instanceof LinearLayout)
-      loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)scrollView);
+    // Child order: title bar, intro, categories, search, status, results.
+    if(panel.getChildCount()<6)return;
+    View statusView=panel.getChildAt(4);
+    View resultsView=panel.getChildAt(5);
+    if(statusView instanceof TextView && resultsView instanceof LinearLayout)
+      loadVodCatalogue(category,panel,(TextView)statusView,(LinearLayout)resultsView);
   }
   private String vodCacheKey(String category){
     return "vod_cache_v2_"+Integer.toHexString(category.hashCode());
