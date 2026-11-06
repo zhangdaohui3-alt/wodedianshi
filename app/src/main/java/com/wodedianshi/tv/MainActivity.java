@@ -177,7 +177,45 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredLiveChannelButton==b)hoveredLiveChannelButton=null;
-        b.setBackground(makeButtonBg(b.hasFocus()?Color.rgb(38,82,125):normalColor,b.hasFocus()));
+        // Mouse hover is transient; do not leave a stale DPAD focus outline behind.
+        if(b.hasFocus())b.clearFocus();
+        b.setBackground(makeButtonBg(normalColor,false));
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0);
+        return true;
+      }
+      return false;
+    });
+  }
+  private Button hoveredVodPageButton;
+  private void styleVodPageButton(Button b,int normalColor){
+    b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
+    b.setBackground(makeButtonBg(normalColor,false));
+    b.setOnFocusChangeListener((v,focused)->{
+      if(hoveredVodPageButton!=b)b.setBackground(makeButtonBg(normalColor,focused));
+      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
+      b.setElevation(focused?dp(8):0);
+    });
+    b.setOnHoverListener((v,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        if(hoveredVodPageButton!=null&&hoveredVodPageButton!=b){
+          Button old=hoveredVodPageButton;
+          old.setBackground(makeButtonBg(Color.rgb(43,68,94),false));
+          if(old.hasFocus())old.clearFocus();
+          old.setScaleX(1f);old.setScaleY(1f);old.setElevation(0);
+        }
+        hoveredVodPageButton=b;
+        if(!b.hasFocus())b.requestFocus();
+        GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
+        bg.setCornerRadius(dp(7));bg.setStroke(dp(2),Color.rgb(120,195,250));
+        b.setBackground(bg);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
+        return true;
+      }
+      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        if(hoveredVodPageButton==b)hoveredVodPageButton=null;
+        if(b.hasFocus())b.clearFocus();
+        b.setBackground(makeButtonBg(normalColor,false));
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0);
         return true;
       }
       return false;
@@ -551,14 +589,16 @@ public class MainActivity extends Activity {
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     // Explicit page controls complement touch swipes, mouse-wheel scrolling and D-pad navigation.
     LinearLayout pageBar=new LinearLayout(this);pageBar.setOrientation(0);pageBar.setGravity(Gravity.CENTER);
-    Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleTvButton(previousPageButton,Color.rgb(43,68,94));
-    Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleTvButton(nextPageButton,Color.rgb(26,100,160));
+    Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleVodPageButton(previousPageButton,Color.rgb(43,68,94));
+    Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleVodPageButton(nextPageButton,Color.rgb(26,100,160));
     pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
     pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(40)));
-    previousPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,-1));
-    nextPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,1));
+    previousPageButton.setNextFocusRightId(nextPageButton.getId());
+    nextPageButton.setNextFocusLeftId(previousPageButton.getId());
+    previousPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,-1);previousPageButton.requestFocus();});
+    nextPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,1);nextPageButton.requestFocus();});
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
