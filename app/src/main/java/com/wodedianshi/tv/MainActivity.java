@@ -726,9 +726,9 @@ public class MainActivity extends Activity {
     int rowHeight=dp(150);
     View firstChild=grid.getChildAt(0);
     if(firstChild!=null&&firstChild.getHeight()>0)rowHeight=firstChild.getHeight()+grid.getVerticalSpacing();
-    int distance=Math.max(rowHeight,grid.getHeight()-rowHeight);
-    if(direction<0)distance=-distance;
-    grid.post(()->grid.smoothScrollBy(distance,260));
+    int pageDistance=Math.max(rowHeight,grid.getHeight()-rowHeight);
+    final int scrollDistance=direction<0?-pageDistance:pageDistance;
+    grid.post(()->grid.smoothScrollBy(scrollDistance,260));
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
