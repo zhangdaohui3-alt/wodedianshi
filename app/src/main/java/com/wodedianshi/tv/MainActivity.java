@@ -597,6 +597,10 @@ public class MainActivity extends Activity {
     pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     TextView pageHint=new TextView(this);pageHint.setText("鼠标可直接点击翻页 · 滚轮也可");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
     pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
+    // Paging is a TV/remote affordance. Phones use the native grid scroll gesture instead.
+    boolean tvPaging=getPackageManager().hasSystemFeature("android.software.leanback")
+        ||getPackageManager().hasSystemFeature("android.hardware.type.television");
+    pageBar.setVisibility(tvPaging?View.VISIBLE:View.GONE);
     panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(42)));pageBar.bringToFront();
     // GridView recycles off-screen cards while retaining native touch and D-pad navigation.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
@@ -711,14 +715,20 @@ public class MainActivity extends Activity {
     return true;
   }
   private void scrollVodGridPage(GridView grid,int direction){
-    if(grid==null||grid.getAdapter()==null||grid.getAdapter().getCount()==0)return;
-    int columns=Math.max(1,grid.getNumColumns());
-    int visibleRows=Math.max(1,grid.getChildCount()/columns);
-    int step=Math.max(columns,(visibleRows-1)*columns);
-    int first=grid.getFirstVisiblePosition();
-    int target=Math.max(0,Math.min(grid.getAdapter().getCount()-1,first+direction*step));
-    if(target==first)return;
-    grid.post(()->grid.smoothScrollToPosition(target));
+    if(grid==null||grid.getAdapter()==null||grid.getAdapter().getCount()==0||direction==0)return;
+    final int count=grid.getAdapter().getCount();
+    final int first=grid.getFirstVisiblePosition();
+    final int last=grid.getLastVisiblePosition();
+    if(direction>0&&last>=count-1)return;
+    if(direction<0&&first<=0)return;
+    // Page by almost one full viewport in pixels. The old childCount/columns
+    // calculation rounded down on partially visible rows, so next page advanced too little.
+    int rowHeight=dp(150);
+    View firstChild=grid.getChildAt(0);
+    if(firstChild!=null&&firstChild.getHeight()>0)rowHeight=firstChild.getHeight()+grid.getVerticalSpacing();
+    int distance=Math.max(rowHeight,grid.getHeight()-rowHeight);
+    if(direction<0)distance=-distance;
+    grid.post(()->grid.smoothScrollBy(distance,260));
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
@@ -1574,19 +1584,27 @@ public class MainActivity extends Activity {
         if(action==android.view.MotionEvent.ACTION_DOWN){
           boolean controlsHidden=vodControlsHolder[0]==null||vodControlsHolder[0].getVisibility()!=View.VISIBLE;
           if(mouse&&controlsHidden){
-            // Reveal before child hit-testing so this very mouse click can land on a top control.
+            // Mouse hover normally reveals controls before click; keep mouse hit-testing native.
             revealVodSeekBar();
             videoTapCandidate=false;
           }else{
             float y=event.getY();
-            videoTapCandidate=controlsHidden||(y>dp(56)&&y<getHeight()-dp(90));
+            videoTapCandidate=!mouse&&controlsHidden;
+            if(!mouse&&!controlsHidden)videoTapCandidate=(y>dp(56)&&y<getHeight()-dp(90));
           }
           videoTouchX=event.getX();videoTouchY=event.getY();
+          // Intercept the whole first finger tap while controls are hidden.
+          // Otherwise PlayerView can own ACTION_DOWN and the stage never receives ACTION_UP.
+          if(videoTapCandidate)return true;
         }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
           float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
-          if(dx<dp(28)&&dy<dp(28)){toggleVodControls();videoTapCandidate=false;return true;}
           videoTapCandidate=false;
-        }else if(action==android.view.MotionEvent.ACTION_CANCEL)videoTapCandidate=false;
+          if(dx<dp(28)&&dy<dp(28))toggleVodControls();
+          return true;
+        }else if(action==android.view.MotionEvent.ACTION_CANCEL&&videoTapCandidate){
+          videoTapCandidate=false;
+          return true;
+        }
         return super.dispatchTouchEvent(event);
       }
     };stage.setBackgroundColor(Color.BLACK);stage.setFocusable(true);stage.setFocusableInTouchMode(true);stage.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
