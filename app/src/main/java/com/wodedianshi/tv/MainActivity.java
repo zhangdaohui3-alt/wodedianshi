@@ -97,8 +97,15 @@ public class MainActivity extends Activity {
   // including for users whose channel list was already saved by an older build.
   private void loadBundledHdBackups(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    // The bundled playlist is an upgrade migration, not startup work. The old
+    // implementation reparsed the entire M3U and resorted every channel on
+    // every launch, making app entry progressively slower as the list grew.
+    final int bundledVersion=3;
+    if(prefs.getInt("bundled_channels_version",0)>=bundledVersion)return;
+    boolean loaded=false;
     try(InputStream in=getAssets().open("default_channels.m3u")){
       parse(read(in));
+      loaded=true;
     }catch(Exception ignored){}
     boolean changed=false;
     synchronized(channels){
@@ -116,7 +123,7 @@ public class MainActivity extends Activity {
       }
     }
     if(changed)persist();
-    prefs.edit().putBoolean("source_quality_order_v2",true).apply();
+    if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
   }
   private int sourceQualityScore(String source){
     if(source==null)return 0;
