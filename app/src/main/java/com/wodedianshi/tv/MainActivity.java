@@ -558,7 +558,7 @@ public class MainActivity extends Activity {
     float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
     if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
     if(wheel==0f)return false;
-    ViewParent p=source;
+    ViewParent p=source.getParent();
     while(p!=null&&!(p instanceof GridView))p=p.getParent();
     if(!(p instanceof GridView))return false;
     GridView grid=(GridView)p;
