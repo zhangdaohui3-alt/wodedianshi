@@ -1355,7 +1355,7 @@ public class MainActivity extends Activity {
       rootLayout.addView(channelPane,1,new LinearLayout.LayoutParams(dp(250),-1));
       categoryPane.setVisibility(View.GONE);channelPane.setVisibility(View.GONE);
       fullscreenMenuPopup=null;
-      if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(fullScreenPlayback&&isTouchDevice()?View.VISIBLE:View.GONE);
+      if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
       if(video!=null&&!isTouchDevice())video.requestFocus();
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
