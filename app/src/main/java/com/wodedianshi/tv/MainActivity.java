@@ -721,13 +721,16 @@ public class MainActivity extends Activity {
       channelId="CHAL1460955924871139";
     if(channelId==null)return found;
     HashSet<String> ids=new HashSet<>();
+    long deadline=android.os.SystemClock.elapsedRealtime()+22000L;
+    int albumChecks=0;
     try{
-      for(int page=1;page<=2&&found.size()<36;page++){
+      for(int page=1;page<=2&&found.size()<24&&android.os.SystemClock.elapsedRealtime()<deadline;page++){
         String endpoint="https://api.cntv.cn/list/getVideoAlbumList?channelid="+channelId+"&p="+page+"&n=24&serviceId=tvcctv&topv=1&t=json";
         JSONArray albums=cctvList(cctvGetJson(endpoint));
         if(albums.length()==0)break;
-        for(int i=0;i<albums.length()&&found.size()<36;i++){
+        for(int i=0;i<albums.length()&&found.size()<24&&albumChecks<8&&android.os.SystemClock.elapsedRealtime()<deadline;i++){
           if(Thread.currentThread().isInterrupted())return found;
+          albumChecks++;
           org.json.JSONObject album=albums.optJSONObject(i);if(album==null)continue;
           String albumId=album.optString("id",album.optString("albumId",""));
           String albumTitle=album.optString("title","央视节目");
@@ -739,7 +742,7 @@ public class MainActivity extends Activity {
           try{
             String episodeUrl="https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id="+URLEncoder.encode(albumId,"UTF-8")+"&serviceId=tvcctv&p=1&n=30&mode=0&pub=1";
             JSONArray episodes=cctvList(cctvGetJson(episodeUrl));
-            for(int j=0;j<episodes.length()&&found.size()<36;j++){
+            for(int j=0;j<episodes.length()&&found.size()<24&&j<12&&android.os.SystemClock.elapsedRealtime()<deadline;j++){
               if(Thread.currentThread().isInterrupted())return found;
               org.json.JSONObject episode=episodes.optJSONObject(j);if(episode==null)continue;
               String guid=episode.optString("guid",episode.optString("pid",""));
