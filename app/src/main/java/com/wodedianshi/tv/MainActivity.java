@@ -516,6 +516,16 @@ public class MainActivity extends Activity {
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
     GridView vodGrid=ensureVodGrid(results,3);
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
+    // Explicit page controls complement touch swipes, mouse-wheel scrolling and D-pad navigation.
+    LinearLayout pageBar=new LinearLayout(this);pageBar.setOrientation(0);pageBar.setGravity(Gravity.CENTER);
+    Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleTvButton(previousPageButton,Color.rgb(43,68,94));
+    Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleTvButton(nextPageButton,Color.rgb(26,100,160));
+    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(dp(104),dp(36)));
+    TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(dp(190),dp(36)));
+    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(dp(104),dp(36)));
+    panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(40)));
+    previousPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,-1));
+    nextPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,1));
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
@@ -613,8 +623,18 @@ public class MainActivity extends Activity {
     int step=Math.max(dp(96),grid.getHeight()/3);
     int delta=Math.round(-wheel*step);
     if(delta==0)delta=wheel>0?-dp(96):dp(96);
-    grid.scrollListBy(delta);
+    grid.smoothScrollBy(delta,180);
     return true;
+  }
+  private void scrollVodGridPage(GridView grid,int direction){
+    if(grid==null||grid.getAdapter()==null||grid.getAdapter().getCount()==0)return;
+    int columns=Math.max(1,grid.getNumColumns());
+    int visibleRows=Math.max(1,grid.getChildCount()/columns);
+    int step=Math.max(columns,(visibleRows-1)*columns);
+    int first=grid.getFirstVisiblePosition();
+    int target=Math.max(0,Math.min(grid.getAdapter().getCount()-1,first+direction*step));
+    if(target==first)return;
+    grid.post(()->grid.smoothScrollToPosition(target));
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
