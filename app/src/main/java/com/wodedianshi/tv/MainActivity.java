@@ -524,7 +524,7 @@ public class MainActivity extends Activity {
     loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
   private String vodCacheKey(String category){
-    return "vod_cache_v5_"+Integer.toHexString(category.hashCode());
+    return "vod_cache_v6_"+Integer.toHexString(category.hashCode());
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
@@ -808,7 +808,7 @@ public class MainActivity extends Activity {
   private ArrayList<VodItem> fetchCctvVod(String category){
     ArrayList<VodItem> found=new ArrayList<>();
     String channelId=null;
-    if("中国纪录片".equals(category)||"中文纪录片".equals(category)||"中国历史影像".equals(category)||"中国经典影像".equals(category))
+    if("中国纪录片".equals(category)||"中文纪录片".equals(category))
       channelId="CHAL1460955924871139";
     else if("中国动画".equals(category)||"中文动画".equals(category))
       channelId="CHAL1460955899450127";
@@ -1029,7 +1029,9 @@ public class MainActivity extends Activity {
         String q="mediatype:movies";
         if("多源精选".equals(category))q="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain OR language:Chinese OR language:chi OR language:zho)";
         else if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
-        else if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
+        else if("中国经典影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:Mandarin OR subject:Chinese) AND (subject:classic OR title:classic OR title:feature OR subject:cinema)";
+        else if("中国历史影像".equals(category))q="mediatype:movies AND (subject:documentary OR title:documentary OR title:historical OR subject:history) AND (title:China OR title:Chinese OR subject:China OR subject:Chinese OR language:chi OR language:zho)";
+        else if("中国电影".equals(category)||"中国老电影".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
         else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:Mandarin OR title:Chinese OR subject:Chinese)";
         else if("中国动画".equals(category)||"中文动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:animation OR subject:cartoons OR title:动画)";
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:documentary OR title:纪录片)";
@@ -1051,7 +1053,7 @@ public class MainActivity extends Activity {
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
         // Chinese film records are inconsistently catalogued; search several independent
         // title/language/region vocabularies rather than trusting one query field.
-        if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)){
+        if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
           String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
           String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
           String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
@@ -1059,7 +1061,10 @@ public class MainActivity extends Activity {
           for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
         }else if("中国动画".equals(category)||"中文动画".equals(category)){
           queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
-        }else if("中国纪录片".equals(category)||"中文纪录片".equals(category)||"中国历史影像".equals(category)){
+        }else if("中国历史影像".equals(category)){
+          queries.add("mediatype:movies AND (title:Chinese history documentary OR title:China history documentary OR subject:Chinese history OR subject:Chinese historical documentary)");
+          queries.add("mediatype:movies AND (title:China newsreel OR title:Chinese archive footage OR subject:China historical footage)");
+        }else if("中国纪录片".equals(category)||"中文纪录片".equals(category)){
           queries.add("mediatype:movies AND (title:China documentary OR title:Chinese documentary OR subject:Chinese documentary OR language:chi OR language:zho)");
         }else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category)){
           queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
@@ -1151,8 +1156,9 @@ public class MainActivity extends Activity {
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","多源精选","中国电影","中国经典影像","中国老电影","中国历史影像","华语经典","中国动画","中文动画","中国纪录片","中文纪录片").contains(category)&&found.size()<48;
         if(useCommonsPublic)commonsPublicFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
         String commonsQuery=null;
-        if("中国电影".equals(category)||"中国老电影".equals(category)||"中国经典影像".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
-        else if("中国历史影像".equals(category))commonsQuery="Chinese historical documentary";
+        if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
+        else if("中国经典影像".equals(category))commonsQuery="Chinese classic cinema film";
+        else if("中国历史影像".equals(category))commonsQuery="Chinese historical documentary archive footage";
         else if("中国动画".equals(category)||"中文动画".equals(category))commonsQuery="Chinese animation";
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
@@ -1163,7 +1169,8 @@ public class MainActivity extends Activity {
         if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
-        else if("中国经典影像".equals(category)||"中国历史影像".equals(category))locQuery="China historical film";
+        else if("中国经典影像".equals(category))locQuery="Chinese classic feature film";
+        else if("中国历史影像".equals(category))locQuery="China historical documentary newsreel";
         else if("中国动画".equals(category)||"中文动画".equals(category))locQuery="Chinese animation";
         else if("中国纪录片".equals(category)||"中文纪录片".equals(category))locQuery="China documentary";
         else if("历史纪录片".equals(category))locQuery="historical documentary";
