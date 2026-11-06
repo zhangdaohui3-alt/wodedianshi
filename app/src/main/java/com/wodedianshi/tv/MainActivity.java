@@ -582,22 +582,27 @@ public class MainActivity extends Activity {
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));searchRow.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
-    // GridView owns vertical touch scrolling and D-pad focus navigation, and
-    // recycles off-screen cards instead of laying out every poster in a ScrollView.
-    LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
-    GridView vodGrid=ensureVodGrid(results,3);
-    panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
-    // Explicit page controls complement touch swipes, mouse-wheel scrolling and D-pad navigation.
+    // Fixed paging controls stay directly above the multi-screen poster grid,
+    // so a mouse never has to travel through the entire list to reach them.
     LinearLayout pageBar=new LinearLayout(this);pageBar.setOrientation(0);pageBar.setGravity(Gravity.CENTER);
+    pageBar.setFocusable(false);pageBar.setClickable(true);pageBar.setElevation(dp(12));
     Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleVodPageButton(previousPageButton,Color.rgb(43,68,94));
     Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleVodPageButton(nextPageButton,Color.rgb(26,100,160));
-    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
-    TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
-    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
-    panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(40)));
     previousPageButton.setId(View.generateViewId());nextPageButton.setId(View.generateViewId());
+    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
+    TextView pageHint=new TextView(this);pageHint.setText("鼠标可直接点击翻页 · 滚轮也可");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
+    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
+    panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(42)));
+    // GridView recycles off-screen cards while retaining native touch and D-pad navigation.
+    LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
+    GridView vodGrid=ensureVodGrid(results,3);
+    vodGrid.setId(View.generateViewId());
+    panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     previousPageButton.setNextFocusRightId(nextPageButton.getId());
     nextPageButton.setNextFocusLeftId(previousPageButton.getId());
+    previousPageButton.setNextFocusUpId(vodGrid.getId());
+    nextPageButton.setNextFocusUpId(vodGrid.getId());
+    vodGrid.setNextFocusDownId(previousPageButton.getId());
     previousPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,-1);previousPageButton.requestFocus();});
     nextPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,1);nextPageButton.requestFocus();});
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
