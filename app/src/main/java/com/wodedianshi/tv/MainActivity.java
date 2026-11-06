@@ -1096,7 +1096,8 @@ public class MainActivity extends Activity {
         else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
         if(commonsQuery!=null&&found.size()<80){
-          Future<ArrayList<VodItem>> commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(commonsQuery));
+          final String commonsSearchTerm=commonsQuery;
+          Future<ArrayList<VodItem>> commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(commonsSearchTerm));
           try{
             ArrayList<VodItem> commonsSearch=commonsSearchFuture.get(5500L,TimeUnit.MILLISECONDS);
             for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
@@ -1114,7 +1115,8 @@ public class MainActivity extends Activity {
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(locQuery!=null&&found.size()<80){
-          Future<ArrayList<VodItem>> locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(locQuery));
+          final String locSearchTerm=locQuery;
+          Future<ArrayList<VodItem>> locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(locSearchTerm));
           try{
             ArrayList<VodItem> locItems=locFuture.get(6500L,TimeUnit.MILLISECONDS);
             for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
@@ -2516,5 +2518,5 @@ public class MainActivity extends Activity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);if(player!=null){player.pause();player.stop();player.clearMediaItems();player.release();player=null;}if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}if(player!=null){player.pause();player.stop();player.clearMediaItems();player.release();player=null;}super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
+  protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}if(player!=null){player.pause();player.stop();player.clearMediaItems();player.release();player=null;}super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
