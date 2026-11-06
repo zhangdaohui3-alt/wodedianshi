@@ -328,7 +328,7 @@ public class MainActivity extends Activity {
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);video.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM);// 保持比例铺满屏幕，超出部分居中裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(23);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setPadding(dp(18),dp(10),dp(18),dp(10));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(24);video.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
@@ -442,9 +442,9 @@ public class MainActivity extends Activity {
     if(player!=null){player.pause();player.stop();player.clearMediaItems();if(video!=null)video.setPlayer(null);player.release();player=null;}
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
-    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(64),dp(30)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(32)));
+    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(44)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
-    String[] categories={"我的收藏","播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
+    String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
     EditText query=new EditText(this);
@@ -724,6 +724,71 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
     return items;
   }
+
+  // Independent Library of Congress film/video catalogue. Require explicit public-domain
+  // or no-known-restrictions wording plus a downloadable video file marked unrestricted.
+  private void collectLocVideoFiles(Object node,ArrayList<String> urls){
+    if(node instanceof org.json.JSONObject){
+      org.json.JSONObject o=(org.json.JSONObject)node;
+      String mime=o.optString("mimetype","").toLowerCase(Locale.ROOT);
+      boolean unrestricted=o.has("rights_restricted")&&!o.optBoolean("rights_restricted",true);
+      if(unrestricted&&mime.startsWith("video/")){
+        String[] fields={"url","video_stream","video"};
+        for(String field:fields){String u=o.optString(field,"");if(u.startsWith("https://")&&!urls.contains(u))urls.add(u);}
+      }
+      java.util.Iterator<String> it=o.keys();
+      while(it.hasNext())collectLocVideoFiles(o.opt(it.next()),urls);
+    }else if(node instanceof org.json.JSONArray){
+      org.json.JSONArray a=(org.json.JSONArray)node;
+      for(int i=0;i<a.length();i++)collectLocVideoFiles(a.opt(i),urls);
+    }
+  }
+  private VodItem fetchLocVideoItem(String itemId,String fallbackTitle){
+    try{
+      String endpoint=itemId.startsWith("http://")?"https://"+itemId.substring(7):itemId;
+      if(!endpoint.startsWith("https://www.loc.gov/"))return null;
+      org.json.JSONObject root=new org.json.JSONObject(httpGetFast(endpoint+(endpoint.contains("?")?"&":"?")+"fo=json"));
+      org.json.JSONObject item=root.optJSONObject("item");if(item==null)return null;
+      String rights=item.optString("rights","")+" "+item.optString("rights_advisory","")+" "+item.optString("rights_information","");
+      org.json.JSONArray rightsArray=item.optJSONArray("rights");
+      if(rightsArray!=null)for(int i=0;i<rightsArray.length();i++)rights+=" "+rightsArray.optString(i,"");
+      String low=rights.toLowerCase(Locale.ROOT);
+      boolean allowed=low.contains("public domain")||low.contains("no known restrictions")||low.contains("no known copyright restrictions")||low.contains("u.s. government work")||low.contains("united states government work");
+      if(!allowed)return null;
+      ArrayList<String> urls=new ArrayList<>();
+      collectLocVideoFiles(root.opt("resources"),urls);
+      if(urls.isEmpty())collectLocVideoFiles(root.opt("resource"),urls);
+      if(urls.isEmpty())return null;
+      String title=item.optString("title",fallbackTitle);
+      String id=item.optString("id",itemId);
+      return new VodItem(title,"loc:"+id,urls.get(0),"Library of Congress · "+rights.trim());
+    }catch(Exception ignored){return null;}
+  }
+  private ArrayList<VodItem> fetchLocPublicDomainVod(String query){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      String api="https://www.loc.gov/film-and-videos/?q="+URLEncoder.encode(query,"UTF-8")+"&fo=json&c=18&sp=1";
+      org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+      org.json.JSONArray docs=root.optJSONArray("results");if(docs==null)return items;
+      ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
+      int submitted=0;
+      for(int i=0;i<docs.length()&&submitted<12;i++){
+        org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
+        String id=doc.optString("id","");if(!id.startsWith("http"))continue;
+        String title=doc.optString("title","公开影像");
+        completion.submit(()->fetchLocVideoItem(id,title));submitted++;
+      }
+      long deadline=android.os.SystemClock.elapsedRealtime()+7000L;
+      while(items.size()<8&&submitted>0&&android.os.SystemClock.elapsedRealtime()<deadline&&!Thread.currentThread().isInterrupted()){
+        Future<VodItem> f=completion.poll(350,TimeUnit.MILLISECONDS);
+        if(f==null)continue;
+        submitted--;
+        try{VodItem v=f.get();if(v!=null)items.add(v);}catch(Exception ignored){}
+      }
+    }catch(Exception ignored){}
+    return items;
+  }
+
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
@@ -742,13 +807,14 @@ public class MainActivity extends Activity {
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>();
       try{
         String q="mediatype:movies";
-        if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
-        else if("中国电影".equals(category)||"中国经典影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
+        if("多源精选".equals(category))q="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain OR language:Chinese OR language:chi OR language:zho)";
+        else if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
+        else if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:China OR title:Chinese OR title:Mandarin OR subject:Chinese OR subject:China)";
         else if("华语经典".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:Mandarin OR title:Chinese OR subject:Chinese)";
-        else if("中国动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:animation OR subject:cartoons OR title:动画)";
-        else if("中国纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:documentary OR title:纪录片)";
+        else if("中国动画".equals(category)||"中文动画".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:animation OR subject:cartoons OR title:动画)";
+        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:China) AND (subject:documentary OR title:纪录片)";
         else if("国产短片".equals(category))q+=" AND (language:Chinese OR language:chi OR language:zho) AND (subject:short film OR title:短片)";
-        else if("纪录片".equals(category)||"科学纪录片".equals(category))q+=" AND subject:documentary";
+        else if("纪录片".equals(category)||"科学纪录片".equals(category)||"历史纪录片".equals(category)||"自然纪录片".equals(category))q+=" AND subject:documentary";
         else if("NASA影像".equals(category))q="mediatype:movies AND (collection:nasa OR creator:NASA)";
         else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
         else if("喜剧".equals(category))q+=" AND subject:comedy";
@@ -757,14 +823,16 @@ public class MainActivity extends Activity {
         else if("欧美经典".equals(category))q+=" AND (language:English OR language:eng) AND (collection:feature_films OR subject:classic)";
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
-        else if(!category.equals("世界公版电影")&&!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
+        else if(!category.equals("世界公版电影")&&!category.equals("精选电影")&&!category.equals("多源精选"))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
         // China-language searches are notoriously inconsistent in archive metadata.
         // A second, broader query catches English-indexed Chinese/Mandarin records.
-        if("中国电影".equals(category)||"中国经典影像".equals(category)||"华语经典".equals(category)){
+        if("中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category)){
           String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
           if(!queries.contains(broad))queries.add(broad);
+          String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
+          if(!queries.contains(chineseTitle))queries.add(chineseTitle);
         }
         if("精选电影".equals(category)){
           String broad="mediatype:movies AND (collection:feature_films OR subject:classic OR subject:public_domain)";
@@ -777,12 +845,12 @@ public class MainActivity extends Activity {
         // Bound the candidate queue and wall-clock time to protect Android TV memory/network.
         outer:
         for(String query:queries){
-          for(int page=1;page<=2;page++){
+          for(int page=1;page<=3;page++){
             if(Thread.currentThread().isInterrupted())break outer;
             String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(query,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+page+"&output=json&sort[]=downloads+desc";
             org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
             org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
-            for(int i=0;i<docs.length()&&submitted<80;i++){
+            for(int i=0;i<docs.length()&&submitted<120;i++){
               org.json.JSONObject doc=docs.getJSONObject(i);
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
@@ -793,8 +861,8 @@ public class MainActivity extends Activity {
             if(docs.length()<100)break;
           }
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+25000L;
-        while(completed<submitted&&found.size()<48&&!Thread.currentThread().isInterrupted()){
+        long deadline=android.os.SystemClock.elapsedRealtime()+30000L;
+        while(completed<submitted&&found.size()<60&&!Thread.currentThread().isInterrupted()){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
           Future<VodItem> future=completion.poll(Math.min(1000L,remaining),TimeUnit.MILLISECONDS);
@@ -809,7 +877,7 @@ public class MainActivity extends Activity {
 
         // Wikimedia Commons is an independent open-media catalogue. Use it as a
         // secondary provider only for categories where its public-domain film set fits.
-        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category))&&found.size()<36){
+        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<36){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
           for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
         }
@@ -818,6 +886,21 @@ public class MainActivity extends Activity {
         for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);
         if(e instanceof InterruptedException)Thread.currentThread().interrupt();
       }
+      
+        String locQuery=null;
+        if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
+        else if("中国经典影像".equals(category)||"中国历史影像".equals(category))locQuery="China historical film";
+        else if("中国动画".equals(category)||"中文动画".equals(category))locQuery="Chinese animation";
+        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))locQuery="China documentary";
+        else if("历史纪录片".equals(category))locQuery="historical documentary";
+        else if("自然纪录片".equals(category)||"科学纪录片".equals(category))locQuery="nature science documentary";
+        else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
+        else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
+        if(locQuery!=null&&found.size()<60){
+          ArrayList<VodItem> locItems=fetchLocPublicDomainVod(locQuery);
+          for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+        }
+
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
@@ -825,7 +908,7 @@ public class MainActivity extends Activity {
         if(!result.isEmpty()){
           writeVodCache(category,result);
           renderVodItems(category,result,status,results,false);
-          status.setText("「"+category+"」 · 找到 "+result.size()+" 部授权视频（多页聚合；文件链接待实际播放验证）");
+          status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
         }else if(cached.isEmpty()){
           status.setText(err==null?"暂时没有检索到符合授权条件且包含 MP4 文件的影片。可稍后重试。":"点播目录暂时无法连接："+err);
         }else{
@@ -1664,7 +1747,7 @@ public class MainActivity extends Activity {
     channelZapOverlay.setGravity(Gravity.CENTER);
     channelZapOverlay.setVisibility(View.VISIBLE);
     hideChannelZapOverlay=()->{if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);hideChannelZapOverlay=null;};
-    uiHandler.postDelayed(hideChannelZapOverlay,3000L);
+    uiHandler.postDelayed(hideChannelZapOverlay,1800L);
   }
   private void showSourcePicker(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
