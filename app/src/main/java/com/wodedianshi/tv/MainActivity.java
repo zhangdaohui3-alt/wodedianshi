@@ -431,6 +431,8 @@ public class MainActivity extends Activity {
   private LinearLayout currentVodPanel,currentVodResults;
   private TextView currentVodStatus;
   private String activeVodCategory="多源精选";
+  // Keep the user scroll position when the same category finishes background refresh.
+  private String currentVodRenderedCategory="";
   private ExoPlayer vodPlayer;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
@@ -551,19 +553,25 @@ public class MainActivity extends Activity {
   // not to the GridView. Forward them so users can scroll without moving to the edge.
   private boolean handleVodGridScroll(View source,android.view.MotionEvent event){
     if(event==null||event.getAction()!=android.view.MotionEvent.ACTION_SCROLL)return false;
-    boolean pointer=event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)
-        ||event.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
-        ||event.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD);
-    if(!pointer)return false;
     float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
     if(wheel==0f)wheel=-event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL);
     if(wheel==0f)return false;
+    GridView grid=source instanceof GridView?(GridView)source:null;
     ViewParent p=source.getParent();
-    while(p!=null&&!(p instanceof GridView))p=p.getParent();
-    if(!(p instanceof GridView))return false;
-    GridView grid=(GridView)p;
-    int step=Math.max(dp(150),(grid.getHeight()*2)/3);
-    grid.smoothScrollBy((int)(-Math.signum(wheel)*step),160);
+    while(grid==null&&p!=null){
+      if(p instanceof GridView)grid=(GridView)p;
+      else p=p.getParent();
+    }
+    if(grid==null&&currentVodResults!=null){
+      for(int i=0;i<currentVodResults.getChildCount();i++){
+        View child=currentVodResults.getChildAt(i);
+        if(child instanceof GridView){grid=(GridView)child;break;}
+      }
+    }
+    if(grid==null)return false;
+    // One wheel notch moves about half a viewport; the pointer can remain over a poster.
+    int step=Math.max(dp(120),grid.getHeight()/2);
+    grid.smoothScrollBy((int)(-Math.signum(wheel)*step),180);
     return true;
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
@@ -608,11 +616,6 @@ public class MainActivity extends Activity {
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
         card.setOnFocusChangeListener((v,focused)->{
           card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
-          if(focused && parent instanceof GridView){
-            GridView owner=(GridView)parent;
-            int p=owner.getPositionForView(card);
-            if(p>=0)owner.setSelection(p);
-          }
         });
       }
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
@@ -622,15 +625,9 @@ public class MainActivity extends Activity {
       holder.meta.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
       loadVodPoster(holder.poster,item.identifier,item.title);
-      card.setOnHoverListener((v,event)->{
-        if(event.getAction()==android.view.MotionEvent.ACTION_HOVER_ENTER && parent instanceof GridView){
-          card.requestFocus();
-          GridView owner=(GridView)parent;
-          int p=owner.getPositionForView(card);
-          if(p>=0)owner.setSelection(p);
-        }
-        return false;
-      });
+      // Do not request keyboard focus or call setSelection on mouse hover:
+      // recycled GridView children can otherwise jump the list back to an old row.
+      card.setOnHoverListener((v,event)->false);
       card.setOnClickListener(v->playVodInside(item));
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
@@ -638,7 +635,13 @@ public class MainActivity extends Activity {
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
     status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
-    GridView grid=resetVodGrid(results,4);grid.setAdapter(new VodGridAdapter(items));grid.setSelection(0);
+    GridView grid=resetVodGrid(results,4);
+    int oldFirst=grid.getFirstVisiblePosition();
+    boolean preservePosition=category.equals(currentVodRenderedCategory)&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0;
+    grid.setAdapter(new VodGridAdapter(items));
+    if(preservePosition&&items!=null&&!items.isEmpty())grid.setSelection(Math.min(oldFirst,items.size()-1));
+    else grid.setSelection(0);
+    currentVodRenderedCategory=category;
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
