@@ -728,6 +728,37 @@ public class MainActivity extends Activity {
     return items;
   }
 
+
+  // Commons search is independent from its curated public-domain category listing.
+  // Keep only direct video files carrying a public-domain or Creative Commons license.
+  private ArrayList<VodItem> fetchCommonsSearchVod(String query){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      String api="https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch="+URLEncoder.encode(query,"UTF-8")+"&gsrnamespace=6&gsrlimit=50&prop=imageinfo&iiprop=url|extmetadata&iiextmetadatalanguage=en&format=json";
+      org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+      org.json.JSONObject queryObject=root.optJSONObject("query");
+      org.json.JSONObject pages=queryObject==null?null:queryObject.optJSONObject("pages");
+      if(pages==null)return items;
+      java.util.Iterator<String> keys=pages.keys();
+      while(keys.hasNext()&&items.size()<24){
+        org.json.JSONObject page=pages.optJSONObject(keys.next());if(page==null)continue;
+        String title=page.optString("title",""),lower=title.toLowerCase(Locale.ROOT);
+        if(!(lower.endsWith(".mp4")||lower.endsWith(".webm")||lower.endsWith(".ogv")||lower.endsWith(".mov")))continue;
+        org.json.JSONArray info=page.optJSONArray("imageinfo");if(info==null||info.length()==0)continue;
+        org.json.JSONObject ii=info.optJSONObject(0);if(ii==null)continue;
+        org.json.JSONObject ext=ii.optJSONObject("extmetadata");if(ext==null)continue;
+        org.json.JSONObject license=ext.optJSONObject("LicenseShortName");
+        String licenseName=license==null?"":android.text.Html.fromHtml(license.optString("value",""),android.text.Html.FROM_HTML_MODE_LEGACY).toString();
+        String l=licenseName.toLowerCase(Locale.ROOT);
+        if(!(l.contains("public domain")||l.equals("cc0")||l.contains("cc by")||l.contains("cc-by")))continue;
+        String url=ii.optString("url","");if(!url.startsWith("https://"))continue;
+        String clean=title.substring(title.lastIndexOf(':')+1).replaceAll("\\.(mp4|webm|ogv|mov)$","");
+        items.add(new VodItem(clean,"commons-search:"+title,url,licenseName));
+      }
+    }catch(Exception ignored){}
+    return items;
+  }
+
   // Independent Library of Congress film/video catalogue. Require explicit public-domain
   // or no-known-restrictions wording plus a downloadable video file marked unrestricted.
   private void collectLocVideoFiles(Object node,ArrayList<String> urls){
@@ -893,6 +924,19 @@ public class MainActivity extends Activity {
         if(e instanceof InterruptedException)Thread.currentThread().interrupt();
       }
       
+        
+        String commonsQuery=null;
+        if("中国电影".equals(category)||"中国老电影".equals(category)||"中国经典影像".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
+        else if("中国历史影像".equals(category))commonsQuery="Chinese historical documentary";
+        else if("中国动画".equals(category)||"中文动画".equals(category))commonsQuery="Chinese animation";
+        else if("中国纪录片".equals(category)||"中文纪录片".equals(category))commonsQuery="China documentary";
+        else if("多源精选".equals(category)||"精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain film";
+        else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
+        if(commonsQuery!=null&&found.size()<60){
+          ArrayList<VodItem> commonsSearch=fetchCommonsSearchVod(commonsQuery);
+          for(VodItem item:commonsSearch)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
+        }
+
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
         else if("中国经典影像".equals(category)||"中国历史影像".equals(category))locQuery="China historical film";
