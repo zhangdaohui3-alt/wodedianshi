@@ -520,9 +520,9 @@ public class MainActivity extends Activity {
     LinearLayout pageBar=new LinearLayout(this);pageBar.setOrientation(0);pageBar.setGravity(Gravity.CENTER);
     Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleTvButton(previousPageButton,Color.rgb(43,68,94));
     Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleTvButton(nextPageButton,Color.rgb(26,100,160));
-    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(dp(104),dp(36)));
-    TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(dp(190),dp(36)));
-    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(dp(104),dp(36)));
+    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
+    TextView pageHint=new TextView(this);pageHint.setText("滚轮 / 上下滑动也可翻页");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
+    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(40)));
     previousPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,-1));
     nextPageButton.setOnClickListener(v->scrollVodGridPage(vodGrid,1));
