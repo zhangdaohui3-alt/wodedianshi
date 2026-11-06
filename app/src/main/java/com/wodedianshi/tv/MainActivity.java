@@ -805,12 +805,13 @@ public class MainActivity extends Activity {
       org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
       org.json.JSONArray docs=root.optJSONArray("results");if(docs==null)return items;
       ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
+      ArrayList<Future<VodItem>> tasks=new ArrayList<>();
       int submitted=0;
       for(int i=0;i<docs.length()&&submitted<12;i++){
         org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
         String id=doc.optString("id","");if(!id.startsWith("http"))continue;
         String title=doc.optString("title","公开影像");
-        completion.submit(()->fetchLocVideoItem(id,title));submitted++;
+        tasks.add(completion.submit(()->fetchLocVideoItem(id,title)));submitted++;
       }
       long deadline=android.os.SystemClock.elapsedRealtime()+7000L;
       while(items.size()<8&&submitted>0&&android.os.SystemClock.elapsedRealtime()<deadline&&!Thread.currentThread().isInterrupted()){
@@ -819,6 +820,7 @@ public class MainActivity extends Activity {
         submitted--;
         try{VodItem v=f.get();if(v!=null)items.add(v);}catch(Exception ignored){}
       }
+      for(Future<VodItem> task:tasks)if(!task.isDone())task.cancel(true);
     }catch(Exception ignored){}
     return items;
   }
