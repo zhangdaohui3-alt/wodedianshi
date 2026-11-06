@@ -426,6 +426,7 @@ public class MainActivity extends Activity {
   // Keep explicit references to the active VOD view model; never infer controls by child index.
   private LinearLayout currentVodPanel,currentVodResults;
   private TextView currentVodStatus;
+  private String activeVodCategory="多源精选";
   private ExoPlayer vodPlayer;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
@@ -442,6 +443,7 @@ public class MainActivity extends Activity {
     if(player!=null){player.pause();player.stop();player.clearMediaItems();if(video!=null)video.setPlayer(null);player.release();player=null;}
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+    Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(44)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
@@ -452,7 +454,7 @@ public class MainActivity extends Activity {
       String category=categories[categoryIndex];
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
       filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
-      b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
+      b.setOnClickListener(v->{activeVodCategory=category;if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
         filters.addView(searchTab,new LinearLayout.LayoutParams(dp(84),dp(40)));
@@ -475,8 +477,9 @@ public class MainActivity extends Activity {
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
-    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
-    loadVodCatalogue("精选电影",panel,status,results);
+    refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodCategory,panel,status,results,true));
+    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty()){activeVodCategory=q;loadVodCatalogue(q,panel,status,results,true);}});
+    loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
       ++vodRequestId;
       Future<?> pending=activeVodCatalogueTask;
@@ -511,7 +514,7 @@ public class MainActivity extends Activity {
     loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
   private String vodCacheKey(String category){
-    return "vod_cache_v3_"+Integer.toHexString(category.hashCode());
+    return "vod_cache_v4_"+Integer.toHexString(category.hashCode());
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
@@ -790,6 +793,9 @@ public class MainActivity extends Activity {
   }
 
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
+    loadVodCatalogue(category,panel,status,results,false);
+  }
+  private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh){
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
@@ -797,7 +803,7 @@ public class MainActivity extends Activity {
     else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,3);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
     // Show fresh cache immediately. A manual refresh is still possible by reopening
     // the category after its cache expires; stale cache never blocks a new harvest.
-    if(!cached.isEmpty()&&isVodCacheFresh(category)){
+    if(!forceRefresh&&!cached.isEmpty()&&isVodCacheFresh(category)){
       status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
       return;
     }
@@ -877,7 +883,7 @@ public class MainActivity extends Activity {
 
         // Wikimedia Commons is an independent open-media catalogue. Use it as a
         // secondary provider only for categories where its public-domain film set fits.
-        if(("世界公版电影".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<36){
+        if(("世界公版电影".equals(category)||"精选电影".equals(category)||"多源精选".equals(category)||"中国电影".equals(category)||"中国经典影像".equals(category)||"中国老电影".equals(category)||"中国历史影像".equals(category)||"华语经典".equals(category)||"中国动画".equals(category)||"中文动画".equals(category)||"中国纪录片".equals(category)||"中文纪录片".equals(category))&&found.size()<36){
           ArrayList<VodItem> commons=fetchCommonsPublicDomainVod(!"世界公版电影".equals(category));
           for(VodItem item:commons)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
         }
@@ -896,6 +902,7 @@ public class MainActivity extends Activity {
         else if("自然纪录片".equals(category)||"科学纪录片".equals(category))locQuery="nature science documentary";
         else if("世界公版电影".equals(category)||"多源精选".equals(category)||"精选电影".equals(category))locQuery="public domain film";
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
+        else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(locQuery!=null&&found.size()<60){
           ArrayList<VodItem> locItems=fetchLocPublicDomainVod(locQuery);
           for(VodItem item:locItems)if(foundIds.add(item.identifier)&&found.size()<60)found.add(item);
@@ -929,6 +936,7 @@ public class MainActivity extends Activity {
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
+    if(identifier!=null&&identifier.startsWith("loc:")){target.setImageResource(android.R.drawable.ic_media_play);return;}
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
     target.setImageResource(android.R.drawable.ic_media_play);
