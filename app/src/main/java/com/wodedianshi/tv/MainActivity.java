@@ -44,6 +44,7 @@ public class MainActivity extends Activity {
   private ScrollView channelScroll;
   private TextView playbackInfo;
   private boolean fullScreenPlayback = false;
+  private boolean fullscreenRemoteDialogOpen = false;
   private PopupWindow fullscreenMenuPopup;
   private TextView fullscreenMenuButton;
   private TextView fullscreenSourceButton;
@@ -1671,7 +1672,7 @@ public class MainActivity extends Activity {
       if(!player.getPlayWhenReady())return;
       int state=player.getPlaybackState();
       // 缓冲由独立计时器处理；READY 但没有真正推进时间轴也必须继续监测。
-      if(state==Player.STATE_BUFFERING){scheduleBufferingFallback();return;}
+      if(state==Player.STATE_BUFFERING){if(bufferingFallback==null)scheduleBufferingFallback();return;}
       if(state!=Player.STATE_READY)return;
       long now=android.os.SystemClock.elapsedRealtime();
       long position=player.getCurrentPosition();
@@ -1720,11 +1721,11 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
     if(configured<=0)return;
     // Initial live startup can legitimately take longer than a mid-stream rebuffer.
     // Do not abandon a healthy but slow-to-start source after only 3-5 seconds.
-    int seconds=sourceReadyRecorded?configured:18;
+    int seconds=sourceReadyRecorded?configured:25;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
@@ -1741,8 +1742,9 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    if(c.backups.size()<2){info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
+    if(c.backups.size()<2){setSourceUpdatePlaybackActive(false);info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
     if(automaticSwitchCount>=c.backups.size()-1){
+      setSourceUpdatePlaybackActive(false);
       info.setText(reason+"；当前频道的播放源已全部尝试，请手动选择其他频道或稍后重试");
       return;
     }
@@ -1763,6 +1765,7 @@ public class MainActivity extends Activity {
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
     enterFullScreenPlayback();
     Channel c=channels.get(selected);
@@ -1860,8 +1863,11 @@ public class MainActivity extends Activity {
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
           if(st==Player.STATE_BUFFERING){
-            if(sourceReadyRecorded&&!sourceWasBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
+            cancelPlaybackWatchdog();
+            boolean firstBuffering=!sourceWasBuffering;
+            if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
+            if(firstBuffering)showChannelZapMessage(sourceReadyRecorded?"网络波动，正在缓冲…":"正在连接播放源…");
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             sourceWasBuffering=false;
@@ -1887,7 +1893,7 @@ public class MainActivity extends Activity {
                 manualSourceSwitch=false;
               }
             }
-          }else if(st==Player.STATE_IDLE||st==Player.STATE_BUFFERING||st==Player.STATE_ENDED){
+          }else if(st==Player.STATE_IDLE||st==Player.STATE_ENDED){
             cancelPlaybackWatchdog();
             if(st==Player.STATE_IDLE)cancelBufferingFallback();
             if(st==Player.STATE_ENDED)advanceToNextSourceAutomatically("当前播放流已结束");
@@ -1957,10 +1963,10 @@ public class MainActivity extends Activity {
     persist();
   }
   private void bufferingSwitchSettingsDialog(){
-    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
-    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换（推荐）","12 秒后切换","关闭自动卡顿切换"};
-    int[] values={3,5,8,12,0};
-    int checked=current==3?0:current==5?1:current==12?3:current==0?4:2;
+    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换","12 秒后切换（推荐）","15 秒后切换","关闭自动卡顿切换"};
+    int[] values={3,5,8,12,15,0};
+    int checked=current==3?0:current==5?1:current==8?2:current==15?4:current==0?5:3;
     new AlertDialog.Builder(this).setTitle("卡顿自动切换备用源")
       .setSingleChoiceItems(labels,checked,(dialog,which)->{
         getSharedPreferences("mytv",0).edit().putInt("buffer_switch_seconds",values[which]).apply();
@@ -1972,6 +1978,9 @@ public class MainActivity extends Activity {
   }
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){super.onStart();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
-  protected void onStop(){super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(player!=null){player.release();player=null;}}
+  private void setSourceUpdatePlaybackActive(boolean active){
+    getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
+  }
+  protected void onStop(){setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(player!=null){player.release();player=null;}}
   protected void onDestroy(){super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();}
 }
