@@ -1122,6 +1122,7 @@ public class MainActivity extends Activity {
         if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
         if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
         if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){locFuture.cancel(true);}}
+      }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
 
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
