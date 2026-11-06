@@ -12,12 +12,16 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_NEW_SOURCES = 100;
+  private static final int MAX_PROBES_PER_RUN = 24;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     if(!getInputData().getBoolean("manual",false)&&!prefs.getBoolean("auto_source_update",true))return Result.success();
+    if(prefs.getBoolean("source_update_playback_active",false)){
+      saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
+      return Result.retry();
+    }
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
     String[] feeds={
@@ -53,6 +57,10 @@ public class SourceUpdateWorker extends Worker {
       ArrayList<Entry> candidates=new ArrayList<>();
       for(String feed:feeds){
         if(isStopped())return Result.retry();
+        if(prefs.getBoolean("source_update_playback_active",false)){
+          saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+          return Result.retry();
+        }
         HttpURLConnection c=null;
         try{
           c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
@@ -66,12 +74,16 @@ public class SourceUpdateWorker extends Worker {
       // Rotate through the complete candidate pool across update runs. This avoids permanently
       // favoring URLs with HD labels and ensures older known sources are periodically re-probed.
       // Bound each update run so a slow public directory cannot keep WorkManager busy indefinitely.
-      long probeDeadline=android.os.SystemClock.elapsedRealtime()+6L*60L*1000L;
+      long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
       int scanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
       int scanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
       for(int offset=0;offset<candidates.size();offset++){
-        if(checked>=MAX_NEW_SOURCES||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
+        if(prefs.getBoolean("source_update_playback_active",false)){
+          saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
+          return Result.retry();
+        }
+        if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
         scanned=offset+1;
         Entry e=candidates.get((scanStart+offset)%candidates.size());
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
