@@ -428,25 +428,25 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     if(player!=null)player.pause();
-    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(12),dp(6),dp(12),dp(8));panel.setBackgroundColor(Color.rgb(12,20,34));
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.CENTER_VERTICAL);
-    TextView dialogTitle=new TextView(this);dialogTitle.setText("我的电视 · 点播");dialogTitle.setTextColor(Color.WHITE);dialogTitle.setTextSize(19);dialogTitle.setTypeface(null,android.graphics.Typeface.BOLD);titleBar.addView(dialogTitle,new LinearLayout.LayoutParams(0,dp(44),1));
-    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(76),dp(42)));panel.addView(titleBar);
-    TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
+    TextView dialogTitle=new TextView(this);dialogTitle.setText("我的电视 · 点播");dialogTitle.setTextColor(Color.WHITE);dialogTitle.setTextSize(19);dialogTitle.setTypeface(null,android.graphics.Typeface.BOLD);titleBar.addView(dialogTitle,new LinearLayout.LayoutParams(0,dp(36),1));
+    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(64),dp(34)));panel.addView(titleBar);
+    TextView intro=new TextView(this);intro.setText("开放授权影片 · 片源可用性受地区与网络影响");intro.setTextColor(Color.LTGRAY);intro.setTextSize(11);intro.setSingleLine(true);intro.setEllipsize(android.text.TextUtils.TruncateAt.END);intro.setPadding(dp(4),0,dp(4),0);panel.addView(intro,new LinearLayout.LayoutParams(-1,dp(22)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"我的收藏","播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     for(String category:categories){
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleTvButton(b,Color.rgb(35,55,78));
-      filters.addView(b,new LinearLayout.LayoutParams(dp(112),dp(48)));
+      filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
       b.setOnClickListener(v->{if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
     }
-    panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(50)));
+    panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(42)));
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
-    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(48),1));
-    Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(100),dp(48)));
-    panel.addView(searchRow);
-    TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(13);status.setPadding(dp(4),dp(8),dp(4),dp(8));panel.addView(status);
+    EditText query=new EditText(this);query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
+    Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
+    panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));
+    TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(26)));
     // GridView owns vertical touch scrolling and D-pad focus navigation, and
     // recycles off-screen cards instead of laying out every poster in a ScrollView.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
