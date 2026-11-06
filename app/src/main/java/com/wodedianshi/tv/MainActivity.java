@@ -434,7 +434,7 @@ public class MainActivity extends Activity {
     // GridView owns vertical touch scrolling and D-pad focus navigation, and
     // recycles off-screen cards instead of laying out every poster in a ScrollView.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
-    GridView vodGrid=new GridView(this);vodGrid.setNumColumns(3);vodGrid.setVerticalSpacing(dp(10));vodGrid.setHorizontalSpacing(dp(8));vodGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);vodGrid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));vodGrid.setFocusable(true);vodGrid.setFocusableInTouchMode(true);vodGrid.setItemsCanFocus(true);vodGrid.setVerticalScrollBarEnabled(true);vodGrid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+    GridView vodGrid=new GridView(this);vodGrid.setNumColumns(3);vodGrid.setVerticalSpacing(dp(10));vodGrid.setHorizontalSpacing(dp(8));vodGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);vodGrid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));vodGrid.setFocusable(true);vodGrid.setFocusableInTouchMode(true);vodGrid;vodGrid.setVerticalScrollBarEnabled(true);vodGrid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
     results.addView(vodGrid,new LinearLayout.LayoutParams(-1,0,1));
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
@@ -510,7 +510,7 @@ public class MainActivity extends Activity {
     if(grid==null){
       grid=new GridView(this);grid.setVerticalSpacing(dp(10));grid.setHorizontalSpacing(dp(8));
       grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-      grid.setFocusable(true);grid.setFocusableInTouchMode(true);grid.setItemsCanFocus(true);
+      grid.setFocusable(true);grid.setFocusableInTouchMode(true);grid;
       grid.setVerticalScrollBarEnabled(true);grid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
       host.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
     }
