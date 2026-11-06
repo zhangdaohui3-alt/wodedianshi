@@ -8,6 +8,7 @@ import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
+import android.util.LruCache;
 import android.view.*;
 import android.widget.*;
 import androidx.media3.common.*;
@@ -64,8 +65,13 @@ public class MainActivity extends Activity {
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final ExecutorService posterWorker = Executors.newFixedThreadPool(3);
   // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
-  private final ExecutorService vodWorker = Executors.newFixedThreadPool(2);
-  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(10);
+  private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
+  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(4);
+  private volatile Future<?> activeVodCatalogueTask;
+  private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(Math.max(1024,(int)(Runtime.getRuntime().maxMemory()/1024/8))) {
+    protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
+  };
+  private final Set<String> vodPosterRequests = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
   private int vodRequestId=0;
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
   private Runnable pendingSearchRefresh;
@@ -415,7 +421,10 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     if(player!=null)player.pause();
-    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(10),dp(16),dp(10));panel.setBackgroundColor(Color.rgb(12,20,34));
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(12),dp(6),dp(12),dp(8));panel.setBackgroundColor(Color.rgb(12,20,34));
+    LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.CENTER_VERTICAL);
+    TextView dialogTitle=new TextView(this);dialogTitle.setText("我的电视 · 点播");dialogTitle.setTextColor(Color.WHITE);dialogTitle.setTextSize(19);dialogTitle.setTypeface(null,android.graphics.Typeface.BOLD);titleBar.addView(dialogTitle,new LinearLayout.LayoutParams(0,dp(44),1));
+    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(76),dp(42)));panel.addView(titleBar);
     TextView intro=new TextView(this);intro.setText("开放授权点播 · 电影与纪录片\n仅收录可识别开放授权声明且具有 MP4 文件的内容；实际可播放性受原始档案、地区和网络影响。");intro.setTextColor(Color.WHITE);intro.setTextSize(14);intro.setPadding(dp(4),dp(4),dp(4),dp(8));panel.addView(intro);
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"我的收藏","播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
@@ -438,10 +447,16 @@ public class MainActivity extends Activity {
     results.addView(vodGrid,new LinearLayout.LayoutParams(-1,0,1));
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的电视 · 点播").setView(panel).setNegativeButton("关闭",null).create();
+    Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+    dialog.setContentView(panel);
+    closeButton.setOnClickListener(v->dialog.dismiss());
     searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty())loadVodCatalogue(q,panel,status,results);});
     loadVodCatalogue("精选电影",panel,status,results);
     dialog.setOnDismissListener(d->{
+      ++vodRequestId;
+      Future<?> pending=activeVodCatalogueTask;
+      if(pending!=null)pending.cancel(true);
+      activeVodCatalogueTask=null;
       if(resumeLiveAfterVod&&player!=null){
         player.play();
         if(player.getPlaybackState()==Player.STATE_BUFFERING)scheduleBufferingFallback();
@@ -456,8 +471,9 @@ public class MainActivity extends Activity {
         dialog.getWindow().getDecorView().setSystemUiVisibility(
           View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
           View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        // The dialog fills the window; the weighted GridView receives a finite
-        // height from the panel and performs its own native scrolling.
+        // A standalone full-screen Dialog avoids AlertDialog's internal custom-view
+        // wrapper. The weighted GridView now receives a finite viewport directly.
+        panel.setFocusableInTouchMode(true);
         panel.requestLayout();
         vodGrid.requestFocus();
       }
@@ -524,7 +540,8 @@ public class MainActivity extends Activity {
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
-    VodGridAdapter(ArrayList<VodItem> data){items=data==null?new ArrayList<>():new ArrayList<>(data);}
+    private final HashSet<String> favoriteIds=new HashSet<>();
+    VodGridAdapter(ArrayList<VodItem> data){items=data==null?new ArrayList<>():new ArrayList<>(data);for(VodItem saved:readVodFavorites())favoriteIds.add(saved.identifier);}
     public int getCount(){return items.size();}
     public Object getItem(int position){return items.get(position);}
     public long getItemId(int position){return position;}
@@ -539,10 +556,10 @@ public class MainActivity extends Activity {
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
         card.setOnFocusChangeListener((v,focused)->card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused)));
       }
-      holder.title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);holder.meta.setText("开放授权 · 可尝试播放");
+      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText("开放授权 · 可尝试播放");
       holder.poster.setImageResource(android.R.drawable.ic_media_play);loadVodPoster(holder.poster,item.identifier);
       card.setOnClickListener(v->playVodInside(item));
-      card.setOnLongClickListener(v->{toggleVodFavorite(item);holder.title.setText((isVodFavorite(item)?"★ ":"☆ ")+item.title);toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");return true;});
+      card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
     }
   }
@@ -575,8 +592,8 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private void loadVodFavorites(LinearLayout panel){
-    if(panel==null||panel.getChildCount()<5)return;
-    View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
+    if(panel==null||panel.getChildCount()<6)return;
+    View statusView=panel.getChildAt(4),scrollView=panel.getChildAt(5);
     if(statusView instanceof TextView&&scrollView instanceof LinearLayout){TextView status=(TextView)statusView;LinearLayout results=(LinearLayout)scrollView;ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");}
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
@@ -595,8 +612,8 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private void loadVodHistory(LinearLayout panel){
-    if(panel==null||panel.getChildCount()<5)return;
-    View statusView=panel.getChildAt(3),scrollView=panel.getChildAt(4);
+    if(panel==null||panel.getChildCount()<6)return;
+    View statusView=panel.getChildAt(4),scrollView=panel.getChildAt(5);
     if(statusView instanceof TextView&&scrollView instanceof LinearLayout)loadVodHistory((TextView)statusView,(LinearLayout)scrollView);
   }
   private class VodHistoryAdapter extends BaseAdapter{
@@ -687,6 +704,7 @@ public class MainActivity extends Activity {
     return items;
   }
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results){
+    Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
@@ -697,8 +715,9 @@ public class MainActivity extends Activity {
       status.setText("「"+category+"」 · "+cached.size()+" 部（高速缓存，稍后可重新检索）");
       return;
     }
-    vodWorker.execute(()->{
+    activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
+      ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       try{
         String q="mediatype:movies";
         if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies";
@@ -717,20 +736,19 @@ public class MainActivity extends Activity {
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
         else if(!category.equals("世界公版电影")&&!category.equals("精选电影"))q+=" AND title:("+category.replace(" "," AND ")+")";
-        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=64&page=1&output=json&sort[]=downloads+desc";
+        String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(q,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=32&page=1&output=json&sort[]=downloads+desc";
         org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
         org.json.JSONArray docs=root.getJSONObject("response").getJSONArray("docs");
         // Metadata lookups run on their own bounded pool (10 parallel requests).
         // The UI/catalogue workers never wait on tasks queued behind themselves.
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
         int submitted=0,completed=0;
-        ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
-        for(int i=0;i<docs.length()&&submitted<64;i++){
+        for(int i=0;i<docs.length()&&submitted<32;i++){
           final org.json.JSONObject doc=docs.getJSONObject(i);
           pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(doc)));submitted++;
         }
-        long deadline=android.os.SystemClock.elapsedRealtime()+22000L;
-        while(completed<submitted&&found.size()<30){
+        long deadline=android.os.SystemClock.elapsedRealtime()+12000L;
+        while(completed<submitted&&found.size()<20&&!Thread.currentThread().isInterrupted()){
           long remaining=deadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0)break;
           Future<VodItem> future=completion.poll(Math.min(1200L,remaining),TimeUnit.MILLISECONDS);
@@ -744,7 +762,7 @@ public class MainActivity extends Activity {
           HashSet<String> seen=new HashSet<>();for(VodItem item:found)seen.add(item.identifier);
           for(VodItem item:commons)if(seen.add(item.identifier)&&found.size()<48)found.add(item);
         }
-      }catch(Exception e){error=e.getMessage();}
+      }catch(Exception e){error=e.getMessage();for(Future<VodItem> future:pendingVodChecks)if(!future.isDone())future.cancel(true);if(e instanceof InterruptedException)Thread.currentThread().interrupt();}
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
@@ -762,7 +780,7 @@ public class MainActivity extends Activity {
   }
   private String httpGetFast(String address)throws Exception{
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-    c.setConnectTimeout(4500);c.setReadTimeout(7000);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
+    c.setConnectTimeout(3500);c.setReadTimeout(5000);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
     c.setRequestProperty("Accept","application/json,*/*");
     try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
       byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");
@@ -770,16 +788,22 @@ public class MainActivity extends Activity {
   }
   private void loadVodPoster(ImageView target,String identifier){
     target.setTag(identifier);
-    posterWorker.execute(()->{
+    Bitmap cached=vodPosterCache.get(identifier);
+    if(cached!=null){target.setImageBitmap(cached);return;}
+    target.setImageResource(android.R.drawable.ic_media_play);
+    if(!vodPosterRequests.add(identifier))return;
+    try{posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
         connection=(HttpURLConnection)new URL("https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8")).openConnection();
-        connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
-        try(InputStream in=connection.getInputStream()){bitmap=BitmapFactory.decodeStream(in);}
-      }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();}
+        connection.setConnectTimeout(1800);connection.setReadTimeout(2500);connection.setInstanceFollowRedirects(true);
+        try(InputStream in=connection.getInputStream()){
+          BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;bitmap=BitmapFactory.decodeStream(in,null,options);
+        }
+      }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();vodPosterRequests.remove(identifier);}
       final Bitmap image=bitmap;
-      if(image!=null)uiHandler.post(()->{if(identifier.equals(target.getTag()))target.setImageBitmap(image);});
-    });
+      if(image!=null){vodPosterCache.put(identifier,image);uiHandler.post(()->{if(identifier.equals(target.getTag()))target.setImageBitmap(image);});}
+    });}catch(RejectedExecutionException ignored){vodPosterRequests.remove(identifier);}
   }
   private String encodeArchivePath(String path){
     try{String[] parts=path.split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(out.length()>0)out.append("/");out.append(URLEncoder.encode(p,"UTF-8").replace("+","%20"));}return out.toString();}catch(Exception e){return path;}
