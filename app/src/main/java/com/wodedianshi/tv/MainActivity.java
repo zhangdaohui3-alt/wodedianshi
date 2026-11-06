@@ -429,10 +429,8 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     if(player!=null)player.pause();
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),dp(3),dp(8),dp(4));panel.setBackgroundColor(Color.rgb(12,20,34));
-    LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.CENTER_VERTICAL);
-    TextView dialogTitle=new TextView(this);dialogTitle.setText("我的电视 · 点播");dialogTitle.setTextColor(Color.WHITE);dialogTitle.setTextSize(19);dialogTitle.setTypeface(null,android.graphics.Typeface.BOLD);titleBar.addView(dialogTitle,new LinearLayout.LayoutParams(0,dp(36),1));
-    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(64),dp(34)));panel.addView(titleBar);
-    TextView intro=new TextView(this);intro.setText("开放授权影片 · 片源可用性受地区与网络影响");intro.setTextColor(Color.LTGRAY);intro.setTextSize(11);intro.setSingleLine(true);intro.setEllipsize(android.text.TextUtils.TruncateAt.END);intro.setPadding(dp(4),0,dp(4),0);panel.addView(intro,new LinearLayout.LayoutParams(-1,dp(22)));
+    LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+    Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(64),dp(30)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(32)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     String[] categories={"我的收藏","播放记录","精选电影","中国电影","中国经典影像","华语经典","中国动画","中国纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
