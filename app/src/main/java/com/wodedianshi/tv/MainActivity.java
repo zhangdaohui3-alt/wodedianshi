@@ -1560,6 +1560,8 @@ public class MainActivity extends Activity {
   private boolean audioTrackSupported=false;
   private boolean audioTrackSelected=false;
   private boolean audioPositionAdvancing=false;
+  private boolean videoTrackPresent=false;
+  private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
   private Runnable audioTrackCheck;
   private void cancelAudioTrackCheck(){
@@ -1574,9 +1576,12 @@ public class MainActivity extends Activity {
       audioTrackCheck=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
           ||player.getPlaybackState()!=Player.STATE_READY)return;
-      if(!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing){
-        recordSourceMetric(currentSourceUrl(),"audio_output_missing",0L);
-        advanceToNextSourceAutomatically("检测到当前源没有有效声音输出");
+      boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
+      boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
+      if(missingAudio||missingVideo){
+        recordSourceMetric(currentSourceUrl(),"failure",0L);
+        String reason=missingAudio&&missingVideo?"音视频轨道均不可用":missingAudio?"没有有效声音输出":"没有可用视频轨道";
+        advanceToNextSourceAutomatically("检测到当前源"+reason);
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
@@ -1694,7 +1699,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -1744,27 +1749,31 @@ public class MainActivity extends Activity {
           audioPositionAdvancing=true;
         }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordSourceMetric(currentSourceUrl(),"audio_codec_error",0L);
+          recordSourceMetric(currentSourceUrl(),"failure",0L);
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordSourceMetric(currentSourceUrl(),"audio_sink_error",0L);
+          recordSourceMetric(currentSourceUrl(),"failure",0L);
         }
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
-          boolean audioPresent=false,audioSupported=false,audioSelected=false,videoSelected=false;
+          boolean audioPresent=false,audioSupported=false,audioSelected=false,videoPresent=false,videoSupported=false,videoSelected=false;
           for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()==C.TRACK_TYPE_AUDIO){
               audioPresent=true;
               if(group.isSupported())audioSupported=true;
               if(group.isSelected())audioSelected=true;
-            }else if(group.getType()==C.TRACK_TYPE_VIDEO&&group.isSelected()){
-              videoSelected=true;
+            }else if(group.getType()==C.TRACK_TYPE_VIDEO){
+              videoPresent=true;
+              if(group.isSupported())videoSupported=true;
+              if(group.isSelected())videoSelected=true;
             }
           }
           audioTrackPresent=audioPresent;
           audioTrackSupported=audioSupported;
           audioTrackSelected=audioSelected;
+          videoTrackPresent=videoPresent;
+          videoTrackSupported=videoSupported;
           videoTrackSelected=videoSelected;
         }
         private boolean isCurrent(){
