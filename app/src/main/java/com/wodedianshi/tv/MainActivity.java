@@ -331,7 +331,7 @@ public class MainActivity extends Activity {
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
-    video=new PlayerView(this);video.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM);// 保持比例铺满屏幕，超出部分居中裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+    video=new PlayerView(this);video.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
@@ -569,9 +569,12 @@ public class MainActivity extends Activity {
       }
     }
     if(grid==null)return false;
-    // One wheel notch moves about half a viewport; the pointer can remain over a poster.
-    int step=Math.max(dp(120),grid.getHeight()/2);
-    grid.smoothScrollBy((int)(-Math.signum(wheel)*step),180);
+    // Consume the wheel at the list itself, even when the pointer is over a poster.
+    // scrollListBy is more reliable than smoothScrollBy for mouse wheels on Android TV.
+    int step=Math.max(dp(96),grid.getHeight()/3);
+    int delta=Math.round(-wheel*step);
+    if(delta==0)delta=wheel>0?-dp(96):dp(96);
+    grid.scrollListBy(delta);
     return true;
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
@@ -637,10 +640,15 @@ public class MainActivity extends Activity {
     status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
     GridView grid=resetVodGrid(results,4);
     int oldFirst=grid.getFirstVisiblePosition();
+    View firstChild=grid.getChildAt(0);
+    int oldTop=firstChild==null?0:firstChild.getTop();
     boolean preservePosition=category.equals(currentVodRenderedCategory)&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0;
     grid.setAdapter(new VodGridAdapter(items));
-    if(preservePosition&&items!=null&&!items.isEmpty())grid.setSelection(Math.min(oldFirst,items.size()-1));
-    else grid.setSelection(0);
+    if(preservePosition&&items!=null&&!items.isEmpty()){
+      final int restorePosition=Math.min(oldFirst,items.size()-1);
+      final int restoreTop=oldTop;
+      grid.post(()->grid.setSelectionFromTop(restorePosition,restoreTop));
+    }else grid.post(()->grid.setSelection(0));
     currentVodRenderedCategory=category;
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
@@ -1309,7 +1317,7 @@ public class MainActivity extends Activity {
         return super.dispatchTouchEvent(event);
       }
     };stage.setBackgroundColor(Color.BLACK);stage.setFocusable(true);stage.setFocusableInTouchMode(true);stage.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-    PlayerView pv=new PlayerView(this);pv.setUseController(false);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);pv.setFocusable(false);pv.setFocusableInTouchMode(false);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+    PlayerView pv=new PlayerView(this);pv.setUseController(false);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);pv.setFocusable(false);pv.setFocusableInTouchMode(false);pv.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
     TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodPlayer!=null){if(vodPlayer.isPlaying())vodPlayer.pause();else vodPlayer.play();playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");}});
