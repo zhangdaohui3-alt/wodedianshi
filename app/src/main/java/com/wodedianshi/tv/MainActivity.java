@@ -1625,6 +1625,7 @@ public class MainActivity extends Activity {
   private long sourceReadyAt=0L;
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
+  private boolean sourceFailureRecorded=false;
   private boolean sourceWasBuffering=false;
   private boolean audioTrackPresent=false;
   private boolean audioTrackSupported=false;
@@ -1649,7 +1650,7 @@ public class MainActivity extends Activity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(missingAudio||missingVideo){
-        recordSourceMetric(currentSourceUrl(),"failure",0L);
+        recordCurrentSourceFailure();
         String reason=missingAudio&&missingVideo?"音视频轨道均不可用":missingAudio?"没有有效声音输出":"没有可用视频轨道";
         advanceToNextSourceAutomatically("检测到当前源"+reason);
       }
@@ -1778,6 +1779,7 @@ public class MainActivity extends Activity {
     hasReceivedVideoFrame=false;
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
+    sourceFailureRecorded=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
     saveLastChannel();
@@ -1819,10 +1821,10 @@ public class MainActivity extends Activity {
           audioPositionAdvancing=true;
         }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordSourceMetric(currentSourceUrl(),"failure",0L);
+          recordCurrentSourceFailure();
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordSourceMetric(currentSourceUrl(),"failure",0L);
+          recordCurrentSourceFailure();
         }
       });
       player.addListener(new Player.Listener(){
@@ -1852,7 +1854,7 @@ public class MainActivity extends Activity {
         }
         public void onPlayerError(PlaybackException e){
           if(!isCurrent())return;
-          if(!sourceReadyRecorded)recordSourceMetric(currentSourceUrl(),"failure",0L);
+          recordCurrentSourceFailure();
           advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
         }
         public void onPlaybackStateChanged(int st){
@@ -1905,6 +1907,11 @@ public class MainActivity extends Activity {
   }
   // Persistent playback observations. READY latency is not the same as a rendered first frame;
   // buffering/error events come from the actual ExoPlayer session, not a URL probe.
+  private void recordCurrentSourceFailure(){
+    if(sourceFailureRecorded)return;
+    sourceFailureRecorded=true;
+    recordSourceMetric(currentSourceUrl(),"failure",0L);
+  }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
     try{
