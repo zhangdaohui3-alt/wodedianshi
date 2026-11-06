@@ -602,6 +602,25 @@ public class MainActivity extends Activity {
     for(int i=host.getChildCount()-1;i>=0;i--)if(host.getChildAt(i)!=grid)host.removeViewAt(i);
     return grid;
   }
+  // Keep mouse hover separate from D-pad focus. Consuming hover on every
+  // card surface prevents GridView's default hover selection from moving focus
+  // between recycled cells while the pointer is merely passing over posters.
+  private void configureVodMouseTarget(View target,View card){
+    if(Build.VERSION.SDK_INT>=24)target.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
+    target.setOnHoverListener((v,event)->{
+      int action=event.getAction();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        card.setBackground(makeButtonBg(Color.rgb(40,76,110),true));
+        return true;
+      }
+      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        boolean focused=card.isFocused();
+        card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+        return true;
+      }
+      return false;
+    });
+  }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
@@ -630,9 +649,12 @@ public class MainActivity extends Activity {
       holder.meta.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
       loadVodPoster(holder.poster,item.identifier,item.title);
-      // Do not request keyboard focus or call setSelection on mouse hover:
-      // recycled GridView children can otherwise jump the list back to an old row.
-      card.setOnHoverListener((v,event)->false);
+      // Mouse hover highlights exactly one card but never changes D-pad focus.
+      // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
+      configureVodMouseTarget(card,card);
+      configureVodMouseTarget(holder.poster,card);
+      configureVodMouseTarget(holder.title,card);
+      configureVodMouseTarget(holder.meta,card);
       card.setOnClickListener(v->playVodInside(item));
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
