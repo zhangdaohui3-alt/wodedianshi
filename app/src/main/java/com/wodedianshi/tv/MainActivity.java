@@ -70,7 +70,8 @@ public class MainActivity extends Activity {
   private final ExecutorService posterWorker = Executors.newFixedThreadPool(2);
   // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
   private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
-  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(2);
+  private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
+  private final ExecutorService vodSourceWorker = Executors.newFixedThreadPool(4);
   private volatile Future<?> activeVodCatalogueTask;
   private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(Math.max(1024,(int)(Runtime.getRuntime().maxMemory()/1024/16))) {
     protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
