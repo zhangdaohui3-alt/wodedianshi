@@ -435,9 +435,9 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
-    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","美国及全球","娱乐频道","国际新闻","体育","天气","教育","中国地区","收藏","自建频道"};
+    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","中国","收藏","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("美国及全球"))showCountryDialog();if(name.equals("中国地区"))showChinaRegionDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -1736,20 +1736,6 @@ public class MainActivity extends Activity {
       try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which]));startActivity(i);}
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
-  }
-  // Keep the original TV/player architecture; this dialog only organizes existing regional categories.
-  private void showChinaRegionDialog(){
-    String[] choices={"中国大陆 · 央视","中国大陆 · 卫视","中国大陆 · 地方台（按省市）","香港／澳门／台湾","中国其他公开频道"};
-    showChoiceDialog("中国地区 · 选择分类",choices,(dialog,which)->{
-      favoriteMode=false;
-      if(which==0){activeCategory="央视";loadChinaChannels();info.setText("中国大陆 · 央视频道");}
-      else if(which==1){activeCategory="卫视";loadChinaChannels();info.setText("中国大陆 · 卫视频道");}
-      else if(which==2){activeCategory="地方";loadChinaChannels();showProvinceDialog();}
-      else if(which==3){activeCategory="港澳台";loadRegionChannels();info.setText("香港／澳门／台湾频道");}
-      else{activeCategory="中国";loadChinaChannels();info.setText("中国其他公开频道");}
-      refresh();
-      focusFirstChannelInMenu();
-    });
   }
   private void showProvinceDialog(){
     String[] provinces={"全部地方台","北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
