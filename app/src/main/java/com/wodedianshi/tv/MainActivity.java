@@ -361,21 +361,22 @@ public class MainActivity extends Activity {
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
-      // Collapse existing duplicates as well as newly imported entries. Preserve every
-      // distinct URL as a backup source and carry favorites to the surviving row.
-      LinkedHashMap<String,Channel> compact=new LinkedHashMap<>();
+      // Preserve display order while using a plain hash index for duplicate lookup.
+      // This avoids allocating a LinkedHashMap entry for every restored channel.
+      HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
+      ArrayList<Channel> compact=new ArrayList<>(channels.size());
       for(Channel c:channels){
         if(c.backups==null)c.backups=new ArrayList<>();
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
         String key=identity(c.name,c.group,c.url);
-        Channel keep=compact.get(key);
-        if(keep==null){compact.put(key,c);}
+        Channel keep=firstByIdentity.get(key);
+        if(keep==null){firstByIdentity.put(key,c);compact.add(c);}
         else{
           for(String source:c.backups)if(source!=null&&!source.isEmpty()&&!keep.backups.contains(source))keep.backups.add(source);
           if(favorites.contains(c.key()))favorites.add(keep.key());
         }
       }
-      channels.clear();channels.addAll(compact.values());
+      channels.clear();channels.addAll(compact);
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
@@ -2782,9 +2783,38 @@ public class MainActivity extends Activity {
     }
     return super.dispatchGenericMotionEvent(event);
   }
+  private boolean isInsideView(View child,View parent){
+    View current=child;
+    while(current!=null){
+      if(current==parent)return true;
+      android.view.ViewParent p=current.getParent();
+      current=p instanceof View?(View)p:null;
+    }
+    return false;
+  }
+  private void focusActiveLeftMenuItem(){
+    if(categoryMenuItems==null)return;
+    String wanted=activeCategory==null?"全部":activeCategory;
+    for(int i=0;i<categoryMenuItems.getChildCount();i++){
+      View item=categoryMenuItems.getChildAt(i);
+      if(item instanceof Button&&wanted.contentEquals(((Button)item).getText())){
+        item.requestFocus();
+        item.setFocusableInTouchMode(true);
+        return;
+      }
+    }
+    if(categoryMenuItems.getChildCount()>0)categoryMenuItems.getChildAt(0).requestFocus();
+  }
   @Override public void onBackPressed(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
+    // First Back from the channel pane returns focus to the left category menu.
+    // A second Back while already in that menu exits the app as expected.
+    View focused=rootLayout==null?null:rootLayout.findFocus();
+    if(categoryPane!=null&&!isInsideView(focused,categoryPane)){
+      focusActiveLeftMenuItem();
+      return;
+    }
     super.onBackPressed();
   }
   private int automaticSwitchCount=0;
