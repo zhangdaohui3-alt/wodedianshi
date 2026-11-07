@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
   private Button hoveredLiveChannelButton;
+  private Button hoveredVodCategoryButton;
   private View hoveredVodCard;
   private final java.util.WeakHashMap<Button,Integer> liveChannelBaseColors=new java.util.WeakHashMap<>();
   private LinearLayout list;
@@ -102,9 +103,16 @@ public class MainActivity extends Activity {
     super.onCreate(b);
     setSourceUpdatePlaybackActive(false); // Clear stale state if Android previously killed the process.
     restore();
-    loadBundledHdBackups();
-    scheduleAutomaticSourceUpdates();
+    // Draw the TV interface first. Asset migration and WorkManager initialization are
+    // non-interactive startup tasks and must not delay the first visible frame.
     makeUi();
+    uiHandler.postDelayed(()->{
+      if(!isFinishing())worker.execute(()->{
+        loadBundledHdBackups();
+        runOnUiThread(()->{if(!isFinishing()){persist();refresh();}});
+      });
+    },900L);
+    uiHandler.postDelayed(()->{if(!isFinishing())scheduleAutomaticSourceUpdates();},1600L);
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
   // including for users whose channel list was already saved by an older build.
@@ -463,7 +471,9 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
-    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","中国","收藏","自建频道"};
+    // "中国" was an empty duplicate entry; China channels are already grouped by CCTV,
+    // satellite and local areas. Keep one clear "地方" entry.
+    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","收藏","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -481,7 +491,9 @@ public class MainActivity extends Activity {
     refresh();
     root.post(()->{if(!fullScreenPlayback&&root.findFocus()==null&&catItems.getChildCount()>0)catItems.getChildAt(0).requestFocus();});
     if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
-    restoreLastChannel();
+    // Restore the last channel only after the first frame is on screen. Player creation
+    // can be expensive on older Android TV boxes and should not block app entry.
+    root.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},650L);
     updateNetworkSpeedMonitor();
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
@@ -792,23 +804,30 @@ public class MainActivity extends Activity {
   // focus stroke here: Android mouse double-clicks can leave stale focus outlines.
   private void styleVodCategoryButton(Button button){
     button.setFocusable(true);
-    // Touch users should activate a tab on the first tap; reserve focus navigation for TV remotes.
     button.setFocusableInTouchMode(false);
     button.setTextColor(Color.WHITE);
     button.setSelected(false);
     button.setBackground(makeVodCategoryBg(false,false));
     button.setOnFocusChangeListener((v,focused)->{
-      if(!button.isHovered())button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
+      if(hoveredVodCategoryButton!=button)button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
       button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
     });
     button.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        if(hoveredVodCategoryButton!=null&&hoveredVodCategoryButton!=button){
+          Button old=hoveredVodCategoryButton;
+          old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
+        }
+        hoveredVodCategoryButton=button;
         GradientDrawable hover=new GradientDrawable();
         hover.setColor(Color.rgb(35,91,139));hover.setCornerRadius(dp(7));
         hover.setStroke(dp(2),Color.rgb(125,205,255));button.setBackground(hover);
+        return true;
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        if(hoveredVodCategoryButton==button)hoveredVodCategoryButton=null;
         button.setBackground(makeVodCategoryBg(button.isSelected(),button.hasFocus()));
+        return true;
       }
       return false;
     });
@@ -1780,28 +1799,34 @@ public class MainActivity extends Activity {
     showHoverChoiceDialog(title,choices,negative,-1,action);
   }
   private void showHoverChoiceDialog(String title,String[] choices,String negative,int selectedIndex,ChoiceAction action){
+    final int normal=Color.rgb(25,39,59);
+    final int hoverColor=Color.rgb(35,91,139);
+    final int[] activeChoice={selectedIndex};
     android.widget.ListView listView=new android.widget.ListView(this);
     listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
     listView.setDividerHeight(dp(1));
     listView.setSelector(android.R.color.transparent);
     listView.setItemsCanFocus(false);
     listView.setChoiceMode(android.widget.ListView.CHOICE_MODE_SINGLE);
-    final int normal=Color.rgb(25,39,59);
-    final int hoverColor=Color.rgb(35,91,139);
     android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,choices){
       @Override public android.view.View getView(int position,android.view.View convertView,android.view.ViewGroup parent){
         android.widget.TextView row=convertView instanceof android.widget.TextView?(android.widget.TextView)convertView:new android.widget.TextView(MainActivity.this);
+        row.setTag(position);
         row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
         row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
         row.setMinHeight(dp(48));row.setFocusable(false);row.setClickable(false);
-        row.setBackground(makeButtonBg(normal,position==selectedIndex));
+        row.setBackground(makeButtonBg(normal,position==activeChoice[0]));
         row.setOnHoverListener((v,event)->{
           int act=event.getActionMasked();
+          int rowPosition=v.getTag() instanceof Integer?(Integer)v.getTag():-1;
           if(act==android.view.MotionEvent.ACTION_HOVER_ENTER||act==android.view.MotionEvent.ACTION_HOVER_MOVE){
+            if(rowPosition>=0){activeChoice[0]=rowPosition;listView.setSelection(rowPosition);}
             GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
             bg.setStroke(dp(2),Color.rgb(125,205,255));v.setBackground(bg);
+            return true;
           }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
-            v.setBackground(makeButtonBg(normal,position==selectedIndex));
+            v.setBackground(makeButtonBg(normal,rowPosition==activeChoice[0]));
+            return true;
           }
           return false;
         });
@@ -1810,18 +1835,53 @@ public class MainActivity extends Activity {
     };
     listView.setAdapter(adapter);
     listView.setPadding(dp(12),dp(4),dp(12),dp(4));
+    listView.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+      public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){
+        activeChoice[0]=position;
+        for(int i=0;i<listView.getChildCount();i++){
+          View child=listView.getChildAt(i);
+          int childPosition=listView.getFirstVisiblePosition()+i;
+          if(childPosition!=position)child.setBackground(makeButtonBg(normal,false));
+          else child.setBackground(makeButtonBg(normal,true));
+        }
+      }
+      public void onNothingSelected(android.widget.AdapterView<?> parent){}
+    });
     listView.setOnHoverListener((v,event)->{
       int act=event.getActionMasked();
       if(act==android.view.MotionEvent.ACTION_HOVER_MOVE||act==android.view.MotionEvent.ACTION_HOVER_ENTER){
         int position=listView.pointToPosition((int)event.getX(),(int)event.getY());
-        if(position>=0)listView.setSelection(position);
+        if(position>=0){
+          activeChoice[0]=position;listView.setSelection(position);
+          for(int i=0;i<listView.getChildCount();i++){
+            View child=listView.getChildAt(i);
+            int childPosition=listView.getFirstVisiblePosition()+i;
+            if(childPosition==position){
+              GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+              bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
+            }else child.setBackground(makeButtonBg(normal,childPosition==selectedIndex));
+          }
+        }
       }
-      return false;
+      return true;
     });
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView).setNegativeButton(negative,null).create();
+    LinearLayout content=new LinearLayout(this);content.setOrientation(1);
+    LinearLayout topRow=new LinearLayout(this);topRow.setOrientation(0);topRow.setGravity(Gravity.CENTER_VERTICAL);
+    TextView heading=new TextView(this);heading.setText(title);heading.setTextColor(Color.WHITE);heading.setTextSize(18);heading.setTypeface(null,android.graphics.Typeface.BOLD);
+    topRow.addView(heading,new LinearLayout.LayoutParams(0,dp(48),1f));
+    Button cancel=new Button(this);cancel.setText(negative);cancel.setAllCaps(false);cancel.setTextSize(13);
+    styleTvButton(cancel,Color.rgb(65,78,96));
+    topRow.addView(cancel,new LinearLayout.LayoutParams(dp(88),dp(40)));
+    content.addView(topRow,new LinearLayout.LayoutParams(-1,dp(48)));
+    content.addView(listView,new LinearLayout.LayoutParams(-1,0,1f));
+    AlertDialog dialog=new AlertDialog.Builder(this).setView(content).create();
+    cancel.setOnClickListener(v->dialog.dismiss());
     listView.setOnItemClickListener((parent,view,position,id)->{
+      int actual=listView.getPositionForView(view);
+      if(actual<0)actual=position;
+      if(actual<0||actual>=choices.length)return;
       dialog.dismiss();
-      action.onChoice(position);
+      action.onChoice(actual);
     });
     dialog.show();
     if(dialog.getWindow()!=null){
@@ -1829,7 +1889,7 @@ public class MainActivity extends Activity {
       int screenH=getResources().getDisplayMetrics().heightPixels;
       boolean touch=isTouchDevice();
       int width=(int)(screenW*(touch?0.92f:0.58f));
-      int height=Math.min(dp(520),(int)(screenH*(touch?0.72f:0.78f)));
+      int height=Math.min(dp(560),(int)(screenH*(touch?0.76f:0.80f)));
       dialog.getWindow().setLayout(width,height);
     }
   }
