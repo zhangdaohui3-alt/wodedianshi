@@ -72,6 +72,11 @@ public class MainActivity extends Activity {
   private final ArrayList<Channel> channels = new ArrayList<>();
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
+  // Dedicated local-area filter; keep the sidebar category as 地方 so a label
+  // such as “全部河北频道” can never fall through to the global category.
+  private boolean localRegionFilterActive=false;
+  private String activeLocalProvince=null;
+  private String activeLocalCity=null;
   private Set<String> parsingGeoChannelKeys=null;
   private final HashSet<String> favorites = new HashSet<>();
   private final ArrayList<Button> menuButtons = new ArrayList<>();
@@ -495,7 +500,7 @@ public class MainActivity extends Activity {
     // satellite and local areas. Keep one clear "地方" entry.
     String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","收藏","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -1949,7 +1954,8 @@ public class MainActivity extends Activity {
     String[] provinces={"全部地方台","北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     showHoverChoiceDialog("选择省级地区",provinces,"取消",which->{
       favoriteMode=false;
-      if(which==0){activeCategory="地方";refresh();info.setText("显示全部地方台");}
+      localRegionFilterActive=true;activeCategory="地方";activeLocalProvince=null;activeLocalCity=null;
+      if(which==0){refresh();info.setText("显示全部地方台");}
       else showCityDialog(provinces[which]);
     });
   }
@@ -1995,8 +2001,9 @@ public class MainActivity extends Activity {
     System.arraycopy(cities,0,choices,1,cities.length);
     showHoverChoiceDialog(province+" · 选择城市",choices,"返回",w->{
       favoriteMode=false;
-      if(w==0){activeCategory=province;info.setText("正在显示："+province+" 地方频道");}
-      else{activeCategory="城市:"+cities[w-1];info.setText("正在筛选："+province+" · "+cities[w-1]+" 频道");}
+      localRegionFilterActive=true;activeCategory="地方";activeLocalProvince=province;
+      if(w==0){activeLocalCity=null;info.setText("正在显示："+province+" 地方频道");}
+      else{activeLocalCity=cities[w-1];info.setText("正在筛选："+province+" · "+activeLocalCity+" 频道");}
       refresh();
     });
   }
@@ -2044,6 +2051,20 @@ public class MainActivity extends Activity {
     }
     return false;
   }
+  private boolean matchesProvinceCity(Channel c,String province,String city){
+    if(c==null||province==null||city==null||isSatelliteChannel(c))return false;
+    String metadata=regionalMetadata(c);
+    String explicit=explicitProvinceIn(metadata);
+    if(!explicit.isEmpty()&&!explicit.equals(province))return false;
+    if(!java.util.Arrays.asList(citiesForProvince(province)).contains(city))return false;
+    return hasRegionalToken(metadata,city)||(hasRegionalToken(metadata,province)&&citiesForProvince(province).length==1);
+  }
+  private boolean matchesLocalRegion(Channel c){
+    if(!localRegionFilterActive)return true;
+    if(activeLocalProvince==null)return isLocalChannel(c);
+    if(activeLocalCity==null)return matchesProvinceLocal(c,activeLocalProvince);
+    return matchesProvinceCity(c,activeLocalProvince,activeLocalCity);
+  }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
@@ -2073,7 +2094,7 @@ public class MainActivity extends Activity {
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
     if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
     if(cat.equals("地方"))return isLocalChannel(c);
-    return true;
+    return false;
   }
   private void refresh(){
     if(list==null||search==null)return;
@@ -2102,7 +2123,9 @@ public class MainActivity extends Activity {
         Channel c=channels.get(i);
         if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
         if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(localRegionFilterActive&&activeCategory.equals("地方")){
+          if(!matchesLocalRegion(c))continue;
+        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
             &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
         visibleIndexes.add(i);
