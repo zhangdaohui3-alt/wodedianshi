@@ -2701,6 +2701,9 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
+    // Re-rank whenever the picker opens so the latest playback results are reflected.
+    // The sorter preserves the currently playing URL and only persists a real order change.
+    sortSourcesByObservedQuality(c);
     ArrayList<String> labels=new ArrayList<>();
     ArrayList<Integer> indexes=new ArrayList<>();
     for(int i=0;i<c.backups.size();i++){
@@ -3178,7 +3181,13 @@ public class MainActivity extends Activity {
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
       double readyPenalty=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
-      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+label*0.01;
+      long lastSuccess=m.optLong("lastSuccess",0L);
+      double recentSuccessBonus=0.0;
+      if(lastSuccess>0L){
+        double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
+        recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
+      }
+      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
   }
   private void sortSourcesByObservedQuality(Channel c){
@@ -3186,6 +3195,7 @@ public class MainActivity extends Activity {
     String active=c.activeSource>=0&&c.activeSource<c.backups.size()?c.backups.get(c.activeSource):c.url;
     ArrayList<String> ordered=new ArrayList<>(c.backups);
     ordered.sort((a,b)->Double.compare(observedSourceScore(b),observedSourceScore(a)));
+    if(ordered.equals(c.backups))return;
     c.backups.clear();c.backups.addAll(ordered);
     int ix=c.backups.indexOf(active);c.activeSource=ix>=0?ix:0;
     persist();
