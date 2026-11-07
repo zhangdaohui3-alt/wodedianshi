@@ -223,14 +223,42 @@ public class MainActivity extends Activity {
       return false;
     });
   }
+  private Button hoveredTvButton;
+  private final java.util.WeakHashMap<Button,Integer> tvButtonBaseColors=new java.util.WeakHashMap<>();
   private void styleTvButton(Button b,int normalColor){
+    tvButtonBaseColors.put(b,normalColor);
     b.setFocusable(true); b.setFocusableInTouchMode(true);
     b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
-      b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.04f:1f); b.setScaleY(focused?1.04f:1f);
-      b.setElevation(focused?dp(8):0);
+      if(hoveredTvButton!=b)b.setBackground(makeButtonBg(normalColor,focused));
+      b.setScaleX(focused?1.025f:1f); b.setScaleY(focused?1.025f:1f);
+      b.setElevation(focused?dp(6):0);
+    });
+    b.setOnHoverListener((v,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        if(hoveredTvButton!=null&&hoveredTvButton!=b){
+          Button old=hoveredTvButton;
+          int base=tvButtonBaseColors.containsKey(old)?tvButtonBaseColors.get(old):Color.rgb(16,24,40);
+          old.setBackground(makeButtonBg(base,old.hasFocus()));
+          old.setScaleX(old.hasFocus()?1.025f:1f);old.setScaleY(old.hasFocus()?1.025f:1f);
+          old.setElevation(old.hasFocus()?dp(6):0);
+        }
+        hoveredTvButton=b;
+        GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(35,91,139));
+        hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
+        b.setBackground(hover);b.setScaleX(1.025f);b.setScaleY(1.025f);b.setElevation(dp(6));
+        return true;
+      }
+      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        if(hoveredTvButton==b)hoveredTvButton=null;
+        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
+        b.setScaleX(b.hasFocus()?1.025f:1f);b.setScaleY(b.hasFocus()?1.025f:1f);
+        b.setElevation(b.hasFocus()?dp(6):0);
+        return true;
+      }
+      return false;
     });
   }
   private void styleVodTopControl(Button b){
@@ -1737,13 +1765,43 @@ public class MainActivity extends Activity {
       catch(Exception e){toast("无法打开，请检查电视是否安装浏览器或对应官方应用");}
     }).setNegativeButton("返回",null).show();
   }
+  private interface ChoiceAction{void onChoice(int which);}
+  private void showHoverChoiceDialog(String title,String[] choices,String negative,ChoiceAction action){
+    android.widget.ListView listView=new android.widget.ListView(this);
+    listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
+    listView.setDividerHeight(dp(1));
+    listView.setSelector(android.R.color.transparent);
+    android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,choices){
+      @Override public android.view.View getView(int position,android.view.View convertView,android.view.ViewGroup parent){
+        android.widget.TextView row=convertView instanceof android.widget.TextView?(android.widget.TextView)convertView:new android.widget.TextView(MainActivity.this);
+        row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
+        row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
+        row.setMinHeight(dp(48));row.setFocusable(true);row.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+        row.setOnFocusChangeListener((v,focused)->{if(!v.isHovered())v.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));});
+        row.setOnHoverListener((v,event)->{
+          int a=event.getActionMasked();
+          if(a==android.view.MotionEvent.ACTION_HOVER_ENTER||a==android.view.MotionEvent.ACTION_HOVER_MOVE){
+            GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(35,91,139));bg.setCornerRadius(dp(6));bg.setStroke(dp(2),Color.rgb(105,185,245));v.setBackground(bg);return true;
+          }
+          if(a==android.view.MotionEvent.ACTION_HOVER_EXIT){v.setBackground(makeButtonBg(Color.rgb(25,39,59),v.hasFocus()));return true;}
+          return false;
+        });
+        return row;
+      }
+    };
+    listView.setAdapter(adapter);
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView,dp(12),dp(4),dp(12),dp(4)).setNegativeButton(negative,null).create();
+    listView.setOnItemClickListener((parent,view,position,id)->{dialog.dismiss();action.onChoice(position);});
+    dialog.show();
+    if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.58),dp(520));
+  }
   private void showProvinceDialog(){
     String[] provinces={"全部地方台","北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-    new AlertDialog.Builder(this).setTitle("选择省级地区").setItems(provinces,(dialog,which)->{
+    showHoverChoiceDialog("选择省级地区",provinces,"取消",which->{
       favoriteMode=false;
       if(which==0){activeCategory="地方";refresh();info.setText("显示全部地方台");}
       else showCityDialog(provinces[which]);
-    }).setNegativeButton("取消",null).show();
+    });
   }
   private String[] citiesForProvince(String p){
     switch(p){
@@ -1785,12 +1843,12 @@ public class MainActivity extends Activity {
     String[] cities=citiesForProvince(province);
     String[] choices=new String[cities.length+1];choices[0]="全部"+province+"频道";
     System.arraycopy(cities,0,choices,1,cities.length);
-    new AlertDialog.Builder(this).setTitle(province+" · 选择城市").setItems(choices,(d,w)->{
+    showHoverChoiceDialog(province+" · 选择城市",choices,"返回",w->{
       favoriteMode=false;
       if(w==0){activeCategory=province;info.setText("正在显示："+province+" 地方频道");}
       else{activeCategory="城市:"+cities[w-1];info.setText("正在筛选："+province+" · "+cities[w-1]+" 频道");}
       refresh();
-    }).setNegativeButton("返回",null).show();
+    });
   }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
