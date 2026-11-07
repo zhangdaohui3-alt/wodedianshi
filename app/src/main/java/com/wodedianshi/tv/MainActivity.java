@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
   private Button hoveredLiveChannelButton;
+  private View hoveredVodCard;
   private final java.util.WeakHashMap<Button,Integer> liveChannelBaseColors=new java.util.WeakHashMap<>();
   private LinearLayout list;
   private TextView info;
@@ -169,9 +170,8 @@ public class MainActivity extends Activity {
         if(hoveredLiveChannelButton!=null&&hoveredLiveChannelButton!=b){
           Button old=hoveredLiveChannelButton;
           int oldBase=liveChannelBaseColors.containsKey(old)?liveChannelBaseColors.get(old):Color.rgb(35,45,62);
-          old.setBackground(makeButtonBg(old.hasFocus()?Color.rgb(38,82,125):oldBase,old.hasFocus()));
-          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);
-          old.setElevation(old.hasFocus()?dp(8):0);
+          old.setBackground(makeButtonBg(oldBase,false));
+          old.setScaleX(1f);old.setScaleY(1f);old.setElevation(0f);
         }
         hoveredLiveChannelButton=b;
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));hover.setCornerRadius(dp(7));
@@ -181,9 +181,8 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredLiveChannelButton==b)hoveredLiveChannelButton=null;
-        b.setBackground(makeButtonBg(b.hasFocus()?Color.rgb(38,82,125):normalColor,b.hasFocus()));
-        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);
-        b.setElevation(b.hasFocus()?dp(8):0);
+        b.setBackground(makeButtonBg(normalColor,false));
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
         return true;
       }
       return false;
@@ -206,9 +205,8 @@ public class MainActivity extends Activity {
         if(hoveredVodPageButton!=null&&hoveredVodPageButton!=b){
           Button old=hoveredVodPageButton;
           int base=vodPageBaseColors.containsKey(old)?vodPageBaseColors.get(old):Color.rgb(43,68,94);
-          old.setBackground(makeButtonBg(old.hasFocus()?base:base,old.hasFocus()));
-          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);
-          old.setElevation(old.hasFocus()?dp(8):0);
+          old.setBackground(makeButtonBg(base,false));
+          old.setScaleX(1f);old.setScaleY(1f);old.setElevation(0f);
         }
         hoveredVodPageButton=b;
         GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
@@ -218,9 +216,8 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredVodPageButton==b)hoveredVodPageButton=null;
-        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
-        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);
-        b.setElevation(b.hasFocus()?dp(8):0);
+        b.setBackground(makeButtonBg(normalColor,false));
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
         return true;
       }
       return false;
@@ -721,14 +718,18 @@ public class MainActivity extends Activity {
     final int last=grid.getLastVisiblePosition();
     if(direction>0&&last>=count-1)return;
     if(direction<0&&first<=0)return;
-    // Page by almost one full viewport in pixels. The old childCount/columns
-    // calculation rounded down on partially visible rows, so next page advanced too little.
-    int rowHeight=dp(150);
-    View firstChild=grid.getChildAt(0);
-    if(firstChild!=null&&firstChild.getHeight()>0)rowHeight=firstChild.getHeight()+grid.getVerticalSpacing();
-    int pageDistance=Math.max(rowHeight,grid.getHeight()-rowHeight);
-    final int scrollDistance=direction<0?-pageDistance:pageDistance;
-    grid.post(()->grid.smoothScrollBy(scrollDistance,260));
+    final int columns=Math.max(1,grid.getNumColumns());
+    final int firstRow=first/columns;
+    final int lastRow=Math.max(firstRow,last/columns);
+    final int visibleRows=Math.max(1,lastRow-firstRow+1);
+    // Keep one row of context on screen while advancing by the actual visible rows.
+    final int pageRows=Math.max(1,visibleRows-1);
+    final int targetRow=direction>0?lastRow+pageRows:firstRow-pageRows;
+    final int targetPosition=Math.max(0,Math.min(count-1,targetRow*columns));
+    if(targetPosition==first)return;
+    // Position-based paging is deterministic on Android 9 GridView; pixel scrolling
+    // could stop early when only a partial row had been laid out by the device.
+    grid.post(()->grid.smoothScrollToPositionFromTop(targetPosition,0,260));
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
@@ -792,14 +793,23 @@ public class MainActivity extends Activity {
   private void configureVodMouseTarget(View target,View card){
     if(Build.VERSION.SDK_INT>=24)target.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
     target.setOnHoverListener((v,event)->{
-      int action=event.getAction();
+      int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        card.setBackground(makeButtonBg(Color.rgb(40,76,110),true));
+        if(hoveredVodCard!=null&&hoveredVodCard!=card){
+          hoveredVodCard.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+        }
+        hoveredVodCard=card;
+        GradientDrawable hover=new GradientDrawable();
+        hover.setColor(Color.rgb(40,76,110));hover.setCornerRadius(dp(7));
+        hover.setStroke(dp(2),Color.rgb(105,185,245));
+        card.setBackground(hover);
         return true;
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        boolean focused=card.isFocused();
-        card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+        if(hoveredVodCard==card)hoveredVodCard=null;
+        // Do not restore a stale yellow focus border after a mouse click.
+        // A subsequent D-pad focus change will draw the remote highlight again.
+        card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
         return true;
       }
       return false;
