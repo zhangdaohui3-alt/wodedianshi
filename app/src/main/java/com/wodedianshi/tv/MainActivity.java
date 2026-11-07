@@ -724,7 +724,7 @@ public class MainActivity extends Activity {
     final int visibleRows=Math.max(1,lastRow-firstRow+1);
     // Keep one row of context on screen while advancing by the actual visible rows.
     final int pageRows=Math.max(1,visibleRows-1);
-    final int targetRow=direction>0?lastRow+pageRows:firstRow-pageRows;
+    final int targetRow=direction>0?firstRow+pageRows:firstRow-pageRows;
     final int targetPosition=Math.max(0,Math.min(count-1,targetRow*columns));
     if(targetPosition==first)return;
     // Position-based paging is deterministic on Android 9 GridView; pixel scrolling
