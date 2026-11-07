@@ -2000,27 +2000,68 @@ public class MainActivity extends Activity {
       refresh();
     });
   }
+  private String regionalMetadata(Channel c){
+    if(c==null)return "";
+    return (c.name+" "+c.group+" "+c.url).toLowerCase(Locale.ROOT)
+        .replace("臺","台").replace("廣","广");
+  }
+  private boolean hasRegionalToken(String metadata,String token){
+    return token!=null&&!token.isEmpty()&&metadata.contains(token.toLowerCase(Locale.ROOT));
+  }
+  private String explicitProvinceIn(String metadata){
+    String[] names={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    for(String p:names)if(metadata.contains(p))return p;
+    String[][] aliases={{"beijing","北京"},{"tianjin","天津"},{"hebei","河北"},{"shanxi","山西"},{"inner mongolia","内蒙古"},{"liaoning","辽宁"},{"jilin","吉林"},{"heilongjiang","黑龙江"},{"shanghai","上海"},{"jiangsu","江苏"},{"zhejiang","浙江"},{"anhui","安徽"},{"fujian","福建"},{"jiangxi","江西"},{"shandong","山东"},{"henan","河南"},{"hubei","湖北"},{"hunan","湖南"},{"guangdong","广东"},{"guangxi","广西"},{"hainan","海南"},{"chongqing","重庆"},{"sichuan","四川"},{"guizhou","贵州"},{"yunnan","云南"},{"tibet","西藏"},{"shaanxi","陕西"},{"gansu","甘肃"},{"qinghai","青海"},{"ningxia","宁夏"},{"xinjiang","新疆"}};
+    for(String[] a:aliases)if(metadata.contains(a[0]))return a[1];
+    return "";
+  }
+  private boolean isSatelliteChannel(Channel c){
+    String metadata=regionalMetadata(c);
+    String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
+    return metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
+  }
+  private boolean matchesProvinceLocal(Channel c,String province){
+    if(c==null||province==null||isSatelliteChannel(c))return false;
+    String metadata=regionalMetadata(c);
+    String explicit=explicitProvinceIn(metadata);
+    if(!explicit.isEmpty()&&!explicit.equals(province))return false;
+    if(hasRegionalToken(metadata,province))return true;
+    for(String city:citiesForProvince(province)){
+      if(hasRegionalToken(metadata,city))return true;
+    }
+    // Avoid assigning a city-only label to the wrong province when city names collide.
+    if(!explicit.isEmpty())return false;
+    return false;
+  }
+  private boolean isLocalChannel(Channel c){
+    if(c==null||isSatelliteChannel(c))return false;
+    String metadata=regionalMetadata(c);
+    if(metadata.contains("地方")||metadata.contains("local"))return true;
+    if(!explicitProvinceIn(metadata).isEmpty())return true;
+    String[] provinces={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    for(String province:provinces)for(String city:citiesForProvince(province)){
+      if(hasRegionalToken(metadata,city))return true;
+    }
+    return false;
+  }
   private boolean categoryMatch(Channel c,String cat){
     String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
     if(cat.equals("自建频道"))return "自建频道".equals(g)||"自定义".equals(g);
-    
-    
-    
-    
-    
-    if(cat.startsWith("城市:"))return x.contains(cat.substring(3).toLowerCase(Locale.ROOT));
-    String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-    // “全部某省频道” includes stations labelled by the province or one of its cities.
-    for(String province:provinceNames){
-      if(cat.equals(province)){
-        if(x.contains(province.toLowerCase(Locale.ROOT)))return true;
-        for(String city:citiesForProvince(province)){
-          if(!city.isEmpty()&&x.contains(city.toLowerCase(Locale.ROOT)))return true;
+    if(cat.startsWith("城市:")){
+      String city=cat.substring(3);
+      String metadata=regionalMetadata(c);
+      if(isSatelliteChannel(c))return false;
+      String explicit=explicitProvinceIn(metadata);
+      if(!explicit.isEmpty()){
+        for(String province:new String[]{"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"}){
+          if(explicit.equals(province)&&!java.util.Arrays.asList(citiesForProvince(province)).contains(city))return false;
         }
-        return false;
       }
+      return hasRegionalToken(metadata,city);
     }
+    String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    for(String province:provinceNames)if(cat.equals(province))return matchesProvinceLocal(c,province);
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
@@ -2031,23 +2072,7 @@ public class MainActivity extends Activity {
     if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
     if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
-    if(cat.equals("地方")){
-      if(x.contains("卫视")||g.contains("卫视")||g.contains("satellite"))return false;
-      String[] regions={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆","beijing","tianjin","hebei","shanxi","inner mongolia","liaoning","jilin","heilongjiang","shanghai","jiangsu","zhejiang","anhui","fujian","jiangxi","shandong","henan","hubei","hunan","guangdong","guangxi","hainan","chongqing","sichuan","guizhou","yunnan","tibet","shaanxi","gansu","qinghai","ningxia","xinjiang"};
-      if(g.contains("地方")||g.contains("local"))return true;
-      for(String region:regions)if(x.contains(region))return true;
-      // “全部地方台” must include city-level stations too. Previously this
-      // branch only recognized province names, so a channel labelled “福州”
-      // or “厦门” appeared in its city filter but disappeared from the all-local
-      // view. Reuse the city catalogue so province and city filters stay aligned.
-      String[] provinceList={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-      for(String province:provinceList){
-        for(String city:citiesForProvince(province)){
-          if(!city.isEmpty()&&x.contains(city.toLowerCase(Locale.ROOT)))return true;
-        }
-      }
-      return false;
-    }
+    if(cat.equals("地方"))return isLocalChannel(c);
     return true;
   }
   private void refresh(){
