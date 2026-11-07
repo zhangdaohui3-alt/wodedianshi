@@ -2169,8 +2169,18 @@ public class MainActivity extends Activity {
     PlaylistFetchResult(String a,String d,String e){address=a;data=d;error=e;}
   }
   private void loadChinaChannels(){
-    if(chinaLoading){info.setText("国内频道列表正在载入，请稍候…");return;}
-    chinaLoading=true;info.setText("正在从多个公开频道目录补充央视、卫视和各省地方台…");
+    if(chinaLoading){info.setText("国内频道列表正在整理，请稍候…");return;}
+    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
+    // Cache-first: opening CCTV/satellite/local categories must not redownload
+    // twelve playlists on every visit. Refresh the catalogue at most every 12h.
+    final long now=System.currentTimeMillis();
+    final long last=cachePrefs.getLong("china_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    if(last>0L&&now-last<refreshInterval){
+      info.setText("已使用本地频道缓存 · 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+      return;
+    }
+    chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
     worker.execute(()->{
       String[] feeds={
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
@@ -2187,17 +2197,19 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
-      int added=fetchAndMergePlaylists(feeds,22000,errors);
+      int added=fetchAndMergePlaylists(feeds,12000,errors);
       final int total=added;final String err=errors.toString();
-      // Serializing a large merged channel catalogue can take noticeable time.
-      // Keep JSON persistence on the worker thread; only repaint the visible UI
-      // after the durable save has completed.
-      persist();
+      // Keep the previous cache if no new entries were merged; persist only
+      // actual additions and avoid a full list rebuild when nothing changed.
+      if(total>0)persist();
+      if(err.split(";").length<feeds.length){
+        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
+      }
       runOnUiThread(()->{
         if(isFinishing())return;
-        refresh();
+        if(total>0)refresh();
         chinaLoading=false;
-        info.setText("国内频道补充完成：新增 "+total+" 个条目，来源包含央视、卫视、地方台及多源检测列表。频道可用性受地区、版权和网络影响。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
+        info.setText("国内频道轻量补充完成：新增 "+total+" 个条目；本地缓存已保留。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
       });
     });
   }
