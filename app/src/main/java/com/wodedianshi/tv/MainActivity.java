@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
   private boolean manualSourceSwitch = false;
   private Button hoveredLiveChannelButton;
   private Button hoveredVodCategoryButton;
+  private volatile boolean startupDataReady=false;
   private View hoveredVodCard;
   private final java.util.WeakHashMap<Button,Integer> liveChannelBaseColors=new java.util.WeakHashMap<>();
   private LinearLayout list;
@@ -102,10 +103,25 @@ public class MainActivity extends Activity {
   public void onCreate(Bundle b) {
     super.onCreate(b);
     setSourceUpdatePlaybackActive(false); // Clear stale state if Android previously killed the process.
-    restore();
-    // Draw the TV interface first. Asset migration and WorkManager initialization are
-    // non-interactive startup tasks and must not delay the first visible frame.
+    // Render the shell immediately. Parsing a large saved playlist and rebuilding
+    // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
+    worker.execute(()->{
+      long restoreStarted=android.os.SystemClock.elapsedRealtime();
+      restore();
+      long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
+      runOnUiThread(()->{
+        if(isFinishing())return;
+        startupDataReady=true;
+        if(search!=null)search.setEnabled(true);
+        if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
+        refresh();
+        if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+        // Keep auto-resume, but only after the restored catalogue is ready.
+        uiHandler.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},350L);
+        android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
+      });
+    });
     uiHandler.postDelayed(()->{
       if(!isFinishing())worker.execute(()->{
         loadBundledHdBackups();
@@ -477,10 +493,10 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show());cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
-    search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
+    search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
@@ -493,7 +509,7 @@ public class MainActivity extends Activity {
     if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
     // Restore the last channel only after the first frame is on screen. Player creation
     // can be expensive on older Android TV boxes and should not block app entry.
-    root.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},650L);
+    // Last-channel restoration is scheduled after asynchronous catalogue recovery in onCreate.
     updateNetworkSpeedMonitor();
   }
   private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
@@ -610,6 +626,21 @@ public class MainActivity extends Activity {
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
     String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
+    // Fallback hit-testing at the scroll-container level for TV boxes whose mouse
+    // hover dispatch is unreliable on child Buttons.
+    categoryScroll.setOnHoverListener((host,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        float x=event.getRawX(),y=event.getRawY();Button hit=null;
+        for(int i=0;i<filters.getChildCount();i++){
+          View child=filters.getChildAt(i);if(!(child instanceof Button))continue;
+          int[] loc=new int[2];child.getLocationOnScreen(loc);
+          if(x>=loc[0]&&x<loc[0]+child.getWidth()&&y>=loc[1]&&y<loc[1]+child.getHeight()){hit=(Button)child;break;}
+        }
+        setVodCategoryHover(hit);
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){setVodCategoryHover(null);}
+      return false;
+    });
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
     EditText query=new EditText(this);
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
@@ -617,7 +648,13 @@ public class MainActivity extends Activity {
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleVodCategoryButton(b);
       categoryButtons.put(category,b);
       filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
-      b.setOnClickListener(v->{activeVodCategory=category;updateVodCategoryHighlight(categoryButtons,category);if("播放记录".equals(category))loadVodHistory(panel);else if("我的收藏".equals(category))loadVodFavorites(panel);else loadVodCatalogue(category,panel);});
+      b.setOnClickListener(v->{
+        // Resolve the clicked view at click time; never reuse a stale hover/focus row.
+        Button clicked=(Button)v;String chosen=clicked.getText().toString();
+        activeVodCategory=chosen;setVodCategoryHover(null);
+        updateVodCategoryHighlight(categoryButtons,chosen);
+        if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
+      });
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
         filters.addView(searchTab,new LinearLayout.LayoutParams(dp(84),dp(40)));
@@ -802,6 +839,19 @@ public class MainActivity extends Activity {
   }
   // Category tabs use a persistent blue selected state. Avoid the shared yellow
   // focus stroke here: Android mouse double-clicks can leave stale focus outlines.
+  private void setVodCategoryHover(Button target){
+    if(hoveredVodCategoryButton==target)return;
+    if(hoveredVodCategoryButton!=null){
+      Button old=hoveredVodCategoryButton;
+      old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
+    }
+    hoveredVodCategoryButton=target;
+    if(target!=null){
+      GradientDrawable hover=new GradientDrawable();
+      hover.setColor(Color.rgb(35,91,139));hover.setCornerRadius(dp(7));
+      hover.setStroke(dp(2),Color.rgb(125,205,255));target.setBackground(hover);
+    }
+  }
   private void styleVodCategoryButton(Button button){
     button.setFocusable(true);
     button.setFocusableInTouchMode(false);
@@ -815,19 +865,17 @@ public class MainActivity extends Activity {
     button.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(hoveredVodCategoryButton!=null&&hoveredVodCategoryButton!=button){
-          Button old=hoveredVodCategoryButton;
-          old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
-        }
-        hoveredVodCategoryButton=button;
-        GradientDrawable hover=new GradientDrawable();
-        hover.setColor(Color.rgb(35,91,139));hover.setCornerRadius(dp(7));
-        hover.setStroke(dp(2),Color.rgb(125,205,255));button.setBackground(hover);
-        return true;
-      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        if(hoveredVodCategoryButton==button)hoveredVodCategoryButton=null;
-        button.setBackground(makeVodCategoryBg(button.isSelected(),button.hasFocus()));
-        return true;
+        setVodCategoryHover(button);
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCategoryButton==button){
+        setVodCategoryHover(null);
+      }
+      // Do not consume pointer events: some Android TV firmware only updates
+      // the parent hover target when the child allows normal event propagation.
+      return false;
+    });
+    button.setOnTouchListener((v,event)->{
+      if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN){
+        setVodCategoryHover(button);
       }
       return false;
     });
