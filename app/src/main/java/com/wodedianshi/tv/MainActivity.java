@@ -792,7 +792,8 @@ public class MainActivity extends Activity {
   // focus stroke here: Android mouse double-clicks can leave stale focus outlines.
   private void styleVodCategoryButton(Button button){
     button.setFocusable(true);
-    button.setFocusableInTouchMode(true);
+    // Touch users should activate a tab on the first tap; reserve focus navigation for TV remotes.
+    button.setFocusableInTouchMode(false);
     button.setTextColor(Color.WHITE);
     button.setSelected(false);
     button.setBackground(makeVodCategoryBg(false,false));
