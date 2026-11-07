@@ -1790,7 +1790,8 @@ public class MainActivity extends Activity {
       }
     };
     listView.setAdapter(adapter);
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView,dp(12),dp(4),dp(12),dp(4)).setNegativeButton(negative,null).create();
+    listView.setPadding(dp(12),dp(4),dp(12),dp(4));
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView).setNegativeButton(negative,null).create();
     listView.setOnItemClickListener((parent,view,position,id)->{dialog.dismiss();action.onChoice(position);});
     dialog.show();
     if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.58),dp(520));
