@@ -1783,6 +1783,8 @@ public class MainActivity extends Activity {
     listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
     listView.setDividerHeight(dp(1));
     listView.setSelector(android.R.color.transparent);
+    listView.setItemsCanFocus(false);
+    listView.setChoiceMode(android.widget.ListView.CHOICE_MODE_SINGLE);
     final int normal=Color.rgb(25,39,59);
     final int hoverColor=Color.rgb(35,91,139);
     android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,choices){
@@ -1790,21 +1792,15 @@ public class MainActivity extends Activity {
         android.widget.TextView row=convertView instanceof android.widget.TextView?(android.widget.TextView)convertView:new android.widget.TextView(MainActivity.this);
         row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
         row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
-        row.setMinHeight(dp(48));row.setFocusable(true);
+        row.setMinHeight(dp(48));row.setFocusable(false);row.setClickable(false);
         row.setBackground(makeButtonBg(normal,position==selectedIndex));
-        row.setOnFocusChangeListener((v,focused)->{
-          if(!v.isHovered())v.setBackground(makeButtonBg(normal,focused||position==selectedIndex));
-        });
         row.setOnHoverListener((v,event)->{
-          int a=event.getActionMasked();
-          if(a==android.view.MotionEvent.ACTION_HOVER_ENTER||a==android.view.MotionEvent.ACTION_HOVER_MOVE){
+          int act=event.getActionMasked();
+          if(act==android.view.MotionEvent.ACTION_HOVER_ENTER||act==android.view.MotionEvent.ACTION_HOVER_MOVE){
             GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
             bg.setStroke(dp(2),Color.rgb(125,205,255));v.setBackground(bg);
-            return false;
-          }
-          if(a==android.view.MotionEvent.ACTION_HOVER_EXIT){
-            v.setBackground(makeButtonBg(normal,v.hasFocus()||position==selectedIndex));
-            return false;
+          }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
+            v.setBackground(makeButtonBg(normal,position==selectedIndex));
           }
           return false;
         });
@@ -1814,17 +1810,27 @@ public class MainActivity extends Activity {
     listView.setAdapter(adapter);
     listView.setPadding(dp(12),dp(4),dp(12),dp(4));
     listView.setOnHoverListener((v,event)->{
-      if(event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_MOVE
-          ||event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_ENTER){
+      int act=event.getActionMasked();
+      if(act==android.view.MotionEvent.ACTION_HOVER_MOVE||act==android.view.MotionEvent.ACTION_HOVER_ENTER){
         int position=listView.pointToPosition((int)event.getX(),(int)event.getY());
         if(position>=0)listView.setSelection(position);
       }
       return false;
     });
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView).setNegativeButton(negative,null).create();
-    listView.setOnItemClickListener((parent,view,position,id)->{dialog.dismiss();action.onChoice(position);});
+    listView.setOnItemClickListener((parent,view,position,id)->{
+      dialog.dismiss();
+      action.onChoice(position);
+    });
     dialog.show();
-    if(dialog.getWindow()!=null)dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*0.58),dp(520));
+    if(dialog.getWindow()!=null){
+      int screenW=getResources().getDisplayMetrics().widthPixels;
+      int screenH=getResources().getDisplayMetrics().heightPixels;
+      boolean touch=isTouchDevice();
+      int width=(int)(screenW*(touch?0.92f:0.58f));
+      int height=Math.min(dp(520),(int)(screenH*(touch?0.72f:0.78f)));
+      dialog.getWindow().setLayout(width,height);
+    }
   }
   private void showProvinceDialog(){
     String[] provinces={"全部地方台","北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
