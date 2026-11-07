@@ -559,7 +559,7 @@ public class MainActivity extends Activity {
       dialog.dismiss();
       if(selected>=0&&selected<channels.size()){
         int channel=selected;
-        if(player!=null){player.release();player=null;video.setPlayer(null);}
+        releaseLivePlayerSafely();
         play(channel);
       }
       toast(which==0?"已切换为自动解码":"已切换为兼容解码；如果仍无声音，可能是音频格式或音轨不兼容");
@@ -589,7 +589,7 @@ public class MainActivity extends Activity {
     setSourceUpdatePlaybackActive(true);
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(player!=null){player.pause();player.stop();player.clearMediaItems();if(video!=null)video.setPlayer(null);player.release();player=null;}
+    releaseLivePlayerSafely();
     LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
@@ -2691,6 +2691,18 @@ public class MainActivity extends Activity {
       advanceToNextSourceAutomatically(reason+"，当前源重连无效");
     }
   }
+  // A given live stream may report error, buffering timeout and ENDED almost together.
+  // Only allow one automatic failover for each playback generation.
+  private String lastAutoFailoverMediaId="";
+  private void releaseLivePlayerSafely(){
+    ExoPlayer old=player;
+    player=null;
+    if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
+    if(old!=null){
+      try{old.pause();old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
+      try{old.release();}catch(RuntimeException ignored){}
+    }
+  }
   private void cancelBufferingFallback(){
     if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
   }
@@ -2713,6 +2725,10 @@ public class MainActivity extends Activity {
     uiHandler.postDelayed(bufferingFallback,seconds*1000L);
   }
   private void advanceToNextSourceAutomatically(String reason){
+    if(selected<0||selected>=channels.size())return;
+    String failedMediaId=currentMediaId;
+    if(failedMediaId.isEmpty()||failedMediaId.equals(lastAutoFailoverMediaId))return;
+    lastAutoFailoverMediaId=failedMediaId;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     if(selected<0||selected>=channels.size())return;
@@ -2770,6 +2786,7 @@ public class MainActivity extends Activity {
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
     info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
+    try{
     if(player==null){
       DefaultHttpDataSource.Factory httpFactory=new DefaultHttpDataSource.Factory()
           .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3")
@@ -2785,19 +2802,21 @@ public class MainActivity extends Activity {
       video.setPlayer(player);
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
       // watchdog below monitors the player timeline without touching codec callbacks.
+      final ExoPlayer listenerOwner=player;
       player.addAnalyticsListener(new AnalyticsListener(){
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
-          audioPositionAdvancing=true;
+          if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordCurrentSourceFailure();
+          if(listenerOwner==MainActivity.this.player)recordCurrentSourceFailure();
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
-          recordCurrentSourceFailure();
+          if(listenerOwner==MainActivity.this.player)recordCurrentSourceFailure();
         }
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
+          if(listenerOwner!=MainActivity.this.player)return;
           boolean audioPresent=false,audioSupported=false,audioSelected=false,videoPresent=false,videoSupported=false,videoSelected=false;
           for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()==C.TRACK_TYPE_AUDIO){
@@ -2818,7 +2837,8 @@ public class MainActivity extends Activity {
           videoTrackSelected=videoSelected;
         }
         private boolean isCurrent(){
-          MediaItem item=player==null?null:player.getCurrentMediaItem();
+          if(listenerOwner!=MainActivity.this.player)return false;
+          MediaItem item=listenerOwner.getCurrentMediaItem();
           return item!=null&&currentMediaId.equals(item.mediaId);
         }
         public void onPlayerError(PlaybackException e){
@@ -2875,6 +2895,13 @@ public class MainActivity extends Activity {
     player.setMediaItem(item);
     player.prepare();
     player.play();
+    }catch(RuntimeException e){
+      String failedMediaId=currentMediaId;
+      recordCurrentSourceFailure();
+      releaseLivePlayerSafely();
+      info.setText("直播播放器启动异常，正在尝试备用源…");
+      if(!failedMediaId.isEmpty())advanceToNextSourceAutomatically("直播播放器启动异常");
+    }
   }
   private String currentSourceUrl(){
     if(selected<0||selected>=channels.size())return "";
@@ -2979,6 +3006,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);if(player!=null){player.pause();player.stop();player.clearMediaItems();player.release();player=null;}if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}if(player!=null){player.pause();player.stop();player.clearMediaItems();player.release();player=null;}super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
