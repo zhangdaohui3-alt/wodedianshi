@@ -251,7 +251,8 @@ public class MainActivity extends Activity {
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        b.setBackground(makeVodTopControlBg(Color.rgb(35,105,160),true));
+        // Mouse hover is blue; remote/D-pad focus remains a distinct yellow outline.
+        b.setBackground(makeVodTopControlHoverBg(Color.rgb(35,105,160)));
         b.setTextColor(Color.WHITE);b.setElevation(dp(11));b.setScaleX(1.05f);b.setScaleY(1.05f);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         boolean focused=b.hasFocus();
@@ -262,9 +263,14 @@ public class MainActivity extends Activity {
       return false;
     });
   }
-  private GradientDrawable makeVodTopControlBg(int color,boolean highlighted){
+  private GradientDrawable makeVodTopControlBg(int color,boolean focused){
     GradientDrawable bg=new GradientDrawable();bg.setColor(color);bg.setCornerRadius(dp(8));
-    bg.setStroke(dp(highlighted?3:1),highlighted?Color.rgb(130,205,255):Color.rgb(112,137,164));
+    bg.setStroke(dp(focused?3:1),focused?Color.rgb(255,210,55):Color.rgb(112,137,164));
+    return bg;
+  }
+  private GradientDrawable makeVodTopControlHoverBg(int color){
+    GradientDrawable bg=new GradientDrawable();bg.setColor(color);bg.setCornerRadius(dp(8));
+    bg.setStroke(dp(2),Color.rgb(105,185,245));
     return bg;
   }
   private GradientDrawable makeButtonBg(int color,boolean focused){
