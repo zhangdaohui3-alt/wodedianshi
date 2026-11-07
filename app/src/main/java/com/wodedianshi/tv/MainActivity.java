@@ -797,10 +797,19 @@ public class MainActivity extends Activity {
     button.setSelected(false);
     button.setBackground(makeVodCategoryBg(false,false));
     button.setOnFocusChangeListener((v,focused)->{
-      button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
-      button.setScaleX(1f);
-      button.setScaleY(1f);
-      button.setElevation(0f);
+      if(!button.isHovered())button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
+      button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
+    });
+    button.setOnHoverListener((v,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        GradientDrawable hover=new GradientDrawable();
+        hover.setColor(Color.rgb(35,91,139));hover.setCornerRadius(dp(7));
+        hover.setStroke(dp(2),Color.rgb(125,205,255));button.setBackground(hover);
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        button.setBackground(makeVodCategoryBg(button.isSelected(),button.hasFocus()));
+      }
+      return false;
     });
   }
   private GradientDrawable makeVodCategoryBg(boolean selected,boolean focused){
@@ -1767,23 +1776,36 @@ public class MainActivity extends Activity {
   }
   private interface ChoiceAction{void onChoice(int which);}
   private void showHoverChoiceDialog(String title,String[] choices,String negative,ChoiceAction action){
+    showHoverChoiceDialog(title,choices,negative,-1,action);
+  }
+  private void showHoverChoiceDialog(String title,String[] choices,String negative,int selectedIndex,ChoiceAction action){
     android.widget.ListView listView=new android.widget.ListView(this);
     listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
     listView.setDividerHeight(dp(1));
     listView.setSelector(android.R.color.transparent);
+    final int normal=Color.rgb(25,39,59);
+    final int hoverColor=Color.rgb(35,91,139);
     android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,choices){
       @Override public android.view.View getView(int position,android.view.View convertView,android.view.ViewGroup parent){
         android.widget.TextView row=convertView instanceof android.widget.TextView?(android.widget.TextView)convertView:new android.widget.TextView(MainActivity.this);
         row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
         row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
-        row.setMinHeight(dp(48));row.setFocusable(true);row.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
-        row.setOnFocusChangeListener((v,focused)->{if(!v.isHovered())v.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));});
+        row.setMinHeight(dp(48));row.setFocusable(true);
+        row.setBackground(makeButtonBg(normal,position==selectedIndex));
+        row.setOnFocusChangeListener((v,focused)->{
+          if(!v.isHovered())v.setBackground(makeButtonBg(normal,focused||position==selectedIndex));
+        });
         row.setOnHoverListener((v,event)->{
           int a=event.getActionMasked();
           if(a==android.view.MotionEvent.ACTION_HOVER_ENTER||a==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(35,91,139));bg.setCornerRadius(dp(6));bg.setStroke(dp(2),Color.rgb(105,185,245));v.setBackground(bg);return true;
+            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+            bg.setStroke(dp(2),Color.rgb(125,205,255));v.setBackground(bg);
+            return false;
           }
-          if(a==android.view.MotionEvent.ACTION_HOVER_EXIT){v.setBackground(makeButtonBg(Color.rgb(25,39,59),v.hasFocus()));return true;}
+          if(a==android.view.MotionEvent.ACTION_HOVER_EXIT){
+            v.setBackground(makeButtonBg(normal,v.hasFocus()||position==selectedIndex));
+            return false;
+          }
           return false;
         });
         return row;
@@ -1791,6 +1813,14 @@ public class MainActivity extends Activity {
     };
     listView.setAdapter(adapter);
     listView.setPadding(dp(12),dp(4),dp(12),dp(4));
+    listView.setOnHoverListener((v,event)->{
+      if(event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_MOVE
+          ||event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_ENTER){
+        int position=listView.pointToPosition((int)event.getX(),(int)event.getY());
+        if(position>=0)listView.setSelection(position);
+      }
+      return false;
+    });
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(listView).setNegativeButton(negative,null).create();
     listView.setOnItemClickListener((parent,view,position,id)->{dialog.dismiss();action.onChoice(position);});
     dialog.show();
@@ -2381,15 +2411,14 @@ public class MainActivity extends Activity {
     String[] choices={"完整显示（保留比例）","铺满屏幕（边缘可能裁切）","拉伸全屏（可能变形）"};
     int saved=getSharedPreferences("mytv",0).getInt(preferenceKey,0);
     saved=Math.max(0,Math.min(2,saved));
-    new AlertDialog.Builder(this).setTitle("画面比例").setSingleChoiceItems(choices,saved,(dialog,which)->{
+    showHoverChoiceDialog("画面比例",choices,"取消",saved,which->{
       int mode=which==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:
         which==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:
         androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;
       target.setResizeMode(mode);
       getSharedPreferences("mytv",0).edit().putInt(preferenceKey,which).apply();
-      dialog.dismiss();
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
-    }).setNegativeButton("取消",null).show();
+    });
   }
   private void showLivePlaybackActions(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
