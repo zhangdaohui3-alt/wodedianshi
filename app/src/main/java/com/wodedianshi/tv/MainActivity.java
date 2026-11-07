@@ -328,7 +328,7 @@ public class MainActivity extends Activity {
   private GradientDrawable makeButtonBg(int color,boolean focused){
     GradientDrawable d=new GradientDrawable(); d.setColor(focused?Color.rgb(22,105,185):color);
     d.setCornerRadius(dp(7));
-    d.setStroke(dp(focused?4:1),focused?Color.rgb(255,210,55):Color.rgb(76,91,112));
+    d.setStroke(dp(focused?3:1),focused?Color.rgb(80,190,255):Color.rgb(76,91,112));
     return d;
   }
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
@@ -848,8 +848,8 @@ public class MainActivity extends Activity {
     hoveredVodCategoryButton=target;
     if(target!=null){
       GradientDrawable hover=new GradientDrawable();
-      hover.setColor(Color.rgb(35,91,139));hover.setCornerRadius(dp(7));
-      hover.setStroke(dp(2),Color.rgb(125,205,255));target.setBackground(hover);
+      hover.setColor(Color.rgb(24,125,205));hover.setCornerRadius(dp(7));
+      hover.setStroke(dp(3),Color.rgb(145,225,255));target.setBackground(hover);
     }
   }
   private void styleVodCategoryButton(Button button){
@@ -2189,7 +2189,16 @@ public class MainActivity extends Activity {
       StringBuilder errors=new StringBuilder();
       int added=fetchAndMergePlaylists(feeds,22000,errors);
       final int total=added;final String err=errors.toString();
-      runOnUiThread(()->{persist();refresh();chinaLoading=false;info.setText("国内频道补充完成：新增 "+total+" 个条目，来源包含央视、卫视、地方台及多源检测列表。频道可用性受地区、版权和网络影响。"+(err.isEmpty()?"":"部分来源暂不可用："+err));});
+      // Serializing a large merged channel catalogue can take noticeable time.
+      // Keep JSON persistence on the worker thread; only repaint the visible UI
+      // after the durable save has completed.
+      persist();
+      runOnUiThread(()->{
+        if(isFinishing())return;
+        refresh();
+        chinaLoading=false;
+        info.setText("国内频道补充完成：新增 "+total+" 个条目，来源包含央视、卫视、地方台及多源检测列表。频道可用性受地区、版权和网络影响。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
+      });
     });
   }
   private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
