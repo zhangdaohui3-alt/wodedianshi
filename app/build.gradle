@@ -10,8 +10,8 @@ android {
         applicationId 'com.wodedianshi.tv'
         minSdk 23
         targetSdk 28
-        versionCode 78
-        versionName '1.9.15'
+        versionCode 79
+        versionName '1.9.16'
     }
 
     signingConfigs {
