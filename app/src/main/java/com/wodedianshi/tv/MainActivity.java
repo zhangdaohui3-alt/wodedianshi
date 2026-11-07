@@ -70,6 +70,9 @@ public class MainActivity extends Activity {
   private TextView info;
   private EditText search;
   private final ArrayList<Channel> channels = new ArrayList<>();
+  // Keep country/state/city playlists scoped to the destination currently selected.
+  private volatile Set<String> activeGeoChannelKeys=null;
+  private Set<String> parsingGeoChannelKeys=null;
   private final HashSet<String> favorites = new HashSet<>();
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
@@ -491,7 +494,7 @@ public class MainActivity extends Activity {
     // satellite and local areas. Keep one clear "地方" entry.
     String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","收藏","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -2062,6 +2065,7 @@ public class MainActivity extends Activity {
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
+        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
         if(favoriteMode&&!favorites.contains(c.key()))continue;
         if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
@@ -2284,8 +2288,17 @@ public class MainActivity extends Activity {
       c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.0 Android");
       int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
       String data;try(InputStream in=c.getInputStream()){data=read(in);}
-      final int count; synchronized(channels){count=parse(data);}
-      runOnUiThread(()->{activeCategory="全部";favoriteMode=false;persist();refresh();info.setText(label+" 载入完成：新增 "+count+" 个频道条目。部分频道受地区、网络或播出授权限制。");});
+      final HashSet<String> destinationKeys=new HashSet<>();
+      synchronized(channels){
+        parsingGeoChannelKeys=destinationKeys;
+        try{parse(data);}finally{parsingGeoChannelKeys=null;}
+      }
+      final int matched=destinationKeys.size();
+      runOnUiThread(()->{
+        activeGeoChannelKeys=new HashSet<>(destinationKeys);
+        activeCategory="全部";favoriteMode=false;persist();refresh();
+        info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+      });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
   }
   private void loadGlobalChannels(){
@@ -2391,6 +2404,10 @@ public class MainActivity extends Activity {
             if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
             else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
           }
+        }
+        if(parsingGeoChannelKeys!=null){
+          Channel scoped=channelsByUrl.get(line);
+          if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
         }
         name=null;group="";
       }
