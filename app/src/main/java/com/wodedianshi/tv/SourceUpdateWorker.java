@@ -215,6 +215,8 @@ public class SourceUpdateWorker extends Worker {
       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       score+=(double)ready/attempts*1000.0;
       score-=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
+      score-=Math.min(60.0,codecWarnings*8.0);
       score-=fail*90.0+buffers*55.0;
     }
     return score;
