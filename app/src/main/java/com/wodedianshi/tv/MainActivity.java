@@ -1640,9 +1640,13 @@ public class MainActivity extends Activity {
 
         // Start independent open catalogues together after the first Archive batch.
         // Waiting is bounded by the slowest provider rather than the sum of their delays.
-        Future<ArrayList<VodItem>> commonsPublicFuture=null,commonsSearchFuture=null,locFuture=null;
+        // Collect independent catalogue providers by completion order. Waiting on
+        // each Future in submission order can accidentally add three full timeouts
+        // together when the first provider is slow.
+        CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+        ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
-        if(useCommonsPublic)commonsPublicFuture=vodSourceWorker.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category)));
+        if(useCommonsPublic)sourceFutures.add(sourceCompletion.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category))));
         String commonsQuery=null;
         if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category))commonsQuery="Chinese film";
         else if("中国经典影像".equals(category))commonsQuery="Chinese classic feature film";
@@ -1660,7 +1664,7 @@ public class MainActivity extends Activity {
         else if("动作片".equals(category))commonsQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
         if(titleSearch)commonsQuery=searchTerm;
-         if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
+         if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;sourceFutures.add(sourceCompletion.submit(()->fetchCommonsSearchVod(term)));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
         else if("中国经典影像".equals(category))locQuery="Chinese classic feature film";
@@ -1681,10 +1685,20 @@ public class MainActivity extends Activity {
         else if("动作片".equals(category))locQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(titleSearch)locQuery=searchTerm;
-         if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
-        if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
-        if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
-        if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){locFuture.cancel(true);}}
+         if(locQuery!=null&&found.size()<80){final String term=locQuery;sourceFutures.add(sourceCompletion.submit(()->fetchLocPublicDomainVod(term)));}
+        long sourceDeadline=android.os.SystemClock.elapsedRealtime()+6500L;
+        for(int completedSources=0;completedSources<sourceFutures.size()&&!Thread.currentThread().isInterrupted();completedSources++){
+          long remaining=sourceDeadline-android.os.SystemClock.elapsedRealtime();
+          if(remaining<=0L)break;
+          Future<ArrayList<VodItem>> completedSource=sourceCompletion.poll(remaining,TimeUnit.MILLISECONDS);
+          if(completedSource==null)break;
+          try{
+            ArrayList<VodItem> sourceItems=completedSource.get();
+            if(sourceItems!=null)for(VodItem item:sourceItems)if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);
+          }catch(Exception ignored){}
+        }
+        // Enforce one shared provider budget, not 6.5 seconds per provider.
+        for(Future<ArrayList<VodItem>> pendingSource:sourceFutures)if(!pendingSource.isDone())pendingSource.cancel(true);
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
 
       final String err=error;
