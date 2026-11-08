@@ -3122,7 +3122,10 @@ public class MainActivity extends Activity {
       }
       // A live source can leave ExoPlayer in READY while its audio/video output has
       // silently stopped. Monitor actual video-frame callbacks, not only position.
-      if(videoFrameMonitoringActive && videoTrackSelected){
+      // Monitor as soon as a video track is selected. Requiring
+      // videoFrameMonitoringActive here would make the first-frame timeout
+      // unreachable, because that flag is set only by the first frame callback.
+      if(videoTrackSelected){
         if(!hasReceivedVideoFrame && sourceReadyAt>0L && now-sourceReadyAt>=20000L){
           recoverFromSilentFreeze("播放器已连接，但 20 秒内没有输出视频画面");
           return;
