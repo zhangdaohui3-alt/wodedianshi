@@ -910,28 +910,32 @@ public class MainActivity extends Activity {
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
   // card surface prevents GridView's default hover selection from moving focus
   // between recycled cells while the pointer is merely passing over posters.
-  private void configureVodMouseTarget(View target,View card){
-    if(Build.VERSION.SDK_INT>=24)target.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
-    target.setOnHoverListener((v,event)->{
+  // Register hover only on the card container. Child poster/text views remain
+  // clickable, but do not compete with the card for hover ownership.
+  private void clearVodMouseHover(){
+    View old=hoveredVodCard;
+    hoveredVodCard=null;
+    if(old!=null)old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
+  }
+  private void configureVodMouseTarget(View card){
+    if(Build.VERSION.SDK_INT>=24)card.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
+    card.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(hoveredVodCard!=null&&hoveredVodCard!=card){
-          hoveredVodCard.setBackground(makeButtonBg(Color.rgb(25,39,59),hoveredVodCard.hasFocus()));
+        if(hoveredVodCard!=card){
+          clearVodMouseHover();
+          hoveredVodCard=card;
+          GradientDrawable hover=new GradientDrawable();
+          hover.setColor(Color.rgb(40,76,110));hover.setCornerRadius(dp(7));
+          hover.setStroke(dp(2),Color.rgb(105,185,245));
+          card.setBackground(hover);
         }
-        hoveredVodCard=card;
-        GradientDrawable hover=new GradientDrawable();
-        hover.setColor(Color.rgb(40,76,110));hover.setCornerRadius(dp(7));
-        hover.setStroke(dp(2),Color.rgb(105,185,245));
-        card.setBackground(hover);
-        // Let Android continue normal pointer dispatch; consuming hover here can
-        // prevent some Android 9 TV launchers from delivering the later mouse click.
+        // Do not consume hover: preserve Android's normal click and pointer dispatch.
         return false;
       }
-      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        if(hoveredVodCard==card)hoveredVodCard=null;
-        // Restore the actual D-pad focus state when the pointer leaves.
+      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
+        hoveredVodCard=null;
         card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
-        return false;
       }
       return false;
     });
@@ -970,10 +974,7 @@ public class MainActivity extends Activity {
       loadVodPoster(holder.poster,item.identifier,item.title);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
-      configureVodMouseTarget(card,card);
-      configureVodMouseTarget(holder.poster,card);
-      configureVodMouseTarget(holder.title,card);
-      configureVodMouseTarget(holder.meta,card);
+      configureVodMouseTarget(card);
       // Make every visible poster/text surface an explicit mouse click target.
       // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
       // leave the poster visually hovered but functionally unclickable.
@@ -990,6 +991,7 @@ public class MainActivity extends Activity {
     }
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
+    clearVodMouseHover();
     status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
     GridView grid=resetVodGrid(results,4);
     int oldFirst=grid.getFirstVisiblePosition();
