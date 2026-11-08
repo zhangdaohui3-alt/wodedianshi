@@ -635,22 +635,29 @@ public class MainActivity extends Activity {
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
     String[] categories={"我的收藏","播放记录","电影","公开电视剧","公开综艺","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","纪录片·历史","纪录片·自然","纪录片·科学","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
-    HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
-    // Fallback hit-testing at the scroll-container level for TV boxes whose mouse
-    // hover dispatch is unreliable on child Buttons.
-    categoryScroll.setOnHoverListener((host,event)->{
-      int action=event.getActionMasked();
-      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        float x=event.getRawX(),y=event.getRawY();Button hit=null;
-        for(int i=0;i<filters.getChildCount();i++){
-          View child=filters.getChildAt(i);if(!(child instanceof Button))continue;
-          int[] loc=new int[2];child.getLocationOnScreen(loc);
-          if(x>=loc[0]&&x<loc[0]+child.getWidth()&&y>=loc[1]&&y<loc[1]+child.getHeight()){hit=(Button)child;break;}
+    // Own hover dispatch at the category-strip boundary. Some Android 9 TV
+    // firmwares keep routing hover to the last child and miss EXIT when the
+    // pointer moves from categories into posters. Hit-test here and consume
+    // HOVER only; touch/click dispatch remains native.
+    HorizontalScrollView categoryScroll=new HorizontalScrollView(this){
+      @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
+        int action=event.getActionMasked();
+        boolean handled=super.dispatchHoverEvent(event);
+        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+          float x=event.getRawX(),y=event.getRawY();Button hit=null;
+          for(int i=0;i<filters.getChildCount();i++){
+            View child=filters.getChildAt(i);if(!(child instanceof Button))continue;
+            int[] loc=new int[2];child.getLocationOnScreen(loc);
+            if(x>=loc[0]&&x<loc[0]+child.getWidth()&&y>=loc[1]&&y<loc[1]+child.getHeight()){hit=(Button)child;break;}
+          }
+          setVodCategoryHover(hit);
+          return true;
         }
-        setVodCategoryHover(hit);
-      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){setVodCategoryHover(null);}
-      return false;
-    });
+        if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){setVodCategoryHover(null);return true;}
+        return handled;
+      }
+    };
+    categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
     LinearLayout suggestionPanel=new LinearLayout(this);suggestionPanel.setOrientation(1);
     suggestionPanel.setPadding(dp(4),dp(3),dp(4),dp(3));
@@ -958,6 +965,7 @@ public class MainActivity extends Activity {
       boolean active=selected!=null&&selected.equals(entry.getKey());
       Button button=entry.getValue();
       button.setSelected(active);
+      if(hoveredVodCategoryButton==button)continue;
       button.setBackground(makeVodCategoryBg(active,button.isFocused()));
       button.setTextColor(active?Color.rgb(170,220,255):Color.WHITE);
       button.setTypeface(null,active?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
