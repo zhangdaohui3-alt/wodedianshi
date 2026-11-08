@@ -798,6 +798,21 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
     return items;
   }
+  private String vodTitleIdentity(String title){
+    if(title==null)return "";
+    String key=title.toLowerCase(Locale.ROOT).replaceAll("\\(.*?\\)|（.*?）|\\[.*?\\]|【.*?】","");
+    key=key.replaceAll("(19|20)\\\\d{2}","").replaceAll("(?:1080p|720p|4k|高清|超清|国语|粤语|中字)","");
+    return key.replaceAll("[^\\\\p{L}\\\\p{N}]","");
+  }
+  private boolean addUniqueVodItem(ArrayList<VodItem> items,Set<String> ids,Set<String> titles,VodItem item){
+    if(item==null||item.identifier==null||item.identifier.isEmpty()||!ids.add(item.identifier))return false;
+    String titleKey=vodTitleIdentity(item.title);
+    // Very short names are common labels rather than reliable film identities.
+    if(titleKey.length()>=6&&!titles.add(titleKey))return false;
+    items.add(item);
+    if(titleKey.length()<6)titles.add(item.identifier);
+    return true;
+  }
   private void writeVodCache(String category,ArrayList<VodItem> items){
     try{
       org.json.JSONArray a=new org.json.JSONArray();
@@ -1304,17 +1319,22 @@ public class MainActivity extends Activity {
       if(!allowed)return null;
       org.json.JSONArray files=meta.optJSONArray("files");if(files==null)return null;
       String fileName=null;
+      long bestFileScore=Long.MIN_VALUE;
       for(int j=0;j<files.length();j++){
-        org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
+        org.json.JSONObject file=files.optJSONObject(j);if(file==null||file.optBoolean("private",false))continue;
         String name=file.optString("name",""),lowerName=name.toLowerCase(Locale.ROOT),format=file.optString("format","").toLowerCase(Locale.US);
         if(!lowerName.endsWith(".mp4")||!(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg")))continue;
-        if(require1080p){
-          int width=file.optInt("width",0),height=file.optInt("height",0);
-          boolean verifiedDimensions=width>=1920&&height>=1080;
-          boolean explicitResolution=lowerName.matches(".*(?:1080p|1080i|1920x1080).*");
-          if(!verifiedDimensions&&!explicitResolution)continue;
-        }
-        fileName=name;break;
+        int width=file.optInt("width",0),height=file.optInt("height",0);
+        boolean verified1080=width>=1920&&height>=1080;
+        boolean explicit1080=lowerName.matches(".*(?:1080p|1080i|1920x1080).*");
+        if(require1080p&&!verified1080&&!explicit1080)continue;
+        // Prefer a broadly compatible 1080p MP4 when available; do not simply
+        // take the first file in the archive (often a tiny preview or low-res copy).
+        int qualityClass=(verified1080||explicit1080)?3:(height>=720||lowerName.matches(".*(?:720p|1280x720).*"))?2:1;
+        if(height>1080||width>1920)qualityClass=Math.min(qualityClass,2);
+        long size=Math.max(0L,file.optLong("size",0L));
+        long score=(long)qualityClass*1000000000000L+Math.min(size,999999999L);
+        if(score>bestFileScore){bestFileScore=score;fileName=name;}
       }
       if(fileName==null)return null;
       return new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license);
@@ -1465,13 +1485,13 @@ public class MainActivity extends Activity {
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
-      HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>();
+      HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
         // Prefer official CCTV catalogue for Chinese documentary/animation categories.
         if(Arrays.asList("中国纪录片","中国历史影像","中国经典影像","中国动画","中文动画").contains(category)){
           ArrayList<VodItem> cctvItems=fetchCctvVod(category);
-          for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
+          for(VodItem item:cctvItems)if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);
         }
 
         boolean titleSearch=category.startsWith("搜索：");
@@ -1604,7 +1624,7 @@ public class MainActivity extends Activity {
           completed++;
           try{
             VodItem item=future.get();
-            if(item!=null&&foundIds.add(item.identifier))found.add(item);
+            if(item!=null&&found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);
             if(found.size()>=6&&found.size()-lastProgressCount>=4){
               lastProgressCount=found.size();
               ArrayList<VodItem> partialBatch=new ArrayList<>(found);
@@ -1675,9 +1695,9 @@ public class MainActivity extends Activity {
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(titleSearch)locQuery=searchTerm;
          if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
-        if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
-        if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
-        if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){locFuture.cancel(true);}}
+        if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
+        if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
+        if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);}catch(Exception ignored){locFuture.cancel(true);}}
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
 
       final String err=error;
@@ -3296,6 +3316,15 @@ public class MainActivity extends Activity {
           if(listenerOwner==MainActivity.this.player)recordCurrentSourceFailure();
         }
       });
+      // Real decoded-frame callbacks: the old watchdog fields existed but were never
+      // activated, so READY could be mistaken for visible video on silent/black streams.
+      player.addVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
+        if(listenerOwner==MainActivity.this.player){
+          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
+          hasReceivedVideoFrame=true;
+          videoFrameMonitoringActive=true;
+        }
+      });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
           if(listenerOwner!=MainActivity.this.player)return;
@@ -3332,6 +3361,7 @@ public class MainActivity extends Activity {
           if(!isCurrent())return;
           if(st==Player.STATE_BUFFERING){
             cancelPlaybackWatchdog();
+            cancelAudioTrackCheck();
             boolean firstBuffering=!sourceWasBuffering;
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
@@ -3353,6 +3383,9 @@ public class MainActivity extends Activity {
             // Start the frame-stall timer only after the player reports READY.
             lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
+            // Run the audio-track/output check only after READY; buffering can
+            // legitimately pause audio advancement and must not trigger a false failover.
+            scheduleAudioTrackCheck();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
               info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
