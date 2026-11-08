@@ -832,6 +832,24 @@ public class MainActivity extends Activity {
     for(int i=0;i<host.getChildCount();i++)if(host.getChildAt(i) instanceof GridView){grid=(GridView)host.getChildAt(i);break;}
     if(grid==null){
       grid=new GridView(this){
+        @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
+          int action=event.getActionMasked();
+          if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+            // Android 9 TV boxes can dispatch hover only to a poster's child view.
+            // Resolve the card from GridView coordinates first, so selection and
+            // the visible hover outline follow the physical mouse independently
+            // of which nested poster/text view receives the event.
+            int position=pointToPosition((int)event.getX(),(int)event.getY());
+            if(position>=0){
+              setSelection(position);
+              View card=getChildAt(position-getFirstVisiblePosition());
+              if(card!=null)showVodMouseHover(card);
+            }else clearVodMouseHover();
+          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+            clearVodMouseHover();
+          }
+          return super.dispatchHoverEvent(event);
+        }
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
           if(handleVodGridScroll(this,event))return true;
           return super.onGenericMotionEvent(event);
@@ -929,31 +947,37 @@ public class MainActivity extends Activity {
       old.setElevation(old.hasFocus()?dp(9):0);
     }
   }
-  private void configureVodMouseTarget(View card){
+  private void showVodMouseHover(View card){
+    if(card==null)return;
+    if(hoveredVodCard!=card){
+      clearVodMouseHover();
+      hoveredVodCard=card;
+    }
+    GradientDrawable hover=new GradientDrawable();
+    hover.setColor(Color.rgb(12,105,170));hover.setCornerRadius(dp(7));
+    hover.setStroke(dp(4),Color.rgb(255,213,64));
+    card.setBackground(hover);
+    card.setScaleX(1.045f);card.setScaleY(1.045f);card.setElevation(dp(14));
+  }
+  private void configureVodMouseTarget(View card,View... surfaces){
     if(Build.VERSION.SDK_INT>=24)card.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
-    card.setOnHoverListener((v,event)->{
+    View.OnHoverListener listener=(v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(hoveredVodCard!=card){
-          clearVodMouseHover();
-          hoveredVodCard=card;
-        }
-        // High-contrast hover is intentionally stronger than ordinary keyboard focus.
-        GradientDrawable hover=new GradientDrawable();
-        hover.setColor(Color.rgb(12,105,170));hover.setCornerRadius(dp(7));
-        hover.setStroke(dp(4),Color.rgb(255,213,64));
-        card.setBackground(hover);
-        card.setScaleX(1.045f);card.setScaleY(1.045f);card.setElevation(dp(14));
+        showVodMouseHover(card);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
-        hoveredVodCard=null;
-        card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
-        card.setScaleX(card.hasFocus()?1.035f:1f);card.setScaleY(card.hasFocus()?1.035f:1f);
-        card.setElevation(card.hasFocus()?dp(9):0);
+        clearVodMouseHover();
       }
-      // Never consume hover: Android 9 TV firmware needs normal dispatch across
-      // card edges and empty grid space to keep the hardware pointer tracking.
+      // Keep native mouse dispatch/click handling intact.
       return false;
-    });
+    };
+    card.setOnHoverListener(listener);
+    // Hover events are often delivered to the deepest child, not the card.
+    // Attach the same visual target to every clickable poster/text surface.
+    if(surfaces!=null)for(View surface:surfaces)if(surface!=null){
+      if(Build.VERSION.SDK_INT>=24)surface.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
+      surface.setOnHoverListener(listener);
+    }
   }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
@@ -993,7 +1017,7 @@ public class MainActivity extends Activity {
       loadVodPoster(holder.poster,item.identifier,item.title);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
-      configureVodMouseTarget(card);
+      configureVodMouseTarget(card,holder.poster,holder.title,holder.meta);
       // Make every visible poster/text surface an explicit mouse click target.
       // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
       // leave the poster visually hovered but functionally unclickable.
