@@ -682,6 +682,10 @@ public class MainActivity extends Activity {
     pageBar.setFocusable(false);pageBar.setClickable(false);pageBar.setElevation(dp(12));
     Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleVodPageButton(previousPageButton,Color.rgb(43,68,94));
     Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleVodPageButton(nextPageButton,Color.rgb(26,100,160));
+    if(Build.VERSION.SDK_INT>=24){
+      android.view.PointerIcon arrow=android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW);
+      previousPageButton.setPointerIcon(arrow);nextPageButton.setPointerIcon(arrow);
+    }
     previousPageButton.setId(View.generateViewId());nextPageButton.setId(View.generateViewId());
     pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
     TextView pageHint=new TextView(this);pageHint.setText("鼠标可直接点击翻页 · 滚轮也可");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
@@ -837,12 +841,10 @@ public class MainActivity extends Activity {
       grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
       grid.setFocusable(true);grid.setFocusableInTouchMode(true);
       grid.setVerticalScrollBarEnabled(true);grid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
-      // Suppress GridView's default hover-selection behavior in empty cell gaps;
-      // otherwise Android TV firmware can redirect the pointer/focus to the sidebar.
-      grid.setOnHoverListener((v,event)->{
-        if(event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_EXIT)clearVodMouseHover();
-        return true;
-      });
+      // Do not consume hover at the GridView level. On some Android 9 TV boxes,
+      // a full-grid hover listener makes the hardware cursor disappear over the
+      // lower poster rows. Let child cards and the system pointer dispatch normally.
+      if(Build.VERSION.SDK_INT>=24)grid.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
       host.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
     }
     grid.setNumColumns(columns);return grid;
