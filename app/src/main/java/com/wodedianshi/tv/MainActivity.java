@@ -652,8 +652,9 @@ public class MainActivity extends Activity {
       return false;
     });
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
-    HorizontalScrollView suggestionScroll=new HorizontalScrollView(this);suggestionScroll.setHorizontalScrollBarEnabled(false);
-    LinearLayout suggestionRow=new LinearLayout(this);suggestionRow.setOrientation(0);suggestionRow.setGravity(Gravity.CENTER_VERTICAL);suggestionRow.setPadding(dp(2),0,dp(2),0);suggestionScroll.addView(suggestionRow);
+    LinearLayout suggestionPanel=new LinearLayout(this);suggestionPanel.setOrientation(1);
+    suggestionPanel.setPadding(dp(4),dp(3),dp(4),dp(3));
+    suggestionPanel.setBackgroundColor(Color.rgb(16,28,44));
     EditText query=new EditText(this);
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
       String category=categories[categoryIndex];
@@ -670,7 +671,7 @@ public class MainActivity extends Activity {
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
         filters.addView(searchTab,new LinearLayout.LayoutParams(dp(84),dp(40)));
-        searchTab.setOnClickListener(v->{boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);suggestionScroll.setVisibility(show?View.VISIBLE:View.GONE);if(show){query.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(query,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);}});
+        searchTab.setOnClickListener(v->{boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);suggestionPanel.setVisibility(show?View.VISIBLE:View.GONE);if(show){query.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(query,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);}});
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
@@ -678,7 +679,7 @@ public class MainActivity extends Activity {
     query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
-    panel.addView(suggestionScroll,new LinearLayout.LayoutParams(-1,dp(38)));suggestionScroll.setVisibility(View.GONE);
+    panel.addView(suggestionPanel,new LinearLayout.LayoutParams(-1,dp(154)));suggestionPanel.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
     // Fixed paging controls stay directly above the multi-screen poster grid,
     // so a mouse never has to travel through the entire list to reach them.
@@ -729,13 +730,29 @@ public class MainActivity extends Activity {
        if(actionId==android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH||actionId==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){searchButton.performClick();return true;}
        return false;
      });
-    // iQIYI-inspired quick-search chips, directly visible beneath the search bar.
-    String[] quickTerms={"中国经典电影","纪录片","历史影像","自然纪录片","动画","喜剧","科幻","战争片","Charlie Chaplin","Buster Keaton"};
-    for(String term:quickTerms){
-      Button chip=new Button(this);chip.setText(term);chip.setAllCaps(false);chip.setTextSize(11);
-      chip.setMinHeight(0);chip.setMinimumHeight(0);chip.setMinWidth(0);chip.setPadding(dp(10),0,dp(10),0);
-      styleTvButton(chip,Color.rgb(35,58,82));suggestionRow.addView(chip,new LinearLayout.LayoutParams(-2,dp(32)));
-      chip.setOnClickListener(v->{query.setText(term);query.setSelection(query.length());searchButton.performClick();});
+    // Search landing panel inspired by iQIYI: grouped content types, genres,
+    // and regions/catalogues are visible directly under the search input.
+    String[][] searchGroups={
+      {"内容类型","电影","公开电视剧","公开综艺","纪录片","动画","戏曲","短片","央视公开节目"},
+      {"题材分类","动作","战争","悬疑","犯罪","喜剧","科幻","恐怖","爱情","家庭","历史"},
+      {"地区与片库","中国","华语","香港","台湾","欧美","日本","公版经典","历史影像","自然纪录片"}
+    };
+    for(String[] group:searchGroups){
+      TextView groupTitle=new TextView(this);groupTitle.setText(group[0]);groupTitle.setTextColor(Color.rgb(170,202,230));
+      groupTitle.setTextSize(11);groupTitle.setTypeface(null,android.graphics.Typeface.BOLD);
+      groupTitle.setPadding(dp(4),dp(1),0,0);
+      suggestionPanel.addView(groupTitle,new LinearLayout.LayoutParams(-1,dp(19)));
+      HorizontalScrollView rowScroll=new HorizontalScrollView(this);rowScroll.setHorizontalScrollBarEnabled(false);
+      LinearLayout row=new LinearLayout(this);row.setOrientation(0);row.setGravity(Gravity.CENTER_VERTICAL);
+      for(int i=1;i<group.length;i++){
+        String term=group[i];
+        Button chip=new Button(this);chip.setText(term);chip.setAllCaps(false);chip.setTextSize(11);
+        chip.setMinHeight(0);chip.setMinimumHeight(0);chip.setMinWidth(0);
+        chip.setPadding(dp(9),0,dp(9),0);styleTvButton(chip,Color.rgb(35,58,82));
+        row.addView(chip,new LinearLayout.LayoutParams(-2,dp(32)));
+        chip.setOnClickListener(v->{query.setText(term);query.setSelection(query.length());searchButton.performClick();});
+      }
+      rowScroll.addView(row);suggestionPanel.addView(rowScroll,new LinearLayout.LayoutParams(-1,dp(34)));
     }
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
@@ -856,15 +873,25 @@ public class MainActivity extends Activity {
     if(grid==null){
       grid=new GridView(this){
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
-          int action=event.getActionMasked();boolean handled=super.dispatchHoverEvent(event);
-          // Use screen-space child bounds; Android 9 GridView pointToPosition can
-          // report the wrong column while a mouse crosses vertically between rows.
+          int action=event.getActionMasked();
+          // Snapshot coordinates before dispatching to children. Android 9 TV firmware
+          // can offset raw coordinates inconsistently when GridView is scrolled.
+          final float localX=event.getX(),localY=event.getY();
+          boolean handled=super.dispatchHoverEvent(event);
           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            float rawX=event.getRawX(),rawY=event.getRawY();View hit=null;
-            for(int i=0;i<getChildCount();i++){View child=getChildAt(i);int[] loc=new int[2];child.getLocationOnScreen(loc);
-              if(rawX>=loc[0]&&rawX<loc[0]+child.getWidth()&&rawY>=loc[1]&&rawY<loc[1]+child.getHeight()){hit=child;break;}}
+            View hit=null;
+            // Child hit rectangles are already expressed in GridView-local coordinates.
+            // This avoids mixing screen coordinates, recycled adapter positions and columns.
+            for(int i=0;i<getChildCount();i++){
+              View child=getChildAt(i);
+              android.graphics.Rect bounds=new android.graphics.Rect();
+              child.getHitRect(bounds);
+              if(bounds.contains(Math.round(localX),Math.round(localY))){hit=child;break;}
+            }
             if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
-          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT)clearVodMouseHover();
+          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+            clearVodMouseHover();
+          }
           return handled;
         }
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
