@@ -244,13 +244,13 @@ public class MainActivity extends Activity {
         GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
         bg.setCornerRadius(dp(7));bg.setStroke(dp(2),Color.rgb(120,195,250));
         b.setBackground(bg);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
-        return true;
+        return false;
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredVodPageButton==b)hoveredVodPageButton=null;
         b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
         b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);b.setElevation(b.hasFocus()?dp(8):0);
-        return true;
+        return false;
       }
       return false;
     });
@@ -837,6 +837,12 @@ public class MainActivity extends Activity {
       grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
       grid.setFocusable(true);grid.setFocusableInTouchMode(true);
       grid.setVerticalScrollBarEnabled(true);grid.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+      // Suppress GridView's default hover-selection behavior in empty cell gaps;
+      // otherwise Android TV firmware can redirect the pointer/focus to the sidebar.
+      grid.setOnHoverListener((v,event)->{
+        if(event.getActionMasked()==android.view.MotionEvent.ACTION_HOVER_EXIT)clearVodMouseHover();
+        return true;
+      });
       host.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
     }
     grid.setNumColumns(columns);return grid;
@@ -930,14 +936,16 @@ public class MainActivity extends Activity {
           hover.setStroke(dp(2),Color.rgb(105,185,245));
           card.setBackground(hover);
         }
-        // Do not consume hover: preserve Android's normal click and pointer dispatch.
-        return false;
+        // Consume hover at the card boundary so GridView does not reinterpret
+        // mouse movement as D-pad selection. Hover consumption does not consume clicks.
+        return true;
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
         hoveredVodCard=null;
         card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
+        return true;
       }
-      return false;
+      return action==android.view.MotionEvent.ACTION_HOVER_EXIT;
     });
   }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
