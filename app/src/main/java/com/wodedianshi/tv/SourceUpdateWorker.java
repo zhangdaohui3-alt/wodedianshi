@@ -55,6 +55,26 @@ public class SourceUpdateWorker extends Worker {
         knownUrls.add(c.optString("url"));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
+      // Include the user's already-saved backup URLs in the rotating health-check
+      // pool. Previously only URLs rediscovered in public playlists were probed,
+      // so a saved backup could silently die without ever losing its old score.
+      ArrayList<Entry> savedCandidates=new ArrayList<>();
+      for(int i=0;i<saved.length()&&savedCandidates.size()<5000;i++){
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
+        LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
+        JSONArray sources=channel.optJSONArray("sources");
+        if(sources!=null)for(int j=0;j<sources.length();j++){
+          String u=sources.optString(j,"");
+          if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
+        }
+        String primary=channel.optString("url","");
+        if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
+        for(String u:channelUrls){
+          if(savedCandidates.size()>=5000)break;
+          savedCandidates.add(new Entry(channelName,u,channelGroup));
+        }
+      }
       for(String feed:feeds){
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
@@ -71,9 +91,19 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
+      // Interleave discovered public candidates with already-saved sources. This gives
+      // both new-source discovery and existing-source health checks a fair share of the
+      // bounded probe budget instead of allowing a large saved list to starve discovery.
+      ArrayList<Entry> balancedCandidates=new ArrayList<>(candidates.size()+savedCandidates.size());
+      int poolSize=Math.max(candidates.size(),savedCandidates.size());
+      for(int i=0;i<poolSize;i++){
+        if(i<candidates.size())balancedCandidates.add(candidates.get(i));
+        if(i<savedCandidates.size())balancedCandidates.add(savedCandidates.get(i));
+      }
+      candidates=balancedCandidates;
       // Rotate through the complete candidate pool across update runs. This avoids permanently
-      // favoring URLs with HD labels and ensures older known sources are periodically re-probed.
-      // Bound each update run so a slow public directory cannot keep WorkManager busy indefinitely.
+      // favoring URLs with HD labels and ensures both newly discovered and saved backup sources
+      // are periodically re-probed. Bound each run to protect battery and network use.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
       int scanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
       int scanned=0;
