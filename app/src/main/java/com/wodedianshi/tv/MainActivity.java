@@ -86,7 +86,10 @@ public class MainActivity extends Activity {
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
   private final ExecutorService vodSourceWorker = Executors.newFixedThreadPool(4);
   private volatile Future<?> activeVodCatalogueTask;
-  private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(Math.max(1024,(int)(Runtime.getRuntime().maxMemory()/1024/16))) {
+  // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
+  // capped independently of large heaps so image browsing cannot crowd playback.
+  private final LruCache<String,Bitmap> vodPosterCache = new LruCache<String,Bitmap>(
+      Math.max(2048,Math.min(8192,(int)(Runtime.getRuntime().maxMemory()/1024/32)))) {
     protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
   };
   private final Set<String> vodPosterRequests = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
@@ -1767,8 +1770,26 @@ public class MainActivity extends Activity {
           connection=(HttpURLConnection)new URL(imageUrl).openConnection();
           connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
           connection.setRequestProperty("User-Agent","MyTV/1.81 Android TV");
-          try(InputStream in=connection.getInputStream()){
-            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;options.inPreferredConfig=Bitmap.Config.RGB_565;bitmap=BitmapFactory.decodeStream(in,null,options);
+          // Posters are displayed in a small TV card. Decode near display size
+          // instead of allocating a full-resolution bitmap for every thumbnail.
+          try(InputStream in=connection.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+            byte[] buffer=new byte[8192];int n,total=0;final int maxImageBytes=4*1024*1024;
+            while((n=in.read(buffer))!=-1&&total<maxImageBytes){
+              int take=Math.min(n,maxImageBytes-total);out.write(buffer,0,take);total+=take;
+              if(total>=maxImageBytes)break;
+            }
+            byte[] imageBytes=out.toByteArray();
+            if(imageBytes.length>0){
+              BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
+              BitmapFactory.decodeByteArray(imageBytes,0,imageBytes.length,bounds);
+              if(bounds.outWidth>0&&bounds.outHeight>0){
+                int sample=1;
+                while(bounds.outWidth/(sample*2)>640||bounds.outHeight/(sample*2)>480)sample*=2;
+                BitmapFactory.Options options=new BitmapFactory.Options();
+                options.inSampleSize=sample;options.inPreferredConfig=Bitmap.Config.RGB_565;
+                bitmap=BitmapFactory.decodeByteArray(imageBytes,0,imageBytes.length,options);
+              }
+            }
           }
         }
       }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();vodPosterRequests.remove(identifier);}
