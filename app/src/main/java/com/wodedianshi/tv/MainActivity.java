@@ -1025,10 +1025,15 @@ public class MainActivity extends Activity {
       VodItem item=items.get(position);LinearLayout card;VodCardHolder holder;
       if(convertView instanceof LinearLayout&&convertView.getTag() instanceof VodCardHolder){card=(LinearLayout)convertView;holder=(VodCardHolder)card.getTag();}
       else{
-        card=new LinearLayout(MainActivity.this);card.setOrientation(1);card.setPadding(dp(6),dp(6),dp(6),dp(8));card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
+        card=new LinearLayout(MainActivity.this);card.setOrientation(1);
+        // Every GridView cell has the same measured height. Without fixed child
+        // heights, Android 9 sizes each row from its tallest wrapped title.
+        card.setPadding(dp(6),dp(5),dp(6),dp(5));
+        card.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1,dp(154)));
+        card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));card.setFocusable(true);card.setClickable(true);
         ImageView poster=new ImageView(MainActivity.this);poster.setScaleType(ImageView.ScaleType.CENTER_CROP);poster.setBackgroundColor(Color.rgb(43,61,82));poster.setImageResource(android.R.drawable.ic_media_play);poster.setAdjustViewBounds(false);card.addView(poster,new LinearLayout.LayoutParams(-1,dp(78)));
-        TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(12);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
-        TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(10);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
+        TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(12);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setGravity(Gravity.CENTER_VERTICAL);title.setPadding(dp(4),0,dp(4),0);card.addView(title,new LinearLayout.LayoutParams(-1,dp(42)));
+        TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(10);meta.setSingleLine(true);meta.setEllipsize(android.text.TextUtils.TruncateAt.END);meta.setGravity(Gravity.CENTER_VERTICAL);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta,new LinearLayout.LayoutParams(-1,dp(24)));
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
       }
       card.setOnFocusChangeListener((v,focused)->{
