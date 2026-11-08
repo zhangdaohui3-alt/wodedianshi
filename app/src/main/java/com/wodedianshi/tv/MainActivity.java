@@ -681,37 +681,13 @@ public class MainActivity extends Activity {
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
     panel.addView(suggestionPanel,new LinearLayout.LayoutParams(-1,dp(166)));suggestionPanel.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
-    // Fixed paging controls stay directly above the multi-screen poster grid,
-    // so a mouse never has to travel through the entire list to reach them.
-    LinearLayout pageBar=new LinearLayout(this);pageBar.setOrientation(0);pageBar.setGravity(Gravity.CENTER);
-    pageBar.setFocusable(false);pageBar.setClickable(false);pageBar.setElevation(dp(12));
-    Button previousPageButton=new Button(this);previousPageButton.setText("上一页");previousPageButton.setAllCaps(false);previousPageButton.setTextSize(12);styleVodPageButton(previousPageButton,Color.rgb(43,68,94));
-    Button nextPageButton=new Button(this);nextPageButton.setText("下一页");nextPageButton.setAllCaps(false);nextPageButton.setTextSize(12);styleVodPageButton(nextPageButton,Color.rgb(26,100,160));
-    if(Build.VERSION.SDK_INT>=24){
-      android.view.PointerIcon arrow=android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW);
-      previousPageButton.setPointerIcon(arrow);nextPageButton.setPointerIcon(arrow);
-    }
-    previousPageButton.setId(View.generateViewId());nextPageButton.setId(View.generateViewId());
-    pageBar.addView(previousPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
-    TextView pageHint=new TextView(this);pageHint.setText("鼠标可直接点击翻页 · 滚轮也可");pageHint.setTextColor(Color.LTGRAY);pageHint.setTextSize(11);pageHint.setGravity(Gravity.CENTER);pageBar.addView(pageHint,new LinearLayout.LayoutParams(0,dp(36),2f));
-    pageBar.addView(nextPageButton,new LinearLayout.LayoutParams(0,dp(36),1f));
-    // Paging is a TV/remote affordance. Phones use the native grid scroll gesture instead.
-    boolean tvPaging=getPackageManager().hasSystemFeature("android.software.leanback")
-        ||getPackageManager().hasSystemFeature("android.hardware.type.television");
-    pageBar.setVisibility(tvPaging?View.VISIBLE:View.GONE);
-    panel.addView(pageBar,new LinearLayout.LayoutParams(-1,dp(42)));pageBar.bringToFront();
+    // No visible previous/next buttons: poster pages are navigated by
+    // native GridView scrolling, mouse wheel/gesture and TV D-pad.
     // GridView recycles off-screen cards while retaining native touch and D-pad navigation.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
     GridView vodGrid=ensureVodGrid(results,3);
     vodGrid.setId(View.generateViewId());
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
-    previousPageButton.setNextFocusRightId(nextPageButton.getId());
-    nextPageButton.setNextFocusLeftId(previousPageButton.getId());
-    previousPageButton.setNextFocusDownId(vodGrid.getId());
-    nextPageButton.setNextFocusDownId(vodGrid.getId());
-    vodGrid.setNextFocusUpId(previousPageButton.getId());
-    previousPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,-1);});
-    nextPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,1);});
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
