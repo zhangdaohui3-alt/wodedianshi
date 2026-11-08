@@ -801,8 +801,8 @@ public class MainActivity extends Activity {
   private String vodTitleIdentity(String title){
     if(title==null)return "";
     String key=title.toLowerCase(Locale.ROOT).replaceAll("\\(.*?\\)|（.*?）|\\[.*?\\]|【.*?】","");
-    key=key.replaceAll("(19|20)\\\\d{2}","").replaceAll("(?:1080p|720p|4k|高清|超清|国语|粤语|中字)","");
-    return key.replaceAll("[^\\\\p{L}\\\\p{N}]","");
+    key=key.replaceAll("(19|20)\\d{2}","").replaceAll("(?:1080p|720p|4k|高清|超清|国语|粤语|中字)","");
+    return key.replaceAll("[^\\p{L}\\p{N}]","");
   }
   private boolean addUniqueVodItem(ArrayList<VodItem> items,Set<String> ids,Set<String> titles,VodItem item){
     if(item==null||item.identifier==null||item.identifier.isEmpty()||!ids.add(item.identifier))return false;
