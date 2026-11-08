@@ -611,6 +611,7 @@ public class MainActivity extends Activity {
   private LinearLayout currentVodPanel,currentVodResults;
   private TextView currentVodStatus;
   private String activeVodCategory="多源精选";
+  private String activeVodQuery="";
   // Keep the user scroll position when the same category finishes background refresh.
   private String currentVodRenderedCategory="";
   private ExoPlayer vodPlayer;
@@ -835,19 +836,27 @@ public class MainActivity extends Activity {
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
           int action=event.getActionMasked();
           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            // Android 9 TV boxes can dispatch hover only to a poster's child view.
-            // Resolve the card from GridView coordinates first, so selection and
-            // the visible hover outline follow the physical mouse independently
-            // of which nested poster/text view receives the event.
-            int position=pointToPosition((int)event.getX(),(int)event.getY());
-            if(position>=0){
-              setSelection(position);
-              View card=getChildAt(position-getFirstVisiblePosition());
-              if(card!=null)showVodMouseHover(card);
-            }else clearVodMouseHover();
+            // IMPORTANT: do not call setSelection() for a mouse. On Android 9
+            // GridView selection can trigger layout/adapter repositioning while the
+            // pointer is stationary; the next hover is then delivered to the last
+            // recycled cell (commonly the right-most poster), making the cursor
+            // appear to jump or vanish at the bottom edge of a card.
+            float rawX=event.getRawX(),rawY=event.getRawY();
+            View hit=null;
+            for(int i=0;i<getChildCount();i++){
+              View child=getChildAt(i);
+              if(child==null||child.getVisibility()!=View.VISIBLE)continue;
+              int[] loc=new int[2];child.getLocationOnScreen(loc);
+              if(rawX>=loc[0]&&rawX<loc[0]+child.getWidth()
+                  &&rawY>=loc[1]&&rawY<loc[1]+child.getHeight()){
+                hit=child;break;
+              }
+            }
+            if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
           }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
             clearVodMouseHover();
           }
+          // Let Android deliver the same pointer event to the actual child surface.
           return super.dispatchHoverEvent(event);
         }
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
@@ -2950,6 +2959,8 @@ public class MainActivity extends Activity {
     super.onBackPressed();
   }
   private int automaticSwitchCount=0;
+  // A complete source failure advances through channels at most once per manual play.
+  private int automaticChannelSwitchCount=0;
   private Runnable bufferingFallback;
   private Runnable playbackWatchdog;
   private long watchdogLastPosition=-1L;
@@ -3037,6 +3048,7 @@ public class MainActivity extends Activity {
       // A source that was healthy for a long time should not consume the startup retry budget forever.
       if(sourceReadyAt>0L && now-sourceReadyAt>=120000L){
         automaticSwitchCount=0;
+        automaticChannelSwitchCount=0;
         sameSourceRecoveryCount=0;
         sourceReadyAt=now;
       }
@@ -3096,16 +3108,17 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    if(c.backups.size()<2){setSourceUpdatePlaybackActive(false);info.setText(reason+"；当前频道只有 1 个播放源，没有备用源可切换");return;}
+    if(c.backups.size()<2){
+      advanceToNextChannelAutomatically(reason+"；本频道没有可用备用源");
+      return;
+    }
     if(automaticSwitchCount>=c.backups.size()-1){
-      setSourceUpdatePlaybackActive(false);
-      info.setText(reason+"；本频道未屏蔽的备用源已尝试完，请手动换台或恢复已屏蔽源");
+      advanceToNextChannelAutomatically(reason+"；本频道备用源已全部尝试");
       return;
     }
     int next=findNextUnblockedSource(c,c.activeSource,1);
     if(next<0){
-      setSourceUpdatePlaybackActive(false);
-      info.setText(reason+"；其余播放源均已屏蔽或尝试，请打开换源菜单恢复合适的源");
+      advanceToNextChannelAutomatically(reason+"；本频道其余源均已屏蔽或尝试");
       return;
     }
     automaticSwitchCount++;
@@ -3113,9 +3126,30 @@ public class MainActivity extends Activity {
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
+  private void advanceToNextChannelAutomatically(String reason){
+    if(selected<0||selected>=channels.size()||channels.isEmpty())return;
+    cancelBufferingFallback();
+    cancelPlaybackWatchdog();
+    if(channels.size()<=1||automaticChannelSwitchCount>=channels.size()-1){
+      setSourceUpdatePlaybackActive(false);
+      info.setText(reason+"；已检查完本轮频道，没有可确认可播放的频道，请手动选择");
+      return;
+    }
+    int next=(selected+1)%channels.size();
+    automaticChannelSwitchCount++;
+    automaticSwitchCount=0;
+    sameSourceRecoveryCount=0;
+    manualSourceSwitch=false;
+    selected=next;
+    Channel target=channels.get(selected);
+    if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
+    info.setText(reason+"，自动切换到下一频道："+target.name);
+    startCurrentSource();
+  }
   private void play(int ix){
     if(ix<0||ix>=channels.size())return;
     automaticSwitchCount=0;
+    automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
     selected=ix;
