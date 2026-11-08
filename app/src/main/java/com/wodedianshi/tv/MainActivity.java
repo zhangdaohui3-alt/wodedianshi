@@ -679,7 +679,7 @@ public class MainActivity extends Activity {
     query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
-    panel.addView(suggestionPanel,new LinearLayout.LayoutParams(-1,dp(154)));suggestionPanel.setVisibility(View.GONE);
+    panel.addView(suggestionPanel,new LinearLayout.LayoutParams(-1,dp(166)));suggestionPanel.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
     // Fixed paging controls stay directly above the multi-screen poster grid,
     // so a mouse never has to travel through the entire list to reach them.
