@@ -633,21 +633,23 @@ public class MainActivity extends Activity {
     // category strip. Android 9 TV firmware can omit the strip's HOVER_EXIT
     // when the pointer crosses directly into the poster GridView.
     LinearLayout panel=new LinearLayout(this){
-      @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
+      // Observe hover before child dispatch. Returning false keeps GridView and
+      // category buttons fully interactive while allowing direct reverse travel.
+      @Override public boolean onInterceptHoverEvent(android.view.MotionEvent event){
         int action=event.getActionMasked();
-        boolean handled=super.dispatchHoverEvent(event);
         if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
           float x=event.getRawX(),y=event.getRawY();Button hit=null;
           for(Button candidate:vodCategoryHoverTargets){
             int[] loc=new int[2];candidate.getLocationOnScreen(loc);
-            if(candidate.getVisibility()==View.VISIBLE&&x>=loc[0]&&x<loc[0]+candidate.getWidth()
+            if(candidate.isShown()&&candidate.isEnabled()
+                &&x>=loc[0]&&x<loc[0]+candidate.getWidth()
                 &&y>=loc[1]&&y<loc[1]+candidate.getHeight()){hit=candidate;break;}
           }
           setVodCategoryHover(hit);
         }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
           setVodCategoryHover(null);
         }
-        return handled;
+        return super.onInterceptHoverEvent(event);
       }
     };
     panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
