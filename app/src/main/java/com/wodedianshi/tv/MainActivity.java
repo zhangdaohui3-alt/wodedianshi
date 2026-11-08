@@ -202,8 +202,8 @@ public class MainActivity extends Activity {
         if(hoveredLiveChannelButton!=null&&hoveredLiveChannelButton!=b){
           Button old=hoveredLiveChannelButton;
           int oldBase=liveChannelBaseColors.containsKey(old)?liveChannelBaseColors.get(old):Color.rgb(35,45,62);
-          old.setBackground(makeButtonBg(oldBase,false));
-          old.setScaleX(1f);old.setScaleY(1f);old.setElevation(0f);
+          old.setBackground(makeButtonBg(oldBase,old.hasFocus()));
+          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);old.setElevation(old.hasFocus()?dp(8):0);
         }
         hoveredLiveChannelButton=b;
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));hover.setCornerRadius(dp(7));
@@ -213,8 +213,8 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredLiveChannelButton==b)hoveredLiveChannelButton=null;
-        b.setBackground(makeButtonBg(normalColor,false));
-        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
+        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
+        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);b.setElevation(b.hasFocus()?dp(8):0);
         return true;
       }
       return false;
@@ -237,8 +237,8 @@ public class MainActivity extends Activity {
         if(hoveredVodPageButton!=null&&hoveredVodPageButton!=b){
           Button old=hoveredVodPageButton;
           int base=vodPageBaseColors.containsKey(old)?vodPageBaseColors.get(old):Color.rgb(43,68,94);
-          old.setBackground(makeButtonBg(base,false));
-          old.setScaleX(1f);old.setScaleY(1f);old.setElevation(0f);
+          old.setBackground(makeButtonBg(base,old.hasFocus()));
+          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);old.setElevation(old.hasFocus()?dp(8):0);
         }
         hoveredVodPageButton=b;
         GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
@@ -248,8 +248,8 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredVodPageButton==b)hoveredVodPageButton=null;
-        b.setBackground(makeButtonBg(normalColor,false));
-        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
+        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
+        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);b.setElevation(b.hasFocus()?dp(8):0);
         return true;
       }
       return false;
@@ -916,7 +916,7 @@ public class MainActivity extends Activity {
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
         if(hoveredVodCard!=null&&hoveredVodCard!=card){
-          hoveredVodCard.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+          hoveredVodCard.setBackground(makeButtonBg(Color.rgb(25,39,59),hoveredVodCard.hasFocus()));
         }
         hoveredVodCard=card;
         GradientDrawable hover=new GradientDrawable();
@@ -929,9 +929,8 @@ public class MainActivity extends Activity {
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredVodCard==card)hoveredVodCard=null;
-        // Do not restore a stale yellow focus border after a mouse click.
-        // A subsequent D-pad focus change will draw the remote highlight again.
-        card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
+        // Restore the actual D-pad focus state when the pointer leaves.
+        card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
         return false;
       }
       return false;
