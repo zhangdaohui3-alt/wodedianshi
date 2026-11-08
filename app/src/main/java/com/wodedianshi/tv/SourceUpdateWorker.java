@@ -214,7 +214,12 @@ public class SourceUpdateWorker extends Worker {
     if(m!=null&&m.optInt("attempts",0)>=2){
       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       score+=(double)ready/attempts*1000.0;
-      score-=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      score-=Math.min(150.0,m.optLong("avgReadyMs",0L)/150.0);
+      // Keep background ranking consistent with foreground playback: the first
+      // actually rendered frame measures perceived zap speed better than READY.
+      long avgFirstFrame=m.optLong("avgFirstFrameMs",0L);
+      double firstFramePenalty=avgFirstFrame>0L?Math.min(350.0,avgFirstFrame/80.0):0.0;
+      score-=firstFramePenalty;
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
       score-=Math.min(60.0,codecWarnings*8.0);
       score-=fail*90.0+buffers*55.0;
