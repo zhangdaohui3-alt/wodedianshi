@@ -3283,10 +3283,20 @@ public class MainActivity extends Activity {
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          if(listenerOwner==MainActivity.this.player)recordCurrentSourceFailure();
+          // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
+          // and the sustained-output watchdog decide whether the source actually failed.
+          if(listenerOwner==MainActivity.this.player)
+            recordSourceMetric(currentSourceUrl(),"audioCodecError",0L);
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
-          if(listenerOwner==MainActivity.this.player)recordCurrentSourceFailure();
+          // A single sink warning is not proof of a dead stream; avoid premature failover.
+          if(listenerOwner==MainActivity.this.player)
+            recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
+        }
+        @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          // Keep video decoder diagnostics separate from confirmed source failures.
+          if(listenerOwner==MainActivity.this.player)
+            recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
       // Real decoded-frame callbacks: the old watchdog fields existed but were never
@@ -3416,6 +3426,9 @@ public class MainActivity extends Activity {
       if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
       else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
       else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
+      else if("audioCodecError".equals(event))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
+      else if("audioSinkError".equals(event))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
+      else if("videoCodecError".equals(event))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
       else if("ready".equals(event)){
         int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
@@ -3438,13 +3451,17 @@ public class MainActivity extends Activity {
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
       double readyPenalty=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      // Decoder/sink warnings are weaker evidence than failed playback. Apply only
+      // a small capped ranking penalty; never convert them into an automatic failure.
+      int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
+      double codecWarningPenalty=Math.min(60.0,codecWarnings*8.0);
       long lastSuccess=m.optLong("lastSuccess",0L);
       double recentSuccessBonus=0.0;
       if(lastSuccess>0L){
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
-      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty+recentSuccessBonus+label*0.01;
+      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
   }
   private void sortSourcesByObservedQuality(Channel c){
