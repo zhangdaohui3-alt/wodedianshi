@@ -892,25 +892,33 @@ public class MainActivity extends Activity {
     for(int i=host.getChildCount()-1;i>=0;i--)if(host.getChildAt(i)!=grid)host.removeViewAt(i);
     return grid;
   }
-  // Category tabs use a persistent blue selected state. Avoid the shared yellow
-  // focus stroke here: Android mouse double-clicks can leave stale focus outlines.
+  // High-contrast mouse hover for VOD categories, tuned for TV viewing distance.
   private void setVodCategoryHover(Button target){
     if(hoveredVodCategoryButton==target)return;
     if(hoveredVodCategoryButton!=null){
       Button old=hoveredVodCategoryButton;
       old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
+      old.setTextColor(old.isSelected()?Color.rgb(170,220,255):Color.WHITE);
+      old.setTypeface(null,old.isSelected()?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+      old.setElevation(old.isFocused()?dp(3):0);
     }
     hoveredVodCategoryButton=target;
     if(target!=null){
       GradientDrawable hover=new GradientDrawable();
-      hover.setColor(Color.rgb(24,125,205));hover.setCornerRadius(dp(7));
-      hover.setStroke(dp(3),Color.rgb(145,225,255));target.setBackground(hover);
+      hover.setColor(Color.rgb(0,145,235));
+      hover.setCornerRadius(dp(7));
+      hover.setStroke(dp(4),Color.rgb(255,226,70));
+      target.setBackground(hover);
+      target.setTextColor(Color.WHITE);
+      target.setTypeface(null,android.graphics.Typeface.BOLD);
+      target.setElevation(dp(8));
     }
   }
   private void styleVodCategoryButton(Button button){
     button.setFocusable(true);
     button.setFocusableInTouchMode(false);
     button.setTextColor(Color.WHITE);
+    button.setTypeface(null,android.graphics.Typeface.NORMAL);
     button.setSelected(false);
     button.setBackground(makeVodCategoryBg(false,false));
     button.setOnFocusChangeListener((v,focused)->{
@@ -951,6 +959,9 @@ public class MainActivity extends Activity {
       Button button=entry.getValue();
       button.setSelected(active);
       button.setBackground(makeVodCategoryBg(active,button.isFocused()));
+      button.setTextColor(active?Color.rgb(170,220,255):Color.WHITE);
+      button.setTypeface(null,active?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+      button.setElevation(button.isFocused()?dp(3):0);
     }
   }
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
