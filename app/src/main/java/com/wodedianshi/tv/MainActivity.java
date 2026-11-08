@@ -1439,7 +1439,7 @@ public class MainActivity extends Activity {
         else if("欧美经典".equals(category))q+=" AND (language:English OR language:eng) AND (collection:feature_films OR subject:classic)";
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
-        else if(!category.equals("世界公版电影")&&!category.equals("精选电影")&&!category.equals("多源精选"))q+=" AND title:("+category.replace(" "," AND ")+")";
+        else if(!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
         if("戏曲".equals(category)){
