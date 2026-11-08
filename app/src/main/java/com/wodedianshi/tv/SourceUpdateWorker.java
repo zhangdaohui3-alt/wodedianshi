@@ -198,17 +198,7 @@ public class SourceUpdateWorker extends Worker {
     }
   }
   private int sourceQualityScore(String address){
-    if(address==null)return 0;
-    String u=address.toLowerCase(Locale.ROOT);
-    if(u.matches(".*(?:1080p|1080i|fullhd|full-hd).*"))return 1200;
-    if(u.contains("master_5000")||u.contains("5000k")||u.contains("5000kbps"))return 1150;
-    if(u.matches(".*(?:720p|720i|hd720).*"))return 1000;
-    if(u.contains("master_4000")||u.contains("4000k")||u.contains("4000kbps"))return 950;
-    if(u.contains("master_3000")||u.contains("3000k")||u.contains("3000kbps"))return 900;
-    if(u.contains("master_2300")||u.contains("2300k")||u.contains("2300kbps"))return 850;
-    if(u.matches(".*(?:576p|576i|480p|480i).*"))return 600;
-    if(u.matches(".*(?:360p|240p).*"))return 300;
-    return 0;
+    return SourceQualityScorer.labelScore(address);
   }
   private static class ProbeResult {
     boolean valid;
