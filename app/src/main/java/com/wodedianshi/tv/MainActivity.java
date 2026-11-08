@@ -735,10 +735,7 @@ public class MainActivity extends Activity {
     }
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
-      ++vodRequestId;
-      Future<?> pending=activeVodCatalogueTask;
-      if(pending!=null)pending.cancel(true);
-      activeVodCatalogueTask=null;
+      cancelActiveVodCatalogue();
       if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()){
         // Recreate the live player only after VOD releases its decoder resources.
         startCurrentSource();
@@ -1736,6 +1733,15 @@ public class MainActivity extends Activity {
   }
   private void purgeCancelledTasks(ExecutorService executor){
     if(executor instanceof ThreadPoolExecutor)((ThreadPoolExecutor)executor).purge();
+  }
+  private void cancelActiveVodCatalogue(){
+    // Invalidate already-posted UI batches before stopping the network work.
+    ++vodRequestId;
+    Future<?> pending=activeVodCatalogueTask;
+    if(pending!=null)pending.cancel(true);
+    activeVodCatalogueTask=null;
+    purgeCancelledTasks(vodMetadataWorker);
+    purgeCancelledTasks(vodSourceWorker);
   }
   private String httpGetFast(String address)throws Exception{
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
@@ -3598,6 +3604,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onStop(){cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
   protected void onDestroy(){if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
