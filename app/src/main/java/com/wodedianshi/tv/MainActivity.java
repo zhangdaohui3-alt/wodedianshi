@@ -3318,7 +3318,7 @@ public class MainActivity extends Activity {
       });
       // Real decoded-frame callbacks: the old watchdog fields existed but were never
       // activated, so READY could be mistaken for visible video on silent/black streams.
-      player.addVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
+      player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
         if(listenerOwner==MainActivity.this.player){
           lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
           hasReceivedVideoFrame=true;
