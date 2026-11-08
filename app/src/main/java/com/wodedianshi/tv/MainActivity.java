@@ -633,7 +633,7 @@ public class MainActivity extends Activity {
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
-    String[] categories={"我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片"};
+    String[] categories={"我的收藏","播放记录","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     // Fallback hit-testing at the scroll-container level for TV boxes whose mouse
     // hover dispatch is unreliable on child Buttons.
@@ -954,6 +954,10 @@ public class MainActivity extends Activity {
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
         card.setOnFocusChangeListener((v,focused)->{
           card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+          if(focused&&parent instanceof GridView){
+            GridView owner=(GridView)parent;
+            if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
+          }
         });
       }
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
@@ -1153,7 +1157,8 @@ public class MainActivity extends Activity {
     return found;
   }
 
-  private VodItem fetchAuthorizedVod(org.json.JSONObject doc){
+  private VodItem fetchAuthorizedVod(org.json.JSONObject doc){return fetchAuthorizedVod(doc,false);}
+  private VodItem fetchAuthorizedVod(org.json.JSONObject doc,boolean require1080p){
     String id=doc.optString("identifier",""),title=doc.optString("title",id);
     if(id.isEmpty())return null;
     try{
@@ -1167,8 +1172,15 @@ public class MainActivity extends Activity {
       String fileName=null;
       for(int j=0;j<files.length();j++){
         org.json.JSONObject file=files.optJSONObject(j);if(file==null)continue;
-        String name=file.optString("name",""),format=file.optString("format","").toLowerCase(Locale.US);
-        if(name.toLowerCase(Locale.US).endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"))){fileName=name;break;}
+        String name=file.optString("name",""),lowerName=name.toLowerCase(Locale.ROOT),format=file.optString("format","").toLowerCase(Locale.US);
+        if(!lowerName.endsWith(".mp4")||!(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg")))continue;
+        if(require1080p){
+          int width=file.optInt("width",0),height=file.optInt("height",0);
+          boolean verifiedDimensions=width>=1920&&height>=1080;
+          boolean explicitResolution=lowerName.matches(".*(?:1080p|1080i|1920x1080).*");
+          if(!verifiedDimensions&&!explicitResolution)continue;
+        }
+        fileName=name;break;
       }
       if(fileName==null)return null;
       return new VodItem(title,id,"https://archive.org/download/"+URLEncoder.encode(id,"UTF-8")+"/"+encodeArchivePath(fileName),license);
@@ -1329,7 +1341,9 @@ public class MainActivity extends Activity {
         }
 
         String q="mediatype:movies";
-        if("多源精选".equals(category))q="mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy OR subject:science_fiction OR subject:short film) AND (language:English OR language:eng)";
+        if("戏曲".equals(category))q="mediatype:movies AND (title:Chinese opera OR title:traditional opera OR subject:Chinese opera OR title:Peking opera OR title:Beijing opera OR title:黄梅戏 OR title:京剧 OR title:越剧 OR title:豫剧)";
+        else if("1080P高清电影".equals(category))q="mediatype:movies AND (title:1080p OR title:1080 OR description:1080p OR description:1920x1080)";
+        else if("多源精选".equals(category))q="mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy OR subject:science_fiction OR subject:short film) AND (language:English OR language:eng)";
         else if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies AND (language:English OR language:eng) AND (subject:classic OR title:classic OR subject:feature film)";
         else if("中国经典影像".equals(category))q="mediatype:movies AND (language:Chinese OR language:chi OR language:zho OR title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:Mandarin OR subject:Chinese OR subject:China) AND (subject:classic OR title:classic OR title:feature OR subject:cinema OR title:电影)";
         else if("中国历史影像".equals(category))q="mediatype:movies AND (subject:documentary OR title:documentary OR title:historical OR subject:history) AND (title:China OR title:Chinese OR subject:China OR subject:Chinese OR language:chi OR language:zho)";
@@ -1357,6 +1371,13 @@ public class MainActivity extends Activity {
         else if(!category.equals("世界公版电影")&&!category.equals("精选电影")&&!category.equals("多源精选"))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
+        if("戏曲".equals(category)){
+          queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
+          queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
+        }else if("1080P高清电影".equals(category)){
+          queries.add("mediatype:movies AND (title:1080p OR title:1080i OR description:1080p OR description:1920x1080)");
+          queries.add("mediatype:movies AND (title:full HD OR title:fullhd OR subject:1080p)");
+        }
         // Chinese film records are inconsistently catalogued; search several independent
         // title/language/region vocabularies rather than trusting one query field.
         if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
@@ -1419,7 +1440,7 @@ public class MainActivity extends Activity {
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
               final org.json.JSONObject candidate=doc;
-              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate)));
+              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate,"1080P高清电影".equals(category))));
               submitted++;
             }
           }catch(Exception ignored){}
@@ -1475,7 +1496,9 @@ public class MainActivity extends Activity {
         else if("中国纪录片".equals(category))commonsQuery="China documentary";
         else if("中文纪录片".equals(category))commonsQuery="Chinese language documentary";
         else if("纪录片".equals(category))commonsQuery="documentary film";
-        else if("多源精选".equals(category))commonsQuery="public domain documentary animation short film";
+        else if("戏曲".equals(category))commonsQuery="Chinese traditional opera performance film";
+         else if("1080P高清电影".equals(category))commonsQuery="1080p full HD feature film";
+         else if("多源精选".equals(category))commonsQuery="public domain documentary animation short film";
         else if("精选电影".equals(category)||"世界公版电影".equals(category))commonsQuery="public domain feature film";
         else if("战争片".equals(category))commonsQuery="war film";
         else if("恐怖片".equals(category))commonsQuery="horror film";
@@ -1492,7 +1515,9 @@ public class MainActivity extends Activity {
         else if("纪录片".equals(category))locQuery="documentary film";
         else if("历史纪录片".equals(category))locQuery="historical documentary";
         else if("自然纪录片".equals(category)||"科学纪录片".equals(category))locQuery="nature science documentary";
-        else if("多源精选".equals(category))locQuery="documentary animation short film";
+        else if("戏曲".equals(category))locQuery="Chinese opera traditional opera film";
+         else if("1080P高清电影".equals(category))locQuery="1080p full HD feature film";
+         else if("多源精选".equals(category))locQuery="documentary animation short film";
         else if("世界公版电影".equals(category)||"精选电影".equals(category))locQuery="public domain feature film";
         else if("欧美经典".equals(category)||"默片经典".equals(category))locQuery="silent film";
         else if("战争片".equals(category))locQuery="war film";
@@ -2827,7 +2852,7 @@ public class MainActivity extends Activity {
           int step=Math.max(dp(120),grid.getHeight()/2);
           int delta=Math.round(-wheel*step);
           if(delta==0)delta=wheel>0?-dp(120):dp(120);
-          grid.scrollListBy(delta);
+          grid.smoothScrollBy(delta,180);
           return true;
         }
       }
