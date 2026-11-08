@@ -923,7 +923,11 @@ public class MainActivity extends Activity {
   private void clearVodMouseHover(){
     View old=hoveredVodCard;
     hoveredVodCard=null;
-    if(old!=null)old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
+    if(old!=null){
+      old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
+      old.setScaleX(old.hasFocus()?1.035f:1f);old.setScaleY(old.hasFocus()?1.035f:1f);
+      old.setElevation(old.hasFocus()?dp(9):0);
+    }
   }
   private void configureVodMouseTarget(View card){
     if(Build.VERSION.SDK_INT>=24)card.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
@@ -933,21 +937,22 @@ public class MainActivity extends Activity {
         if(hoveredVodCard!=card){
           clearVodMouseHover();
           hoveredVodCard=card;
-          GradientDrawable hover=new GradientDrawable();
-          hover.setColor(Color.rgb(40,76,110));hover.setCornerRadius(dp(7));
-          hover.setStroke(dp(2),Color.rgb(105,185,245));
-          card.setBackground(hover);
         }
-        // Consume hover at the card boundary so GridView does not reinterpret
-        // mouse movement as D-pad selection. Hover consumption does not consume clicks.
-        return true;
-      }
-      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
+        // High-contrast hover is intentionally stronger than ordinary keyboard focus.
+        GradientDrawable hover=new GradientDrawable();
+        hover.setColor(Color.rgb(12,105,170));hover.setCornerRadius(dp(7));
+        hover.setStroke(dp(4),Color.rgb(255,213,64));
+        card.setBackground(hover);
+        card.setScaleX(1.045f);card.setScaleY(1.045f);card.setElevation(dp(14));
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
         hoveredVodCard=null;
         card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
-        return true;
+        card.setScaleX(card.hasFocus()?1.035f:1f);card.setScaleY(card.hasFocus()?1.035f:1f);
+        card.setElevation(card.hasFocus()?dp(9):0);
       }
-      return action==android.view.MotionEvent.ACTION_HOVER_EXIT;
+      // Never consume hover: Android 9 TV firmware needs normal dispatch across
+      // card edges and empty grid space to keep the hardware pointer tracking.
+      return false;
     });
   }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
@@ -969,7 +974,11 @@ public class MainActivity extends Activity {
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
       }
       card.setOnFocusChangeListener((v,focused)->{
-        card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+        if(hoveredVodCard!=card){
+          card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+          card.setScaleX(focused?1.035f:1f);card.setScaleY(focused?1.035f:1f);
+          card.setElevation(focused?dp(9):0);
+        }
         if(focused&&parent instanceof GridView){
           GridView owner=(GridView)parent;
           if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
