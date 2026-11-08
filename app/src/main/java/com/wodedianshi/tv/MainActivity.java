@@ -923,14 +923,16 @@ public class MainActivity extends Activity {
         hover.setColor(Color.rgb(40,76,110));hover.setCornerRadius(dp(7));
         hover.setStroke(dp(2),Color.rgb(105,185,245));
         card.setBackground(hover);
-        return true;
+        // Let Android continue normal pointer dispatch; consuming hover here can
+        // prevent some Android 9 TV launchers from delivering the later mouse click.
+        return false;
       }
       if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         if(hoveredVodCard==card)hoveredVodCard=null;
         // Do not restore a stale yellow focus border after a mouse click.
         // A subsequent D-pad focus change will draw the remote highlight again.
         card.setBackground(makeButtonBg(Color.rgb(25,39,59),false));
-        return true;
+        return false;
       }
       return false;
     });
@@ -973,6 +975,16 @@ public class MainActivity extends Activity {
       configureVodMouseTarget(holder.poster,card);
       configureVodMouseTarget(holder.title,card);
       configureVodMouseTarget(holder.meta,card);
+      // Make every visible poster/text surface an explicit mouse click target.
+      // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
+      // leave the poster visually hovered but functionally unclickable.
+      holder.poster.setClickable(true);
+      holder.title.setClickable(true);
+      holder.meta.setClickable(true);
+      View.OnClickListener openItem=v->card.performClick();
+      holder.poster.setOnClickListener(openItem);
+      holder.title.setOnClickListener(openItem);
+      holder.meta.setOnClickListener(openItem);
       card.setOnClickListener(v->playVodInside(item));
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
