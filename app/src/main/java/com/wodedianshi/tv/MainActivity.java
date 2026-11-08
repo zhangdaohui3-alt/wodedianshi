@@ -1707,6 +1707,11 @@ public class MainActivity extends Activity {
         for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
         for(Future<VodItem> task:pendingVodChecks)if(!task.isDone())task.cancel(true);
         for(Future<ArrayList<VodItem>> task:sourceFutures)if(!task.isDone())task.cancel(true);
+        // Fixed thread pools retain cancelled FutureTasks in their work queues
+        // until dequeued. Purge them immediately so rapid category changes cannot
+        // build a backlog of dead requests on low-memory Android TV devices.
+        purgeCancelledTasks(vodMetadataWorker);
+        purgeCancelledTasks(vodSourceWorker);
       }
 
       final String err=error;
@@ -1724,6 +1729,9 @@ public class MainActivity extends Activity {
         }
       });
     });
+  }
+  private void purgeCancelledTasks(ExecutorService executor){
+    if(executor instanceof ThreadPoolExecutor)((ThreadPoolExecutor)executor).purge();
   }
   private String httpGetFast(String address)throws Exception{
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
