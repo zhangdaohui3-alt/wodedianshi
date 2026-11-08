@@ -3346,6 +3346,9 @@ public class MainActivity extends Activity {
           videoTrackPresent=videoPresent;
           videoTrackSupported=videoSupported;
           videoTrackSelected=videoSelected;
+          // Start first-frame monitoring as soon as a video track is selected,
+          // not only after the first frame arrives; this catches black/no-frame streams.
+          videoFrameMonitoringActive=videoSelected;
         }
         private boolean isCurrent(){
           if(listenerOwner!=MainActivity.this.player)return false;
