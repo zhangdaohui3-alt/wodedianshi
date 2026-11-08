@@ -628,35 +628,37 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     releaseLivePlayerSafely();
-    LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
+    final java.util.ArrayList<Button> vodCategoryHoverTargets=new java.util.ArrayList<>();
+    // Track pointer movement at the dialog content root, not only inside the
+    // category strip. Android 9 TV firmware can omit the strip's HOVER_EXIT
+    // when the pointer crosses directly into the poster GridView.
+    LinearLayout panel=new LinearLayout(this){
+      @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
+        int action=event.getActionMasked();
+        boolean handled=super.dispatchHoverEvent(event);
+        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+          float x=event.getRawX(),y=event.getRawY();Button hit=null;
+          for(Button candidate:vodCategoryHoverTargets){
+            int[] loc=new int[2];candidate.getLocationOnScreen(loc);
+            if(candidate.getVisibility()==View.VISIBLE&&x>=loc[0]&&x<loc[0]+candidate.getWidth()
+                &&y>=loc[1]&&y<loc[1]+candidate.getHeight()){hit=candidate;break;}
+          }
+          setVodCategoryHover(hit);
+        }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+          setVodCategoryHover(null);
+        }
+        return handled;
+      }
+    };
+    panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
     String[] categories={"我的收藏","播放记录","电影","公开电视剧","公开综艺","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","纪录片·历史","纪录片·自然","纪录片·科学","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
-    // Own hover dispatch at the category-strip boundary. Some Android 9 TV
-    // firmwares keep routing hover to the last child and miss EXIT when the
-    // pointer moves from categories into posters. Hit-test here and consume
-    // HOVER only; touch/click dispatch remains native.
-    HorizontalScrollView categoryScroll=new HorizontalScrollView(this){
-      @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
-        int action=event.getActionMasked();
-        boolean handled=super.dispatchHoverEvent(event);
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-          float x=event.getRawX(),y=event.getRawY();Button hit=null;
-          for(int i=0;i<filters.getChildCount();i++){
-            View child=filters.getChildAt(i);if(!(child instanceof Button))continue;
-            int[] loc=new int[2];child.getLocationOnScreen(loc);
-            if(x>=loc[0]&&x<loc[0]+child.getWidth()&&y>=loc[1]&&y<loc[1]+child.getHeight()){hit=(Button)child;break;}
-          }
-          setVodCategoryHover(hit);
-          return true;
-        }
-        if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){setVodCategoryHover(null);return true;}
-        return handled;
-      }
-    };
+    // Hover is tracked by the dialog root so leaving the strip is observable.
+    HorizontalScrollView categoryScroll=new HorizontalScrollView(this);
     categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
     LinearLayout suggestionPanel=new LinearLayout(this);suggestionPanel.setOrientation(1);
@@ -666,6 +668,7 @@ public class MainActivity extends Activity {
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
       String category=categories[categoryIndex];
       Button b=new Button(this);b.setText(category);b.setTextSize(13);b.setAllCaps(false);styleVodCategoryButton(b);
+      vodCategoryHoverTargets.add(b);
       categoryButtons.put(category,b);
       filters.addView(b,new LinearLayout.LayoutParams(dp(100),dp(40)));
       b.setOnClickListener(v->{
@@ -907,6 +910,7 @@ public class MainActivity extends Activity {
       old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
       old.setTextColor(old.isSelected()?Color.rgb(170,220,255):Color.WHITE);
       old.setTypeface(null,old.isSelected()?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+      old.setScaleX(1f);old.setScaleY(1f);
       old.setElevation(old.isFocused()?dp(3):0);
     }
     hoveredVodCategoryButton=target;
@@ -918,7 +922,8 @@ public class MainActivity extends Activity {
       target.setBackground(hover);
       target.setTextColor(Color.WHITE);
       target.setTypeface(null,android.graphics.Typeface.BOLD);
-      target.setElevation(dp(8));
+      target.setScaleX(1.06f);target.setScaleY(1.06f);
+      target.setElevation(dp(12));
     }
   }
   private void styleVodCategoryButton(Button button){
@@ -929,8 +934,10 @@ public class MainActivity extends Activity {
     button.setSelected(false);
     button.setBackground(makeVodCategoryBg(false,false));
     button.setOnFocusChangeListener((v,focused)->{
-      if(hoveredVodCategoryButton!=button)button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
-      button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
+      if(hoveredVodCategoryButton!=button){
+        button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
+        button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
+      }
     });
     button.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
