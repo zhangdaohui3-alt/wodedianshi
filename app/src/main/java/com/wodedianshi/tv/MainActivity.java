@@ -652,6 +652,8 @@ public class MainActivity extends Activity {
       return false;
     });
     LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(0);
+    HorizontalScrollView suggestionScroll=new HorizontalScrollView(this);suggestionScroll.setHorizontalScrollBarEnabled(false);
+    LinearLayout suggestionRow=new LinearLayout(this);suggestionRow.setOrientation(0);suggestionRow.setGravity(Gravity.CENTER_VERTICAL);suggestionRow.setPadding(dp(2),0,dp(2),0);suggestionScroll.addView(suggestionRow);
     EditText query=new EditText(this);
     for(int categoryIndex=0;categoryIndex<categories.length;categoryIndex++){
       String category=categories[categoryIndex];
@@ -668,14 +670,15 @@ public class MainActivity extends Activity {
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
         filters.addView(searchTab,new LinearLayout.LayoutParams(dp(84),dp(40)));
-        searchTab.setOnClickListener(v->{searchRow.setVisibility(searchRow.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);if(searchRow.getVisibility()==View.VISIBLE){query.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(query,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);}});
+        searchTab.setOnClickListener(v->{boolean show=searchRow.getVisibility()!=View.VISIBLE;searchRow.setVisibility(show?View.VISIBLE:View.GONE);suggestionScroll.setVisibility(show?View.VISIBLE:View.GONE);if(show){query.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(query,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);}});
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
     updateVodCategoryHighlight(categoryButtons,"多源精选");
     query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
-    panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));searchRow.setVisibility(View.GONE);
+    panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
+    panel.addView(suggestionScroll,new LinearLayout.LayoutParams(-1,dp(38)));suggestionScroll.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
     // Fixed paging controls stay directly above the multi-screen poster grid,
     // so a mouse never has to travel through the entire list to reach them.
@@ -726,6 +729,14 @@ public class MainActivity extends Activity {
        if(actionId==android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH||actionId==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){searchButton.performClick();return true;}
        return false;
      });
+    // iQIYI-inspired quick-search chips, directly visible beneath the search bar.
+    String[] quickTerms={"中国经典电影","纪录片","历史影像","自然纪录片","动画","喜剧","科幻","战争片","Charlie Chaplin","Buster Keaton"};
+    for(String term:quickTerms){
+      Button chip=new Button(this);chip.setText(term);chip.setAllCaps(false);chip.setTextSize(11);
+      chip.setMinHeight(0);chip.setMinimumHeight(0);chip.setMinWidth(0);chip.setPadding(dp(10),0,dp(10),0);
+      styleTvButton(chip,Color.rgb(35,58,82));suggestionRow.addView(chip,new LinearLayout.LayoutParams(-2,dp(32)));
+      chip.setOnClickListener(v->{query.setText(term);query.setSelection(query.length());searchButton.performClick();});
+    }
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
       ++vodRequestId;
@@ -845,18 +856,15 @@ public class MainActivity extends Activity {
     if(grid==null){
       grid=new GridView(this){
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
-          int action=event.getActionMasked();
-          // Route to children first. A child HOVER_EXIT can otherwise erase the
-          // next row's highlight while the pointer crosses a recycled GridView cell.
-          boolean handled=super.dispatchHoverEvent(event);
+          int action=event.getActionMasked();boolean handled=super.dispatchHoverEvent(event);
+          // Use screen-space child bounds; Android 9 GridView pointToPosition can
+          // report the wrong column while a mouse crosses vertically between rows.
           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            int position=pointToPosition(Math.round(event.getX()),Math.round(event.getY()));
-            int childIndex=position-getFirstVisiblePosition();
-            View hit=(position>=0&&childIndex>=0&&childIndex<getChildCount())?getChildAt(childIndex):null;
+            float rawX=event.getRawX(),rawY=event.getRawY();View hit=null;
+            for(int i=0;i<getChildCount();i++){View child=getChildAt(i);int[] loc=new int[2];child.getLocationOnScreen(loc);
+              if(rawX>=loc[0]&&rawX<loc[0]+child.getWidth()&&rawY>=loc[1]&&rawY<loc[1]+child.getHeight()){hit=child;break;}}
             if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
-          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-            clearVodMouseHover();
-          }
+          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT)clearVodMouseHover();
           return handled;
         }
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
@@ -952,8 +960,7 @@ public class MainActivity extends Activity {
     hoveredVodCard=null;
     if(old!=null){
       old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
-      old.setScaleX(old.hasFocus()?1.035f:1f);old.setScaleY(old.hasFocus()?1.035f:1f);
-      old.setElevation(old.hasFocus()?dp(9):0);
+      old.setScaleX(1f);old.setScaleY(1f);old.setElevation(old.hasFocus()?dp(4):0);
     }
   }
   private void showVodMouseHover(View card){
@@ -964,9 +971,10 @@ public class MainActivity extends Activity {
     }
     GradientDrawable hover=new GradientDrawable();
     hover.setColor(Color.rgb(12,105,170));hover.setCornerRadius(dp(7));
-    hover.setStroke(dp(4),Color.rgb(255,213,64));
+    hover.setStroke(dp(3),Color.rgb(255,213,64));
     card.setBackground(hover);
-    card.setScaleX(1.045f);card.setScaleY(1.045f);card.setElevation(dp(14));
+    // Never scale grid cells: overlapping transformed cards corrupt mouse hit tests.
+    card.setScaleX(1f);card.setScaleY(1f);card.setElevation(dp(4));
   }
   private void configureVodMouseTarget(View card,View... surfaces){
     // GridView alone owns hover state; child-level listeners race at Android 9 row boundaries.
@@ -997,8 +1005,7 @@ public class MainActivity extends Activity {
       card.setOnFocusChangeListener((v,focused)->{
         if(hoveredVodCard!=card){
           card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
-          card.setScaleX(focused?1.035f:1f);card.setScaleY(focused?1.035f:1f);
-          card.setElevation(focused?dp(9):0);
+          card.setScaleX(1f);card.setScaleY(1f);card.setElevation(focused?dp(4):0);
         }
         if(focused&&parent instanceof GridView){
           GridView owner=(GridView)parent;
@@ -1026,6 +1033,20 @@ public class MainActivity extends Activity {
       holder.title.setOnClickListener(openItem);
       holder.meta.setOnClickListener(openItem);
       card.setOnClickListener(v->playVodInside(item));
+      // Deterministic D-pad navigation: up/down preserve the current column.
+      card.setOnKeyListener((v,keyCode,event)->{
+        if(event.getAction()!=android.view.KeyEvent.ACTION_DOWN||!(parent instanceof GridView))return false;
+        GridView owner=(GridView)parent;int current=owner.getPositionForView(card);
+        if(current<0)return false;int target=current;int count=owner.getAdapter()==null?0:owner.getAdapter().getCount();int columns=Math.max(1,owner.getNumColumns());
+        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP)target=current-columns;
+        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_DOWN)target=current+columns;
+        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT){if(current%columns==0)return false;target=current-1;}
+        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT){if(current%columns==columns-1||current+1>=count)return false;target=current+1;}
+        else return false;
+        if(target<0||target>=count)return true;final int destination=target;owner.setSelection(destination);
+        owner.post(()->{int childIndex=destination-owner.getFirstVisiblePosition();if(childIndex>=0&&childIndex<owner.getChildCount()){View next=owner.getChildAt(childIndex);if(next!=null)next.requestFocus();}else owner.smoothScrollToPosition(destination);});
+        return true;
+      });
       card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
     }
@@ -1400,7 +1421,7 @@ public class MainActivity extends Activity {
           String term=searchTerm.replace("\\"," ").replace("\""," ").replaceAll("[\\r\\n]+"," ").trim();
           String phrase=term.replaceAll("\\s+"," ");
           if(phrase.isEmpty())phrase="film";
-          q="mediatype:movies AND (title:\""+phrase+"\" OR description:\""+phrase+"\" OR subject:\""+phrase+"\")";
+          q="mediatype:movies AND (title:\""+phrase+"\" OR description:\""+phrase+"\" OR subject:\""+phrase+"\" OR creator:\""+phrase+"\")";
         }
         else if("电影".equals(category))q="mediatype:movies AND (subject:feature film OR subject:public domain OR collection:feature_films)";
         else if("公开电视剧".equals(category))q="mediatype:movies AND (subject:television OR title:television series OR title:TV series OR collection:television)";
