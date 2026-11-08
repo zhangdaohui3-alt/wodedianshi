@@ -1472,6 +1472,8 @@ public class MainActivity extends Activity {
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
+      ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
+      ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
@@ -1565,7 +1567,6 @@ public class MainActivity extends Activity {
 
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
         ExecutorCompletionService<org.json.JSONArray> pageCompletion=new ExecutorCompletionService<>(vodSourceWorker);
-        ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
         int submitted=0,completed=0;
         // Start independent catalogue pages together. The slowest page no longer blocks
         // the next query; only four HTTP page requests run at once on low-memory TV boxes.
@@ -1644,7 +1645,6 @@ public class MainActivity extends Activity {
         // each Future in submission order can accidentally add three full timeouts
         // together when the first provider is slow.
         CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
-        ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
         if(useCommonsPublic)sourceFutures.add(sourceCompletion.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category))));
         String commonsQuery=null;
@@ -1700,6 +1700,14 @@ public class MainActivity extends Activity {
         // Enforce one shared provider budget, not 6.5 seconds per provider.
         for(Future<ArrayList<VodItem>> pendingSource:sourceFutures)if(!pendingSource.isDone())pendingSource.cancel(true);
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
+      finally{
+        // A cancelled catalogue request must release every child request too.
+        // Otherwise stale metadata/page/provider tasks can occupy the bounded pools
+        // and delay the user's next category or title search.
+        for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
+        for(Future<VodItem> task:pendingVodChecks)if(!task.isDone())task.cancel(true);
+        for(Future<ArrayList<VodItem>> task:sourceFutures)if(!task.isDone())task.cancel(true);
+      }
 
       final String err=error;
       final ArrayList<VodItem> result=new ArrayList<>(found);
