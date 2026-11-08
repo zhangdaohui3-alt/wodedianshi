@@ -3120,6 +3120,8 @@ public class MainActivity extends Activity {
   private volatile boolean hasReceivedVideoFrame=false;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
+  // A stale HLS live-window position gets one in-place recovery before source failover.
+  private boolean liveWindowRecoveryAttempted=false;
   private long sourceAttemptStartedAt=0L;
   private long sourceReadyAt=0L;
   private boolean resumePlaybackOnStart=false;
@@ -3331,6 +3333,7 @@ public class MainActivity extends Activity {
     sourceReadyRecorded=false;
     sourceFirstFrameRecorded=false;
     sourceFailureRecorded=false;
+    liveWindowRecoveryAttempted=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
     saveLastChannel();
@@ -3414,6 +3417,20 @@ public class MainActivity extends Activity {
         }
         public void onPlayerError(PlaybackException e){
           if(!isCurrent())return;
+          // HLS live playback can fail only because its playback position fell
+          // behind the sliding live window. Re-seek to the live edge once before
+          // marking this URL failed; switching sources immediately would be wasteful.
+          if(e.errorCode==PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW&&!liveWindowRecoveryAttempted){
+            liveWindowRecoveryAttempted=true;
+            cancelBufferingFallback();
+            cancelPlaybackWatchdog();
+            cancelAudioTrackCheck();
+            info.setText("直播位置已过期，正在重新连接到直播现场…");
+            player.seekToDefaultPosition();
+            player.prepare();
+            player.play();
+            return;
+          }
           recordCurrentSourceFailure();
           advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
         }
