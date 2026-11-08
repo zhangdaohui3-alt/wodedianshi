@@ -907,8 +907,9 @@ public class MainActivity extends Activity {
     if(hoveredVodCategoryButton==target)return;
     if(hoveredVodCategoryButton!=null){
       Button old=hoveredVodCategoryButton;
+      old.setBackgroundTintList(null);
       old.setBackground(makeVodCategoryBg(old.isSelected(),old.hasFocus()));
-      old.setTextColor(old.isSelected()?Color.rgb(170,220,255):Color.WHITE);
+      old.setTextColor(old.isSelected()?Color.WHITE:Color.rgb(235,243,252));
       old.setTypeface(null,old.isSelected()?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
       old.setScaleX(1f);old.setScaleY(1f);
       old.setElevation(old.isFocused()?dp(3):0);
@@ -916,14 +917,16 @@ public class MainActivity extends Activity {
     hoveredVodCategoryButton=target;
     if(target!=null){
       GradientDrawable hover=new GradientDrawable();
-      hover.setColor(Color.rgb(0,112,210));
+      hover.setColor(Color.rgb(255,150,20));
       hover.setCornerRadius(dp(7));
-      hover.setStroke(dp(5),Color.rgb(255,238,0));
+      hover.setStroke(dp(3),Color.WHITE);
+      target.setBackgroundTintList(null);
       target.setBackground(hover);
-      target.setTextColor(Color.WHITE);
+      target.setTextColor(Color.BLACK);
       target.setTypeface(null,android.graphics.Typeface.BOLD);
-      target.setScaleX(1.06f);target.setScaleY(1.06f);
-      target.setElevation(dp(12));
+      // Keep category hit rectangles stable for mouse movement and D-pad.
+      target.setScaleX(1f);target.setScaleY(1f);
+      target.setElevation(dp(10));
     }
   }
   private void styleVodCategoryButton(Button button){
