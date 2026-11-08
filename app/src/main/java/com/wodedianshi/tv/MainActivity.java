@@ -634,7 +634,7 @@ public class MainActivity extends Activity {
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
-    String[] categories={"我的收藏","播放记录","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
+    String[] categories={"我的收藏","播放记录","电影","公开电视剧","公开综艺","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","纪录片·历史","纪录片·自然","纪录片·科学","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
     // Fallback hit-testing at the scroll-container level for TV boxes whose mouse
     // hover dispatch is unreliable on child Buttons.
@@ -1406,7 +1406,13 @@ public class MainActivity extends Activity {
         }
 
         String q="mediatype:movies";
-        if("戏曲".equals(category))q="mediatype:movies AND (title:Chinese opera OR title:traditional opera OR subject:Chinese opera OR title:Peking opera OR title:Beijing opera OR title:黄梅戏 OR title:京剧 OR title:越剧 OR title:豫剧)";
+        if("电影".equals(category))q="mediatype:movies AND (subject:feature film OR subject:public domain OR collection:feature_films)";
+        else if("公开电视剧".equals(category))q="mediatype:movies AND (subject:television OR title:television series OR title:TV series OR collection:television)";
+        else if("公开综艺".equals(category))q="mediatype:movies AND (subject:variety show OR title:variety show OR title:talk show OR subject:talk show)";
+        else if("纪录片·历史".equals(category))q="mediatype:movies AND subject:documentary AND (subject:history OR title:history OR title:historical)";
+        else if("纪录片·自然".equals(category))q="mediatype:movies AND subject:documentary AND (subject:nature OR title:nature OR subject:wildlife)";
+        else if("纪录片·科学".equals(category))q="mediatype:movies AND subject:documentary AND (subject:science OR title:science OR subject:technology)";
+        else if("戏曲".equals(category))q="mediatype:movies AND (title:Chinese opera OR title:traditional opera OR subject:Chinese opera OR title:Peking opera OR title:Beijing opera OR title:黄梅戏 OR title:京剧 OR title:越剧 OR title:豫剧)";
         else if("1080P高清电影".equals(category))q="mediatype:movies AND (title:1080p OR title:1080 OR description:1080p OR description:1920x1080)";
         else if("多源精选".equals(category))q="mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy OR subject:science_fiction OR subject:short film) AND (language:English OR language:eng)";
         else if("精选电影".equals(category))q="collection:feature_films AND mediatype:movies AND (language:English OR language:eng) AND (subject:classic OR title:classic OR subject:feature film)";
