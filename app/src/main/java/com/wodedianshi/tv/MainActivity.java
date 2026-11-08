@@ -988,6 +988,13 @@ public class MainActivity extends Activity {
     View old=hoveredVodCard;
     hoveredVodCard=null;
     if(old!=null){
+      old.setForeground(null);
+      Object tag=old.getTag();
+      if(tag instanceof VodCardHolder){
+        VodCardHolder h=(VodCardHolder)tag;
+        h.title.setBackgroundColor(Color.TRANSPARENT);
+        h.meta.setBackgroundColor(Color.TRANSPARENT);
+      }
       old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
       old.setScaleX(1f);old.setScaleY(1f);old.setElevation(old.hasFocus()?dp(4):0);
     }
@@ -998,12 +1005,26 @@ public class MainActivity extends Activity {
       clearVodMouseHover();
       hoveredVodCard=card;
     }
-    GradientDrawable hover=new GradientDrawable();
-    hover.setColor(Color.rgb(12,105,170));hover.setCornerRadius(dp(7));
-    hover.setStroke(dp(3),Color.rgb(255,213,64));
-    card.setBackground(hover);
-    // Never scale grid cells: overlapping transformed cards corrupt mouse hit tests.
-    card.setScaleX(1f);card.setScaleY(1f);card.setElevation(dp(4));
+    // The poster image covers the card background, so changing only the card
+    // background looks gray/unchanged. Draw a foreground ring above the poster
+    // and tint the text bands; this is a true whole-card mouse indicator.
+    GradientDrawable hoverBg=new GradientDrawable();
+    hoverBg.setColor(Color.rgb(0,88,112));hoverBg.setCornerRadius(dp(7));
+    card.setBackground(hoverBg);
+    GradientDrawable ring=new GradientDrawable();
+    ring.setColor(Color.TRANSPARENT);ring.setCornerRadius(dp(7));
+    ring.setStroke(dp(4),Color.rgb(0,238,220));
+    card.setForeground(ring);
+    Object tag=card.getTag();
+    if(tag instanceof VodCardHolder){
+      VodCardHolder h=(VodCardHolder)tag;
+      h.title.setBackgroundColor(Color.rgb(0,112,132));
+      h.meta.setBackgroundColor(Color.rgb(0,82,101));
+      h.title.setTextColor(Color.WHITE);
+      h.meta.setTextColor(Color.WHITE);
+    }
+    // Keep the fixed GridView cell geometry from 2.8; no scaling/reflow.
+    card.setScaleX(1f);card.setScaleY(1f);card.setElevation(dp(8));
   }
   private void configureVodMouseTarget(View card,View... surfaces){
     // GridView alone owns hover state; child-level listeners race at Android 9 row boundaries.
