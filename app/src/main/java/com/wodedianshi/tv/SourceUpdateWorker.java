@@ -281,13 +281,13 @@ public class SourceUpdateWorker extends Worker {
         String segmentUrl=new URL(new URL(mediaUrl),segments.get(0)).toString();
         long segmentStart=android.os.SystemClock.elapsedRealtime();
         byte[] sample=fetchSample(segmentUrl,32768);
-        if(sample==null||sample.length<188)return result;
+        if(!looksLikeHlsSegment(sample))return result;
         long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
         boolean secondSegmentOk=true;
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192);
-          secondSegmentOk=second!=null&&second.length>=188;
+          secondSegmentOk=looksLikeHlsSegment(second);
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
@@ -311,10 +311,30 @@ public class SourceUpdateWorker extends Worker {
       return result;
     }catch(Exception e){return result;}
   }
+  // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
+  // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
+  private boolean looksLikeHlsSegment(byte[] b){
+    if(b==null||b.length<8)return false;
+    int maxOffset=Math.min(187,b.length-1);
+    for(int offset=0;offset<=maxOffset;offset++){
+      if((b[offset]&255)==0x47&&offset+188<b.length&&(b[offset+188]&255)==0x47)return true;
+    }
+    return hasIsoBmffBox(b);
+  }
+  private boolean hasIsoBmffBox(byte[] b){
+    if(b==null||b.length<8)return false;
+    String[] boxes={"ftyp","styp","moof","mdat","sidx"};
+    int limit=Math.min(b.length-4,96);
+    for(int i=4;i<limit;i++){
+      for(String box:boxes){
+        if(b[i]==box.charAt(0)&&b[i+1]==box.charAt(1)&&b[i+2]==box.charAt(2)&&b[i+3]==box.charAt(3))return true;
+      }
+    }
+    return false;
+  }
   private boolean looksLikeMediaPayload(byte[] b){
-    if(b==null||b.length<12)return false;
-    if(b.length>188&&(b[0]&255)==0x47&&(b[188]&255)==0x47)return true; // MPEG-TS sync
-    if(b.length>8&&b[4]=='f'&&b[5]=='t'&&b[6]=='y'&&b[7]=='p')return true; // MP4
+    if(b==null||b.length<8)return false;
+    if(looksLikeHlsSegment(b))return true;
     if(b[0]=='F'&&b[1]=='L'&&b[2]=='V')return true; // FLV
     if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0))return true; // ADTS AAC
     return false;
