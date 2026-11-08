@@ -661,7 +661,7 @@ public class MainActivity extends Activity {
       b.setOnClickListener(v->{
         // Resolve the clicked view at click time; never reuse a stale hover/focus row.
         Button clicked=(Button)v;String chosen=clicked.getText().toString();
-        activeVodCategory=chosen;setVodCategoryHover(null);
+        activeVodCategory=chosen;activeVodQuery="";query.setText("");setVodCategoryHover(null);
         updateVodCategoryHighlight(categoryButtons,chosen);
         if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
       });
@@ -673,7 +673,7 @@ public class MainActivity extends Activity {
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
     updateVodCategoryHighlight(categoryButtons,"多源精选");
-    query.setSingleLine(true);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("搜索中文片名、英文片名或原名");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
+    query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(40)));searchRow.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
@@ -713,8 +713,19 @@ public class MainActivity extends Activity {
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
-    refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodCategory,panel,status,results,true));
-    searchButton.setOnClickListener(v->{String q=query.getText().toString().trim();if(!q.isEmpty()){activeVodCategory=q;updateVodCategoryHighlight(categoryButtons,null);loadVodCatalogue(q,panel,status,results,true);}});
+    refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodQuery.isEmpty()?activeVodCategory:"搜索："+activeVodQuery,panel,status,results,true));
+    searchButton.setOnClickListener(v->{
+       String q=query.getText().toString().trim();
+       if(q.isEmpty()){toast("请输入影片名称或关键词");query.requestFocus();return;}
+       activeVodQuery=q;
+       updateVodCategoryHighlight(categoryButtons,null);
+       ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
+       loadVodCatalogue("搜索："+q,panel,status,results,true);
+     });
+     query.setOnEditorActionListener((v,actionId,event)->{
+       if(actionId==android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH||actionId==android.view.inputmethod.EditorInfo.IME_ACTION_DONE){searchButton.performClick();return true;}
+       return false;
+     });
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
       ++vodRequestId;
@@ -835,29 +846,18 @@ public class MainActivity extends Activity {
       grid=new GridView(this){
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
           int action=event.getActionMasked();
+          // Route to children first. A child HOVER_EXIT can otherwise erase the
+          // next row's highlight while the pointer crosses a recycled GridView cell.
+          boolean handled=super.dispatchHoverEvent(event);
           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            // IMPORTANT: do not call setSelection() for a mouse. On Android 9
-            // GridView selection can trigger layout/adapter repositioning while the
-            // pointer is stationary; the next hover is then delivered to the last
-            // recycled cell (commonly the right-most poster), making the cursor
-            // appear to jump or vanish at the bottom edge of a card.
-            float rawX=event.getRawX(),rawY=event.getRawY();
-            View hit=null;
-            for(int i=0;i<getChildCount();i++){
-              View child=getChildAt(i);
-              if(child==null||child.getVisibility()!=View.VISIBLE)continue;
-              int[] loc=new int[2];child.getLocationOnScreen(loc);
-              if(rawX>=loc[0]&&rawX<loc[0]+child.getWidth()
-                  &&rawY>=loc[1]&&rawY<loc[1]+child.getHeight()){
-                hit=child;break;
-              }
-            }
+            int position=pointToPosition(Math.round(event.getX()),Math.round(event.getY()));
+            int childIndex=position-getFirstVisiblePosition();
+            View hit=(position>=0&&childIndex>=0&&childIndex<getChildCount())?getChildAt(childIndex):null;
             if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
           }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
             clearVodMouseHover();
           }
-          // Let Android deliver the same pointer event to the actual child surface.
-          return super.dispatchHoverEvent(event);
+          return handled;
         }
         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
           if(handleVodGridScroll(this,event))return true;
@@ -969,23 +969,11 @@ public class MainActivity extends Activity {
     card.setScaleX(1.045f);card.setScaleY(1.045f);card.setElevation(dp(14));
   }
   private void configureVodMouseTarget(View card,View... surfaces){
-    if(Build.VERSION.SDK_INT>=24)card.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
-    View.OnHoverListener listener=(v,event)->{
-      int action=event.getActionMasked();
-      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        showVodMouseHover(card);
-      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
-        clearVodMouseHover();
-      }
-      // Keep native mouse dispatch/click handling intact.
-      return false;
-    };
-    card.setOnHoverListener(listener);
-    // Hover events are often delivered to the deepest child, not the card.
-    // Attach the same visual target to every clickable poster/text surface.
-    if(surfaces!=null)for(View surface:surfaces)if(surface!=null){
-      if(Build.VERSION.SDK_INT>=24)surface.setPointerIcon(android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW));
-      surface.setOnHoverListener(listener);
+    // GridView alone owns hover state; child-level listeners race at Android 9 row boundaries.
+    if(Build.VERSION.SDK_INT>=24){
+      android.view.PointerIcon arrow=android.view.PointerIcon.getSystemIcon(this,android.view.PointerIcon.TYPE_ARROW);
+      if(card!=null)card.setPointerIcon(arrow);
+      if(surfaces!=null)for(View surface:surfaces)if(surface!=null)surface.setPointerIcon(arrow);
     }
   }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
@@ -1405,8 +1393,16 @@ public class MainActivity extends Activity {
           for(VodItem item:cctvItems)if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);
         }
 
+        boolean titleSearch=category.startsWith("搜索：");
+        String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
         String q="mediatype:movies";
-        if("电影".equals(category))q="mediatype:movies AND (subject:feature film OR subject:public domain OR collection:feature_films)";
+        if(titleSearch){
+          String term=searchTerm.replace("\\"," ").replace("\""," ").replaceAll("[\\r\\n]+"," ").trim();
+          String phrase=term.replaceAll("\\s+"," ");
+          if(phrase.isEmpty())phrase="film";
+          q="mediatype:movies AND (title:\""+phrase+"\" OR description:\""+phrase+"\" OR subject:\""+phrase+"\")";
+        }
+        else if("电影".equals(category))q="mediatype:movies AND (subject:feature film OR subject:public domain OR collection:feature_films)";
         else if("公开电视剧".equals(category))q="mediatype:movies AND (subject:television OR title:television series OR title:TV series OR collection:television)";
         else if("公开综艺".equals(category))q="mediatype:movies AND (subject:variety show OR title:variety show OR title:talk show OR subject:talk show)";
         else if("纪录片·历史".equals(category))q="mediatype:movies AND subject:documentary AND (subject:history OR title:history OR title:historical)";
@@ -1439,7 +1435,7 @@ public class MainActivity extends Activity {
         else if("欧美经典".equals(category))q+=" AND (language:English OR language:eng) AND (collection:feature_films OR subject:classic)";
         else if("默片经典".equals(category))q+=" AND (subject:silent film OR title:silent)";
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
-        else if(!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
+        else if(!titleSearch&&!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();queries.add(q);
         if("戏曲".equals(category)){
@@ -1575,7 +1571,8 @@ public class MainActivity extends Activity {
         else if("恐怖片".equals(category))commonsQuery="horror film";
         else if("动作片".equals(category))commonsQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
-        if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
+        if(titleSearch)commonsQuery=searchTerm;
+         if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;commonsSearchFuture=vodSourceWorker.submit(()->fetchCommonsSearchVod(term));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
         else if("中国经典影像".equals(category))locQuery="Chinese classic feature film";
@@ -1595,7 +1592,8 @@ public class MainActivity extends Activity {
         else if("恐怖片".equals(category))locQuery="horror film";
         else if("动作片".equals(category))locQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
-        if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
+        if(titleSearch)locQuery=searchTerm;
+         if(locQuery!=null&&found.size()<80){final String term=locQuery;locFuture=vodSourceWorker.submit(()->fetchLocPublicDomainVod(term));}
         if(commonsPublicFuture!=null){try{for(VodItem item:commonsPublicFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsPublicFuture.cancel(true);}}
         if(commonsSearchFuture!=null){try{for(VodItem item:commonsSearchFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){commonsSearchFuture.cancel(true);}}
         if(locFuture!=null){try{for(VodItem item:locFuture.get(6500L,TimeUnit.MILLISECONDS))if(foundIds.add(item.identifier)&&found.size()<80)found.add(item);}catch(Exception ignored){locFuture.cancel(true);}}
