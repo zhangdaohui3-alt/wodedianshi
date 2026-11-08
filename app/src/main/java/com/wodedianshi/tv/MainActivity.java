@@ -3084,6 +3084,7 @@ public class MainActivity extends Activity {
   private long sourceReadyAt=0L;
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
+  private volatile boolean sourceFirstFrameRecorded=false;
   private boolean sourceFailureRecorded=false;
   private boolean sourceWasBuffering=false;
   private boolean audioTrackPresent=false;
@@ -3288,6 +3289,7 @@ public class MainActivity extends Activity {
     hasReceivedVideoFrame=false;
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
+    sourceFirstFrameRecorded=false;
     sourceFailureRecorded=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
@@ -3327,9 +3329,17 @@ public class MainActivity extends Activity {
       // activated, so READY could be mistaken for visible video on silent/black streams.
       player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
         if(listenerOwner==MainActivity.this.player){
-          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
-          hasReceivedVideoFrame=true;
-          videoFrameMonitoringActive=true;
+          MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
+          if(renderedItem!=null&&currentMediaId.equals(renderedItem.mediaId)){
+            long frameAt=android.os.SystemClock.elapsedRealtime();
+            lastVideoFrameAt=frameAt;
+            hasReceivedVideoFrame=true;
+            videoFrameMonitoringActive=true;
+            if(!sourceFirstFrameRecorded){
+              sourceFirstFrameRecorded=true;
+              recordSourceMetric(currentSourceUrl(),"firstFrame",frameAt-sourceAttemptStartedAt);
+            }
+          }
         }
       });
       player.addListener(new Player.Listener(){
@@ -3457,6 +3467,11 @@ public class MainActivity extends Activity {
         int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
         m.put("lastSuccess",System.currentTimeMillis());
+      }else if("firstFrame".equals(event)){
+        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
+        m.put("firstFrames",count+1);
+        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+        m.put("lastFirstFrame",System.currentTimeMillis());
       }
       m.put("updated",System.currentTimeMillis());all.put(key,m);
       p.edit().putString("source_qoe_v1",all.toString()).apply();
@@ -3474,7 +3489,11 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
-      double readyPenalty=Math.min(250.0,m.optLong("avgReadyMs",0L)/100.0);
+      double readyPenalty=Math.min(150.0,m.optLong("avgReadyMs",0L)/150.0);
+      // First rendered frame is a better measure of perceived channel-zap speed
+      // than STATE_READY alone. Keep the penalty bounded so stability still wins.
+      long avgFirstFrame=m.optLong("avgFirstFrameMs",0L);
+      double firstFramePenalty=avgFirstFrame>0L?Math.min(350.0,avgFirstFrame/80.0):0.0;
       // Decoder/sink warnings are weaker evidence than failed playback. Apply only
       // a small capped ranking penalty; never convert them into an automatic failure.
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
@@ -3485,7 +3504,7 @@ public class MainActivity extends Activity {
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
-      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
+      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty-firstFramePenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
   }
   private void sortSourcesByObservedQuality(Channel c){
