@@ -698,9 +698,9 @@ public class MainActivity extends Activity {
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     previousPageButton.setNextFocusRightId(nextPageButton.getId());
     nextPageButton.setNextFocusLeftId(previousPageButton.getId());
-    previousPageButton.setNextFocusUpId(vodGrid.getId());
-    nextPageButton.setNextFocusUpId(vodGrid.getId());
-    vodGrid.setNextFocusDownId(previousPageButton.getId());
+    previousPageButton.setNextFocusDownId(vodGrid.getId());
+    nextPageButton.setNextFocusDownId(vodGrid.getId());
+    vodGrid.setNextFocusUpId(previousPageButton.getId());
     previousPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,-1);});
     nextPageButton.setOnClickListener(v->{scrollVodGridPage(vodGrid,1);});
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
@@ -952,14 +952,14 @@ public class MainActivity extends Activity {
         TextView title=new TextView(MainActivity.this);title.setTextColor(Color.WHITE);title.setTextSize(12);title.setMaxLines(2);title.setPadding(dp(4),dp(7),dp(4),dp(2));card.addView(title);
         TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(10);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta);
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
-        card.setOnFocusChangeListener((v,focused)->{
-          card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
-          if(focused&&parent instanceof GridView){
-            GridView owner=(GridView)parent;
-            if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
-          }
-        });
       }
+      card.setOnFocusChangeListener((v,focused)->{
+        card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
+        if(focused&&parent instanceof GridView){
+          GridView owner=(GridView)parent;
+          if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
+        }
+      });
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
