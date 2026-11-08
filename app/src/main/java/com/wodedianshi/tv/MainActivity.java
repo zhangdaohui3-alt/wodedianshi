@@ -916,9 +916,9 @@ public class MainActivity extends Activity {
     hoveredVodCategoryButton=target;
     if(target!=null){
       GradientDrawable hover=new GradientDrawable();
-      hover.setColor(Color.rgb(0,145,235));
+      hover.setColor(Color.rgb(0,112,210));
       hover.setCornerRadius(dp(7));
-      hover.setStroke(dp(4),Color.rgb(255,226,70));
+      hover.setStroke(dp(5),Color.rgb(255,238,0));
       target.setBackground(hover);
       target.setTextColor(Color.WHITE);
       target.setTypeface(null,android.graphics.Typeface.BOLD);
