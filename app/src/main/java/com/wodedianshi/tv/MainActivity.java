@@ -80,7 +80,11 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
-  private final ExecutorService posterWorker = Executors.newFixedThreadPool(2);
+  // Bound queued thumbnail work: fast scrolling must not build an unbounded
+  // network/decode backlog on Android TV. Rejected cards use the local fallback poster.
+  private final ExecutorService posterWorker = new ThreadPoolExecutor(
+      2,2,0L,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(48),
+      new ThreadPoolExecutor.AbortPolicy());
   // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
   private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
