@@ -1784,7 +1784,7 @@ public class MainActivity extends Activity {
               BitmapFactory.decodeByteArray(imageBytes,0,imageBytes.length,bounds);
               if(bounds.outWidth>0&&bounds.outHeight>0){
                 int sample=1;
-                while(bounds.outWidth/(sample*2)>640||bounds.outHeight/(sample*2)>480)sample*=2;
+                while(bounds.outWidth/sample>640||bounds.outHeight/sample>480)sample*=2;
                 BitmapFactory.Options options=new BitmapFactory.Options();
                 options.inSampleSize=sample;options.inPreferredConfig=Bitmap.Config.RGB_565;
                 bitmap=BitmapFactory.decodeByteArray(imageBytes,0,imageBytes.length,options);
