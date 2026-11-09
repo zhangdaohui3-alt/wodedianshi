@@ -224,8 +224,11 @@ public class SourceUpdateWorker extends Worker {
     JSONObject m=qoe.optJSONObject(scoreKey(url));
     if(m!=null&&m.optInt("attempts",0)>=2){
       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-      score+=(double)ready/attempts*1000.0;
-      score-=Math.min(150.0,m.optLong("avgReadyMs",0L)/150.0);
+      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
+      double stableRate=(double)m.optInt("stablePlays",0)/attempts;
+      score+=(double)ready/attempts*450.0+firstFrameRate*450.0+stableRate*700.0;
+      score-=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
+      score-=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
       score-=Math.min(60.0,codecWarnings*8.0);
       score-=fail*90.0+buffers*55.0;
