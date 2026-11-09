@@ -3707,9 +3707,22 @@ public class MainActivity extends Activity {
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
-      return probeScore+successRate*450.0+firstFrameRate*450.0+stableRate*700.0
-          -fail*90.0-buffers*55.0-readyPenalty-firstFramePenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
+      // Historical QoE should describe current source behavior, not punish a
+      // source forever for failures from months ago. Keep a small evidence floor
+      // while letting recent device playback dominate the ranking.
+      double qoeAdjustment=successRate*450.0+firstFrameRate*450.0+stableRate*700.0
+          -fail*90.0-buffers*55.0-readyPenalty-firstFramePenalty-codecWarningPenalty;
+      double historyWeight=sourceHistoryWeight(m.optLong("updated",0L));
+      return probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
+  }
+  // 30-day half-life with a 12% floor: old evidence fades gradually,
+  // but a source with sparse history never becomes completely unmeasured.
+  private double sourceHistoryWeight(long updatedAt){
+    if(updatedAt<=0L)return 0.12d;
+    long ageMs=Math.max(0L,System.currentTimeMillis()-updatedAt);
+    double halfLifeMs=30.0d*24.0d*60.0d*60.0d*1000.0d;
+    return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
   }
   private void sortSourcesByObservedQuality(Channel c){
     if(c==null||c.backups==null||c.backups.size()<2)return;

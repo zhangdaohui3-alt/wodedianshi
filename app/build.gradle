@@ -10,8 +10,8 @@ android {
         applicationId 'com.wodedianshi.tv'
         minSdk 23
         targetSdk 28
-        versionCode 131
-        versionName '2.42'
+        versionCode 132
+        versionName '2.43'
     }
 
     signingConfigs {
@@ -38,8 +38,8 @@ android {
 }
 
 dependencies {
-    implementation "androidx.media3:media3-exoplayer:1.10.1"
-    implementation "androidx.media3:media3-exoplayer-hls:1.10.1"
-    implementation "androidx.media3:media3-ui:1.10.1"
+    implementation "androidx.media3:media3-exoplayer:1.11.1"
+    implementation "androidx.media3:media3-exoplayer-hls:1.11.1"
+    implementation "androidx.media3:media3-ui:1.11.1"
     implementation "androidx.work:work-runtime:2.10.1"
 }
