@@ -17,11 +17,15 @@ public final class SourceSelectionPolicy {
         if (sources == null || sources.size() < 2) return -1;
         int fallback = -1;
         int size = sources.size();
-        int start = Math.floorMod(currentIndex, size);
+        // Avoid Math.floorMod: it is not available on every Android API level
+        // supported by this app (minSdk 23).
+        int start = currentIndex % size;
+        if (start < 0) start += size;
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
-            if (url == null || (blocked != null && blocked.contains(url))) continue;
+            if (url == null || url.trim().isEmpty()
+                    || (blocked != null && blocked.contains(url))) continue;
             if (fallback < 0) fallback = index;
             if (coolingDown == null || !coolingDown.contains(url)) return index;
         }

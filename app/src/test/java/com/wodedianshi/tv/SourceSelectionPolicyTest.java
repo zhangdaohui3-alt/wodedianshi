@@ -35,4 +35,17 @@ public class SourceSelectionPolicyTest {
         assertEquals(-1, SourceSelectionPolicy.findNext(
                 null, 0, Collections.emptySet(), Collections.emptySet()));
     }
+
+    @Test public void handlesNegativeAndOversizedCurrentIndexes() {
+        assertEquals(1, SourceSelectionPolicy.findNext(
+                sources, -1, Collections.emptySet(), Collections.emptySet()));
+        assertEquals(3, SourceSelectionPolicy.findNext(
+                sources, 6, Collections.emptySet(), Collections.emptySet()));
+    }
+
+    @Test public void skipsNullAndBlankBackupEntries() {
+        assertEquals(3, SourceSelectionPolicy.findNext(
+                Arrays.asList("a", "b", null, " ", "d"), 0,
+                Collections.emptySet(), Collections.emptySet()));
+    }
 }
