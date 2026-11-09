@@ -59,11 +59,9 @@ public class MainActivity extends Activity {
   private Runnable networkSpeedUpdater;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
-  private Button hoveredLiveChannelButton;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
   private View hoveredVodCard;
-  private final java.util.WeakHashMap<Button,Integer> liveChannelBaseColors=new java.util.WeakHashMap<>();
   private LinearLayout list;
   private TextView info;
   private EditText search;
@@ -187,117 +185,75 @@ public class MainActivity extends Activity {
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   // Mouse hover and D-pad focus are independent states. Hover never steals or clears focus.
   private void styleLiveChannelButton(Button b,int normalColor){
-    liveChannelBaseColors.put(b,normalColor);
     b.setFocusable(true);b.setFocusableInTouchMode(true);
     b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
       saveLiveDiagnostic("CHANNEL_FOCUS",(b.getText()==null?"频道":b.getText().toString())+" focused="+focused);
-      if(hoveredLiveChannelButton!=b)b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
+      if(!b.isHovered())b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
       b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
       b.setElevation(focused?dp(8):0);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)saveLiveDiagnostic("CHANNEL_HOVER",(b.getText()==null?"频道":b.getText().toString())+" focus="+b.hasFocus());
-        if(hoveredLiveChannelButton!=null&&hoveredLiveChannelButton!=b){
-          Button old=hoveredLiveChannelButton;
-          int oldBase=liveChannelBaseColors.containsKey(old)?liveChannelBaseColors.get(old):Color.rgb(35,45,62);
-          old.setBackground(makeButtonBg(oldBase,old.hasFocus()));
-          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);old.setElevation(old.hasFocus()?dp(8):0);
-        }
-        hoveredLiveChannelButton=b;
-        GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));hover.setCornerRadius(dp(7));
-        hover.setStroke(dp(2),Color.rgb(105,185,245));b.setBackground(hover);
-        b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
-        return true;
-      }
-      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        if(hoveredLiveChannelButton==b)hoveredLiveChannelButton=null;
-        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
-        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);b.setElevation(b.hasFocus()?dp(8):0);
-        return true;
+        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
+          saveLiveDiagnostic("CHANNEL_HOVER",(b.getText()==null?"频道":b.getText().toString())+" focus="+b.hasFocus());
+        GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));
+        hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
+        b.setBackground(hover);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        boolean focused=b.hasFocus();
+        b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
+        b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
       }
       return false;
     });
   }
-  private Button hoveredVodPageButton;
-  private final java.util.WeakHashMap<Button,Integer> vodPageBaseColors=new java.util.WeakHashMap<>();
-  private void styleVodPageButton(Button b,int normalColor){
-    vodPageBaseColors.put(b,normalColor);
+  private void styleVodPageButton(  private void styleVodPageButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
-      if(hoveredVodPageButton!=b)b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
-      b.setElevation(focused?dp(8):0);
+      if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
+      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(hoveredVodPageButton!=null&&hoveredVodPageButton!=b){
-          Button old=hoveredVodPageButton;
-          int base=vodPageBaseColors.containsKey(old)?vodPageBaseColors.get(old):Color.rgb(43,68,94);
-          old.setBackground(makeButtonBg(base,old.hasFocus()));
-          old.setScaleX(old.hasFocus()?1.04f:1f);old.setScaleY(old.hasFocus()?1.04f:1f);old.setElevation(old.hasFocus()?dp(8):0);
-        }
-        hoveredVodPageButton=b;
         GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
         bg.setCornerRadius(dp(7));bg.setStroke(dp(2),Color.rgb(120,195,250));
         b.setBackground(bg);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
-        return false;
-      }
-      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        if(hoveredVodPageButton==b)hoveredVodPageButton=null;
-        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
-        b.setScaleX(b.hasFocus()?1.04f:1f);b.setScaleY(b.hasFocus()?1.04f:1f);b.setElevation(b.hasFocus()?dp(8):0);
-        return false;
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        boolean focused=b.hasFocus();b.setBackground(makeButtonBg(normalColor,focused));
+        b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
       }
       return false;
     });
   }
-  private Button hoveredTvButton;
-  private final java.util.WeakHashMap<Button,Integer> tvButtonBaseColors=new java.util.WeakHashMap<>();
-  private void styleTvButton(Button b,int normalColor){
-    tvButtonBaseColors.put(b,normalColor);
-    b.setFocusable(true); b.setFocusableInTouchMode(true);
-    b.setTextColor(Color.WHITE);
+  private void styleTvButton(  private void styleTvButton(Button b,int normalColor){
+    b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
       saveLiveDiagnostic("UI_FOCUS",(b.getText()==null?"按钮":b.getText().toString())+" focused="+focused);
-      if(hoveredTvButton!=b)b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.025f:1f); b.setScaleY(focused?1.025f:1f);
-      b.setElevation(focused?dp(6):0);
+      if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
+      b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)saveLiveDiagnostic("UI_HOVER",(b.getText()==null?"按钮":b.getText().toString())+" focus="+b.hasFocus());
-        if(hoveredTvButton!=null&&hoveredTvButton!=b){
-          Button old=hoveredTvButton;
-          int base=tvButtonBaseColors.containsKey(old)?tvButtonBaseColors.get(old):Color.rgb(16,24,40);
-          old.setBackground(makeButtonBg(base,old.hasFocus()));
-          old.setScaleX(old.hasFocus()?1.025f:1f);old.setScaleY(old.hasFocus()?1.025f:1f);
-          old.setElevation(old.hasFocus()?dp(6):0);
-        }
-        hoveredTvButton=b;
+        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
+          saveLiveDiagnostic("UI_HOVER",(b.getText()==null?"按钮":b.getText().toString())+" focus="+b.hasFocus());
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(35,91,139));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
         b.setBackground(hover);b.setScaleX(1.025f);b.setScaleY(1.025f);b.setElevation(dp(6));
-        return true;
-      }
-      if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        if(hoveredTvButton==b)hoveredTvButton=null;
-        b.setBackground(makeButtonBg(normalColor,b.hasFocus()));
-        b.setScaleX(b.hasFocus()?1.025f:1f);b.setScaleY(b.hasFocus()?1.025f:1f);
-        b.setElevation(b.hasFocus()?dp(6):0);
-        return true;
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        boolean focused=b.hasFocus();b.setBackground(makeButtonBg(normalColor,focused));
+        b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
       }
       return false;
     });
   }
-  private void styleVodTopControl(Button b){
+  private void styleVodTopControl(  private void styleVodTopControl(Button b){
     final int normal=Color.rgb(28,42,60);
     final int active=Color.rgb(25,105,185);
     b.setTextColor(Color.WHITE);
