@@ -3198,6 +3198,7 @@ public class MainActivity extends Activity {
   private long sourceReadyAt=0L;
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
+  private boolean sourceStableRecorded=false;
   private volatile boolean sourceFirstFrameRecorded=false;
   private volatile boolean sourceFirstLoadCompleted=false;
   private boolean sourceFailureRecorded=false;
@@ -3274,6 +3275,11 @@ public class MainActivity extends Activity {
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
       // A source that was healthy for a long time should not consume the startup retry budget forever.
+      if(!sourceStableRecorded&&sourceReadyAt>0L&&now-sourceReadyAt>=30000L
+          &&now-watchdogLastAdvanceAt<15000L){
+        sourceStableRecorded=true;
+        recordSourceMetric(currentSourceUrl(),"stable",0L);
+      }
       if(sourceReadyAt>0L && now-sourceReadyAt>=120000L){
         automaticSwitchCount=0;
         automaticChannelSwitchCount=0;
@@ -3412,6 +3418,7 @@ public class MainActivity extends Activity {
     hasReceivedVideoFrame=false;
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
+    sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
     firstFrameUiPostPending.set(false);
     sourceFirstLoadCompleted=false;
@@ -3658,6 +3665,9 @@ public class MainActivity extends Activity {
         m.put("firstFrames",count+1);
         m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
         m.put("lastFirstFrame",System.currentTimeMillis());
+      }else if("stable".equals(event)){
+        m.put("stablePlays",m.optInt("stablePlays",0)+1);
+        m.put("lastStable",System.currentTimeMillis());
       }
       m.put("updated",System.currentTimeMillis());all.put(key,m);
       p.edit().putString("source_qoe_v1",all.toString()).apply();
@@ -3675,7 +3685,10 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
-      double readyPenalty=Math.min(150.0,m.optLong("avgReadyMs",0L)/150.0);
+      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
+      double stableRate=(double)m.optInt("stablePlays",0)/attempts;
+      double readyPenalty=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
+      double firstFramePenalty=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
       // Decoder/sink warnings are weaker evidence than failed playback. Apply only
       // a small capped ranking penalty; never convert them into an automatic failure.
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
@@ -3686,7 +3699,8 @@ public class MainActivity extends Activity {
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
-      return probeScore+successRate*1000.0-fail*90.0-buffers*55.0-readyPenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
+      return probeScore+successRate*450.0+firstFrameRate*450.0+stableRate*700.0
+          -fail*90.0-buffers*55.0-readyPenalty-firstFramePenalty-codecWarningPenalty+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
   }
   private void sortSourcesByObservedQuality(Channel c){
