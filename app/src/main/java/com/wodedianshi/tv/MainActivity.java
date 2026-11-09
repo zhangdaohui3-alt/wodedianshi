@@ -1751,7 +1751,7 @@ public class MainActivity extends Activity {
     int w=360,h=240;Bitmap b=Bitmap.createBitmap(w,h,Bitmap.Config.RGB_565);Canvas c=new Canvas(b);
     int seed=identifier==null?0:identifier.hashCode();int[] colors={
       Color.rgb(20,55,91),Color.rgb(72,42,84),Color.rgb(25,78,75),Color.rgb(86,54,32),Color.rgb(38,48,88)};
-    int base=colors[Math.floorMod(seed,colors.length)];
+    int base=colors[SourceSelectionPolicy.wrapIndex(seed,colors.length)];
     Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
     c.drawColor(Color.rgb(14,25,42));
     p.setShader(new android.graphics.LinearGradient(0,0,w,h,base,Color.rgb(12,20,34),android.graphics.Shader.TileMode.CLAMP));
@@ -2989,7 +2989,7 @@ public class MainActivity extends Activity {
     ArrayList<Integer> order=currentRemoteChannelOrder();
     if(order.isEmpty()){toast("当前栏目没有可切换的频道");return;}
     int current=order.indexOf(selected);
-    int nextPosition=current<0?(delta>0?0:order.size()-1):Math.floorMod(current+delta,order.size());
+    int nextPosition=current<0?(delta>0?0:order.size()-1):SourceSelectionPolicy.wrapIndex(current+delta,order.size());
     play(order.get(nextPosition));
     showChannelZapOverlay();
   }

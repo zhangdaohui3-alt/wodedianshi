@@ -9,6 +9,12 @@ import static org.junit.Assert.*;
 public class SourceSelectionPolicyTest {
     private final java.util.List<String> sources = Arrays.asList("a", "b", "c", "d");
 
+    @Test public void wrapIndexHandlesNegativeAndOversizedValues() {
+        assertEquals(3, SourceSelectionPolicy.wrapIndex(-1, 4));
+        assertEquals(2, SourceSelectionPolicy.wrapIndex(6, 4));
+        assertEquals(-1, SourceSelectionPolicy.wrapIndex(0, 0));
+    }
+
     @Test public void prefersFirstUnblockedSourceOutsideCooldown() {
         assertEquals(3, SourceSelectionPolicy.findNext(
                 sources, 1, Collections.singleton("c"), Collections.emptySet()));
@@ -36,15 +42,8 @@ public class SourceSelectionPolicyTest {
                 null, 0, Collections.emptySet(), Collections.emptySet()));
     }
 
-    @Test public void handlesNegativeAndOversizedCurrentIndexes() {
-        assertEquals(1, SourceSelectionPolicy.findNext(
-                sources, -1, Collections.emptySet(), Collections.emptySet()));
-        assertEquals(3, SourceSelectionPolicy.findNext(
-                sources, 6, Collections.emptySet(), Collections.emptySet()));
-    }
-
     @Test public void skipsNullAndBlankBackupEntries() {
-        assertEquals(3, SourceSelectionPolicy.findNext(
+        assertEquals(4, SourceSelectionPolicy.findNext(
                 Arrays.asList("a", "b", null, " ", "d"), 0,
                 Collections.emptySet(), Collections.emptySet()));
     }

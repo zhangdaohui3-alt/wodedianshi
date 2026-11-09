@@ -7,6 +7,13 @@ import java.util.Set;
 public final class SourceSelectionPolicy {
     private SourceSelectionPolicy() {}
 
+    /** Positive modulo that works on every Android API level supported by the app. */
+    public static int wrapIndex(int index, int size) {
+        if (size <= 0) return -1;
+        int wrapped = index % size;
+        return wrapped < 0 ? wrapped + size : wrapped;
+    }
+
     /**
      * Walks forward from the active source, skipping blocked entries and preferring
      * sources outside cooldown. If every unblocked source is cooling down, returns
@@ -17,10 +24,7 @@ public final class SourceSelectionPolicy {
         if (sources == null || sources.size() < 2) return -1;
         int fallback = -1;
         int size = sources.size();
-        // Avoid Math.floorMod: it is not available on every Android API level
-        // supported by this app (minSdk 23).
-        int start = currentIndex % size;
-        if (start < 0) start += size;
+        int start = wrapIndex(currentIndex, size);
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
