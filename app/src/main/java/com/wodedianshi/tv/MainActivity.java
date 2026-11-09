@@ -3368,7 +3368,8 @@ public class MainActivity extends Activity {
     selected=ix;
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     sortSourcesByObservedQuality(channels.get(ix));
-    applyLastKnownGoodSource(channels.get(ix));
+    // Restore the 2.21 startup source order: stale remembered URLs must not override
+    // the current channel's ranked primary source after a source-list refresh.
     startCurrentSource();
   }
   private void startCurrentSource(){
