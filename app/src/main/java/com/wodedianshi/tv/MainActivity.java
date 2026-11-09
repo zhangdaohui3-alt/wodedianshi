@@ -759,7 +759,10 @@ public class MainActivity extends Activity {
     loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
   private String vodCacheKey(String category){
-    return "vod_cache_v8_"+Integer.toHexString(category.hashCode());
+    // These two catalogue categories had an incorrect CCTV documentary mapping.
+    // Use a fresh cache namespace so an older, duplicated result list is not reused.
+    String revision=("多源精选".equals(category)||"精选电影".equals(category))?"9":"8";
+    return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode());
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
@@ -1244,13 +1247,7 @@ public class MainActivity extends Activity {
   }
   private ArrayList<VodItem> fetchCctvVod(String category){
     ArrayList<VodItem> found=new ArrayList<>();
-    String channelId=null;
-    if("中国纪录片".equals(category)||"中文纪录片".equals(category))
-      channelId="CHAL1460955924871139";
-    else if("中国动画".equals(category)||"中文动画".equals(category))
-      channelId="CHAL1460955899450127";
-    else if("多源精选".equals(category)||"精选电影".equals(category))
-      channelId="CHAL1460955924871139";
+    String channelId=CctvVodCategoryPolicy.channelIdFor(category);
     if(channelId==null)return found;
     HashSet<String> ids=new HashSet<>();
     long deadline=android.os.SystemClock.elapsedRealtime()+22000L;
