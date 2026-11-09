@@ -357,30 +357,13 @@ public class SourceUpdateWorker extends Worker {
   // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
   // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
   private boolean looksLikeHlsSegment(byte[] b){
-    if(b==null||b.length<8)return false;
-    int maxOffset=Math.min(187,b.length-1);
-    for(int offset=0;offset<=maxOffset;offset++){
-      if((b[offset]&255)==0x47&&offset+188<b.length&&(b[offset+188]&255)==0x47)return true;
-    }
-    return hasIsoBmffBox(b);
+    return MediaPayloadValidator.looksLikeHlsSegment(b);
   }
   private boolean hasIsoBmffBox(byte[] b){
-    if(b==null||b.length<8)return false;
-    String[] boxes={"ftyp","styp","moof","mdat","sidx"};
-    int limit=Math.min(b.length-4,96);
-    for(int i=4;i<limit;i++){
-      for(String box:boxes){
-        if(b[i]==box.charAt(0)&&b[i+1]==box.charAt(1)&&b[i+2]==box.charAt(2)&&b[i+3]==box.charAt(3))return true;
-      }
-    }
-    return false;
+    return MediaPayloadValidator.hasIsoBmffBox(b);
   }
   private boolean looksLikeMediaPayload(byte[] b){
-    if(b==null||b.length<8)return false;
-    if(looksLikeHlsSegment(b))return true;
-    if(b[0]=='F'&&b[1]=='L'&&b[2]=='V')return true; // FLV
-    if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0))return true; // ADTS AAC
-    return false;
+    return MediaPayloadValidator.looksLikeMediaPayload(b);
   }
   private static class SampleResponse{
     final byte[] bytes;

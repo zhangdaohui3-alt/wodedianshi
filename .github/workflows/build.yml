@@ -47,6 +47,9 @@ jobs:
       - name: Verify signing key fingerprint
         run: keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E "SHA256:"
 
+      - name: Run unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
       - name: Build universal APK
         run: gradle assembleDebug --stacktrace
 
