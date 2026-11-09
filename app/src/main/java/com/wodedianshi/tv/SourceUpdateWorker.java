@@ -72,6 +72,7 @@ public class SourceUpdateWorker extends Worker {
       // pool. Previously only URLs rediscovered in public playlists were probed,
       // so a saved backup could silently die without ever losing its old score.
       ArrayList<Entry> savedPool=new ArrayList<>();
+      HashSet<String> savedPoolUrls=new HashSet<>();
       for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
@@ -85,16 +86,27 @@ public class SourceUpdateWorker extends Worker {
         if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
         for(String u:channelUrls){
           if(savedPool.size()>=20000)break;
-          savedPool.add(new Entry(channelName,u,channelGroup));
+          // A shared URL only needs one network probe, even if several channel
+          // entries reference it. Keep the first channel identity for diagnostics.
+          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
         }
       }
-      // Rotate the saved-source window too: channels beyond the first 5,000
-      // URLs must receive health checks instead of being permanently starved.
-      ArrayList<Entry> savedCandidates=new ArrayList<>();
       int savedScanStart=savedPool.isEmpty()?0:Math.floorMod(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
-      int savedWindow=Math.min(5000,savedPool.size());
-      for(int i=0;i<savedWindow;i++)savedCandidates.add(savedPool.get((savedScanStart+i)%savedPool.size()));
-      int savedScanNext=savedPool.isEmpty()?0:(savedScanStart+savedWindow)%savedPool.size();
+      int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      int discoveryScanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
+      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
+      ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
+      int savedIndex=0,discoveryIndex=0;
+      while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
+        if(discoveryIndex<discoveryWindow){
+          Entry e=candidates.get((discoveryScanStart+discoveryIndex)%candidates.size());
+          probeCandidates.add(e);discoveryIndex++;
+        }
+        if(savedIndex<savedWindow){
+          Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
+          probeCandidates.add(e);savedIndex++;
+        }
+      }
       for(String feed:feeds){
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
@@ -117,31 +129,20 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
-      // Interleave discovered public candidates with already-saved sources. This gives
-      // both new-source discovery and existing-source health checks a fair share of the
-      // bounded probe budget instead of allowing a large saved list to starve discovery.
-      ArrayList<Entry> balancedCandidates=new ArrayList<>(candidates.size()+savedCandidates.size());
-      int poolSize=Math.max(candidates.size(),savedCandidates.size());
-      for(int i=0;i<poolSize;i++){
-        if(i<candidates.size())balancedCandidates.add(candidates.get(i));
-        if(i<savedCandidates.size())balancedCandidates.add(savedCandidates.get(i));
-      }
-      candidates=balancedCandidates;
-      // Rotate through the complete candidate pool across update runs. This avoids permanently
-      // favoring URLs with HD labels and ensures both newly discovered and saved backup sources
-      // are periodically re-probed. Bound each run to protect battery and network use.
+      // Use independent rotating cursors and a fixed per-run budget for discovery
+      // and saved-source health checks. A moving 5,000-item window combined with one
+      // cursor could skip most saved URLs forever as the window changed between runs.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
-      int scanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
-      int scanned=0;
+      int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
-      for(int offset=0;offset<candidates.size();offset++){
+      for(int offset=0;offset<probeCandidates.size();offset++){
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
           return Result.retry();
         }
         if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
-        scanned=offset+1;
-        Entry e=candidates.get((scanStart+offset)%candidates.size());
+        Entry e=probeCandidates.get(offset);
+        if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         if(!visitedUrls.add(e.url))continue;
         checked++;
@@ -195,8 +196,8 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
-      prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(scanStart+scanned)%candidates.size())
-          .putInt("source_saved_scan_cursor",savedScanNext)
+      prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+          .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
           .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
@@ -204,7 +205,11 @@ public class SourceUpdateWorker extends Worker {
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
-  private static class Entry{String name,url,group;Entry(String n,String u,String g){name=n;url=u;group=g;}}
+  private static class Entry{
+    String name,url,group;boolean savedSource;
+    Entry(String n,String u,String g){this(n,u,g,false);}
+    Entry(String n,String u,String g,boolean saved){name=n;url=u;group=g;savedSource=saved;}
+  }
   private void parsePlaylist(String data,List<Entry> out){
     String name=null,group="",pendingGroup="";
     for(String raw:data.replace("\uFEFF","").replace('\r','\n').split("\n")){
