@@ -14,6 +14,8 @@ import org.json.*;
 public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
+  // Bound memory while ensuring later regional feeds are not starved by the global index.
+  private static final int MAX_DISCOVERY_CANDIDATES = 12000;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -24,24 +26,32 @@ public class SourceUpdateWorker extends Worker {
     }
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
-    String[] feeds={
-      "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
-      "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
-      "https://iptv-org.github.io/iptv/countries/cn.m3u",
-      "https://iptv-org.github.io/iptv/index.m3u",
-      "https://iptv-org.github.io/iptv/countries/hk.m3u",
-      "https://iptv-org.github.io/iptv/countries/mo.m3u",
-      "https://iptv-org.github.io/iptv/countries/tw.m3u",
-      "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-      "https://iptv-org.github.io/iptv/categories/movies.m3u",
-      "https://iptv-org.github.io/iptv/categories/music.m3u",
-      "https://iptv-org.github.io/iptv/categories/kids.m3u",
-      "https://iptv-org.github.io/iptv/categories/documentary.m3u",
-      // Additional curated public/free directories; candidates must still pass
-      // the existing playlist and real media-segment probe before being added.
-      "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
-      "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u"
-    };
+     String[] feeds={
+       // China-first discovery: domestic and regional channels are read before the global index.
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+       "https://iptv-org.github.io/iptv/countries/cn.m3u",
+       "https://iptv-org.github.io/iptv/countries/hk.m3u",
+       "https://iptv-org.github.io/iptv/countries/mo.m3u",
+       "https://iptv-org.github.io/iptv/countries/tw.m3u",
+       // The current test region is included after China and its neighboring regions.
+       "https://iptv-org.github.io/iptv/countries/us.m3u",
+       "https://iptv-org.github.io/iptv/categories/news.m3u",
+       "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+       "https://iptv-org.github.io/iptv/categories/movies.m3u",
+       "https://iptv-org.github.io/iptv/categories/music.m3u",
+       "https://iptv-org.github.io/iptv/categories/kids.m3u",
+       "https://iptv-org.github.io/iptv/categories/documentary.m3u",
+       "https://iptv-org.github.io/iptv/categories/weather.m3u",
+       "https://iptv-org.github.io/iptv/categories/education.m3u",
+       // These directories explicitly describe their entries as free/official/public.
+       // Every URL must still pass the real playlist and media-segment probe.
+       "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
+       "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u",
+       "https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u",
+       // The large worldwide index is last so it cannot starve regional/category feeds.
+       "https://iptv-org.github.io/iptv/index.m3u"
+     };
     try{
       JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
@@ -181,6 +191,7 @@ public class SourceUpdateWorker extends Worker {
   private void parsePlaylist(String data,List<Entry> out){
     String name=null,group="",pendingGroup="";
     for(String raw:data.replace("\uFEFF","").replace('\r','\n').split("\n")){
+      if(out.size()>=MAX_DISCOVERY_CANDIDATES)break;
       String line=raw.trim();if(line.isEmpty())continue;
       if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
       if(line.startsWith("#EXTINF")){
@@ -193,7 +204,7 @@ public class SourceUpdateWorker extends Worker {
       }else if(!line.startsWith("#")&&(line.startsWith("http://")||line.startsWith("https://"))){
         if(name!=null&&!name.trim().isEmpty())out.add(new Entry(name,line,group));
         name=null;group="";
-        if(out.size()>5000)break;
+        if(out.size()>=MAX_DISCOVERY_CANDIDATES)break;
       }
     }
   }
