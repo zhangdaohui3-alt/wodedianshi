@@ -15,7 +15,10 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
-  private static final int MAX_DISCOVERY_CANDIDATES = 12000;
+  private static final int MAX_DISCOVERY_CANDIDATES = 24000;
+  // Give every configured directory its own quota so an early large playlist
+  // cannot consume the entire discovery budget and starve later regions/categories.
+  private static final int MAX_DISCOVERY_PER_FEED = 1200;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -97,7 +100,13 @@ public class SourceUpdateWorker extends Worker {
           c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
           int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
           String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          parsePlaylist(data,candidates);feedsOk++;
+          String normalized=data.replace("\\uFEFF","").trim();
+          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
+          ArrayList<Entry> feedCandidates=new ArrayList<>();
+          parsePlaylist(data,feedCandidates);
+          int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          feedsOk++;
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
@@ -191,7 +200,7 @@ public class SourceUpdateWorker extends Worker {
   private void parsePlaylist(String data,List<Entry> out){
     String name=null,group="",pendingGroup="";
     for(String raw:data.replace("\uFEFF","").replace('\r','\n').split("\n")){
-      if(out.size()>=MAX_DISCOVERY_CANDIDATES)break;
+      if(out.size()>=MAX_DISCOVERY_PER_FEED)break;
       String line=raw.trim();if(line.isEmpty())continue;
       if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
       if(line.startsWith("#EXTINF")){
