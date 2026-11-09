@@ -3259,7 +3259,7 @@ public class MainActivity extends Activity {
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
         watchdogLastPosition=position;
         watchdogLastAdvanceAt=now;
-      }else if(now-watchdogLastAdvanceAt>=45000L){
+      }else if(PlaybackRecoveryPolicy.isTimelineStalled(now,watchdogLastAdvanceAt,45000L)){
         recoverFromSilentFreeze("播放时间轴连续 45 秒没有推进");
         return;
       }
@@ -3268,15 +3268,12 @@ public class MainActivity extends Activity {
       // Monitor as soon as a video track is selected. Requiring
       // videoFrameMonitoringActive here would make the first-frame timeout
       // unreachable, because that flag is set only by the first frame callback.
-      if(videoTrackSelected){
-        if(!hasReceivedVideoFrame && sourceReadyAt>0L && now-sourceReadyAt>=20000L){
-          recoverFromSilentFreeze("播放器已连接，但 20 秒内没有输出视频画面");
-          return;
-        }
-        if(hasReceivedVideoFrame && now-lastVideoFrameAt>=20000L){
-          recoverFromSilentFreeze("检测到视频帧连续 20 秒没有输出");
-          return;
-        }
+      if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,hasReceivedVideoFrame,
+          sourceReadyAt,lastVideoFrameAt,now,20000L)){
+        recoverFromSilentFreeze(hasReceivedVideoFrame
+            ?"检测到视频帧连续 20 秒没有输出"
+            :"播放器已连接，但 20 秒内没有输出视频画面");
+        return;
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
       // A source that was healthy for a long time should not consume the startup retry budget forever.
