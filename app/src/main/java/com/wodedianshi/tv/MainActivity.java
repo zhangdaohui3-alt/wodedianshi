@@ -106,6 +106,9 @@ public class MainActivity extends Activity {
   private int selected = -1;
   private long playbackGeneration = 0;
   private String currentMediaId = "";
+  // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
+  // per source so no ExoPlayer getter is ever called from that callback thread.
+  private final java.util.concurrent.atomic.AtomicBoolean firstFrameUiPostPending = new java.util.concurrent.atomic.AtomicBoolean(false);
   private static class Channel {
     String name, url, group;
     ArrayList<String> backups = new ArrayList<>();
@@ -3410,6 +3413,7 @@ public class MainActivity extends Activity {
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
     sourceFirstFrameRecorded=false;
+    firstFrameUiPostPending.set(false);
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
     liveWindowRecoveryAttempted=false;
@@ -3468,13 +3472,21 @@ public class MainActivity extends Activity {
       // Real decoded-frame callbacks: the old watchdog fields existed but were never
       // activated, so READY could be mistaken for visible video on silent/black streams.
       player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
-        if(listenerOwner==MainActivity.this.player){
-          MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-          if(renderedItem!=null&&currentMediaId.equals(renderedItem.mediaId)){
-            long frameAt=android.os.SystemClock.elapsedRealtime();
-            lastVideoFrameAt=frameAt;
-            hasReceivedVideoFrame=true;
-            videoFrameMonitoringActive=true;
+        // Media3 invokes this callback on ExoPlayer:Playback, not the UI thread.
+        // Do not call getCurrentMediaItem() or any other player API here.
+        if(listenerOwner!=MainActivity.this.player)return;
+        long frameAt=android.os.SystemClock.elapsedRealtime();
+        lastVideoFrameAt=frameAt;
+        hasReceivedVideoFrame=true;
+        videoFrameMonitoringActive=true;
+        if(firstFrameUiPostPending.compareAndSet(false,true)){
+          uiHandler.post(()->{
+            if(listenerOwner!=MainActivity.this.player)return;
+            MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
+            if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId)){
+              firstFrameUiPostPending.set(false);
+              return;
+            }
             if(!sourceFirstFrameRecorded){
               sourceFirstFrameRecorded=true;
               String renderedUrl=currentSourceUrl();
@@ -3486,7 +3498,7 @@ public class MainActivity extends Activity {
                     renderedUrl);
               }
             }
-          }
+          });
         }
       });
       player.addListener(new Player.Listener(){
