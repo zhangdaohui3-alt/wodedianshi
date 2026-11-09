@@ -240,11 +240,15 @@ public class SourceUpdateWorker extends Worker {
     try{
       String lower=address.toLowerCase(Locale.ROOT);
       if(lower.contains(".m3u8")||lower.contains("m3u8?")){
-        byte[] manifestBytes=fetchSample(address,65536);
+        // Resolve relative HLS paths against the final URL after HTTP redirects.
+        // CDN front doors commonly redirect playlists to a different host/path.
+        SampleResponse manifestResponse=fetchSampleResponse(address,65536);
+        byte[] manifestBytes=manifestResponse==null?null:manifestResponse.bytes;
         if(manifestBytes==null||manifestBytes.length==0)return result;
         String manifest=new String(manifestBytes,"UTF-8").replace("\uFEFF","");
         if(!manifest.contains("#EXTM3U"))return result;
-        String mediaUrl=address;
+        String manifestUrl=manifestResponse.finalUrl;
+        String mediaUrl=manifestUrl;
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
         String[] lines=manifest.replace("\r","").split("\n");
@@ -260,15 +264,17 @@ public class SourceUpdateWorker extends Worker {
           for(int j=i+1;j<lines.length;j++){String candidate=lines[j].trim();if(!candidate.isEmpty()&&!candidate.startsWith("#")){child=candidate;break;}}
           if(!child.isEmpty()&&bw>=bestBandwidth){
             bestBandwidth=bw;bestWidth=w;bestHeight=h;
-            mediaUrl=new URL(new URL(address),child).toString();
+            mediaUrl=new URL(new URL(manifestUrl),child).toString();
           }
         }
-        if(!mediaUrl.equals(address)){
-          byte[] variant=fetchSample(mediaUrl,65536);
+        if(!mediaUrl.equals(manifestUrl)){
+          SampleResponse variantResponse=fetchSampleResponse(mediaUrl,65536);
+          byte[] variant=variantResponse==null?null:variantResponse.bytes;
           if(variant==null||variant.length==0)return result;
           String variantText=new String(variant,"UTF-8").replace("\uFEFF","");
           if(!variantText.contains("#EXTM3U"))return result;
           manifest=variantText;
+          mediaUrl=variantResponse.finalUrl;
         }
         ArrayList<String> segments=new ArrayList<>();
         String[] mediaLines=manifest.replace("\r","").split("\n");
@@ -342,7 +348,16 @@ public class SourceUpdateWorker extends Worker {
     if((b[0]&255)==0xFF&&((b[1]&0xF6)==0xF0))return true; // ADTS AAC
     return false;
   }
+  private static class SampleResponse{
+    final byte[] bytes;
+    final String finalUrl;
+    SampleResponse(byte[] data,String url){bytes=data;finalUrl=url;}
+  }
   private byte[] fetchSample(String address,int maxBytes)throws Exception{
+    SampleResponse response=fetchSampleResponse(address,maxBytes);
+    return response==null?null:response.bytes;
+  }
+  private SampleResponse fetchSampleResponse(String address,int maxBytes)throws Exception{
     HttpURLConnection c=null;
     try{
       c=(HttpURLConnection)new URL(address).openConnection();
@@ -352,13 +367,14 @@ public class SourceUpdateWorker extends Worker {
       int code=c.getResponseCode();if(code<200||code>=400)return null;
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
+      String finalUrl=c.getURL().toString();
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[4096];int n,total=0;
         while((n=in.read(buffer))!=-1&&total<maxBytes){
           int take=Math.min(n,maxBytes-total);out.write(buffer,0,take);total+=take;
           if(total>=maxBytes)break;
         }
-        return out.toByteArray();
+        return new SampleResponse(out.toByteArray(),finalUrl);
       }
     }finally{if(c!=null)c.disconnect();}
   }
