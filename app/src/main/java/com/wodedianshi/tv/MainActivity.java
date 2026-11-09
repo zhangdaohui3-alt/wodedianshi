@@ -3271,6 +3271,10 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size())return;
     String failedMediaId=currentMediaId;
     if(failedMediaId.isEmpty()||failedMediaId.equals(lastAutoFailoverMediaId))return;
+    // Every automatic failover path (buffer timeout, silent freeze, ended stream,
+    // track failure or player error) must update the same failure memory. Some
+    // paths arrive here without passing through onPlayerError.
+    recordCurrentSourceFailure();
     lastAutoFailoverMediaId=failedMediaId;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
