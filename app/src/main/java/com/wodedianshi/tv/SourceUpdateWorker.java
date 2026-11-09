@@ -91,22 +91,6 @@ public class SourceUpdateWorker extends Worker {
           if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
         }
       }
-      int savedScanStart=savedPool.isEmpty()?0:Math.floorMod(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
-      int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
-      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
-      ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
-      int savedIndex=0,discoveryIndex=0;
-      while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
-        if(discoveryIndex<discoveryWindow){
-          Entry e=candidates.get((discoveryScanStart+discoveryIndex)%candidates.size());
-          probeCandidates.add(e);discoveryIndex++;
-        }
-        if(savedIndex<savedWindow){
-          Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
-          probeCandidates.add(e);savedIndex++;
-        }
-      }
       for(String feed:feeds){
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
@@ -128,6 +112,22 @@ public class SourceUpdateWorker extends Worker {
           feedsOk++;
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
+      }
+      int savedScanStart=savedPool.isEmpty()?0:Math.floorMod(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
+      int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      int discoveryScanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
+      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
+      ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
+      int savedIndex=0,discoveryIndex=0;
+      while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
+        if(discoveryIndex<discoveryWindow){
+          Entry e=candidates.get((discoveryScanStart+discoveryIndex)%candidates.size());
+          probeCandidates.add(e);discoveryIndex++;
+        }
+        if(savedIndex<savedWindow){
+          Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
+          probeCandidates.add(e);savedIndex++;
+        }
       }
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
