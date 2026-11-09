@@ -45,6 +45,6 @@ public class SourceSelectionPolicyTest {
     @Test public void skipsNullAndBlankBackupEntries() {
         assertEquals(4, SourceSelectionPolicy.findNext(
                 Arrays.asList("a", "b", null, " ", "d"), 0,
-                Collections.emptySet(), Collections.emptySet()));
+                Collections.singleton("b"), Collections.emptySet()));
     }
 }

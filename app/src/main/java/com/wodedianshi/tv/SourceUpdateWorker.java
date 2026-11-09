@@ -113,9 +113,9 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
-      int savedScanStart=savedPool.isEmpty()?0:Math.floorMod(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
+      int savedScanStart=savedPool.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=candidates.isEmpty()?0:Math.floorMod(prefs.getInt("source_scan_cursor",0),candidates.size());
+      int discoveryScanStart=candidates.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_scan_cursor",0),candidates.size());
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
