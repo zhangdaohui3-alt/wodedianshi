@@ -210,7 +210,7 @@ public class MainActivity extends Activity {
       return false;
     });
   }
-  private void styleVodPageButton(  private void styleVodPageButton(Button b,int normalColor){
+  private void styleVodPageButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
@@ -230,7 +230,7 @@ public class MainActivity extends Activity {
       return false;
     });
   }
-  private void styleTvButton(  private void styleTvButton(Button b,int normalColor){
+  private void styleTvButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
