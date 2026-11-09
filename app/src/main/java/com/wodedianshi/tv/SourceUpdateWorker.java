@@ -100,7 +100,7 @@ public class SourceUpdateWorker extends Worker {
           c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
           int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
           String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\\uFEFF","").trim();
+          String normalized=data.replace("\uFEFF","").trim();
           if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
           ArrayList<Entry> feedCandidates=new ArrayList<>();
           parsePlaylist(data,feedCandidates);
@@ -213,7 +213,7 @@ public class SourceUpdateWorker extends Worker {
       }else if(!line.startsWith("#")&&(line.startsWith("http://")||line.startsWith("https://"))){
         if(name!=null&&!name.trim().isEmpty())out.add(new Entry(name,line,group));
         name=null;group="";
-        if(out.size()>=MAX_DISCOVERY_CANDIDATES)break;
+        if(out.size()>=MAX_DISCOVERY_PER_FEED)break;
       }
     }
   }
