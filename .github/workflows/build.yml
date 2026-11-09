@@ -50,6 +50,22 @@ jobs:
       - name: Build universal APK
         run: gradle assembleDebug --stacktrace
 
+      - name: Validate APK package and archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -type f | head -n 1)"
+          test -n "$APK"
+          test "$(stat -c%s "$APK")" -gt 1000000
+          unzip -t "$APK" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          BADGING="$("$AAPT" dump badging "$APK")"
+          echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
+          echo "$BADGING" | grep -F "sdkVersion:'23'"
+          echo "$BADGING" | grep -F "targetSdkVersion:'28'"
+          echo "APK archive, package ID, minSdk and targetSdk checks passed."
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
