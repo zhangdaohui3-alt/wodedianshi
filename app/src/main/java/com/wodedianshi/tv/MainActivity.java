@@ -456,25 +456,42 @@ public class MainActivity extends Activity {
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    String source=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
-    getSharedPreferences("mytv",0).edit().putString("last_channel_identity",identity(c.name,c.group,c.url)).putString("last_channel_url",c.url).putString("last_source_url",source).putInt("last_source_index",c.activeSource).apply();
+    // Persist the channel, not the last attempted source. startCurrentSource() calls
+    // this before playback succeeds, so last_source_url could permanently remember
+    // a dead endpoint and make every next launch start from that failed URL.
+    getSharedPreferences("mytv",0).edit()
+        .putString("last_channel_identity",identity(c.name,c.group,c.url))
+        .putString("last_channel_url",c.url).apply();
   }
   private void restoreLastChannel(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     String savedIdentity=p.getString("last_channel_identity","");
     if(savedIdentity.isEmpty())return;
     String savedUrl=p.getString("last_channel_url","");
-    String savedSource=p.getString("last_source_url","");
     int found=-1;
-    for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group,c.url).equals(savedIdentity)&&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}}
-    if(found<0){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(identity(c.name,c.group,c.url).equals(savedIdentity)){found=i;break;}}}
+    for(int i=0;i<channels.size();i++){
+      Channel c=channels.get(i);
+      if(identity(c.name,c.group,c.url).equals(savedIdentity)
+          &&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}
+    }
+    if(found<0){
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(identity(c.name,c.group,c.url).equals(savedIdentity)){found=i;break;}
+      }
+    }
     // Older builds stored the pre-normalized identity; use the saved primary URL
     // as a migration fallback after duplicate channels have been consolidated.
-    if(found<0&&!savedUrl.isEmpty()){for(int i=0;i<channels.size();i++){Channel c=channels.get(i);if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}}}
+    if(found<0&&!savedUrl.isEmpty()){
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}
+      }
+    }
     if(found<0)return;
-    Channel c=channels.get(found);
-    if(!savedSource.isEmpty()){int source=c.backups.indexOf(savedSource);if(source>=0)c.activeSource=(sourceQualityScore(c.backups.get(0))>sourceQualityScore(savedSource))?0:source;else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));}
-    else c.activeSource=Math.max(0,Math.min(p.getInt("last_source_index",0),c.backups.size()-1));
+    // Never resume a source merely because it was the last attempted one. It may
+    // have timed out before the app closed. Start from the channel's primary source.
+    channels.get(found).activeSource=0;
     play(found);
   }
   private void persist(){
@@ -3368,8 +3385,9 @@ public class MainActivity extends Activity {
     selected=ix;
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     sortSourcesByObservedQuality(channels.get(ix));
-    // Restore the 2.21 startup source order: stale remembered URLs must not override
-    // the current channel's ranked primary source after a source-list refresh.
+    // A newly selected channel always starts at its highest-ranked current source.
+    // Manual source changes continue to use startCurrentSource() directly.
+    channels.get(ix).activeSource=0;
     startCurrentSource();
   }
   private void startCurrentSource(){
