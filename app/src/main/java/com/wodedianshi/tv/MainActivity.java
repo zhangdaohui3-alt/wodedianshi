@@ -3072,17 +3072,14 @@ public class MainActivity extends Activity {
     return -1;
   }
   private int findNextAutomaticSource(Channel c,int from){
-    if(c==null||c.backups==null||c.backups.size()<2)return -1;
-    int fallback=-1;
-    for(int step=1;step<c.backups.size();step++){
-      int ix=(from+step)%c.backups.size();
-      String url=c.backups.get(ix);
-      if(isSourceBlocked(url))continue;
-      if(fallback<0)fallback=ix;
-      if(!SourceMemoryStore.isCoolingDown(this,url))return ix;
+    if(c==null||c.backups==null)return -1;
+    HashSet<String> blocked=new HashSet<>();
+    HashSet<String> coolingDown=new HashSet<>();
+    for(String url:c.backups){
+      if(isSourceBlocked(url))blocked.add(url);
+      else if(SourceMemoryStore.isCoolingDown(this,url))coolingDown.add(url);
     }
-    // If every remaining source is cooling down, still try an unblocked source.
-    return fallback;
+    return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
   }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
