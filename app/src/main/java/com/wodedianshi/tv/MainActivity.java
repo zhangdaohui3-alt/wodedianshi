@@ -3131,8 +3131,8 @@ public class MainActivity extends Activity {
   // stream URLs are deliberately excluded so signed URLs/tokens are not exposed.
   private String safeDiagnosticDetail(String value){
     if(value==null)return "";
-    String clean=value.replaceAll("(?i)https?://\\\\S+","[URL]");
-    clean=clean.replaceAll("[\\\\r\\\\n\\\\t]+"," ");
+    String clean=value.replaceAll("(?i)https?://\\S+","[URL]");
+    clean=clean.replaceAll("[\\r\\n\\t]+"," ");
     return clean.length()>260?clean.substring(0,260):clean;
   }
   private void saveLiveDiagnostic(String stage,String detail){
@@ -3143,16 +3143,16 @@ public class MainActivity extends Activity {
       android.content.SharedPreferences p=getSharedPreferences("mytv",0);
       String old=p.getString("live_diagnostics_v1","");
       ArrayList<String> entries=new ArrayList<>();
-      if(old!=null&&!old.isEmpty())entries.addAll(Arrays.asList(old.split("\\\\n")));
+      if(old!=null&&!old.isEmpty())entries.addAll(Arrays.asList(old.split("\\n")));
       entries.add(line);
       while(entries.size()>30)entries.remove(0);
-      p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\\n",entries)).apply();
+      p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
     }catch(Exception ignored){}
   }
   private void showLiveDiagnostics(){
     String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
-        .setMessage(details+"\\n\\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
+        .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
           if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",details));toast("诊断记录已复制");}
@@ -3179,6 +3179,7 @@ public class MainActivity extends Activity {
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
   private volatile boolean sourceFirstFrameRecorded=false;
+  private volatile boolean sourceFirstLoadCompleted=false;
   private boolean sourceFailureRecorded=false;
   private boolean sourceWasBuffering=false;
   private boolean audioTrackPresent=false;
@@ -3390,6 +3391,7 @@ public class MainActivity extends Activity {
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
     sourceFirstFrameRecorded=false;
+    sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
     liveWindowRecoveryAttempted=false;
     sourceWasBuffering=false;
@@ -3419,8 +3421,10 @@ public class MainActivity extends Activity {
           saveLiveDiagnostic("LOAD_ERROR",detail);
         }
         @Override public void onLoadCompleted(AnalyticsListener.EventTime eventTime,LoadEventInfo loadEventInfo,MediaLoadData mediaLoadData){
-          if(listenerOwner==MainActivity.this.player&&loadEventInfo!=null)
-            saveLiveDiagnostic("LOAD_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
+          if(listenerOwner==MainActivity.this.player&&loadEventInfo!=null&&!sourceFirstLoadCompleted){
+            sourceFirstLoadCompleted=true;
+            saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
+          }
         }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
