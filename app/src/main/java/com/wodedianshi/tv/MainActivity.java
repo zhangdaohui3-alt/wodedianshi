@@ -67,6 +67,9 @@ public class MainActivity extends Activity {
   private LinearLayout list;
   private TextView info;
   private EditText search;
+  private int livePageIndex=0;
+  private Button livePreviousPageButton,liveNextPageButton;
+  private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
@@ -508,24 +511,33 @@ public class MainActivity extends Activity {
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
-    TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(23);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(82)));
+    TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(21);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(64)));
     // "中国" was an empty duplicate entry; China channels are already grouped by CCTV,
     // satellite and local areas. Keep one clear "地方" entry.
-    String[] names={"点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","收藏","自建频道"};
+    String[] names={"收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(16);x.setMinHeight(dp(48));styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(50)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(58)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
-    search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
+    search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
+    LinearLayout livePaging=new LinearLayout(this);livePaging.setOrientation(0);livePaging.setGravity(Gravity.CENTER_VERTICAL);
+    livePreviousPageButton=new Button(this);livePreviousPageButton.setText("上一页");livePreviousPageButton.setAllCaps(false);livePreviousPageButton.setTextSize(12);livePreviousPageButton.setMinHeight(0);livePreviousPageButton.setMinimumHeight(0);livePreviousPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(livePreviousPageButton,Color.rgb(35,55,78));
+    livePageStatus=new TextView(this);livePageStatus.setTextColor(Color.LTGRAY);livePageStatus.setTextSize(11);livePageStatus.setGravity(Gravity.CENTER);livePageStatus.setText("第 1 页"); 
+    liveNextPageButton=new Button(this);liveNextPageButton.setText("下一页");liveNextPageButton.setAllCaps(false);liveNextPageButton.setTextSize(12);liveNextPageButton.setMinHeight(0);liveNextPageButton.setMinimumHeight(0);liveNextPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(liveNextPageButton,Color.rgb(35,55,78));
+    livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
+    channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
+    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+119)/120);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(104),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
-    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
+    search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
     root.post(()->{if(!fullScreenPlayback&&root.findFocus()==null&&catItems.getChildCount()>0)catItems.getChildAt(0).requestFocus();});
     if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
@@ -2400,8 +2412,12 @@ public class MainActivity extends Activity {
         });
       }
       totalMatches=visibleIndexes.size();
-      for(int ix:visibleIndexes){
-        if(shown>=maxRows)continue;
+      int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
+      if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
+      int pageStart=livePageIndex*maxRows;
+      for(int row=0;row<visibleIndexes.size();row++){
+        if(row<pageStart||row>=pageStart+maxRows)continue;
+        int ix=visibleIndexes.get(row);
         Channel c=channels.get(ix);shown++;
         Button b=new Button(this);b.setTag(ix);
         String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
@@ -2412,6 +2428,7 @@ public class MainActivity extends Activity {
         list.addView(b);
       }
     }
+    updateLivePaging(totalMatches);
     if(totalMatches==0){
       TextView empty=new TextView(this);
       empty.setText(customCategory
@@ -2430,6 +2447,37 @@ public class MainActivity extends Activity {
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
+  }
+  private int getCurrentLiveMatchCount(){
+    if(channels==null)return 0;
+    String q=search==null?"":search.getText().toString().toLowerCase(Locale.ROOT);
+    int count=0;
+    synchronized(channels){
+      for(Channel c:channels){
+        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
+        if(favoriteMode&&!favorites.contains(c.key()))continue;
+        if(localRegionFilterActive&&activeCategory.equals("地方")){
+          if(!matchesLocalRegion(c))continue;
+        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+        count++;
+      }
+    }
+    return count;
+  }
+  private void updateLivePaging(int total){
+    int pages=Math.max(1,(total+119)/120);
+    if(livePageIndex>=pages)livePageIndex=pages-1;
+    if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
+    if(livePreviousPageButton!=null){
+      boolean enabled=livePageIndex>0;livePreviousPageButton.setEnabled(enabled);
+      livePreviousPageButton.setAlpha(enabled?1f:0.42f);
+    }
+    if(liveNextPageButton!=null){
+      boolean enabled=livePageIndex+1<pages;liveNextPageButton.setEnabled(enabled);
+      liveNextPageButton.setAlpha(enabled?1f:0.42f);
+    }
   }
   private View findChannelRow(int channelIndex){
     if(channelIndex<0)return null;
