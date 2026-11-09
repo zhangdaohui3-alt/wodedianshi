@@ -3029,13 +3029,26 @@ public class MainActivity extends Activity {
   }
   private int findNextUnblockedSource(Channel c,int from,int direction){
     if(c==null||c.backups==null||c.backups.size()<2)return -1;
-    // Never wrap back to the source that just failed or was reported as an ad.
+    // Manual selection remains unrestricted except for sources explicitly blocked by the user.
     for(int step=1;step<c.backups.size();step++){
       int ix=(from+direction*step)%c.backups.size();
       if(ix<0)ix+=c.backups.size();
       if(!isSourceBlocked(c.backups.get(ix)))return ix;
     }
     return -1;
+  }
+  private int findNextAutomaticSource(Channel c,int from){
+    if(c==null||c.backups==null||c.backups.size()<2)return -1;
+    int fallback=-1;
+    for(int step=1;step<c.backups.size();step++){
+      int ix=(from+step)%c.backups.size();
+      String url=c.backups.get(ix);
+      if(isSourceBlocked(url))continue;
+      if(fallback<0)fallback=ix;
+      if(!SourceMemoryStore.isCoolingDown(this,url))return ix;
+    }
+    // If every remaining source is cooling down, still try an unblocked source.
+    return fallback;
   }
   private void stepSource(int delta){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
@@ -3271,7 +3284,7 @@ public class MainActivity extends Activity {
       advanceToNextChannelAutomatically(reason+"；本频道备用源已全部尝试");
       return;
     }
-    int next=findNextUnblockedSource(c,c.activeSource,1);
+    int next=findNextAutomaticSource(c,c.activeSource);
     if(next<0){
       advanceToNextChannelAutomatically(reason+"；本频道其余源均已屏蔽或尝试");
       return;
@@ -3310,6 +3323,7 @@ public class MainActivity extends Activity {
     selected=ix;
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     sortSourcesByObservedQuality(channels.get(ix));
+    applyLastKnownGoodSource(channels.get(ix));
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -3380,7 +3394,14 @@ public class MainActivity extends Activity {
             videoFrameMonitoringActive=true;
             if(!sourceFirstFrameRecorded){
               sourceFirstFrameRecorded=true;
-              recordSourceMetric(currentSourceUrl(),"firstFrame",frameAt-sourceAttemptStartedAt);
+              String renderedUrl=currentSourceUrl();
+              recordSourceMetric(renderedUrl,"firstFrame",frameAt-sourceAttemptStartedAt);
+              if(selected>=0&&selected<channels.size()){
+                Channel renderedChannel=channels.get(selected);
+                SourceMemoryStore.saveLastGood(MainActivity.this,
+                    SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                    renderedUrl);
+              }
             }
           }
         }
@@ -3505,7 +3526,18 @@ public class MainActivity extends Activity {
   private void recordCurrentSourceFailure(){
     if(sourceFailureRecorded)return;
     sourceFailureRecorded=true;
-    recordSourceMetric(currentSourceUrl(),"failure",0L);
+    String failedUrl=currentSourceUrl();
+    recordSourceMetric(failedUrl,"failure",0L);
+    // Temporarily cool down a failed endpoint to prevent repeated dead-source loops.
+    SourceMemoryStore.coolDown(this,failedUrl,120000L);
+  }
+  private void applyLastKnownGoodSource(Channel c){
+    if(c==null||c.backups==null||c.backups.isEmpty())return;
+    String remembered=SourceMemoryStore.getLastGood(this,
+        SourceMemoryStore.channelKey(c.name,c.group,c.url));
+    if(remembered==null)return;
+    int index=c.backups.indexOf(remembered);
+    if(index>=0)c.activeSource=index;
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
