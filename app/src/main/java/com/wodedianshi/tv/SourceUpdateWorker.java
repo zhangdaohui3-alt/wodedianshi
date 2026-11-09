@@ -71,8 +71,8 @@ public class SourceUpdateWorker extends Worker {
       // Include the user's already-saved backup URLs in the rotating health-check
       // pool. Previously only URLs rediscovered in public playlists were probed,
       // so a saved backup could silently die without ever losing its old score.
-      ArrayList<Entry> savedCandidates=new ArrayList<>();
-      for(int i=0;i<saved.length()&&savedCandidates.size()<5000;i++){
+      ArrayList<Entry> savedPool=new ArrayList<>();
+      for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
         LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
@@ -84,10 +84,17 @@ public class SourceUpdateWorker extends Worker {
         String primary=channel.optString("url","");
         if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
         for(String u:channelUrls){
-          if(savedCandidates.size()>=5000)break;
-          savedCandidates.add(new Entry(channelName,u,channelGroup));
+          if(savedPool.size()>=20000)break;
+          savedPool.add(new Entry(channelName,u,channelGroup));
         }
       }
+      // Rotate the saved-source window too: channels beyond the first 5,000
+      // URLs must receive health checks instead of being permanently starved.
+      ArrayList<Entry> savedCandidates=new ArrayList<>();
+      int savedScanStart=savedPool.isEmpty()?0:Math.floorMod(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
+      int savedWindow=Math.min(5000,savedPool.size());
+      for(int i=0;i<savedWindow;i++)savedCandidates.add(savedPool.get((savedScanStart+i)%savedPool.size()));
+      int savedScanNext=savedPool.isEmpty()?0:(savedScanStart+savedWindow)%savedPool.size();
       for(String feed:feeds){
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
@@ -189,6 +196,7 @@ public class SourceUpdateWorker extends Worker {
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(scanStart+scanned)%candidates.size())
+          .putInt("source_saved_scan_cursor",savedScanNext)
           .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
           .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
