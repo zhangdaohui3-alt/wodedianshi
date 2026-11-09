@@ -767,7 +767,10 @@ public class MainActivity extends Activity {
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
     long saved=getSharedPreferences("mytv",0).getLong(vodCacheTimeKey(category),0L);
-    return saved>0L&&System.currentTimeMillis()-saved<6L*60L*60L*1000L;
+    return VodCachePolicy.isFresh(saved,System.currentTimeMillis(),6L*60L*60L*1000L);
+  }
+  private void invalidateVodCacheFreshness(String category){
+    getSharedPreferences("mytv",0).edit().putLong(vodCacheTimeKey(category),0L).apply();
   }
   private ArrayList<VodItem> readVodCache(String category){
     ArrayList<VodItem> items=new ArrayList<>();
@@ -798,13 +801,17 @@ public class MainActivity extends Activity {
     if(titleKey.length()<6)titles.add(item.identifier);
     return true;
   }
-  private void writeVodCache(String category,ArrayList<VodItem> items){
+  private void writeVodCache(String category,ArrayList<VodItem> items,boolean complete){
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);a.put(o);
       }
-      getSharedPreferences("mytv",0).edit().putString(vodCacheKey(category),a.toString()).putLong(vodCacheTimeKey(category),System.currentTimeMillis()).apply();
+      android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
+          .putString(vodCacheKey(category),a.toString());
+      // Partial batches are displayed immediately but must never suppress a future
+      // full search for six hours. Only a completed aggregate gets a fresh timestamp.
+      edit.putLong(vodCacheTimeKey(category),complete?System.currentTimeMillis():0L).apply();
     }catch(Exception ignored){}
   }
   // Mouse-wheel events are often dispatched to the card/image under the pointer,
@@ -1461,6 +1468,9 @@ public class MainActivity extends Activity {
       status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
       return;
     }
+    // A forced refresh must remain stale if the request is cancelled before
+    // the first partial batch or fails before a complete result is published.
+    if(forceRefresh)invalidateVodCacheFreshness(category);
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
@@ -1610,7 +1620,7 @@ public class MainActivity extends Activity {
               ArrayList<VodItem> partialBatch=new ArrayList<>(found);
               uiHandler.post(()->{
                 if(!isFinishing()&&request==vodRequestId){
-                  writeVodCache(category,partialBatch);
+                  writeVodCache(category,partialBatch,false);
                   renderVodItems(category,partialBatch,status,results,false);
                   status.setText("「"+category+"」 · 已找到 "+partialBatch.size()+" 部，继续搜索其他结果…");
                 }
@@ -1624,7 +1634,7 @@ public class MainActivity extends Activity {
           ArrayList<VodItem> firstBatch=new ArrayList<>(found);
           uiHandler.post(()->{
             if(!isFinishing()&&request==vodRequestId){
-              writeVodCache(category,firstBatch);
+              writeVodCache(category,firstBatch,false);
               renderVodItems(category,firstBatch,status,results,false);
               status.setText("「"+category+"」 · 已先显示 "+firstBatch.size()+" 部，其他片库继续检索…");
             }
@@ -1711,7 +1721,7 @@ public class MainActivity extends Activity {
       uiHandler.post(()->{
         if(isFinishing()||request!=vodRequestId)return;
         if(!result.isEmpty()){
-          writeVodCache(category,result);
+          writeVodCache(category,result,true);
           renderVodItems(category,result,status,results,false);
           status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
         }else if(cached.isEmpty()){
