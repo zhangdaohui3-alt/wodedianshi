@@ -253,7 +253,7 @@ public class MainActivity extends Activity {
       return false;
     });
   }
-  private void styleVodTopControl(  private void styleVodTopControl(Button b){
+  private void styleVodTopControl(Button b){
     final int normal=Color.rgb(28,42,60);
     final int active=Color.rgb(25,105,185);
     b.setTextColor(Color.WHITE);
