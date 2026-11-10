@@ -28,8 +28,12 @@ import java.util.concurrent.TimeUnit;
 public final class VodMetadataSearch {
     private static final int CONNECT_TIMEOUT_MS = 2400;
     private static final int READ_TIMEOUT_MS = 3000;
-    private static final int MAX_RESULTS_PER_WIKI = 25;
-    private static final int MAX_RESULTS_APPLE = 25;
+    private static final int MAX_RESULTS_PER_WIKI = 40;
+    private static final int MAX_RESULTS_APPLE = 40;
+    // Search multiple Apple storefronts regardless of the selected region. The
+    // region switch changes ordering/labels, not whether a title is discoverable.
+    private static final String[] APPLE_STOREFRONTS =
+            {"cn", "hk", "tw", "us", "gb", "jp", "kr", "au", "ca", "fr", "de", "in"};
 
     private VodMetadataSearch() {}
 
@@ -40,21 +44,27 @@ public final class VodMetadataSearch {
             return new ArrayList<>();
         }
         boolean china = "中国".equals(region);
-        ExecutorService providers = Executors.newFixedThreadPool(3);
+        ExecutorService providers = Executors.newFixedThreadPool(6);
         CompletionService<List<VodTitleRecord>> completion =
                 new ExecutorCompletionService<>(providers);
         ArrayList<Future<List<VodTitleRecord>>> tasks = new ArrayList<>();
         LinkedHashMap<String, VodTitleRecord> merged = new LinkedHashMap<>();
         try {
-            // Independent metadata providers run concurrently, within a bounded budget.
+            // Fan out across regional storefronts and both language editions of
+            // Wikipedia. A selected region is a ranking hint, never a hard filter.
+            for (String storefront : APPLE_STOREFRONTS) {
+                final String country = storefront;
+                tasks.add(completion.submit(() -> {
+                    LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
+                    String label = "cn".equals(country) || "hk".equals(country)
+                            || "tw".equals(country) ? "中国/华语" : "国外/国际";
+                    collectApple(query, country, label, local);
+                    return new ArrayList<>(local.values());
+                }));
+            }
             tasks.add(completion.submit(() -> {
                 LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
-                collectApple(query, china ? "cn" : "us", china ? "中国" : "国外/国际", local);
-                return new ArrayList<>(local.values());
-            }));
-            tasks.add(completion.submit(() -> {
-                LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
-                collectWiki("zh", "中国", query, local);
+                collectWiki("zh", "中国/华语", query, local);
                 return new ArrayList<>(local.values());
             }));
             tasks.add(completion.submit(() -> {
@@ -62,7 +72,7 @@ public final class VodMetadataSearch {
                 collectWiki("en", "国外/国际", query, local);
                 return new ArrayList<>(local.values());
             }));
-            long deadline = android.os.SystemClock.elapsedRealtime() + 5600L;
+            long deadline = android.os.SystemClock.elapsedRealtime() + 7600L;
             for (int i = 0; i < tasks.size() && !Thread.currentThread().isInterrupted(); i++) {
                 long remaining = deadline - android.os.SystemClock.elapsedRealtime();
                 if (remaining <= 0L) break;
@@ -72,13 +82,7 @@ public final class VodMetadataSearch {
                     List<VodTitleRecord> records = ready.get();
                     for (VodTitleRecord record : records) {
                         if (record == null || record.id.isEmpty() || record.title.isEmpty()) continue;
-                        // Region-specific provider results are ordered first without excluding
-                        // the other language index; this is a ranking preference, not a filter.
-                        if (china && "中国".equals(record.region)) {
-                            merged.putIfAbsent(record.id, record);
-                        } else {
-                            merged.putIfAbsent(record.id, record);
-                        }
+                        merged.putIfAbsent(record.id, record);
                     }
                 } catch (Exception ignored) {}
             }
@@ -86,7 +90,16 @@ public final class VodMetadataSearch {
             for (Future<?> task : tasks) if (!task.isDone()) task.cancel(true);
             providers.shutdownNow();
         }
-        return new ArrayList<>(merged.values());
+        ArrayList<VodTitleRecord> result = new ArrayList<>(merged.values());
+        // Keep the chosen region near the top without discarding other regions.
+        result.sort((a, b) -> {
+            boolean aPreferred = china
+                    ? a.region.contains("中国") : a.region.contains("国外");
+            boolean bPreferred = china
+                    ? b.region.contains("中国") : b.region.contains("国外");
+            return Boolean.compare(bPreferred, aPreferred);
+        });
+        return result;
     }
 
     private static void collectApple(String query, String country, String region,
@@ -115,10 +128,10 @@ public final class VodMetadataSearch {
                 try { year = Integer.parseInt(release.substring(0, 4)); }
                 catch (NumberFormatException ignored) {}
             }
-            String key = "apple:" + country + ":" + id;
+            String key = "apple:" + id;
             if (!out.containsKey(key)) {
                 out.put(key, new VodTitleRecord(key, title, alternate, synopsis, region,
-                        "Apple影视资料", page, year, poster));
+                        "Apple影视资料 (" + country.toUpperCase(Locale.ROOT) + ")", page, year, poster));
             }
         }
     }
