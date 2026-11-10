@@ -6,7 +6,7 @@
 
 在电视 App 中进入：**设置与管理 → 云端家长锁设置**
 
-填写你的 HTTPS 配置接口，例如 `https://example.com/api/parent-lock`。保存后 App 会立即请求一次，此后每 40 秒请求一次。留空并保存可关闭云端家长锁。
+填写你的 HTTPS 配置接口，例如 `https://example.com/api/parent-lock`。下方可填写可选的设备 API 令牌；填写后客户端会在 GET/POST 请求中发送 `Authorization: Bearer <token>`，令牌使用 Android Keystore AES-GCM 加密保存。保存后 App 会立即请求一次，此后前台每 40 秒请求一次。留空接口地址并保存可关闭云端家长锁。
 
 也可以在本地私有 SharedPreferences 中设置：文件 `mytv_remote_parent_lock`，键 `endpoint` 和 `remote_enabled`。
 
@@ -88,6 +88,6 @@ App 使用 HTTPS GET 请求接口，服务端返回 `200 application/json`。推
 1. 必须部署真实 HTTPS 服务端；本次仓库改动只提供 Android 客户端模块，不会自动生成或托管云端服务器。
 2. 示例密码仅为格式示意，部署时替换成管理员自己的密码；建议 6 位以上且避免弱口令。
 3. HTTPS 证书必须由设备信任；不要使用自签名证书绕过校验。
-4. 云端服务端必须鉴权设备并限制配置接口访问；生产环境建议每台设备独立令牌、配置签名/版本号、请求限流和审计。
+4. 云端服务端应启用设备令牌鉴权并限制配置接口访问；生产环境建议每台设备独立令牌、配置签名/版本号、请求限流和审计。客户端令牌通过 Authorization Bearer 头发送。
 5. 目前客户端在同一 URL 使用 GET 拉取、POST 上报。若你的服务器将上报设计为独立路径，需再增加 `usage_url` 配置字段并修改客户端。
 6. 这版 APK 必须在当贝盒子和 Android 手机分别实测；GitHub 构建通过不代表所有遥控器固件和系统 HOME 行为均已验证。
