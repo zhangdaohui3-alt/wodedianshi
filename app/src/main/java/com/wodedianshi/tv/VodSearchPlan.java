@@ -37,17 +37,24 @@ public final class VodSearchPlan {
 
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         String phrase = quote(cleaned);
+        boolean hasHan = raw != null && raw.codePoints()
+                .anyMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN);
         String regionClause = "";
         if ("中国".equals(region)) {
             regionClause = " AND (language:Chinese OR language:chi OR language:zho"
                     + " OR language:Mandarin OR title:Chinese OR title:China"
                     + " OR subject:Chinese OR subject:China OR title:中文 OR title:中国"
-                    + " OR title:华语 OR description:Chinese OR description:China)";
+                    + " OR title:华语 OR description:Chinese OR description:China"
+                    + (hasHan ? " OR title:" + phrase + " OR description:" + phrase : "") + ")";
         } else if ("国外".equals(region)) {
             regionClause = " AND (language:English OR language:eng OR language:Spanish"
                     + " OR language:French OR language:German OR language:Japanese"
                     + " OR language:Korean OR language:Italian OR language:Russian"
-                    + " OR subject:international OR title:foreign)";
+                    + " OR language:Portuguese OR language:Hindi OR language:Arabic"
+                    + " OR language:Thai OR language:Vietnamese OR language:Indonesian"
+                    + " OR language:Dutch OR language:Swedish OR language:Polish"
+                    + " OR language:Turkish OR subject:international OR title:foreign"
+                    + (hasHan ? " OR title:" + phrase + " OR description:" + phrase : "") + ")";
         }
         queries.add("mediatype:movies AND (title:" + phrase
                 + " OR description:" + phrase + " OR subject:" + phrase
@@ -58,8 +65,7 @@ public final class VodSearchPlan {
             titleTokens.append("title:").append(quote(cleaned.split(" ")[i]));
         }
         titleTokens.append(")");
-        queries.add(titleTokens.toString().replace("mediatype:movies AND (",
-                "mediatype:movies AND (") + (regionClause.isEmpty() ? "" : regionClause));
+        queries.add(titleTokens.toString() + regionClause);
 
         String[] terms = cleaned.split(" ");
         if (terms.length > 1) {
