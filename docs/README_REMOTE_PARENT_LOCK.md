@@ -77,7 +77,7 @@ App 使用 HTTPS GET 请求接口，服务端返回 `200 application/json`。推
 - 输入密码后按遥控器确认/Enter，或手机键盘完成键提交。
 - 锁定期间 App 窗口收到的按键由 Activity 消费，Back 不会退出锁界面。
 - Android 系统 HOME 键是系统保留按键，普通第三方 App 无权保证拦截。用户按 HOME 可能暂时离开 App；重新回到 App 时会重新检查并显示锁界面。
-- 若要求真正 kiosk 级别的 HOME/最近任务限制，需要设备管理员在支持的机顶盒上预先将 App 配置为 Device Owner，并使用 Lock Task Mode。此操作通常需要设备初始化/ADB 或厂商管理能力，不能由普通 App 静默开启，也不保证每个当贝固件都支持。
+- 若设备管理员已预先将本 App 加入 Lock Task 允许列表，锁界面会自动尝试进入 Lock Task Mode；解锁后退出该模式。若未授权则自动跳过。要获得真正 kiosk 级别的 HOME/最近任务限制，需要设备管理员在支持的机顶盒上预先将 App 配置为 Device Owner 并加入允许列表。此操作通常需要设备初始化/ADB 或厂商管理能力，不能由普通 App 静默开启，也不保证每个当贝固件都支持。
 
 ## 7. 日志
 
