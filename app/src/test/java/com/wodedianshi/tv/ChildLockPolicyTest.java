@@ -32,9 +32,10 @@ public class ChildLockPolicyTest {
     }
 
     @Test public void pinHashIsStableAndNotPlainText() {
-        String hash = ChildLockPolicy.sha256("1234");
+        String hash = ChildLockPolicy.hashPin("1234", "test-salt");
         assertEquals(64, hash.length());
         assertNotEquals("1234", hash);
-        assertEquals(hash, ChildLockPolicy.sha256("1234"));
+        assertEquals(hash, ChildLockPolicy.hashPin("1234", "test-salt"));
+        assertNotEquals(hash, ChildLockPolicy.hashPin("1234", "different-salt"));
     }
 }
