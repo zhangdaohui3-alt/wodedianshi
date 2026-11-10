@@ -668,6 +668,7 @@ public class MainActivity extends Activity {
     };
     panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+    Button backToVodCategories=new Button(this);backToVodCategories.setText("返回分类");backToVodCategories.setAllCaps(false);backToVodCategories.setTextSize(12);backToVodCategories.setMinWidth(0);backToVodCategories.setMinHeight(0);backToVodCategories.setPadding(dp(6),0,dp(6),0);styleTvButton(backToVodCategories,Color.rgb(35,78,112));titleBar.addView(backToVodCategories,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
@@ -741,6 +742,14 @@ public class MainActivity extends Activity {
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
+    backToVodCategories.setOnClickListener(v->{
+      View target=vodCategoryFocusTarget;
+      if(target!=null&&target.isShown()){
+        target.requestFocus();
+        categoryScroll.smoothScrollTo(0,0);
+        setVodCategoryHover(null);
+      }else categoryScroll.requestFocus();
+    });
     refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodQuery.isEmpty()?activeVodCategory:"搜索："+activeVodQuery,panel,status,results,true));
     searchButton.setOnClickListener(v->{
        String q=query.getText().toString().trim();
