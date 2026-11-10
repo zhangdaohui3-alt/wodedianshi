@@ -34,11 +34,20 @@ public final class SourceSelectionPolicy {
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()
                     || duplicateKey(url).equals(activeKey)
-                    || (blocked != null && blocked.contains(url))) continue;
+                    || containsEquivalent(blocked, url)) continue;
             if (fallback < 0) fallback = index;
-            if (coolingDown == null || !coolingDown.contains(url)) return index;
+            if (!containsEquivalent(coolingDown, url)) return index;
         }
         return fallback;
+    }
+
+    private static boolean containsEquivalent(Set<String> values, String candidate) {
+        if (values == null || values.isEmpty()) return false;
+        String key = duplicateKey(candidate);
+        for (String value : values) {
+            if (duplicateKey(value).equals(key)) return true;
+        }
+        return false;
     }
 
     /**
