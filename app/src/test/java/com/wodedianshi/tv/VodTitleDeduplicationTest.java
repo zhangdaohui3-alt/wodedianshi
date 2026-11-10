@@ -36,6 +36,24 @@ public class VodTitleDeduplicationTest {
         assertNotEquals(VodTitleDeduplication.key(first), VodTitleDeduplication.key(second));
     }
 
+    @Test public void selectedRegionRecordWinsAcrossStorefrontDuplicates() {
+        VodTitleRecord china = new VodTitleRecord("apple:200", "Same Film", "", "Short",
+                "中国/华语", "Apple影视资料 (CN)", "https://example.cn", 2020);
+        VodTitleRecord us = new VodTitleRecord("apple:100", "Same Film", "", "Longer synopsis",
+                "国外/国际", "Apple影视资料 (US)", "https://example.com", 2020);
+        assertTrue(VodTitleDeduplication.prefer(china, us, "中国"));
+        assertFalse(VodTitleDeduplication.prefer(us, china, "中国"));
+    }
+
+    @Test public void richerPosterAndSynopsisWinWithinSameRegion() {
+        VodTitleRecord rich = new VodTitleRecord("apple:200", "Same Film", "", "A longer synopsis",
+                "国外/国际", "Apple影视资料 (US)", "https://example.com", 2020,
+                "https://example.com/poster.jpg");
+        VodTitleRecord plain = new VodTitleRecord("apple:100", "Same Film", "", "Short",
+                "国外/国际", "Apple影视资料 (GB)", "https://example.co.uk", 2020);
+        assertTrue(VodTitleDeduplication.prefer(rich, plain, "国外"));
+    }
+
     @Test public void fallsBackToProviderIdWhenYearIsUnknown() {
         VodTitleRecord first = new VodTitleRecord("apple:100", "Unknown", "", "",
                 "国外/国际", "Apple影视资料 (US)", "https://example.com/1", 0);
