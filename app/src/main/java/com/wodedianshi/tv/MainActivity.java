@@ -3896,10 +3896,10 @@ public class MainActivity extends Activity {
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
               info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
-              if(manualSourceSwitch){
-                showChannelZapMessage(channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
-                manualSourceSwitch=false;
-              }
+              // Briefly identify the channel that actually reached READY. This is
+              // especially useful after automatic failover changes the selected channel.
+              showChannelZapMessage("正在播放："+channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
+              if(manualSourceSwitch)manualSourceSwitch=false;
             }
           }else if(st==Player.STATE_IDLE||st==Player.STATE_ENDED){
             cancelPlaybackWatchdog();
