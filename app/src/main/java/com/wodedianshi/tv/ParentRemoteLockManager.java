@@ -26,6 +26,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import javax.crypto.Cipher;
@@ -65,6 +66,8 @@ public final class ParentRemoteLockManager {
     private volatile boolean locked;
     private volatile boolean running;
     private volatile boolean lastOnline;
+    private ScheduledFuture<?> tickFuture;
+    private ScheduledFuture<?> pollFuture;
     private volatile String lockReason = "";
     private long lastElapsed;
     private long lastWall;
@@ -100,14 +103,17 @@ public final class ParentRemoteLockManager {
         lastUsageDay = dayKey(lastWall);
         log("start; cached=" + (config != null));
         executor.execute(this::pollNow);
-        executor.scheduleAtFixedRate(this::tickSafely, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS);
-        executor.scheduleAtFixedRate(this::pollSafely, POLL_MS, POLL_MS, TimeUnit.MILLISECONDS);
+        tickFuture = executor.scheduleAtFixedRate(this::tickSafely, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS);
+        pollFuture = executor.scheduleAtFixedRate(this::pollSafely, POLL_MS, POLL_MS, TimeUnit.MILLISECONDS);
     }
 
     public synchronized void stop() {
         if (!running) return;
         tickSafely();
         running = false;
+        if (tickFuture != null) tickFuture.cancel(false);
+        if (pollFuture != null) pollFuture.cancel(false);
+        tickFuture = null; pollFuture = null;
         log("stop");
     }
 
@@ -216,8 +222,9 @@ public final class ParentRemoteLockManager {
         long used = prefs.getLong("usage_ms", 0L);
         if (!today.equals(prefs.getString("usage_day", ""))) used = 0L;
         used += delta;
-        prefs.edit().putString("usage_day", today).putLong("usage_ms", used)
-                .putLong("pending_upload_ms", prefs.getLong("pending_upload_ms", 0L) + delta).apply();
+        SharedPreferences.Editor edit = prefs.edit().putString("usage_day", today).putLong("usage_ms", used);
+        if (!isOnline()) edit.putLong("pending_upload_ms", prefs.getLong("pending_upload_ms", 0L) + delta);
+        edit.apply();
         if (!today.equals(lastUsageDay)) {
             lastUsageDay = today;
             log("daily usage date rolled over");
@@ -227,6 +234,10 @@ public final class ParentRemoteLockManager {
 
     private void evaluate() {
         Config c = config;
+        if (System.currentTimeMillis() < prefs.getLong("remote_unlock_until", 0L)) {
+            setLocked(false, "");
+            return;
+        }
         if (c == null) {
             if (prefs.getBoolean("remote_enabled", false)) applyOfflinePolicy();
             return;
@@ -369,6 +380,12 @@ public final class ParentRemoteLockManager {
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setRandomizedEncryptionRequired(true).build());
         return gen.generateKey();
+    }
+
+    public void grantAdminUnlock(long durationMs) {
+        prefs.edit().putLong("remote_unlock_until", System.currentTimeMillis() + Math.max(60_000L, durationMs)).apply();
+        setLocked(false, "");
+        log("administrator temporary unlock granted");
     }
 
     public boolean verifyAdminPassword(String input) {
