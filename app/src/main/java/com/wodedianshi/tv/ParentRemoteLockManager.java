@@ -153,6 +153,8 @@ public final class ParentRemoteLockManager {
             c.setReadTimeout(8000);
             c.setRequestProperty("Accept", "application/json");
             c.setRequestProperty("Cache-Control", "no-cache");
+            String apiToken = getApiToken();
+            if (!apiToken.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + apiToken);
             int code = c.getResponseCode();
             if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
             String body = readAll(c.getInputStream());
@@ -408,6 +410,39 @@ public final class ParentRemoteLockManager {
         return gen.generateKey();
     }
 
+    public void setApiToken(String token) {
+        try {
+            String value = token == null ? "" : token.trim();
+            if (value.isEmpty()) {
+                prefs.edit().remove("encrypted_api_token").apply();
+                return;
+            }
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, getCacheKey());
+            byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            out.write(cipher.getIV()); out.write(encrypted);
+            prefs.edit().putString("encrypted_api_token",
+                    Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)).apply();
+        } catch (Exception e) { log("API token encryption failed"); }
+    }
+
+    public String getApiToken() {
+        try {
+            String encoded = prefs.getString("encrypted_api_token", "");
+            if (encoded.isEmpty()) return "";
+            byte[] all = Base64.decode(encoded, Base64.NO_WRAP);
+            if (all.length <= 12) return "";
+            byte[] iv = new byte[12];
+            System.arraycopy(all, 0, iv, 0, 12);
+            byte[] encrypted = new byte[all.length - 12];
+            System.arraycopy(all, 12, encrypted, 0, encrypted.length);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, getCacheKey(), new GCMParameterSpec(128, iv));
+            return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
+        } catch (Exception e) { log("API token unavailable"); return ""; }
+    }
+
     public void grantAdminUnlock(long durationMs) {
         prefs.edit().putLong("remote_unlock_until", System.currentTimeMillis() + Math.max(60_000L, durationMs)).apply();
         setLocked(false, "");
@@ -434,6 +469,8 @@ public final class ParentRemoteLockManager {
             c.setRequestMethod("POST");
             c.setConnectTimeout(8000); c.setReadTimeout(8000);
             c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            String apiToken = getApiToken();
+            if (!apiToken.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + apiToken);
             byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
             c.getOutputStream().write(bytes);
             int code = c.getResponseCode();
