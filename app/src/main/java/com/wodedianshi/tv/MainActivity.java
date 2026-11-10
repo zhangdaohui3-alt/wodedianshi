@@ -1186,6 +1186,17 @@ public class MainActivity extends Activity {
     if(id.startsWith("meta:"))return "影片资料（非播放源）";
     return "来源：Internet Archive";
   }
+  private String vodRightsLabel(String rights){
+    if(rights==null||rights.trim().isEmpty())return "公开授权";
+    String value=rights.toLowerCase(Locale.ROOT);
+    if(value.contains("public domain"))return "公有领域";
+    if(value.contains("creativecommons.org/licenses/by-sa")||value.contains("cc by-sa"))return "CC BY-SA";
+    if(value.contains("creativecommons.org/licenses/by")||value.contains("cc by"))return "CC BY";
+    if(value.contains("creativecommons.org/zero")||value.equals("cc0"))return "CC0";
+    if(value.contains("no known restrictions"))return "无已知限制";
+    if(value.contains("u.s. government work")||value.contains("united states government work"))return "美国政府作品";
+    return "公开授权";
+  }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
@@ -1221,7 +1232,7 @@ public class MainActivity extends Activity {
         }
       });
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);
-      holder.meta.setText(vodSourceLabel(item)+" · "+(item.identifier.startsWith("cctv:")?"官方播放":(item.license==null||item.license.trim().isEmpty()?"公开可播放":item.license.trim())));
+      holder.meta.setText(vodSourceLabel(item)+" · "+(item.identifier.startsWith("cctv:")?"官方播放":vodRightsLabel(item.license)));
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
@@ -2786,8 +2797,8 @@ public class MainActivity extends Activity {
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
     worker.execute(()->{
       String[] feeds={
-        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
         "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u",
         "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
