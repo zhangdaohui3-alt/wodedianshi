@@ -48,6 +48,30 @@ public class VodSearchPlanTest {
         assertTrue(VodSearchPlan.archiveQueries("   ").isEmpty());
     }
 
+    @Test public void chinaRegionPrioritizesChineseCatalogueMetadata() {
+        List<String> queries = VodSearchPlan.archiveQueries("霸王别姬", "中国");
+        assertFalse(queries.isEmpty());
+        assertTrue(queries.get(0).contains("language:Chinese"));
+        assertTrue(queries.get(0).contains("language:zho"));
+        assertTrue(queries.get(0).contains("subject:Chinese"));
+    }
+
+    @Test public void internationalRegionUsesMultipleLanguageMetadata() {
+        List<String> queries = VodSearchPlan.archiveQueries("The Matrix", "国外");
+        assertFalse(queries.isEmpty());
+        assertTrue(queries.get(0).contains("language:English"));
+        assertTrue(queries.get(0).contains("language:Japanese"));
+        assertTrue(queries.get(0).contains("language:Spanish"));
+    }
+
+    @Test public void allRegionLeavesSearchUnrestricted() {
+        List<String> all = VodSearchPlan.archiveQueries("Cinema", "全部");
+        List<String> defaultPlan = VodSearchPlan.archiveQueries("Cinema");
+        assertEquals(defaultPlan, all);
+        assertFalse(all.get(0).contains("language:Chinese"));
+        assertFalse(all.get(0).contains("language:English"));
+    }
+
     @Test public void rejectsEmptyPlans() {
         assertTrue(VodSearchPlan.orderedPages(0, 3).isEmpty());
         assertTrue(VodSearchPlan.orderedPages(3, 0).isEmpty());
