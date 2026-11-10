@@ -131,6 +131,23 @@ public final class OfficialMovieNavigation {
             card.setClickable(true);
             card.setBackground(cardBackground(Color.rgb(23, 36, 54), false, activity));
 
+            // Poster-like provider cover: this is an in-app TV directory card,
+            // not a disguised web page or an automatically opened browser tab.
+            TextView cover = new TextView(activity);
+            String[] marks = {"1905", "爱奇艺", "腾讯", "优酷", "哔哩", "咪咕", "央视频"};
+            int[] coverColors = {
+                Color.rgb(125, 35, 42), Color.rgb(166, 36, 52), Color.rgb(24, 92, 156),
+                Color.rgb(35, 112, 166), Color.rgb(235, 116, 38), Color.rgb(24, 119, 104),
+                Color.rgb(27, 82, 142)
+            };
+            cover.setText(marks[i]);
+            cover.setTextColor(Color.WHITE);
+            cover.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            cover.setTypeface(null, Typeface.BOLD);
+            cover.setGravity(Gravity.CENTER);
+            cover.setBackground(cardBackground(coverColors[i], false, activity));
+            card.addView(cover, new LinearLayout.LayoutParams(-1, dp(activity, 54)));
+
             TextView name = new TextView(activity);
             name.setText(NAMES[i]);
             name.setTextColor(Color.WHITE);
@@ -175,7 +192,7 @@ public final class OfficialMovieNavigation {
 
             GridLayout.LayoutParams params = new GridLayout.LayoutParams();
             params.width = 0;
-            params.height = dp(activity, 132);
+            params.height = dp(activity, 166);
             params.columnSpec = GridLayout.spec(i % columns, 1, 1f);
             params.rowSpec = GridLayout.spec(i / columns);
             int margin = dp(activity, 6);
@@ -227,14 +244,23 @@ public final class OfficialMovieNavigation {
                 Log.w(TAG, "app_launch_failed platform=" + index + " package=" + packageName, e);
             }
         }
-        try {
-            Intent web = new Intent(Intent.ACTION_VIEW, Uri.parse(URLS[index]));
-            activity.startActivity(web);
-            Log.i(TAG, "open_official_https platform=" + index);
-        } catch (Exception e) {
-            Log.e(TAG, "official_url_open_failed platform=" + index, e);
-            android.widget.Toast.makeText(activity, "无法打开官方入口，请检查网络或浏览器", android.widget.Toast.LENGTH_LONG).show();
-        }
+        // Never silently send a TV user into a browser. Ask first and explain that
+        // an official TV client was not found on this device.
+        new android.app.AlertDialog.Builder(activity)
+            .setTitle(NAMES[index])
+            .setMessage("没有检测到已安装的官方客户端。\n\n为了避免点进去变成网页，这里不会自动打开浏览器。你可以选择手动查看平台官方网页，或先安装对应的电视版客户端。")
+            .setPositiveButton("手动打开官方网页", (dialog, which) -> {
+                try {
+                    Intent web = new Intent(Intent.ACTION_VIEW, Uri.parse(URLS[index]));
+                    activity.startActivity(web);
+                    Log.i(TAG, "user_confirmed_official_https platform=" + index);
+                } catch (Exception e) {
+                    Log.e(TAG, "official_url_open_failed platform=" + index, e);
+                    android.widget.Toast.makeText(activity, "无法打开官方入口，请检查网络或浏览器", android.widget.Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("暂不打开", null)
+            .show();
     }
 
     private static GradientDrawable cardBackground(int color, boolean focused, Activity activity) {
