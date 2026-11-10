@@ -737,7 +737,7 @@ public class MainActivity extends Activity {
     loadVodCatalogue("多源精选",panel,status,results);
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
-      if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()){
+      if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
         // Recreate the live player only after VOD releases its decoder resources.
         startCurrentSource();
       }
