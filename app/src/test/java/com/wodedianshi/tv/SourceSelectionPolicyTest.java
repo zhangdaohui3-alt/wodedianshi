@@ -54,6 +54,19 @@ public class SourceSelectionPolicyTest {
                 Collections.singleton("b"), Collections.emptySet()));
     }
 
+    @Test public void treatsSchemeHostCaseAndDefaultPortAsSameEndpoint() {
+        assertEquals(-1, SourceSelectionPolicy.findNext(
+                Arrays.asList("HTTP://Example.COM:80/live.m3u8", "http://example.com/live.m3u8"),
+                0, Collections.emptySet(), Collections.emptySet()));
+    }
+
+    @Test public void skipsEquivalentEndpointAndContinuesToDistinctBackup() {
+        assertEquals(2, SourceSelectionPolicy.findNext(
+                Arrays.asList("https://EXAMPLE.com:443/live.m3u8",
+                        "https://example.com/live.m3u8", "https://backup.example/live.m3u8"),
+                0, Collections.emptySet(), Collections.emptySet()));
+    }
+
     @Test public void skipsDuplicateActiveUrlAndContinuesToDistinctBackup() {
         assertEquals(3, SourceSelectionPolicy.findNext(
                 Arrays.asList("a", "b", "a", "c"), 0,
