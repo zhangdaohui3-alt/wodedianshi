@@ -618,6 +618,7 @@ public class MainActivity extends Activity {
   private TextView currentVodStatus;
   private String activeVodCategory="电影";
   private String activeVodQuery="";
+  private String activeVodRegion="中国";
   // Keep the user scroll position when the same category finishes background refresh.
   private String currentVodRenderedCategory="";
   private ExoPlayer vodPlayer;
@@ -631,6 +632,8 @@ public class MainActivity extends Activity {
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     resumeLiveAfterVod=player!=null&&player.isPlaying();
+    activeVodRegion=getSharedPreferences("mytv",0).getString("vod_search_region","中国");
+    if(!"国外".equals(activeVodRegion))activeVodRegion="中国";
     setSourceUpdatePlaybackActive(true);
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
@@ -699,8 +702,24 @@ public class MainActivity extends Activity {
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
     updateVodCategoryHighlight(categoryButtons,"电影");
-    query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
+    Button chinaRegionButton=new Button(this);chinaRegionButton.setText("中国");chinaRegionButton.setAllCaps(false);chinaRegionButton.setTextSize(12);styleTvButton(chinaRegionButton,"中国".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
+    Button foreignRegionButton=new Button(this);foreignRegionButton.setText("国外");foreignRegionButton.setAllCaps(false);foreignRegionButton.setTextSize(12);styleTvButton(foreignRegionButton,"国外".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
+    searchRow.addView(chinaRegionButton,new LinearLayout.LayoutParams(dp(66),dp(40)));
+    searchRow.addView(foreignRegionButton,new LinearLayout.LayoutParams(dp(66),dp(40)));
+    query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
+    View.OnClickListener regionClick=v->{
+      String selectedRegion=v==chinaRegionButton?"中国":"国外";
+      if(selectedRegion.equals(activeVodRegion))return;
+      activeVodRegion=selectedRegion;
+      getSharedPreferences("mytv",0).edit().putString("vod_search_region",activeVodRegion).apply();
+      styleTvButton(chinaRegionButton,"中国".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
+      styleTvButton(foreignRegionButton,"国外".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
+      if(!activeVodQuery.isEmpty())loadVodCatalogue("搜索："+activeVodQuery,panel,status,results,true);
+      else status.setText("已切换到"+activeVodRegion+"影视搜索，请输入片名或关键词");
+    };
+    chinaRegionButton.setOnClickListener(regionClick);
+    foreignRegionButton.setOnClickListener(regionClick);
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
     panel.addView(suggestionPanel,new LinearLayout.LayoutParams(-1,dp(166)));suggestionPanel.setVisibility(View.GONE);
     TextView status=new TextView(this);status.setText("正在载入精选影片…");status.setTextColor(Color.LTGRAY);status.setTextSize(12);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setPadding(dp(4),0,dp(4),0);panel.addView(status,new LinearLayout.LayoutParams(-1,dp(20)));
@@ -788,7 +807,8 @@ public class MainActivity extends Activity {
     // These two catalogue categories had an incorrect CCTV documentary mapping.
     // Use a fresh cache namespace so an older, duplicated result list is not reused.
     String revision=("多源精选".equals(category)||"精选电影".equals(category))?"9":"8";
-    return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode());
+    String regionKey=category.startsWith("搜索：")?"_"+activeVodRegion:"";
+    return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode())+regionKey;
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
@@ -1556,7 +1576,7 @@ public class MainActivity extends Activity {
         else if(!titleSearch&&!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();
-        if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm));
+        if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm,activeVodRegion));
         else queries.add(q);
         if("戏曲".equals(category)){
           queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
@@ -1694,7 +1714,7 @@ public class MainActivity extends Activity {
         else if("恐怖片".equals(category))commonsQuery="horror film";
         else if("动作片".equals(category))commonsQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
-        if(titleSearch)commonsQuery=searchTerm;
+        if(titleSearch)commonsQuery=searchTerm+("中国".equals(activeVodRegion)?" Chinese film":" international film");
          if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;sourceFutures.add(sourceCompletion.submit(()->fetchCommonsSearchVod(term)));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
