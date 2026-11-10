@@ -129,6 +129,7 @@ public final class ParentRemoteLockManager {
         if (!running) return;
         String endpoint = prefs.getString("endpoint", "").trim();
         if (endpoint.isEmpty()) {
+            config = null;
             setLocked(false, "");
             status("云端家长锁未配置接口地址");
             return;
@@ -139,7 +140,7 @@ public final class ParentRemoteLockManager {
             return;
         }
         if (!isOnline()) {
-            if (lastOnline) log("network disconnected");
+            log("network offline");
             lastOnline = false;
             applyOfflinePolicy();
             return;
@@ -277,6 +278,7 @@ public final class ParentRemoteLockManager {
         if (System.currentTimeMillis() < prefs.getLong("remote_unlock_until", 0L)) { setLocked(false, ""); return; }
         Config c = config;
         boolean enabled = prefs.getBoolean("remote_enabled", false);
+        if (!enabled) { setLocked(false, ""); return; }
         if (ParentRemoteLockPolicy.shouldLockOffline(c != null && c.lockEnable && c.offlineStrict, c != null, enabled)) {
             setLocked(true, c == null ? "尚无有效云端缓存，无法确认家长规则" : "网络已断开，离线严格策略要求管理员解锁");
         } else if (c != null) {
@@ -350,8 +352,8 @@ public final class ParentRemoteLockManager {
         c.maxDayMinute = Math.max(0, j.optInt("max_day_minute", 0));
         c.offlineStrict = j.optBoolean("offline_strict", false);
         c.adminPassword = j.optString("admin_pwd", "");
-        if (c.adminPassword.length() < 4 || c.adminPassword.length() > 32)
-            throw new IllegalArgumentException("admin_pwd 必须为 4–32 位");
+        if (!c.adminPassword.matches("[0-9]{4,32}"))
+            throw new IllegalArgumentException("admin_pwd 必须为 4–32 位数字");
         if (minuteOfDay(c.startTime) < 0 || minuteOfDay(c.endTime) < 0)
             throw new IllegalArgumentException("start_time/end_time 格式必须为 HH:mm");
         c.raw = j;
