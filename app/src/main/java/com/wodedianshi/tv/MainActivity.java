@@ -3900,6 +3900,14 @@ public class MainActivity extends Activity {
     int limit=p.getInt("child_daily_limit_min",0);
     return "今天的观看时长已达到 "+limit+" 分钟";
   }
+  private void refreshChildLockState(){
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(childLockDialog!=null&&childLockDialog.isShowing()){
+      childLockDialog.dismiss();childLockDialog=null;
+      toast("限制时段已结束，可以继续使用");
+      if(!resumeLiveAfterVod&&selected>=0&&selected<channels.size())startCurrentSource();
+    }
+  }
   private void enforceChildLock(){
     if(!isChildLockCurrentlyActive()||isFinishing()||isDestroyed())return;
     if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
@@ -4024,9 +4032,9 @@ public class MainActivity extends Activity {
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
     childLockLastWall=System.currentTimeMillis();
     if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);
-    childLockTicker=()->{if(isFinishing())return;updateChildUsage();enforceChildLock();uiHandler.postDelayed(childLockTicker,30000L);};
+    childLockTicker=()->{if(isFinishing())return;updateChildUsage();refreshChildLockState();uiHandler.postDelayed(childLockTicker,30000L);};
     uiHandler.postDelayed(childLockTicker,30000L);
-    enforceChildLock();
+    refreshChildLockState();
     updateNetworkSpeedMonitor();
     if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){resumePlaybackOnStart=false;startCurrentSource();}
   }
