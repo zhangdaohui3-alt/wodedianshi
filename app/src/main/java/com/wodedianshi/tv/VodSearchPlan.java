@@ -2,9 +2,10 @@ package com.wodedianshi.tv;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 
-/** Orders multi-query catalogue requests to maximize first-page source diversity. */
+/** Builds bounded, diverse searches for public catalogues. */
 public final class VodSearchPlan {
     private VodSearchPlan() {}
 
@@ -18,7 +19,55 @@ public final class VodSearchPlan {
         }
     }
 
-    /** Page-major ordering: all query page-1 requests precede every page-2 request. */
+    /**
+     * Build independent title/metadata queries instead of requiring one exact
+     * phrase to occur in one field. Terms are reduced to letters, digits and
+     * spaces before being inserted into the Archive.org query language.
+     */
+    public static List<String> archiveQueries(String raw) {
+        String cleaned = raw == null ? "" : raw
+                .replaceAll("[\\p{Punct}\\p{Z}\\s]+", " ")
+                .replaceAll("[^\\p{L}\\p{N} ]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (cleaned.isEmpty()) return Collections.emptyList();
+
+        LinkedHashSet<String> queries = new LinkedHashSet<>();
+        String phrase = quote(cleaned);
+        queries.add("mediatype:movies AND (title:" + phrase
+                + " OR description:" + phrase + " OR subject:" + phrase
+                + " OR creator:" + phrase + ")");
+        queries.add("mediatype:movies AND (title:" + phrase
+                + " OR title:" + quote(cleaned.replace(" ", " AND "))
+                + " OR identifier:" + quote(cleaned.replace(" ", "")) + ")");
+
+        String[] terms = cleaned.split(" ");
+        if (terms.length > 1) {
+            StringBuilder allFields = new StringBuilder("mediatype:movies AND ");
+            for (int i = 0; i < terms.length; i++) {
+                if (i > 0) allFields.append(" AND ");
+                String term = quote(terms[i]);
+                allFields.append("(title:").append(term)
+                        .append(" OR description:").append(term)
+                        .append(" OR subject:").append(term)
+                        .append(" OR creator:").append(term).append(")");
+            }
+            queries.add(allFields.toString());
+        }
+        // A broad all-fields query catches catalogue records whose title is
+        // incomplete but whose creator/subject/description carries the name.
+        if (cleaned.length() >= 3) {
+            queries.add("mediatype:movies AND (title:" + phrase
+                    + " OR description:" + phrase + " OR subject:" + phrase
+                    + " OR creator:" + phrase + ")");
+        }
+        return Collections.unmodifiableList(new ArrayList<>(queries));
+    }
+
+    private static String quote(String value) {
+        return "\"" + value.replace("\\", " ").replace("\"", " ") + "\"";
+    }
+
+    /** Page-major ordering: all query page-1 requests precede every page-2 page. */
     public static List<PageRequest> orderedPages(int queryCount, int maxPagesPerQuery) {
         if (queryCount <= 0 || maxPagesPerQuery <= 0) return Collections.emptyList();
         ArrayList<PageRequest> result = new ArrayList<>(queryCount * maxPagesPerQuery);
