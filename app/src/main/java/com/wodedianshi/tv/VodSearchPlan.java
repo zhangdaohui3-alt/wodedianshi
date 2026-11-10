@@ -37,6 +37,7 @@ public final class VodSearchPlan {
 
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         String phrase = quote(cleaned);
+        String[] terms = cleaned.split(" ");
         boolean hasHan = raw != null && raw.codePoints()
                 .anyMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN);
         String regionClause = "";
@@ -85,7 +86,6 @@ public final class VodSearchPlan {
         titleTokens.append(")");
         queries.add(titleTokens.toString() + regionClause);
 
-        String[] terms = cleaned.split(" ");
         if (terms.length > 1) {
             StringBuilder allFields = new StringBuilder("mediatype:movies AND ");
             for (int i = 0; i < terms.length; i++) {
