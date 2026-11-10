@@ -16,7 +16,6 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -72,7 +71,6 @@ public final class ParentRemoteLockManager {
     private long lastElapsed;
     private long lastWall;
     private String lastUsageDay = "";
-    private long lastServerTimeMs;
 
     private static final class Config {
         boolean lockEnable;
@@ -134,6 +132,7 @@ public final class ParentRemoteLockManager {
             status("云端家长锁未配置接口地址");
             return;
         }
+        if (config == null) loadEncryptedCache();
         if (!endpoint.toLowerCase(Locale.ROOT).startsWith("https://")) {
             status("拒绝非 HTTPS 家长锁接口；请配置 https:// 地址");
             applyCachedOrFailClosed();
@@ -170,7 +169,6 @@ public final class ParentRemoteLockManager {
                 return;
             }
             config = next;
-            lastServerTimeMs = serverTime;
             prefs.edit().putLong("anchor_server_ms", serverTime)
                     .putLong("anchor_wall_ms", System.currentTimeMillis())
                     .putLong("anchor_elapsed_ms", SystemClock.elapsedRealtime())
