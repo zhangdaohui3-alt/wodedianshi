@@ -2603,7 +2603,7 @@ public class MainActivity extends Activity {
     return count;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+119)/120);
+    int pages=Math.max(1,(total+59)/60);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){
