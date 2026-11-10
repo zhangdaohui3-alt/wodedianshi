@@ -4093,7 +4093,7 @@ public class MainActivity extends Activity {
         }
         getSharedPreferences("mytv_remote_parent_lock",0).edit()
           .putString("endpoint",url).putBoolean("remote_enabled",!url.isEmpty()).apply();
-        if(remoteParentLockManager!=null)remoteParentLockManager.pollNow();
+        if(remoteParentLockManager!=null)remoteParentLockManager.requestPoll();
         toast(url.isEmpty()?"已关闭云端家长锁":"云端家长锁接口已保存");
       }).setNegativeButton("取消",null).show();
   }
@@ -4157,12 +4157,13 @@ public class MainActivity extends Activity {
   }
 
   private void dismissRemoteParentLock(){
+    boolean wasShowing=remoteLockOverlayShowing;
     remoteLockOverlayShowing=false;
     if(remoteParentLockDialog!=null){
       AlertDialog old=remoteParentLockDialog;remoteParentLockDialog=null;
       if(old.isShowing())old.dismiss();
     }
-    if(selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+    if(wasShowing&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
       resumePlaybackOnStart=false;startCurrentSource();
     }
   }
