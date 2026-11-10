@@ -68,8 +68,8 @@ public class SourceUpdateWorker extends Worker {
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
         JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
-        knownUrls.add(c.optString("url"));
+        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(SourceSelectionPolicy.endpointKey(src.optString(j)));
+        knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
@@ -92,7 +92,7 @@ public class SourceUpdateWorker extends Worker {
           if(savedPool.size()>=20000)break;
           // A shared URL only needs one network probe, even if several channel
           // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
+          if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(channelName,u,channelGroup,true));
         }
       }
       for(String feed:feeds){
@@ -157,7 +157,8 @@ public class SourceUpdateWorker extends Worker {
         measuredScores.remove(legacyScoreKey(e.url));
         if(!measured.valid)continue;
         // Known sources are re-tested and re-scored, but never inserted twice.
-        if(knownUrls.contains(e.url))continue;
+        String endpointKey=SourceSelectionPolicy.endpointKey(e.url);
+         if(knownUrls.contains(endpointKey))continue;
         String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
@@ -166,7 +167,8 @@ public class SourceUpdateWorker extends Worker {
         }else{
           JSONArray sources=target.optJSONArray("sources");
           if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
-          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
+          boolean duplicate=false;String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
+           for(int i=0;i<sources.length();i++)if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){duplicate=true;break;}
           if(!duplicate){
             if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);added++;}
             else{
@@ -181,7 +183,7 @@ public class SourceUpdateWorker extends Worker {
             }
           }
         }
-        knownUrls.add(e.url);
+        knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
       }
       if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
       // Keep each channel's best few distinct sources together, ranked by measured
@@ -192,7 +194,12 @@ public class SourceUpdateWorker extends Worker {
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
         ArrayList<String> ordered=new ArrayList<>();
-        for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
+         HashSet<String> orderedEndpoints=new HashSet<>();
+         for(int j=0;j<sourceArray.length();j++){
+           String u=sourceArray.optString(j,"");
+           if((u.startsWith("http://")||u.startsWith("https://"))
+               &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
+         }
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
         JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
