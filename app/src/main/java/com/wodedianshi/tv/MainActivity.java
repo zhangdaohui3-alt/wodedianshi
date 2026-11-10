@@ -105,6 +105,10 @@ public class MainActivity extends Activity {
   private Runnable pendingSearchRefresh;
   private boolean favoriteMode = false;
   private int selected = -1;
+  // Local parental controls: elapsed-time accounting is monotonic and only runs while the app is foregrounded.
+  private long childLockLastElapsed=0L;
+  private Runnable childLockTicker;
+  private AlertDialog childLockDialog;
   private long playbackGeneration = 0;
   private String currentMediaId = "";
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
@@ -480,7 +484,7 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭")},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else toggleNetworkSpeed();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else childLockSettingsDialog();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
@@ -3427,6 +3431,7 @@ public class MainActivity extends Activity {
   }
   private void play(int ix){
     if(ix<0||ix>=channels.size())return;
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     automaticSwitchCount=0;
     automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
@@ -3815,11 +3820,186 @@ public class MainActivity extends Activity {
         toast(values[which]==0?"已关闭卡顿自动切换":"播放中连续缓冲 "+values[which]+" 秒后尝试下一个源；首次打开会多等待一会儿");
       }).setNegativeButton("关闭",null).show();
   }
+
+  // ---------------- Local parental controls ----------------
+  private android.content.SharedPreferences childPrefs(){return getSharedPreferences("mytv",0);}
+  private String childTodayKey(){
+    Calendar cal=Calendar.getInstance();
+    return cal.get(Calendar.YEAR)+"-"+cal.get(Calendar.DAY_OF_YEAR);
+  }
+  private int childDayBit(Calendar cal){return 1<<(cal.get(Calendar.DAY_OF_WEEK)-Calendar.SUNDAY);}
+  private boolean childQuietTimeNow(){
+    android.content.SharedPreferences p=childPrefs();
+    if(!p.getBoolean("child_block_enabled",false))return false;
+    Calendar now=Calendar.getInstance();
+    return ChildLockPolicy.isBlocked(now,p.getInt("child_block_start",22*60),
+        p.getInt("child_block_end",3*60),p.getInt("child_block_days",0x7f));
+  }
+  private long childTodayUsage(){
+    android.content.SharedPreferences p=childPrefs();
+    String day=childTodayKey();
+    if(!day.equals(p.getString("child_usage_day",""))){
+      p.edit().putString("child_usage_day",day).putLong("child_usage_ms",0L).apply();
+      return 0L;
+    }
+    return Math.max(0L,p.getLong("child_usage_ms",0L));
+  }
+  private void updateChildUsage(){
+    long now=android.os.SystemClock.elapsedRealtime();
+    if(childLockLastElapsed<=0L){childLockLastElapsed=now;return;}
+    long delta=Math.max(0L,Math.min(60000L,now-childLockLastElapsed));
+    childLockLastElapsed=now;
+    if(delta==0L)return;
+    android.content.SharedPreferences p=childPrefs();
+    String day=childTodayKey();
+    String saved=p.getString("child_usage_day","");
+    long used=saved.equals(day)?Math.max(0L,p.getLong("child_usage_ms",0L)):0L;
+    p.edit().putString("child_usage_day",day).putLong("child_usage_ms",used+delta).apply();
+  }
+  private boolean isChildLockCurrentlyActive(){
+    android.content.SharedPreferences p=childPrefs();
+    if(p.getString("child_pin_hash","").isEmpty())return false;
+    if(p.getLong("child_unlock_until",0L)>System.currentTimeMillis())return false;
+    if(childQuietTimeNow())return true;
+    int limit=p.getInt("child_daily_limit_min",0);
+    return limit>0&&childTodayUsage()>=limit*60000L;
+  }
+  private String childLockReason(){
+    android.content.SharedPreferences p=childPrefs();
+    if(childQuietTimeNow())return "当前处于家长设置的禁止使用时段";
+    int limit=p.getInt("child_daily_limit_min",0);
+    return "今天的观看时长已达到 "+limit+" 分钟";
+  }
+  private void enforceChildLock(){
+    if(!isChildLockCurrentlyActive()||isFinishing()||isDestroyed())return;
+    if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
+    if(fullScreenPlayback)exitFullScreenPlayback();
+    if(childLockDialog!=null&&childLockDialog.isShowing())return;
+    EditText pin=new EditText(this);
+    pin.setSingleLine(true);
+    pin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    pin.setHint("输入家长密码");
+    pin.setPadding(dp(14),dp(10),dp(14),dp(10));
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("儿童锁已启用")
+        .setMessage(childLockReason()+"。需要家长密码才能临时解锁。")
+        .setView(pin).setCancelable(false)
+        .setPositiveButton("家长解锁 15 分钟",null).create();
+    childLockDialog=dialog;
+    dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
+      String saved=childPrefs().getString("child_pin_hash","");
+      if(saved.equals(ChildLockPolicy.sha256(pin.getText().toString().trim()))){
+        childPrefs().edit().putLong("child_unlock_until",System.currentTimeMillis()+15L*60L*1000L).apply();
+        childLockDialog=null;dialog.dismiss();toast("已临时解锁 15 分钟");
+        if(selected>=0&&selected<channels.size())startCurrentSource();
+      }else{pin.setText("");pin.setError("密码不正确");}
+    }));
+    dialog.show();
+    dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+  }
+  private void childLockSettingsDialog(){
+    String hash=childPrefs().getString("child_pin_hash","");
+    if(hash.isEmpty()){setChildParentPin();return;}
+    requireChildParentPin(this::showChildLockOptions);
+  }
+  private void setChildParentPin(){
+    LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
+    EditText first=new EditText(this);first.setSingleLine(true);first.setHint("设置 4–8 位数字密码");first.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    EditText second=new EditText(this);second.setSingleLine(true);second.setHint("再次输入密码");second.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    box.addView(first);box.addView(second);
+    new AlertDialog.Builder(this).setTitle("设置家长密码").setMessage("首次使用儿童锁，请先设置家长密码。")
+        .setView(box).setPositiveButton("保存", (d,w)->{
+          String a=first.getText().toString().trim(),b=second.getText().toString().trim();
+          if(!a.matches("[0-9]{4,8}")||!a.equals(b)){toast("密码需为相同的 4–8 位数字");return;}
+          childPrefs().edit().putString("child_pin_hash",ChildLockPolicy.sha256(a)).putLong("child_unlock_until",0L).apply();
+          toast("家长密码已设置");showChildLockOptions();
+        }).setNegativeButton("取消",null).show();
+  }
+  private void requireChildParentPin(Runnable accepted){
+    EditText pin=new EditText(this);pin.setSingleLine(true);pin.setHint("输入家长密码");
+    pin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    new AlertDialog.Builder(this).setTitle("家长验证").setView(pin)
+        .setPositiveButton("验证",(d,w)->{
+          if(childPrefs().getString("child_pin_hash","").equals(ChildLockPolicy.sha256(pin.getText().toString().trim())))accepted.run();
+          else toast("家长密码不正确");
+        }).setNegativeButton("取消",null).show();
+  }
+  private void showChildLockOptions(){
+    android.content.SharedPreferences p=childPrefs();
+    int start=p.getInt("child_block_start",22*60),end=p.getInt("child_block_end",3*60);
+    int limit=p.getInt("child_daily_limit_min",0);
+    String[] items={
+      "禁止时段："+(p.getBoolean("child_block_enabled",false)?"已启用":"未启用"),
+      "设置开始时间："+String.format(Locale.ROOT,"%02d:%02d",start/60,start%60),
+      "设置结束时间："+String.format(Locale.ROOT,"%02d:%02d",end/60,end%60)+"（跨午夜自动算到次日）",
+      "设置每周重复日",
+      "每日观看限额："+(limit==0?"不限制":limit+" 分钟"),
+      "修改家长密码",
+      "查看今日观看时长"
+    };
+    new AlertDialog.Builder(this).setTitle("儿童锁与时段管理").setItems(items,(d,which)->{
+      if(which==0){
+        boolean enabled=!p.getBoolean("child_block_enabled",false);
+        p.edit().putBoolean("child_block_enabled",enabled).apply();
+        toast(enabled?"禁止时段已启用":"禁止时段已停用");
+        showChildLockOptions();
+      }else if(which==1||which==2){
+        int value=which==1?start:end;
+        new TimePickerDialog(this,(view,hour,minute)->{
+          p.edit().putInt(which==1?"child_block_start":"child_block_end",hour*60+minute).apply();
+          showChildLockOptions();
+        },value/60,value%60,true).show();
+      }else if(which==3){
+        String[] days={"星期日","星期一","星期二","星期三","星期四","星期五","星期六"};
+        int mask=p.getInt("child_block_days",0x7f);
+        boolean[] checked=new boolean[7];
+        for(int i=0;i<7;i++)checked[i]=(mask&(1<<i))!=0;
+        new AlertDialog.Builder(this).setTitle("选择重复日期").setMultiChoiceItems(days,checked,(dd,index,isChecked)->checked[index]=isChecked)
+            .setPositiveButton("保存",(dd,w)->{
+              int result=0;for(int i=0;i<7;i++)if(checked[i])result|=1<<i;
+              p.edit().putInt("child_block_days",result).apply();showChildLockOptions();
+            }).setNegativeButton("取消",null).show();
+      }else if(which==4){
+        String[] labels={"不限制","30 分钟","1 小时","1.5 小时","2 小时","3 小时","4 小时"};
+        int[] values={0,30,60,90,120,180,240};
+        int current=0;for(int i=0;i<values.length;i++)if(values[i]==limit)current=i;
+        new AlertDialog.Builder(this).setTitle("每日观看限额").setSingleChoiceItems(labels,current,(dd,index)->{
+          p.edit().putInt("child_daily_limit_min",values[index]).apply();dd.dismiss();showChildLockOptions();
+        }).setNegativeButton("取消",null).show();
+      }else if(which==5){
+        changeChildParentPin();
+      }else{
+        long used=childTodayUsage()/60000L;
+        int max=p.getInt("child_daily_limit_min",0);
+        toast("今日已使用约 "+used+" 分钟"+(max>0?" / 限额 "+max+" 分钟":""));
+      }
+    }).setNegativeButton("关闭",null).show();
+  }
+  private void changeChildParentPin(){
+    LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
+    EditText first=new EditText(this);first.setSingleLine(true);first.setHint("新密码（4–8 位数字）");first.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    EditText second=new EditText(this);second.setSingleLine(true);second.setHint("再次输入新密码");second.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    box.addView(first);box.addView(second);
+    new AlertDialog.Builder(this).setTitle("修改家长密码").setView(box).setPositiveButton("保存",(d,w)->{
+      String a=first.getText().toString().trim(),b=second.getText().toString().trim();
+      if(!a.matches("[0-9]{4,8}")||!a.equals(b)){toast("密码需为相同的 4–8 位数字");return;}
+      childPrefs().edit().putString("child_pin_hash",ChildLockPolicy.sha256(a)).apply();toast("家长密码已修改");
+    }).setNegativeButton("取消",null).show();
+  }
+
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-  protected void onStart(){super.onStart();updateNetworkSpeedMonitor();if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}}
+  protected void onStart(){
+    super.onStart();
+    childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
+    if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);
+    childLockTicker=()->{if(isFinishing())return;updateChildUsage();enforceChildLock();uiHandler.postDelayed(childLockTicker,30000L);};
+    uiHandler.postDelayed(childLockTicker,30000L);
+    enforceChildLock();
+    updateNetworkSpeedMonitor();
+    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){resumePlaybackOnStart=false;startCurrentSource();}
+  }
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){updateChildUsage();childLockLastElapsed=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onDestroy(){if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
