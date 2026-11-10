@@ -2,7 +2,7 @@ package com.wodedianshi.tv;
 
 /**
  * Search catalogue record, deliberately independent from a playable media URL.
- * A title may be discoverable even when no authorized direct stream is known.
+ * A title may be discoverable even when no direct stream is known.
  */
 public final class VodTitleRecord {
     public final String id;
@@ -13,10 +13,18 @@ public final class VodTitleRecord {
     public final String metadataProvider;
     public final String metadataUrl;
     public final int year;
+    public final String posterUrl;
 
     public VodTitleRecord(String id, String title, String alternateTitle,
                           String synopsis, String region, String metadataProvider,
                           String metadataUrl, int year) {
+        this(id, title, alternateTitle, synopsis, region, metadataProvider,
+                metadataUrl, year, "");
+    }
+
+    public VodTitleRecord(String id, String title, String alternateTitle,
+                          String synopsis, String region, String metadataProvider,
+                          String metadataUrl, int year, String posterUrl) {
         this.id = safe(id);
         this.title = safe(title);
         this.alternateTitle = safe(alternateTitle);
@@ -25,6 +33,7 @@ public final class VodTitleRecord {
         this.metadataProvider = safe(metadataProvider);
         this.metadataUrl = safe(metadataUrl);
         this.year = Math.max(0, year);
+        this.posterUrl = safe(posterUrl);
     }
 
     public boolean hasMetadataPage() {

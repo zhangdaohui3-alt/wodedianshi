@@ -88,7 +88,7 @@ public final class OfficialMovieNavigation {
         heading.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView subtitle = new TextView(activity);
-        subtitle.setText("选择正规平台，使用平台官方客户端或官方网站观看");
+        subtitle.setText("正版电视客户端入口；影片海报请在点播搜索结果中查看");
         subtitle.setTextColor(Color.rgb(160, 181, 207));
         subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         subtitle.setPadding(0, dp(activity, 4), 0, 0);
@@ -204,7 +204,7 @@ public final class OfficialMovieNavigation {
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         TextView footnote = new TextView(activity);
-        footnote.setText("说明：平台片库、会员权益、广告及地区可用性以各平台实际提供为准。本页面仅提供官方入口，不解析或提取视频流。");
+        footnote.setText("说明：此处仅显示平台入口，不是电影片库。未安装官方客户端时不会跳转浏览器；影片海报和资料在点播搜索结果中展示。");
         footnote.setTextColor(Color.rgb(126, 148, 174));
         footnote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         footnote.setPadding(dp(activity, 2), dp(activity, 6), dp(activity, 2), 0);
@@ -244,22 +244,11 @@ public final class OfficialMovieNavigation {
                 Log.w(TAG, "app_launch_failed platform=" + index + " package=" + packageName, e);
             }
         }
-        // Never silently send a TV user into a browser. Ask first and explain that
-        // an official TV client was not found on this device.
+        // Do not force a TV user into a browser when no native client is installed.
         new android.app.AlertDialog.Builder(activity)
             .setTitle(NAMES[index])
-            .setMessage("没有检测到已安装的官方客户端。\n\n为了避免点进去变成网页，这里不会自动打开浏览器。你可以选择手动查看平台官方网页，或先安装对应的电视版客户端。")
-            .setPositiveButton("手动打开官方网页", (dialog, which) -> {
-                try {
-                    Intent web = new Intent(Intent.ACTION_VIEW, Uri.parse(URLS[index]));
-                    activity.startActivity(web);
-                    Log.i(TAG, "user_confirmed_official_https platform=" + index);
-                } catch (Exception e) {
-                    Log.e(TAG, "official_url_open_failed platform=" + index, e);
-                    android.widget.Toast.makeText(activity, "无法打开官方入口，请检查网络或浏览器", android.widget.Toast.LENGTH_LONG).show();
-                }
-            })
-            .setNegativeButton("暂不打开", null)
+            .setMessage("当前设备没有检测到该平台的官方客户端。\n\n为保持电视端原生观看体验，这里不会打开网页。请先通过当贝应用市场或平台官方渠道安装电视版客户端，再从这里进入。")
+            .setPositiveButton("知道了", null)
             .show();
     }
 

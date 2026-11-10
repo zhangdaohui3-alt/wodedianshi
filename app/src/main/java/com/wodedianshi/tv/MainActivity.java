@@ -510,7 +510,7 @@ public class MainActivity extends Activity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+119)/120);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -609,8 +609,9 @@ public class MainActivity extends Activity {
     }).setNegativeButton("关闭",null).show();
   }
   private static class VodItem {
-    String title,identifier,url,license;
-    VodItem(String t,String id,String u,String l){title=t;identifier=id;url=u;license=l;}
+    String title,identifier,url,license,posterUrl;
+    VodItem(String t,String id,String u,String l){this(t,id,u,l,"");}
+    VodItem(String t,String id,String u,String l,String poster){title=t;identifier=id;url=u;license=l;posterUrl=poster==null?"":poster;}
   }
   private Dialog vodPlayerDialog;
   // Keep explicit references to the active VOD view model; never infer controls by child index.
@@ -852,8 +853,8 @@ public class MainActivity extends Activity {
       org.json.JSONArray a=new org.json.JSONArray(raw);
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
-        String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
-        if(!title.isEmpty()&&!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));
+        String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license",""),poster=o.optString("poster","");
+        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))items.add(new VodItem(title,id,url,license,poster));
       }
     }catch(Exception ignored){}
     return items;
@@ -877,7 +878,7 @@ public class MainActivity extends Activity {
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
-        org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);a.put(o);
+        org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
       }
       android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
           .putString(vodCacheKey(category),a.toString());
@@ -888,6 +889,18 @@ public class MainActivity extends Activity {
   }
   // Mouse-wheel events are often dispatched to the card/image under the pointer,
   // not to the GridView. Forward them so users can scroll without moving to the edge.
+  private void attachVodSwipeScroll(View target,GridView grid){
+    final float[] lastY={0f},downX={0f},downY={0f};
+    final boolean[] scrolling={false};
+    final int slop=android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+    target.setOnTouchListener((view,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_DOWN){downX[0]=event.getX();downY[0]=event.getY();lastY[0]=event.getY();scrolling[0]=false;return false;}
+      if(action==android.view.MotionEvent.ACTION_MOVE){float dx=event.getX()-downX[0],dy=event.getY()-downY[0];if(!scrolling[0]&&Math.abs(dy)>slop&&Math.abs(dy)>Math.abs(dx)*1.15f)scrolling[0]=true;if(scrolling[0]){float y=event.getY();grid.scrollListBy(Math.round(lastY[0]-y));lastY[0]=y;return true;}}
+      if(action==android.view.MotionEvent.ACTION_UP||action==android.view.MotionEvent.ACTION_CANCEL){boolean consumed=scrolling[0];scrolling[0]=false;return consumed;}
+      return scrolling[0];
+    });
+  }
   private boolean handleVodGridScroll(View source,android.view.MotionEvent event){
     if(event==null||event.getAction()!=android.view.MotionEvent.ACTION_SCROLL)return false;
     float wheel=event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL);
@@ -1158,7 +1171,7 @@ public class MainActivity extends Activity {
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.meta.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
-      loadVodPoster(holder.poster,item.identifier,item.title);
+      loadVodPoster(holder.poster,item.identifier,item.title,item.posterUrl);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
       configureVodMouseTarget(card,holder.poster,holder.title,holder.meta);
@@ -1168,6 +1181,8 @@ public class MainActivity extends Activity {
       holder.poster.setClickable(true);
       holder.title.setClickable(true);
       holder.meta.setClickable(true);
+      GridView swipeGrid=parent instanceof GridView?(GridView)parent:null;
+      if(swipeGrid!=null){attachVodSwipeScroll(card,swipeGrid);attachVodSwipeScroll(holder.poster,swipeGrid);attachVodSwipeScroll(holder.title,swipeGrid);attachVodSwipeScroll(holder.meta,swipeGrid);}
       View.OnClickListener openItem=v->card.performClick();
       holder.poster.setOnClickListener(openItem);
       holder.title.setOnClickListener(openItem);
@@ -1175,7 +1190,7 @@ public class MainActivity extends Activity {
       card.setOnClickListener(v->{
         if(item.identifier.startsWith("meta:")){
           new AlertDialog.Builder(MainActivity.this).setTitle(item.title)
-              .setMessage("已从公开影片资料目录检索到这部影片。\n\n当前没有找到可验证的公开授权直播放源，因此不会伪造播放地址，也不会把资料网页当作影片播放。\n\n可稍后刷新目录，继续检查其他公开片库和正版平台入口。")
+              .setMessage("已找到影片资料"+(item.posterUrl.isEmpty()?"，暂时没有取得海报":"和影片缩略图")+"。\n\n目前没有查到可直接播放的公开授权视频源，因此不会把资料页或平台网页冒充成影片播放。你可以查看影片信息，或在已安装的正版电视客户端中搜索片名。")
               .setPositiveButton("知道了",null).show();
         }else playVodInside(item);
       });
@@ -1206,7 +1221,7 @@ public class MainActivity extends Activity {
   }
   private void renderVodItems(String category,ArrayList<VodItem> items,TextView status,LinearLayout results,boolean cached){
     clearVodMouseHover();
-    status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"符合授权筛选的影片"));
+    status.setText("「"+category+"」 · "+items.size()+" 部"+(cached?"（缓存秒开，正在后台检查更新）":"影片资料与可播放内容"));
     GridView grid=resetVodGrid(results,4);
     int oldFirst=grid.getFirstVisiblePosition();
     View firstChild=grid.getChildAt(0);
@@ -1395,14 +1410,21 @@ public class MainActivity extends Activity {
       for(int j=0;j<files.length();j++){
         org.json.JSONObject file=files.optJSONObject(j);if(file==null||file.optBoolean("private",false))continue;
         String name=file.optString("name",""),lowerName=name.toLowerCase(Locale.ROOT),format=file.optString("format","").toLowerCase(Locale.US);
-        if(!lowerName.endsWith(".mp4")||!(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg")))continue;
+        boolean mp4=lowerName.endsWith(".mp4")&&(format.contains("mpeg4")||format.contains("h.264")||format.contains("mpeg"));
+        boolean hls=lowerName.endsWith(".m3u8")&&(format.contains("m3u8")||format.contains("hls")||format.contains("playlist"));
+        boolean dash=lowerName.endsWith(".mpd")&&(format.contains("dash")||format.contains("mpd")||format.contains("xml"));
+        boolean webm=lowerName.endsWith(".webm")&&(format.contains("webm")||format.contains("video"));
+        boolean quicktime=lowerName.endsWith(".mov")&&(format.contains("quicktime")||format.contains("video"));
+        if(!(mp4||hls||dash||webm||quicktime))continue;
         int width=file.optInt("width",0),height=file.optInt("height",0);
         boolean verified1080=width>=1920&&height>=1080;
         boolean explicit1080=lowerName.matches(".*(?:1080p|1080i|1920x1080).*");
         if(require1080p&&!verified1080&&!explicit1080)continue;
         // Prefer a broadly compatible 1080p MP4 when available; do not simply
         // take the first file in the archive (often a tiny preview or low-res copy).
-        int qualityClass=(verified1080||explicit1080)?3:(height>=720||lowerName.matches(".*(?:720p|1280x720).*"))?2:1;
+        int qualityClass=(verified1080||explicit1080)?5:(height>=720||lowerName.matches(".*(?:720p|1280x720).*"))?4:1;
+        if(hls)qualityClass=Math.max(qualityClass,3);
+        if(dash)qualityClass=Math.max(qualityClass,2);
         if(height>1080||width>1920)qualityClass=Math.min(qualityClass,2);
         long size=Math.max(0L,file.optLong("size",0L));
         long score=(long)qualityClass*1000000000000L+Math.min(size,999999999L);
@@ -1519,7 +1541,7 @@ public class MainActivity extends Activity {
         if(record==null||record.title.isEmpty())continue;
         String metadataPage=record.metadataUrl;
         items.add(new VodItem(record.title,"meta:"+record.id,"",
-            "影片资料 · "+record.metadataProvider+" · 暂无已验证直播放源"+(metadataPage.isEmpty()?"":" · "+metadataPage)));
+            "影片资料 · "+record.metadataProvider+" · 暂无已验证直播放源"+(metadataPage.isEmpty()?"":" · "+metadataPage),record.posterUrl));
       }
     }catch(Exception ignored){}
     return items;
@@ -1576,6 +1598,10 @@ public class MainActivity extends Activity {
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
       ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
+      CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+      boolean titleSearch=category.startsWith("搜索：");
+      String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
+      if(titleSearch&&!searchTerm.isEmpty())sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
@@ -1585,8 +1611,6 @@ public class MainActivity extends Activity {
           for(VodItem item:cctvItems)if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);
         }
 
-        boolean titleSearch=category.startsWith("搜索：");
-        String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
         String q="mediatype:movies";
         if(titleSearch){
           String term=searchTerm.replace("\\"," ").replace("\""," ").replaceAll("[\\r\\n]+"," ").trim();
@@ -1749,12 +1773,7 @@ public class MainActivity extends Activity {
         // Collect independent catalogue providers by completion order. Waiting on
         // each Future in submission order can accidentally add three full timeouts
         // together when the first provider is slow.
-        CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
-        // Metadata recall is independent of direct-stream lookup. A film can therefore
-        // appear in search even when no openly licensed MP4 exists in public archives.
-        if(titleSearch&&!searchTerm.isEmpty()){
-          sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
-        }
+        // Metadata search is already running in parallel with direct-stream search.
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
         if(useCommonsPublic)sourceFutures.add(sourceCompletion.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category))));
         String commonsQuery=null;
@@ -1917,6 +1936,9 @@ public class MainActivity extends Activity {
     return "";
   }
   private void loadVodPoster(ImageView target,String identifier,String title){
+    loadVodPoster(target,identifier,title,"");
+  }
+  private void loadVodPoster(ImageView target,String identifier,String title,String suppliedPosterUrl){
     target.setTag(identifier);
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
@@ -1924,11 +1946,11 @@ public class MainActivity extends Activity {
     try{posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
-        String imageUrl="";
-        if(identifier.startsWith("commons:")||identifier.startsWith("commons-search:"))imageUrl=fetchCommonsPosterUrl(identifier);
-        else if(!identifier.startsWith("loc:")&&!identifier.startsWith("cctv:"))
+        String imageUrl=suppliedPosterUrl==null?"":suppliedPosterUrl;
+        if(imageUrl.isEmpty()&&(identifier.startsWith("commons:")||identifier.startsWith("commons-search:")))imageUrl=fetchCommonsPosterUrl(identifier);
+        else if(imageUrl.isEmpty()&&!identifier.startsWith("loc:")&&!identifier.startsWith("cctv:")&&!identifier.startsWith("meta:"))
           imageUrl="https://archive.org/services/img/"+URLEncoder.encode(identifier,"UTF-8");
-        if(!imageUrl.isEmpty()){
+        if(!imageUrl.isEmpty()&&imageUrl.startsWith("https://")){
           connection=(HttpURLConnection)new URL(imageUrl).openConnection();
           connection.setConnectTimeout(2500);connection.setReadTimeout(3500);connection.setInstanceFollowRedirects(true);
           connection.setRequestProperty("User-Agent","MyTV/1.81 Android TV");
@@ -2192,7 +2214,12 @@ public class MainActivity extends Activity {
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
-      pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);MediaItem media=MediaItem.fromUri(item.url);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+      pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
+       String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT).split("\\?")[0];
+       MediaItem.Builder mediaBuilder=new MediaItem.Builder().setUri(item.url);
+       if(mediaPath.endsWith(".m3u8"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8);
+       else if(mediaPath.endsWith(".mpd"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD);
+       MediaItem media=mediaBuilder.build();vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
@@ -2495,7 +2522,7 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=120;int shown=0,totalMatches=0;
+    final int maxRows=60;int shown=0,totalMatches=0;
     ArrayList<Integer> visibleIndexes=new ArrayList<>();
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
@@ -2576,7 +2603,7 @@ public class MainActivity extends Activity {
     return count;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+119)/120);
+    int pages=Math.max(1,(total+59)/60);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){

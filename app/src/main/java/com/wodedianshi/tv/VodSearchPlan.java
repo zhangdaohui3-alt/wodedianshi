@@ -37,6 +37,7 @@ public final class VodSearchPlan {
 
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         String phrase = quote(cleaned);
+        String[] terms = cleaned.split(" ");
         boolean hasHan = raw != null && raw.codePoints()
                 .anyMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN);
         String regionClause = "";
@@ -59,6 +60,24 @@ public final class VodSearchPlan {
         queries.add("mediatype:movies AND (title:" + phrase
                 + " OR description:" + phrase + " OR subject:" + phrase
                 + " OR creator:" + phrase + ")" + regionClause);
+        // Region tags in public archives are often incomplete. Keep a second,
+        // region-neutral pass so a title is not hidden by missing language metadata.
+        queries.add("mediatype:movies AND (title:" + phrase
+                + " OR description:" + phrase + " OR subject:" + phrase
+                + " OR creator:" + phrase + ")");
+        if (terms.length > 1) {
+            StringBuilder relaxed = new StringBuilder("mediatype:movies AND (");
+            for (int i = 0; i < terms.length; i++) {
+                if (i > 0) relaxed.append(" OR ");
+                String term = quote(terms[i]);
+                relaxed.append("title:").append(term)
+                        .append(" OR description:").append(term)
+                        .append(" OR subject:").append(term)
+                        .append(" OR creator:").append(term);
+            }
+            relaxed.append(")");
+            queries.add(relaxed.toString());
+        }
         StringBuilder titleTokens = new StringBuilder("mediatype:movies AND (");
         for (int i = 0; i < termsCount(cleaned); i++) {
             if (i > 0) titleTokens.append(" AND ");
@@ -67,7 +86,6 @@ public final class VodSearchPlan {
         titleTokens.append(")");
         queries.add(titleTokens.toString() + regionClause);
 
-        String[] terms = cleaned.split(" ");
         if (terms.length > 1) {
             StringBuilder allFields = new StringBuilder("mediatype:movies AND ");
             for (int i = 0; i < terms.length; i++) {
