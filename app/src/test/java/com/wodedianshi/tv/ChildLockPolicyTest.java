@@ -31,6 +31,12 @@ public class ChildLockPolicyTest {
         assertFalse(ChildLockPolicy.isBlocked(at(Calendar.MONDAY, 23, 0), 22*60, 22*60, 0x7f));
     }
 
+    @Test public void staleDayReadDoesNotCarryUsageIntoNewDay() {
+        assertEquals(0L, ChildLockPolicy.usageForDate("2026-11-08", "2026-11-09", 45L * 60L * 1000L));
+        assertEquals(45L * 60L * 1000L, ChildLockPolicy.usageForDate("2026-11-09", "2026-11-09", 45L * 60L * 1000L));
+        assertEquals(0L, ChildLockPolicy.usageForDate("2026-11-09", "2026-11-09", -1L));
+    }
+
     @Test public void pinHashIsStableAndNotPlainText() {
         String hash = ChildLockPolicy.hashPin("1234", "test-salt");
         assertEquals(64, hash.length());
