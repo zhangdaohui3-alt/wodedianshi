@@ -107,6 +107,7 @@ public class MainActivity extends Activity {
   private int selected = -1;
   // Local parental controls: elapsed-time accounting is monotonic and only runs while the app is foregrounded.
   private long childLockLastElapsed=0L;
+  private long childLockLastWall=0L;
   private Runnable childLockTicker;
   private AlertDialog childLockDialog;
   private long playbackGeneration = 0;
@@ -3862,15 +3863,29 @@ public class MainActivity extends Activity {
   }
   private void updateChildUsage(){
     long now=android.os.SystemClock.elapsedRealtime();
-    if(childLockLastElapsed<=0L){childLockLastElapsed=now;return;}
+    long wall=System.currentTimeMillis();
+    if(childLockLastElapsed<=0L){childLockLastElapsed=now;childLockLastWall=wall;return;}
     long delta=Math.max(0L,Math.min(43200000L,now-childLockLastElapsed));
     childLockLastElapsed=now;
+    long previousWall=childLockLastWall;
+    childLockLastWall=wall;
     if(delta==0L)return;
     android.content.SharedPreferences p=childPrefs();
     String day=childTodayKey();
     String saved=p.getString("child_usage_day","");
-    long used=saved.equals(day)?Math.max(0L,p.getLong("child_usage_ms",0L)):0L;
-    p.edit().putString("child_usage_day",day).putLong("child_usage_ms",used+delta).apply();
+    long used;
+    if(saved.equals(day)){
+      used=Math.max(0L,p.getLong("child_usage_ms",0L))+delta;
+    }else{
+      Calendar midnight=Calendar.getInstance();
+      midnight.set(Calendar.HOUR_OF_DAY,0);midnight.set(Calendar.MINUTE,0);
+      midnight.set(Calendar.SECOND,0);midnight.set(Calendar.MILLISECOND,0);
+      long sinceMidnight=Math.max(0L,wall-midnight.getTimeInMillis());
+      // If the foreground session crossed midnight, attribute only the post-midnight
+      // portion to the new day; the previous day's saved total remains separate.
+      used=Math.min(delta,sinceMidnight);
+    }
+    p.edit().putString("child_usage_day",day).putLong("child_usage_ms",used).apply();
   }
   private boolean isChildLockCurrentlyActive(){
     android.content.SharedPreferences p=childPrefs();
@@ -4008,6 +4023,7 @@ public class MainActivity extends Activity {
   protected void onStart(){
     super.onStart();
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
+    childLockLastWall=System.currentTimeMillis();
     if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);
     childLockTicker=()->{if(isFinishing())return;updateChildUsage();enforceChildLock();uiHandler.postDelayed(childLockTicker,30000L);};
     uiHandler.postDelayed(childLockTicker,30000L);
@@ -4018,6 +4034,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){updateChildUsage();childLockLastElapsed=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onStop(){updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
   protected void onDestroy(){if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
