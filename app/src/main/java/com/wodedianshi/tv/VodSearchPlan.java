@@ -36,9 +36,13 @@ public final class VodSearchPlan {
         queries.add("mediatype:movies AND (title:" + phrase
                 + " OR description:" + phrase + " OR subject:" + phrase
                 + " OR creator:" + phrase + ")");
-        queries.add("mediatype:movies AND (title:" + phrase
-                + " OR title:" + quote(cleaned.replace(" ", " AND "))
-                + " OR identifier:" + quote(cleaned.replace(" ", "")) + ")");
+        StringBuilder titleTokens = new StringBuilder("mediatype:movies AND (");
+        for (int i = 0; i < termsCount(cleaned); i++) {
+            if (i > 0) titleTokens.append(" AND ");
+            titleTokens.append("title:").append(quote(cleaned.split(" ")[i]));
+        }
+        titleTokens.append(")");
+        queries.add(titleTokens.toString());
 
         String[] terms = cleaned.split(" ");
         if (terms.length > 1) {
@@ -62,6 +66,8 @@ public final class VodSearchPlan {
         }
         return Collections.unmodifiableList(new ArrayList<>(queries));
     }
+
+    private static int termsCount(String value) { return value.split(" ").length; }
 
     private static String quote(String value) {
         return "\"" + value.replace("\\", " ").replace("\"", " ") + "\"";
