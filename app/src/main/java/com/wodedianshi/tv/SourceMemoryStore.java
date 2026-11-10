@@ -68,7 +68,9 @@ public final class SourceMemoryStore {
                 String key = it.next();
                 if (all.optLong(key, 0L) <= now) it.remove();
             }
-            all.put(StableKey.url(url), now + durationMs);
+            all.put(StableKey.url(SourceSelectionPolicy.endpointKey(url)), now + durationMs);
+            // Remove exact-key variants after migrating them to the canonical endpoint key.
+            all.remove(StableKey.url(url));
             all.remove(StableKey.legacyUrl(url));
             trimOldest(all);
             prefs.edit().putString(COOLDOWNS, all.toString()).apply();
@@ -80,7 +82,9 @@ public final class SourceMemoryStore {
         try {
             JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(COOLDOWNS, "{}"));
-            long until = all.optLong(StableKey.url(url), 0L);
+            long until = all.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
+            // Read pre-canonical v2 and legacy keys so existing cooldowns survive upgrades.
+            if (until <= 0L) until = all.optLong(StableKey.url(url), 0L);
             if (until <= 0L) until = all.optLong(StableKey.legacyUrl(url), 0L);
             return until > System.currentTimeMillis();
         } catch (Exception ignored) { return false; }
