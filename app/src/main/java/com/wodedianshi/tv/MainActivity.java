@@ -748,7 +748,7 @@ public class MainActivity extends Activity {
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
-    String[] categories={"我的收藏","播放记录","电影","电视剧","综艺","纪录片","动漫","正版平台"};
+    String[] categories={"我的收藏","播放记录","电影","电视剧","综艺","纪录片","动漫"};
     // Hover is tracked by the dialog root so leaving the strip is observable.
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);
     categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
@@ -767,9 +767,6 @@ public class MainActivity extends Activity {
         // Resolve the clicked view at click time; never reuse a stale hover/focus row.
         Button clicked=(Button)v;String chosen=clicked.getText().toString();
         setVodCategoryHover(null);
-        // Platform navigation is not a catalogue category: do not overwrite the
-        // active film category or let the refresh button search for "正版平台".
-        if("正版平台".equals(chosen)){openOfficialVodPlatforms();return;}
         activeVodCategory=chosen;activeVodQuery="";query.setText("");
         vodCategoryFocusTarget=clicked;
         updateVodCategoryHighlight(categoryButtons,chosen);
@@ -897,7 +894,7 @@ public class MainActivity extends Activity {
   private String vodCacheKey(String category){
     // These two catalogue categories had an incorrect CCTV documentary mapping.
     // Use a fresh cache namespace so an older, duplicated result list is not reused.
-    String revision=("多源精选".equals(category)||"精选电影".equals(category))?"9":"8";
+    String revision="10";
     String regionKey=category.startsWith("搜索：")?"_"+activeVodRegion:"";
     return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode())+regionKey;
   }
@@ -1188,6 +1185,20 @@ public class MainActivity extends Activity {
     // Keep the fixed GridView cell geometry from 2.8; no scaling/reflow.
     card.setScaleX(1f);card.setScaleY(1f);card.setElevation(dp(8));
   }
+  private boolean handleVodCardHover(View card,android.view.MotionEvent event){
+    if(card==null||event==null)return false;
+    int action=event.getActionMasked();
+    if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+      showVodMouseHover(card);
+    }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
+      int[] location=new int[2];card.getLocationOnScreen(location);
+      float x=event.getRawX(),y=event.getRawY();
+      boolean stillInside=x>=location[0]&&x<location[0]+card.getWidth()
+          &&y>=location[1]&&y<location[1]+card.getHeight();
+      if(!stillInside)clearVodMouseHover();
+    }
+    return false;
+  }
   private void configureVodMouseTarget(View card,View... surfaces){
     // GridView alone owns hover state; child-level listeners race at Android 9 row boundaries.
     if(Build.VERSION.SDK_INT>=24){
@@ -1240,6 +1251,11 @@ public class MainActivity extends Activity {
       loadVodPoster(holder.poster,item.identifier,item.title,item.posterUrl);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
+      View.OnHoverListener cardHover=(view,event)->handleVodCardHover(card,event);
+      card.setOnHoverListener(cardHover);
+      holder.poster.setOnHoverListener(cardHover);
+      holder.title.setOnHoverListener(cardHover);
+      holder.meta.setOnHoverListener(cardHover);
       configureVodMouseTarget(card,holder.poster,holder.title,holder.meta);
       // Make every visible poster/text surface an explicit mouse click target.
       // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
@@ -1667,7 +1683,7 @@ public class MainActivity extends Activity {
       CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
       boolean titleSearch=category.startsWith("搜索：");
       String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
-      if(titleSearch&&!searchTerm.isEmpty())sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
+      // Search results must be directly playable catalogue entries, not metadata-only cards.
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
@@ -1766,7 +1782,7 @@ public class MainActivity extends Activity {
         // This avoids letting one broad query occupy the queue with pages 1-3 while
         // Chinese/regional query variants wait behind it. Later pages still run,
         // preserving catalogue breadth after the first-page coverage is queued.
-        for(VodSearchPlan.PageRequest pageRequest:VodSearchPlan.orderedPages(queries.size(),3)){
+        for(VodSearchPlan.PageRequest pageRequest:VodSearchPlan.orderedPages(queries.size(),titleSearch?4:3)){
           if(Thread.currentThread().isInterrupted())break;
           final String pageQuery=queries.get(pageRequest.queryIndex);
           final int pageNumber=pageRequest.page;
@@ -1918,7 +1934,7 @@ public class MainActivity extends Activity {
           renderVodItems(category,result,status,results,false);
           status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
         }else if(cached.isEmpty()){
-          status.setText(err==null?"暂时没有检索到匹配的影片资料或可验证直播放源。可换关键词或稍后重试。":"点播目录暂时无法连接："+err);
+          status.setText(err==null?"暂时没有找到可直接播放且权利状态可核验的影片。可尝试简短片名、原名或中英文名称。":"点播目录暂时无法连接："+err);
         }else{
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
