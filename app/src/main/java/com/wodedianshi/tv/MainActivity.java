@@ -1759,38 +1759,33 @@ public class MainActivity extends Activity {
 
         ArrayList<String> queries=new ArrayList<>();
         if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm,requestRegion));
+        else if(VodCategoryQueryPolicy.handles(category))queries.addAll(VodCategoryQueryPolicy.queriesFor(category));
         else queries.add(q);
-        if("戏曲".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
-          queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
-        }else if("1080P高清电影".equals(category)){
-          queries.add("mediatype:movies AND (title:1080p OR title:1080i OR description:1080p OR description:1920x1080)");
-          queries.add("mediatype:movies AND (title:full HD OR title:fullhd OR subject:1080p)");
-        }
-        // Chinese film records are inconsistently catalogued; search several independent
-        // title/language/region vocabularies rather than trusting one query field.
-        if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
-          String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
-          String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
-          String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
-          String silent="mediatype:movies AND (title:Chinese silent OR subject:Chinese silent film OR title:China film)";
-          for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
-        }else if("中国经典影像".equals(category)){
-          queries.add("mediatype:movies AND (language:chi OR language:zho OR title:Chinese OR title:Mandarin OR subject:Chinese cinema) AND (title:classic OR subject:classic film OR subject:feature film)");
-          queries.add("mediatype:movies AND (title:Hong Kong classic OR title:Taiwan classic OR subject:Hong Kong cinema OR subject:Chinese cinema)");
-        }else if("中国动画".equals(category)||"中文动画".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
-        }else if("中国历史影像".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese history documentary OR title:China history documentary OR subject:Chinese history OR subject:Chinese historical documentary)");
-          queries.add("mediatype:movies AND (title:China newsreel OR title:Chinese archive footage OR subject:China historical footage)");
-        }else if("中国纪录片".equals(category)){
-          queries.add("mediatype:movies AND (title:China documentary OR title:Chinese documentary OR subject:Chinese documentary OR language:chi OR language:zho)");
-        }else if("多源精选".equals(category)){
-          queries.add("mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy) AND (language:English OR language:eng)");
-          queries.add("mediatype:movies AND (subject:science_fiction OR subject:short film OR subject:educational film) AND (language:English OR language:eng)");
-        }else if("精选电影".equals(category)||"世界公版电影".equals(category)){
-          queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
-          queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema)");
+        if(!VodCategoryQueryPolicy.handles(category)){
+          if("戏曲".equals(category)){
+            queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
+            queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
+          }else if("1080P高清电影".equals(category)){
+            queries.add("mediatype:movies AND (title:1080p OR title:1080i OR description:1080p OR description:1920x1080)");
+            queries.add("mediatype:movies AND (title:full HD OR title:fullhd OR subject:1080p)");
+          }
+          // Chinese film records are inconsistently catalogued; search several independent
+          // title/language/region vocabularies rather than trusting one query field.
+          if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
+            String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
+            String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
+            String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
+            String silent="mediatype:movies AND (title:Chinese silent OR subject:Chinese silent film OR title:China film)";
+            for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
+          }else if("中国动画".equals(category)||"中文动画".equals(category)){
+            queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
+          }else if("多源精选".equals(category)){
+            queries.add("mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy) AND (language:English OR language:eng)");
+            queries.add("mediatype:movies AND (subject:science_fiction OR subject:short film OR subject:educational film) AND (language:English OR language:eng)");
+          }else if("精选电影".equals(category)||"世界公版电影".equals(category)){
+            queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
+            queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema)");
+          }
         }
         if("精选电影".equals(category)){
           queries.add("collection:feature_films AND mediatype:movies AND (language:English OR language:eng) AND (title:classic OR subject:classic film OR subject:feature film)");
