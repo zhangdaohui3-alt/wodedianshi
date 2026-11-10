@@ -211,23 +211,8 @@ public class SourceUpdateWorker extends Worker {
     Entry(String n,String u,String g,boolean saved){name=n;url=u;group=g;savedSource=saved;}
   }
   private void parsePlaylist(String data,List<Entry> out){
-    String name=null,group="",pendingGroup="";
-    for(String raw:data.replace("\uFEFF","").replace('\r','\n').split("\n")){
-      if(out.size()>=MAX_DISCOVERY_PER_FEED)break;
-      String line=raw.trim();if(line.isEmpty())continue;
-      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
-      if(line.startsWith("#EXTINF")){
-        int comma=-1;boolean quote=false;for(int i=0;i<line.length();i++){char ch=line.charAt(i);if(ch=='"')quote=!quote;else if(ch==','&&!quote){comma=i;break;}}
-        name=comma>=0?line.substring(comma+1).trim():"";
-        if(name.isEmpty()){java.util.regex.Matcher m=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);if(m.find())name=m.group(1).trim();}
-        if(name.isEmpty())name="未命名频道";
-        group=pendingGroup;pendingGroup="";
-        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
-      }else if(!line.startsWith("#")&&(line.startsWith("http://")||line.startsWith("https://"))){
-        if(name!=null&&!name.trim().isEmpty())out.add(new Entry(name,line,group));
-        name=null;group="";
-        if(out.size()>=MAX_DISCOVERY_PER_FEED)break;
-      }
+    for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
+      out.add(new Entry(source.name,source.url,source.group));
     }
   }
   private int sourceQualityScore(String address){
