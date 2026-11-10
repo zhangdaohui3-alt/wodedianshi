@@ -2117,26 +2117,9 @@ public class MainActivity extends Activity {
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
   }
 
-  // Official-platform navigation is deliberately separate from direct VOD search.
-  // Prefer an installed official app; only offer the official website as an explicit fallback.
+  // Official VOD navigation is isolated in its own UI module.
   private void openOfficialVodPlatforms(){
-    String[] names={"1905电影网","央视频","爱奇艺","腾讯视频","优酷","芒果TV","哔哩哔哩"};
-    String[] packages={"","com.cctv.yangshipin.app.androidp","com.qiyi.video","com.tencent.qqlive","com.youku.phone","com.hunantv.imgo.activity","tv.danmaku.bili"};
-    String[] urls={"https://www.1905.com/","https://www.yangshipin.cn/","https://www.iqiyi.com/","https://v.qq.com/","https://www.youku.com/","https://www.mgtv.com/","https://www.bilibili.com/"};
-    new AlertDialog.Builder(this).setTitle("正版影视平台")
-      .setItems(names,(dialog,which)->{
-        String packageName=packages[which];
-        try{
-          Intent launch=packageName.isEmpty()?null:getPackageManager().getLaunchIntentForPackage(packageName);
-          if(launch!=null){launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(launch);return;}
-        }catch(Exception ignored){}
-        new AlertDialog.Builder(this).setTitle(names[which])
-          .setMessage("没有检测到该平台的官方客户端。是否打开其官方网站？平台内容、会员要求及当前地区可用性以平台实际提供为准。")
-          .setPositiveButton("打开官方网站",(d,w)->{
-            try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which])));}
-            catch(Exception e){toast("无法打开官方入口，请检查网络或浏览器");}
-          }).setNegativeButton("取消",null).show();
-      }).setNegativeButton("关闭",null).show();
+    OfficialMovieNavigation.show(this);
   }
   private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
