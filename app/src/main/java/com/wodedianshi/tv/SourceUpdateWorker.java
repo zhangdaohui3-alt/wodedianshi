@@ -72,6 +72,7 @@ public class SourceUpdateWorker extends Worker {
         knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
+      HashSet<String> discoveredEndpoints=new HashSet<>();
       // Include the user's already-saved backup URLs in the rotating health-check
       // pool. Previously only URLs rediscovered in public playlists were probed,
       // so a saved backup could silently die without ever losing its old score.
@@ -111,8 +112,19 @@ public class SourceUpdateWorker extends Worker {
           if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
           ArrayList<Entry> feedCandidates=new ArrayList<>();
           parsePlaylist(data,feedCandidates);
-          int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
-          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          // Deduplicate across all directories before spending the small rotating
+          // probe budget. Public IPTV indexes often repeat the same endpoint in
+          // country, category and global playlists; duplicates must not crowd out
+          // distinct regional backups in the next scan window.
+          int addedFromFeed=0;
+          for(Entry candidate:feedCandidates){
+            if(candidates.size()>=MAX_DISCOVERY_CANDIDATES)break;
+            if(addedFromFeed>=MAX_DISCOVERY_PER_FEED)break;
+            if(SourceSelectionPolicy.markEndpointIfNew(discoveredEndpoints,candidate.url)){
+              candidates.add(candidate);
+              addedFromFeed++;
+            }
+          }
           feedsOk++;
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
