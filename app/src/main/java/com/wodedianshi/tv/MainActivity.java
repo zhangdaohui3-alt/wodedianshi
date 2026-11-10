@@ -2062,7 +2062,7 @@ public class MainActivity extends Activity {
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
-    if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
+    if(savedPosition>10000){android.app.AlertDialog resumeDialog=new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).create();resumeDialog.show();Button resumeButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE);Button restartButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE);Button cancelButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL);if(resumeButton!=null)styleTvButton(resumeButton,Color.rgb(25,39,59));if(restartButton!=null)styleTvButton(restartButton,Color.rgb(25,39,59));if(cancelButton!=null)styleTvButton(cancelButton,Color.rgb(25,39,59));return;}
     startVodPlayback(item,0);
   }
   private VodItem findNextVodItem(VodItem current){
@@ -2202,7 +2202,7 @@ public class MainActivity extends Activity {
     Button replayEnded=new Button(this);replayEnded.setText("重新播放");replayEnded.setAllCaps(false);
     Button nextEnded=new Button(this);nextEnded.setText("下一部");nextEnded.setAllCaps(false);
     Button backEnded=new Button(this);backEnded.setText("返回影片列表");backEnded.setAllCaps(false);
-    for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
+    for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setFocusableInTouchMode(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);styleTvButton(action,Color.rgb(25,39,59));endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
     endedPanel.addView(endedTitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedSubtitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedActions,new LinearLayout.LayoutParams(-1,-2));
     FrameLayout.LayoutParams endedParams=new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER);endedParams.leftMargin=dp(24);endedParams.rightMargin=dp(24);stage.addView(endedPanel,endedParams);
     replayEnded.setOnClickListener(v->{endedPanel.setVisibility(View.GONE);if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
