@@ -2789,8 +2789,10 @@ public class MainActivity extends Activity {
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
     final long now=System.currentTimeMillis();
     final long last=cachePrefs.getLong("china_supplement_last_success",0L);
+    final int feedVersion=2;
+    final int cachedFeedVersion=cachePrefs.getInt("china_supplement_feed_version",0);
     final long refreshInterval=12L*60L*60L*1000L;
-    if(last>0L&&now-last<refreshInterval){
+    if(cachedFeedVersion>=feedVersion&&last>0L&&now-last<refreshInterval){
       info.setText("已使用本地频道缓存 · 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
       return;
     }
@@ -2817,7 +2819,8 @@ public class MainActivity extends Activity {
       // actual additions and avoid a full list rebuild when nothing changed.
       if(total>0)persist();
       if(err.split(";").length<feeds.length){
-        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
+        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis())
+            .putInt("china_supplement_feed_version",feedVersion).apply();
       }
       runOnUiThread(()->{
         if(isFinishing())return;
