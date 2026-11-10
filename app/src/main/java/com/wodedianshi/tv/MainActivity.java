@@ -683,9 +683,13 @@ public class MainActivity extends Activity {
       b.setOnClickListener(v->{
         // Resolve the clicked view at click time; never reuse a stale hover/focus row.
         Button clicked=(Button)v;String chosen=clicked.getText().toString();
-        activeVodCategory=chosen;activeVodQuery="";query.setText("");setVodCategoryHover(null);
+        setVodCategoryHover(null);
+        // Platform navigation is not a catalogue category: do not overwrite the
+        // active film category or let the refresh button search for "正版平台".
+        if("正版平台".equals(chosen)){openOfficialVodPlatforms();return;}
+        activeVodCategory=chosen;activeVodQuery="";query.setText("");
         updateVodCategoryHighlight(categoryButtons,chosen);
-        if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else if("正版平台".equals(chosen))openOfficialVodPlatforms();else loadVodCatalogue(chosen,panel);
+        if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
       });
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
