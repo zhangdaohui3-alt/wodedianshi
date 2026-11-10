@@ -213,7 +213,7 @@ public final class ParentRemoteLockManager {
             setLocked(true, "检测到系统时间被修改，已触发安全锁定");
             log("clock jump detected wallDelta=" + wallDelta + " elapsedDelta=" + elapsedDelta);
         }
-        if (elapsedDelta > 0L) addUsage(elapsedDelta, nowWall);
+        if (!locked && elapsedDelta > 0L) addUsage(elapsedDelta, nowWall);
         if (!isOnline()) applyOfflinePolicy(); else evaluate();
     }
 
@@ -264,9 +264,10 @@ public final class ParentRemoteLockManager {
     }
 
     private void applyOfflinePolicy() {
+        if (System.currentTimeMillis() < prefs.getLong("remote_unlock_until", 0L)) { setLocked(false, ""); return; }
         Config c = config;
         boolean enabled = prefs.getBoolean("remote_enabled", false);
-        if (ParentRemoteLockPolicy.shouldLockOffline(c != null && c.offlineStrict, c != null, enabled)) {
+        if (ParentRemoteLockPolicy.shouldLockOffline(c != null && c.lockEnable && c.offlineStrict, c != null, enabled)) {
             setLocked(true, c == null ? "尚无有效云端缓存，无法确认家长规则" : "网络已断开，离线严格策略要求管理员解锁");
         } else if (c != null) {
             evaluate();
