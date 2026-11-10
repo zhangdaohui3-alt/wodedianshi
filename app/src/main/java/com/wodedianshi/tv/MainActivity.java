@@ -1746,12 +1746,25 @@ public class MainActivity extends Activity {
     purgeCancelledTasks(vodSourceWorker);
   }
   private String httpGetFast(String address)throws Exception{
+    // Future.cancel(true) interrupts catalogue workers. Check that signal before
+    // opening a socket and between reads so stale searches release resources
+    // promptly instead of continuing to parse responses no longer requested.
+    if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("点播检索已取消");
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-    c.setConnectTimeout(2500);c.setReadTimeout(3500);c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
+    c.setConnectTimeout(2500);c.setReadTimeout(3500);c.setInstanceFollowRedirects(true);c.setUseCaches(false);
+    c.setRequestProperty("User-Agent","MyTV/2.0 Android TV");
     c.setRequestProperty("Accept","application/json,*/*");
     try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
       byte[] buf=new byte[8192];int n,total=0;final int maxBytes=2*1024*1024;
-      while((n=in.read(buf))!=-1){total+=n;if(total>maxBytes)throw new IOException("点播目录响应超过2MB，已停止读取以保护设备内存");out.write(buf,0,n);}
+      while(true){
+        if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("点播检索已取消");
+        n=in.read(buf);
+        if(n==-1)break;
+        if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("点播检索已取消");
+        total+=n;if(total>maxBytes)throw new IOException("点播目录响应超过2MB，已停止读取以保护设备内存");
+        out.write(buf,0,n);
+      }
+      if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("点播检索已取消");
       return out.toString("UTF-8");
     }finally{c.disconnect();}
   }
