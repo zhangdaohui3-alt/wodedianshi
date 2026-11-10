@@ -15,7 +15,7 @@ public final class VodItemTitleIdentity {
         Matcher yearMatcher = YEAR.matcher(value);
         String year = yearMatcher.find() ? yearMatcher.group(1) : "unknown-year";
 
-        value = value.replaceAll("(?i)\\b(?:1080p|720p|4k|2160p|高清|超清|超高清|国语|粤语|中字|hd|fhd)\\b", " ");
+        value = value.replaceAll("(?i)(?<![a-z0-9])(?:1080p|720p|4k|2160p|hd|fhd)(?![a-z0-9])|高清|超清|超高清|国语|粤语|中字", " ");
         value = value.replaceAll("\\((?!(?:18|19|20)\\d{2}\\))[^)]*\\)|（[^）]*）|\\[[^]]*\\]|【[^】]*】", " ");
         value = value.replaceAll("(?<!\\d)(?:18|19|20)\\d{2}(?!\\d)", " ");
         value = value.toLowerCase(Locale.ROOT)
