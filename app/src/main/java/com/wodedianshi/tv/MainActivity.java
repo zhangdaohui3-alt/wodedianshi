@@ -110,6 +110,9 @@ public class MainActivity extends Activity {
   private long childLockLastWall=0L;
   private Runnable childLockTicker;
   private AlertDialog childLockDialog;
+  private ParentRemoteLockManager remoteParentLockManager;
+  private AlertDialog remoteParentLockDialog;
+  private boolean remoteLockOverlayShowing=false;
   private long playbackGeneration = 0;
   private String currentMediaId = "";
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
@@ -128,6 +131,15 @@ public class MainActivity extends Activity {
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
+    remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
+      @Override public void onLockStateChanged(boolean locked, String reason) {
+        if (locked) enforceRemoteParentLock(reason);
+        else dismissRemoteParentLock();
+      }
+      @Override public void onStatus(String message) {
+        android.util.Log.i("MyTVRemoteLock", message);
+      }
+    });
     worker.execute(()->{
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       restore();
@@ -485,7 +497,7 @@ public class MainActivity extends Activity {
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else childLockSettingsDialog();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else configureRemoteParentLock();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
@@ -2981,6 +2993,9 @@ public class MainActivity extends Activity {
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
+    // While the parental overlay is active, consume all keys delivered to this app window.
+    // Android reserves HOME for the system; ordinary apps cannot reliably intercept it.
+    if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return true;
     if(fullScreenPlayback&&event.getKeyCode()==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_DOWN){if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())closeFullscreenChannelMenu();else exitFullScreenPlayback();}return true;}
     if(fullScreenPlayback&&!fullscreenRemoteDialogOpen&&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())){
       int key=event.getKeyCode();
@@ -3187,6 +3202,7 @@ public class MainActivity extends Activity {
     if(categoryMenuItems.getChildCount()>0)categoryMenuItems.getChildAt(0).requestFocus();
   }
   @Override public void onBackPressed(){
+    if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return;
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
     if(fullScreenPlayback){exitFullScreenPlayback();return;}
     // First Back from the channel pane returns focus to the left category menu.
@@ -4062,9 +4078,99 @@ public class MainActivity extends Activity {
     }).setNegativeButton("取消",null).show();
   }
 
+  private void configureRemoteParentLock(){
+    EditText endpoint=new EditText(this);
+    endpoint.setSingleLine(true);
+    endpoint.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
+    endpoint.setHint("https://你的域名/api/parent-lock");
+    endpoint.setText(getSharedPreferences("mytv_remote_parent_lock",0).getString("endpoint",""));
+    new AlertDialog.Builder(this).setTitle("云端家长锁接口")
+      .setMessage("填写 HTTPS 配置接口地址；留空可关闭云端家长锁。服务端需支持 GET 配置，建议同时支持 POST 离线时长上报。")
+      .setView(endpoint).setPositiveButton("保存",(d,w)->{
+        String url=endpoint.getText().toString().trim();
+        if(!url.isEmpty()&&!url.toLowerCase(Locale.ROOT).startsWith("https://")){
+          toast("为保护管理员密码，只允许 HTTPS 接口");return;
+        }
+        getSharedPreferences("mytv_remote_parent_lock",0).edit()
+          .putString("endpoint",url).putBoolean("remote_enabled",!url.isEmpty()).apply();
+        if(remoteParentLockManager!=null)remoteParentLockManager.pollNow();
+        toast(url.isEmpty()?"已关闭云端家长锁":"云端家长锁接口已保存");
+      }).setNegativeButton("取消",null).show();
+  }
+
+  private void enforceRemoteParentLock(String reason){
+    if(isFinishing()||isDestroyed())return;
+    remoteLockOverlayShowing=true;
+    if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
+    if(vodPlayer!=null){try{vodPlayer.pause();vodPlayer.stop();}catch(Exception ignored){}}
+    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
+    if(fullScreenPlayback)exitFullScreenPlayback();
+    if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())return;
+    EditText pin=new EditText(this);
+    pin.setSingleLine(true);
+    pin.setGravity(Gravity.CENTER);
+    pin.setTextColor(Color.WHITE);
+    pin.setHintTextColor(Color.LTGRAY);
+    pin.setHint("输入管理员数字密码");
+    pin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    pin.setTextSize(22);
+    pin.setPadding(dp(24),dp(18),dp(24),dp(18));
+    pin.setSelectAllOnFocus(false);
+    AlertDialog dialog=new AlertDialog.Builder(this).setView(pin).setCancelable(false).create();
+    remoteParentLockDialog=dialog;
+    dialog.setCanceledOnTouchOutside(false);
+    dialog.setOnShowListener(v->{
+      android.view.Window win=dialog.getWindow();
+      if(win!=null){
+        win.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.BLACK));
+        win.setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,android.view.WindowManager.LayoutParams.MATCH_PARENT);
+        win.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN|android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        android.view.WindowManager.LayoutParams lp=win.getAttributes();lp.dimAmount=1f;win.setAttributes(lp);
+      }
+      pin.requestFocus();
+      pin.setOnEditorActionListener((view,action,event)->{
+        submitRemoteParentPin(pin,dialog);return true;
+      });
+      pin.setOnKeyListener((view,key,event)->{
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&(key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_NUMPAD_ENTER)){
+          submitRemoteParentPin(pin,dialog);return true;
+        }
+        return false;
+      });
+    });
+    dialog.show();
+    android.view.Window win=dialog.getWindow();
+    if(win!=null)win.setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,android.view.WindowManager.LayoutParams.MATCH_PARENT);
+    android.util.Log.w("MyTVRemoteLock","show full-screen lock: "+safeDiagnosticDetail(reason));
+  }
+
+  private void submitRemoteParentPin(EditText pin, AlertDialog dialog){
+    String entered=pin.getText().toString().trim();
+    if(remoteParentLockManager!=null&&remoteParentLockManager.verifyAdminPassword(entered)){
+      remoteParentLockManager.grantAdminUnlock(15L*60L*1000L);
+      remoteLockOverlayShowing=false;remoteParentLockDialog=null;dialog.dismiss();
+      toast("管理员验证成功，临时解锁 15 分钟");
+      if(selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive())startCurrentSource();
+    }else{
+      pin.setText("");pin.setError("密码不正确");
+    }
+  }
+
+  private void dismissRemoteParentLock(){
+    remoteLockOverlayShowing=false;
+    if(remoteParentLockDialog!=null){
+      AlertDialog old=remoteParentLockDialog;remoteParentLockDialog=null;
+      if(old.isShowing())old.dismiss();
+    }
+    if(selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+      resumePlaybackOnStart=false;startCurrentSource();
+    }
+  }
+
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){
     super.onStart();
+    if(remoteParentLockManager!=null)remoteParentLockManager.start();
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
     childLockLastWall=System.currentTimeMillis();
     if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);
@@ -4077,6 +4183,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onDestroy(){if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
