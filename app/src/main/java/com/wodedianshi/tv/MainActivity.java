@@ -643,12 +643,11 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     releaseLivePlayerSafely();
     final java.util.ArrayList<Button> vodCategoryHoverTargets=new java.util.ArrayList<>();
-    // Track pointer movement at the dialog content root, not only inside the
-    // category strip. Android 9 TV firmware can omit the strip's HOVER_EXIT
-    // when the pointer crosses directly into the poster GridView.
+    final GridView[] vodGridHoverTarget=new GridView[1];
+    // Track pointer movement at the dialog content root. Some Android 9 TV
+    // firmwares omit child HOVER_EXIT when the pointer crosses between GridView
+    // cards and the category strip, leaving a stale poster highlight behind.
     LinearLayout panel=new LinearLayout(this){
-      // Observe hover before child dispatch. Returning false keeps GridView and
-      // category buttons fully interactive while allowing direct reverse travel.
       @Override public boolean onInterceptHoverEvent(android.view.MotionEvent event){
         int action=event.getActionMasked();
         if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
@@ -660,8 +659,19 @@ public class MainActivity extends Activity {
                 &&y>=loc[1]&&y<loc[1]+candidate.getHeight()){hit=candidate;break;}
           }
           setVodCategoryHover(hit);
+          GridView grid=vodGridHoverTarget[0];
+          boolean insideGrid=false;
+          if(grid!=null&&grid.isShown()){
+            int[] loc=new int[2];grid.getLocationOnScreen(loc);
+            insideGrid=x>=loc[0]&&x<loc[0]+grid.getWidth()
+                &&y>=loc[1]&&y<loc[1]+grid.getHeight();
+          }
+          // Explicitly clear the card ring whenever the pointer leaves the poster
+          // viewport, even if the OEM firmware failed to dispatch HOVER_EXIT.
+          if(hit!=null||!insideGrid)clearVodMouseHover();
         }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
           setVodCategoryHover(null);
+          clearVodMouseHover();
         }
         return super.onInterceptHoverEvent(event);
       }
@@ -735,6 +745,7 @@ public class MainActivity extends Activity {
     // GridView recycles off-screen cards while retaining native touch and D-pad navigation.
     LinearLayout results=new LinearLayout(this);results.setOrientation(1);results.setFocusable(false);
     GridView vodGrid=ensureVodGrid(results,3);
+    vodGridHoverTarget[0]=vodGrid;
     vodGrid.setId(View.generateViewId());
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
