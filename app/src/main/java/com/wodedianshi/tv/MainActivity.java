@@ -607,6 +607,7 @@ public class MainActivity extends Activity {
     if(!prefs.getString("source_update_time","").isEmpty())return;
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
         .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .setInputData(new Data.Builder().putBoolean("bootstrap",true).build())
         .build();
     prefs.edit().putBoolean("source_bootstrap_scheduled_v1",true).apply();
     WorkManager wm=WorkManager.getInstance(this);
@@ -618,17 +619,12 @@ public class MainActivity extends Activity {
         if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED&&state!=WorkInfo.State.CANCELLED)return;
         wm.getWorkInfoByIdLiveData(request.getId()).removeObserver(this);
         if(state==WorkInfo.State.SUCCEEDED){
-          // A worker may legitimately finish without scanning when the user disabled
-          // automatic updates while it was queued. Do not leave the one-time bootstrap
-          // latch set in that case; re-enabling updates must be able to schedule it.
-          boolean scanned=!prefs.getString("source_update_time","").isEmpty();
-          if(!scanned)prefs.edit().putBoolean("source_bootstrap_scheduled_v1",false).apply();
-          if(scanned&&!isFinishing()){
+          if(!isFinishing()){
             reloadChannelsAfterSourceUpdate();
             if(info!=null)info.setText("首次频道目录检查完成，已合并通过连通性初筛的频道与备用线路");
           }
         }else{
-          // Allow a later app launch or manual retry to schedule the bootstrap again.
+          // Allow a later app launch or re-enable action to schedule the bootstrap again.
           prefs.edit().putBoolean("source_bootstrap_scheduled_v1",false).apply();
         }
       }
