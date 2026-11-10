@@ -3867,7 +3867,6 @@ public class MainActivity extends Activity {
     if(childLockLastElapsed<=0L){childLockLastElapsed=now;childLockLastWall=wall;return;}
     long delta=Math.max(0L,Math.min(43200000L,now-childLockLastElapsed));
     childLockLastElapsed=now;
-    long previousWall=childLockLastWall;
     childLockLastWall=wall;
     if(delta==0L)return;
     android.content.SharedPreferences p=childPrefs();
