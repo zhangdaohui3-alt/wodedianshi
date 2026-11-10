@@ -24,7 +24,7 @@ final class RegionCategoryPolicy {
 
     private static String normalize(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT)
-                .replace('臺', '台').replace("澳門", "澳门");
+                .replace('臺', '台').replace('灣', '湾').replace("澳門", "澳门");
     }
 
     private static boolean containsRegionName(String value) {
