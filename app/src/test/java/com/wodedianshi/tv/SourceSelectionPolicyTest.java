@@ -72,6 +72,11 @@ public class SourceSelectionPolicyTest {
                 SourceSelectionPolicy.endpointKey("http://example.com/live.m3u8"));
     }
 
+    @Test public void canonicalEndpointKeyIgnoresClientSideFragment() {
+        assertEquals(SourceSelectionPolicy.endpointKey("https://example.com/live.m3u8#player-a"),
+                SourceSelectionPolicy.endpointKey("https://example.com/live.m3u8#player-b"));
+    }
+
     @Test public void canonicalEndpointKeyPreservesCaseSensitivePathAndQuery() {
         assertNotEquals(SourceSelectionPolicy.endpointKey("http://example.com/Live?token=AbC"),
                 SourceSelectionPolicy.endpointKey("http://example.com/live?token=AbC"));
