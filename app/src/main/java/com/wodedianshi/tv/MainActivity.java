@@ -616,7 +616,7 @@ public class MainActivity extends Activity {
   // Keep explicit references to the active VOD view model; never infer controls by child index.
   private LinearLayout currentVodPanel,currentVodResults;
   private TextView currentVodStatus;
-  private String activeVodCategory="多源精选";
+  private String activeVodCategory="电影";
   private String activeVodQuery="";
   // Keep the user scroll position when the same category finishes background refresh.
   private String currentVodRenderedCategory="";
@@ -665,7 +665,7 @@ public class MainActivity extends Activity {
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
-    String[] categories={"我的收藏","播放记录","电影","公开电视剧","公开综艺","多源精选","中国电影","中国经典影像","中国历史影像","戏曲","1080P高清电影","中国动画","中国纪录片","世界公版电影","纪录片·历史","纪录片·自然","纪录片·科学","战争片","恐怖片","动作片","欧美经典","纪录片","动画","喜剧","科幻","剧情"};
+    String[] categories={"我的收藏","播放记录","电影","电视剧","综艺","纪录片","动漫","正版平台"};
     // Hover is tracked by the dialog root so leaving the strip is observable.
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);
     categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
@@ -685,7 +685,7 @@ public class MainActivity extends Activity {
         Button clicked=(Button)v;String chosen=clicked.getText().toString();
         activeVodCategory=chosen;activeVodQuery="";query.setText("");setVodCategoryHover(null);
         updateVodCategoryHighlight(categoryButtons,chosen);
-        if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
+        if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else if("正版平台".equals(chosen))openOfficialVodPlatforms();else loadVodCatalogue(chosen,panel);
       });
       if(categoryIndex==0){
         Button searchTab=new Button(this);searchTab.setText("搜索");searchTab.setTextSize(13);searchTab.setAllCaps(false);styleTvButton(searchTab,Color.rgb(26,100,160));
@@ -694,7 +694,7 @@ public class MainActivity extends Activity {
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
-    updateVodCategoryHighlight(categoryButtons,"多源精选");
+    updateVodCategoryHighlight(categoryButtons,"电影");
     query.setSingleLine(true);query.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);query.setTextColor(Color.WHITE);query.setHintTextColor(Color.LTGRAY);query.setHint("输入片名/演员/关键词，支持中英文");searchRow.addView(query,new LinearLayout.LayoutParams(0,dp(40),1));
     Button searchButton=new Button(this);searchButton.setText("搜索");searchButton.setAllCaps(false);styleTvButton(searchButton,Color.rgb(26,100,160));searchRow.addView(searchButton,new LinearLayout.LayoutParams(dp(84),dp(40)));
     panel.addView(searchRow,new LinearLayout.LayoutParams(-1,dp(42)));searchRow.setVisibility(View.GONE);
@@ -728,9 +728,9 @@ public class MainActivity extends Activity {
     // Search landing panel inspired by iQIYI: grouped content types, genres,
     // and regions/catalogues are visible directly under the search input.
     String[][] searchGroups={
-      {"内容类型","电影","公开电视剧","公开综艺","纪录片","动画","戏曲","短片","央视公开节目"},
-      {"题材分类","动作","战争","悬疑","犯罪","喜剧","科幻","恐怖","爱情","家庭","历史"},
-      {"地区与片库","中国","华语","香港","台湾","欧美","日本","公版经典","历史影像","自然纪录片"}
+      {"内容类型","电影","电视剧","综艺","纪录片","动漫"},
+      {"题材筛选","动作片","战争片","悬疑","犯罪","喜剧","科幻","恐怖片","爱情","家庭","历史"},
+      {"地区筛选","中国电影","华语经典","香港","台湾","欧美经典","日本"}
     };
     for(String[] group:searchGroups){
       TextView groupTitle=new TextView(this);groupTitle.setText(group[0]);groupTitle.setTextColor(Color.rgb(170,202,230));
@@ -749,7 +749,7 @@ public class MainActivity extends Activity {
       }
       rowScroll.addView(row);suggestionPanel.addView(rowScroll,new LinearLayout.LayoutParams(-1,dp(34)));
     }
-    loadVodCatalogue("多源精选",panel,status,results);
+    loadVodCatalogue("电影",panel,status,results);
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
       if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
@@ -1517,8 +1517,8 @@ public class MainActivity extends Activity {
           q="mediatype:movies AND (title:\""+phrase+"\" OR description:\""+phrase+"\" OR subject:\""+phrase+"\" OR creator:\""+phrase+"\")";
         }
         else if("电影".equals(category))q="mediatype:movies AND (subject:feature film OR subject:public domain OR collection:feature_films)";
-        else if("公开电视剧".equals(category))q="mediatype:movies AND (subject:television OR title:television series OR title:TV series OR collection:television)";
-        else if("公开综艺".equals(category))q="mediatype:movies AND (subject:variety show OR title:variety show OR title:talk show OR subject:talk show)";
+        else if("公开电视剧".equals(category)||"电视剧".equals(category))q="mediatype:movies AND (subject:television OR title:television series OR title:TV series OR collection:television)";
+        else if("公开综艺".equals(category)||"综艺".equals(category))q="mediatype:movies AND (subject:variety show OR title:variety show OR title:talk show OR subject:talk show)";
         else if("纪录片·历史".equals(category))q="mediatype:movies AND subject:documentary AND (subject:history OR title:history OR title:historical)";
         else if("纪录片·自然".equals(category))q="mediatype:movies AND subject:documentary AND (subject:nature OR title:nature OR subject:wildlife)";
         else if("纪录片·科学".equals(category))q="mediatype:movies AND subject:documentary AND (subject:science OR title:science OR subject:technology)";
@@ -1542,7 +1542,7 @@ public class MainActivity extends Activity {
         else if("战争片".equals(category))q="mediatype:movies AND (subject:war OR subject:military OR title:war)";
         else if("恐怖片".equals(category))q="mediatype:movies AND (subject:horror OR title:horror)";
         else if("动作片".equals(category))q="mediatype:movies AND (subject:action OR title:action)";
-        else if("动画".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
+        else if("动画".equals(category)||"动漫".equals(category))q+=" AND (subject:animation OR subject:cartoons)";
         else if("喜剧".equals(category))q+=" AND subject:comedy";
         else if("科幻".equals(category))q+=" AND (subject:science_fiction OR subject:science-fiction)";
         else if("剧情".equals(category))q+=" AND subject:drama";
@@ -2111,6 +2111,28 @@ public class MainActivity extends Activity {
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
+  }
+
+  // Official-platform navigation is deliberately separate from direct VOD search.
+  // Prefer an installed official app; only offer the official website as an explicit fallback.
+  private void openOfficialVodPlatforms(){
+    String[] names={"1905电影网","央视频","爱奇艺","腾讯视频","优酷","芒果TV","哔哩哔哩"};
+    String[] packages={"","com.cctv.yangshipin.app.androidp","com.qiyi.video","com.tencent.qqlive","com.youku.phone","com.hunantv.imgo.activity","tv.danmaku.bili"};
+    String[] urls={"https://www.1905.com/","https://www.yangshipin.cn/","https://www.iqiyi.com/","https://v.qq.com/","https://www.youku.com/","https://www.mgtv.com/","https://www.bilibili.com/"};
+    new AlertDialog.Builder(this).setTitle("正版影视平台")
+      .setItems(names,(dialog,which)->{
+        String packageName=packages[which];
+        try{
+          Intent launch=packageName.isEmpty()?null:getPackageManager().getLaunchIntentForPackage(packageName);
+          if(launch!=null){launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(launch);return;}
+        }catch(Exception ignored){}
+        new AlertDialog.Builder(this).setTitle(names[which])
+          .setMessage("没有检测到该平台的官方客户端。是否打开其官方网站？平台内容、会员要求及当前地区可用性以平台实际提供为准。")
+          .setPositiveButton("打开官方网站",(d,w)->{
+            try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(urls[which])));}
+            catch(Exception e){toast("无法打开官方入口，请检查网络或浏览器");}
+          }).setNegativeButton("取消",null).show();
+      }).setNegativeButton("关闭",null).show();
   }
   private void officialDialog(){
     String[] categories={"央视频道（CCTV）","省级卫视","各省市地方频道","港澳台频道","国内影视与节目"};
