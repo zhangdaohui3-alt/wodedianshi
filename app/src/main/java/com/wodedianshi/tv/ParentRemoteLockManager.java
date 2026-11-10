@@ -136,7 +136,7 @@ public final class ParentRemoteLockManager {
         }
         if (!endpoint.toLowerCase(Locale.ROOT).startsWith("https://")) {
             status("拒绝非 HTTPS 家长锁接口；请配置 https:// 地址");
-            applyOfflinePolicy();
+            applyCachedOrFailClosed();
             return;
         }
         if (!isOnline()) {
@@ -184,7 +184,7 @@ public final class ParentRemoteLockManager {
         } catch (Exception e) {
             status("云端配置获取失败：" + e.getMessage());
             log("config fetch failed: " + e.getClass().getSimpleName());
-            applyOfflinePolicy();
+            if (!isOnline()) applyOfflinePolicy(); else applyCachedOrFailClosed();
         } finally {
             if (c != null) c.disconnect();
         }
@@ -272,6 +272,11 @@ public final class ParentRemoteLockManager {
             return;
         }
         setLocked(false, "");
+    }
+
+    private void applyCachedOrFailClosed() {
+        if (config != null) evaluate();
+        else if (prefs.getBoolean("remote_enabled", false)) setLocked(true, "无法取得有效云端配置且没有可用缓存");
     }
 
     private void applyOfflinePolicy() {
