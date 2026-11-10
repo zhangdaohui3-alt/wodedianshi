@@ -31,8 +31,8 @@ public class SourceUpdateWorker extends Worker {
     StringBuilder errors=new StringBuilder();
      String[] feeds={
        // China-first discovery: domestic and regional channels are read before the global index.
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
        "https://iptv-org.github.io/iptv/countries/cn.m3u",
        "https://iptv-org.github.io/iptv/countries/hk.m3u",
        "https://iptv-org.github.io/iptv/countries/mo.m3u",
@@ -114,7 +114,7 @@ public class SourceUpdateWorker extends Worker {
         finally{if(c!=null)c.disconnect();}
       }
       int savedScanStart=savedPool.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
-      int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      int savedWindow=Math.min(Math.max(1,MAX_PROBES_PER_RUN/3),savedPool.size());
       int discoveryScanStart=candidates.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_scan_cursor",0),candidates.size());
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
