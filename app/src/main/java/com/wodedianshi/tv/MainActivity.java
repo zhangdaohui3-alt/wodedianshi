@@ -187,10 +187,12 @@ public class MainActivity extends Activity {
   private void styleLiveChannelButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);
     b.setTextColor(Color.WHITE);
-    b.setBackground(makeButtonBg(normalColor,false));
+    boolean playingRow=b.getTag() instanceof Integer&&((Integer)b.getTag())==selected;
+    int selectedColor=Color.rgb(28,67,91);
+    b.setBackground(makeButtonBg(playingRow?selectedColor:normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
       saveLiveDiagnostic("CHANNEL_FOCUS",(b.getText()==null?"频道":b.getText().toString())+" focused="+focused);
-      if(!b.isHovered())b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
+      if(!b.isHovered())b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):(playingRow?selectedColor:normalColor),focused));
       b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
       b.setElevation(focused?dp(8):0);
     });
@@ -204,7 +206,7 @@ public class MainActivity extends Activity {
         b.setBackground(hover);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         boolean focused=b.hasFocus();
-        b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):normalColor,focused));
+        b.setBackground(makeButtonBg(focused?Color.rgb(38,82,125):(playingRow?selectedColor:normalColor),focused));
         b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
       }
       return false;
@@ -2414,7 +2416,8 @@ public class MainActivity extends Activity {
         Button b=new Button(this);b.setTag(ix);
         String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
         String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
-        b.setText((favorites.contains(c.key())?"★ ":"")+title+group);
+        b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
+        if(ix==selected)b.setContentDescription("当前正在播放："+title);
         b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
         b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
@@ -2891,6 +2894,8 @@ public class MainActivity extends Activity {
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
     video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    // Rebuild the list so the currently playing channel keeps its marker and selected tint.
+    refresh();
     View restoreFocus=list.getChildAt(0);
     if(selected>=0){
       for(int i=0;i<list.getChildCount();i++){
