@@ -14,14 +14,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Broad public movie metadata lookup. Metadata and poster art are kept separate
  * from playback URLs: Apple/Wikipedia records never become playable streams.
  */
 public final class VodMetadataSearch {
-    private static final int CONNECT_TIMEOUT_MS = 3200;
-    private static final int READ_TIMEOUT_MS = 4200;
+    private static final int CONNECT_TIMEOUT_MS = 2400;
+    private static final int READ_TIMEOUT_MS = 3000;
     private static final int MAX_RESULTS_PER_WIKI = 25;
     private static final int MAX_RESULTS_APPLE = 25;
 
@@ -33,20 +39,52 @@ public final class VodMetadataSearch {
         if (query.isEmpty() || Thread.currentThread().isInterrupted()) {
             return new ArrayList<>();
         }
-        LinkedHashMap<String, VodTitleRecord> merged = new LinkedHashMap<>();
         boolean china = "中国".equals(region);
-        // Apple Search provides artwork and store metadata without requiring an API key.
-        // It does not prove that a full film is available to stream.
-        try { collectApple(query, china ? "cn" : "us", china ? "中国" : "国外/国际", merged); }
-        catch (Exception ignored) {}
-        // Search both language indexes even in a region-specific mode. Region changes
-        // ranking/labels, not recall: Chinese films may have English catalogue entries.
-        if (china) {
-            try { collectWiki("zh", "中国", query, merged); } catch (Exception ignored) {}
-            try { collectWiki("en", "国外/国际", query, merged); } catch (Exception ignored) {}
-        } else {
-            try { collectWiki("en", "国外/国际", query, merged); } catch (Exception ignored) {}
-            try { collectWiki("zh", "中国", query, merged); } catch (Exception ignored) {}
+        ExecutorService providers = Executors.newFixedThreadPool(3);
+        CompletionService<List<VodTitleRecord>> completion =
+                new ExecutorCompletionService<>(providers);
+        ArrayList<Future<List<VodTitleRecord>>> tasks = new ArrayList<>();
+        LinkedHashMap<String, VodTitleRecord> merged = new LinkedHashMap<>();
+        try {
+            // Independent metadata providers run concurrently, within a bounded budget.
+            tasks.add(completion.submit(() -> {
+                LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
+                collectApple(query, china ? "cn" : "us", china ? "中国" : "国外/国际", local);
+                return new ArrayList<>(local.values());
+            }));
+            tasks.add(completion.submit(() -> {
+                LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
+                collectWiki("zh", "中国", query, local);
+                return new ArrayList<>(local.values());
+            }));
+            tasks.add(completion.submit(() -> {
+                LinkedHashMap<String, VodTitleRecord> local = new LinkedHashMap<>();
+                collectWiki("en", "国外/国际", query, local);
+                return new ArrayList<>(local.values());
+            }));
+            long deadline = android.os.SystemClock.elapsedRealtime() + 5600L;
+            for (int i = 0; i < tasks.size() && !Thread.currentThread().isInterrupted(); i++) {
+                long remaining = deadline - android.os.SystemClock.elapsedRealtime();
+                if (remaining <= 0L) break;
+                Future<List<VodTitleRecord>> ready = completion.poll(remaining, TimeUnit.MILLISECONDS);
+                if (ready == null) break;
+                try {
+                    List<VodTitleRecord> records = ready.get();
+                    for (VodTitleRecord record : records) {
+                        if (record == null || record.id.isEmpty() || record.title.isEmpty()) continue;
+                        // Region-specific provider results are ordered first without excluding
+                        // the other language index; this is a ranking preference, not a filter.
+                        if (china && "中国".equals(record.region)) {
+                            merged.putIfAbsent(record.id, record);
+                        } else {
+                            merged.putIfAbsent(record.id, record);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        } finally {
+            for (Future<?> task : tasks) if (!task.isDone()) task.cancel(true);
+            providers.shutdownNow();
         }
         return new ArrayList<>(merged.values());
     }
