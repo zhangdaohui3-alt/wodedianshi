@@ -19,6 +19,7 @@ App 使用 HTTPS GET 请求接口，服务端返回 `200 application/json`。推
 ```json
 {
   "lock_enable": true,
+  "force_lock": false,
   "start_time": "08:00",
   "end_time": "21:30",
   "max_day_minute": 180,
@@ -30,6 +31,7 @@ App 使用 HTTPS GET 请求接口，服务端返回 `200 application/json`。推
 
 字段说明：
 - `lock_enable`：总开关。false 表示关闭云端时间限制。
+- `force_lock`：可选，true 表示立即执行云端强制锁定指令；管理员密码解锁 15 分钟后仍会按该指令重新锁定。
 - `start_time` / `end_time`：每日允许使用时间，支持跨午夜，例如 22:00–06:00。
 - `max_day_minute`：每日最大前台观看分钟数；0 表示不限制。
 - `offline_strict`：true 断网锁定；false 按上次缓存规则继续。
