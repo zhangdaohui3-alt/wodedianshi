@@ -2410,6 +2410,8 @@ public class MainActivity extends Activity {
         });
       }
       totalMatches=visibleIndexes.size();
+      int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
+      if(selectedPosition>=0)livePageIndex=selectedPosition/maxRows;
       int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
       if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
       int pageStart=livePageIndex*maxRows;
@@ -3446,6 +3448,7 @@ public class MainActivity extends Activity {
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
     enterFullScreenPlayback();
@@ -3823,6 +3826,16 @@ public class MainActivity extends Activity {
 
   // ---------------- Local parental controls ----------------
   private android.content.SharedPreferences childPrefs(){return getSharedPreferences("mytv",0);}
+  private String hashChildPin(String pin){
+    android.content.SharedPreferences p=childPrefs();
+    String salt=p.getString("child_pin_salt","");
+    if(salt.isEmpty()){
+      byte[] bytes=new byte[16];new java.security.SecureRandom().nextBytes(bytes);
+      StringBuilder out=new StringBuilder(32);for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&0xff));
+      salt=out.toString();p.edit().putString("child_pin_salt",salt).apply();
+    }
+    return ChildLockPolicy.hashPin(pin,salt);
+  }
   private String childTodayKey(){
     Calendar cal=Calendar.getInstance();
     return cal.get(Calendar.YEAR)+"-"+cal.get(Calendar.DAY_OF_YEAR);
@@ -3887,7 +3900,7 @@ public class MainActivity extends Activity {
     childLockDialog=dialog;
     dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
       String saved=childPrefs().getString("child_pin_hash","");
-      if(saved.equals(ChildLockPolicy.sha256(pin.getText().toString().trim()))){
+      if(saved.equals(hashChildPin(pin.getText().toString().trim()))){
         childPrefs().edit().putLong("child_unlock_until",System.currentTimeMillis()+15L*60L*1000L).apply();
         childLockDialog=null;dialog.dismiss();toast("已临时解锁 15 分钟");
         if(selected>=0&&selected<channels.size())startCurrentSource();
@@ -3910,7 +3923,7 @@ public class MainActivity extends Activity {
         .setView(box).setPositiveButton("保存", (d,w)->{
           String a=first.getText().toString().trim(),b=second.getText().toString().trim();
           if(!a.matches("[0-9]{4,8}")||!a.equals(b)){toast("密码需为相同的 4–8 位数字");return;}
-          childPrefs().edit().putString("child_pin_hash",ChildLockPolicy.sha256(a)).putLong("child_unlock_until",0L).apply();
+          childPrefs().edit().putString("child_pin_hash",hashChildPin(a)).putLong("child_unlock_until",0L).apply();
           toast("家长密码已设置");showChildLockOptions();
         }).setNegativeButton("取消",null).show();
   }
@@ -3919,7 +3932,7 @@ public class MainActivity extends Activity {
     pin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
     new AlertDialog.Builder(this).setTitle("家长验证").setView(pin)
         .setPositiveButton("验证",(d,w)->{
-          if(childPrefs().getString("child_pin_hash","").equals(ChildLockPolicy.sha256(pin.getText().toString().trim())))accepted.run();
+          if(childPrefs().getString("child_pin_hash","").equals(hashChildPin(pin.getText().toString().trim())))accepted.run();
           else toast("家长密码不正确");
         }).setNegativeButton("取消",null).show();
   }
@@ -3982,7 +3995,7 @@ public class MainActivity extends Activity {
     new AlertDialog.Builder(this).setTitle("修改家长密码").setView(box).setPositiveButton("保存",(d,w)->{
       String a=first.getText().toString().trim(),b=second.getText().toString().trim();
       if(!a.matches("[0-9]{4,8}")||!a.equals(b)){toast("密码需为相同的 4–8 位数字");return;}
-      childPrefs().edit().putString("child_pin_hash",ChildLockPolicy.sha256(a)).apply();toast("家长密码已修改");
+      childPrefs().edit().putString("child_pin_hash",hashChildPin(a)).apply();toast("家长密码已修改");
     }).setNegativeButton("取消",null).show();
   }
 
