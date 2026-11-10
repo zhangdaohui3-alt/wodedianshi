@@ -259,13 +259,9 @@ public class MainActivity extends Activity {
         applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
       }
     }
-    if(channelNameOverlay!=null){
-      if(selected>=0&&selected<channels.size()){
-        Channel channel=channels.get(selected);
-        channelNameOverlay.setText("正在播放  ·  "+(isCctvChannel(channel)?displayChannelName(channel.name):channel.name));
-        channelNameOverlay.setVisibility(fullScreenPlayback?View.VISIBLE:View.GONE);
-      }else channelNameOverlay.setVisibility(View.GONE);
-    }
+    // Keep the live picture clean: channel selection stays highlighted in the list,
+    // but the full-screen player never overlays a persistent “正在播放” channel label.
+    if(channelNameOverlay!=null)channelNameOverlay.setVisibility(View.GONE);
   }
   private void styleVodPageButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
