@@ -1,7 +1,7 @@
 package com.wodedianshi.tv;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import javax.crypto.SecretKeyFactory;\nimport javax.crypto.spec.PBEKeySpec;
 import java.util.Calendar;
 import java.util.Locale;
 
@@ -30,15 +30,20 @@ public final class ChildLockPolicy {
         return false;
     }
 
-    public static String sha256(String value) {
+    /** PBKDF2 password hash; callers must persist a random per-install salt. */
+    public static String hashPin(String pin, String salt) {
+        char[] password = (pin == null ? "" : pin).toCharArray();
+        PBEKeySpec spec = new PBEKeySpec(password, (salt == null ? "" : salt).getBytes(StandardCharsets.UTF_8), 120000, 256);
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+            byte[] digest = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1").generateSecret(spec).getEncoded();
             StringBuilder out = new StringBuilder(digest.length * 2);
             for (byte b : digest) out.append(String.format(Locale.ROOT, "%02x", b & 0xff));
             return out.toString();
         } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
+            throw new IllegalStateException("PBKDF2 unavailable", e);
+        } finally {
+            spec.clearPassword();
+            java.util.Arrays.fill(password, '\\0');
         }
     }
 }
