@@ -651,7 +651,7 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",0);
+    int current=prefs.getInt("decoder_mode",1);
     String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
