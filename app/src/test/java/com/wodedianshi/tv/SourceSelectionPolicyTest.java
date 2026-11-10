@@ -67,6 +67,20 @@ public class SourceSelectionPolicyTest {
                 0, Collections.emptySet(), Collections.emptySet()));
     }
 
+    @Test public void blockedEndpointAliasesAreAlsoBlocked() {
+        assertEquals(2, SourceSelectionPolicy.findNext(
+                Arrays.asList("http://active/live", "HTTP://Blocked.Example:80/live",
+                        "http://backup.example/live"),
+                0, Collections.singleton("http://blocked.example/live"), Collections.emptySet()));
+    }
+
+    @Test public void cooldownEndpointAliasesAreSkippedWhenHealthyBackupExists() {
+        assertEquals(2, SourceSelectionPolicy.findNext(
+                Arrays.asList("http://active/live", "HTTP://Slow.Example:80/live",
+                        "http://backup.example/live"),
+                0, Collections.emptySet(), Collections.singleton("http://slow.example/live")));
+    }
+
     @Test public void skipsDuplicateActiveUrlAndContinuesToDistinctBackup() {
         assertEquals(3, SourceSelectionPolicy.findNext(
                 Arrays.asList("a", "b", "a", "c"), 0,
