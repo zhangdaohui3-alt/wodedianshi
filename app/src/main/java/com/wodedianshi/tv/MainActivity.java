@@ -2248,13 +2248,51 @@ public class MainActivity extends Activity {
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
-      vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
-      pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
-       String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT).split("\\?")[0];
-       MediaItem.Builder mediaBuilder=new MediaItem.Builder().setUri(item.url);
-       if(mediaPath.endsWith(".m3u8"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8);
-       else if(mediaPath.endsWith(".mpd"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD);
-       MediaItem media=mediaBuilder.build();vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+      final ExoPlayer vodOwner=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
+      vodPlayer=vodOwner;
+      pv.setPlayer(vodOwner);pv.setKeepScreenOn(true);
+      // Register listeners before setMediaItem/prepare: some sources fail or
+      // transition state immediately during preparation on TV decoders.
+      vodOwner.addListener(new Player.Listener(){
+        @Override public void onPlaybackStateChanged(int state){
+          if(vodPlayer!=vodOwner||activeVodItem!=item)return;
+          if(state==Player.STATE_ENDED){
+            saveVodHistory(item,0,vodOwner.getDuration());
+            endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();
+            if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);
+            if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+            if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+            for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+            replayEnded.requestFocus();
+          }
+        }
+        @Override public void onPlayerError(PlaybackException error){
+          if(vodPlayer!=vodOwner||activeVodItem!=item)return;
+          android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.errorCodeName,error);
+          toast("点播播放失败："+error.errorCodeName+"，可尝试兼容解码或更换正版来源");
+        }
+      });
+      String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT);
+      int queryAt=mediaPath.indexOf('?'),fragmentAt=mediaPath.indexOf('#');
+      int pathEnd=mediaPath.length();
+      if(queryAt>=0)pathEnd=Math.min(pathEnd,queryAt);
+      if(fragmentAt>=0)pathEnd=Math.min(pathEnd,fragmentAt);
+      mediaPath=mediaPath.substring(0,pathEnd);
+      MediaItem.Builder mediaBuilder=new MediaItem.Builder().setUri(item.url);
+      if(mediaPath.endsWith(".m3u8"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8);
+      else if(mediaPath.endsWith(".mpd"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD);
+      MediaItem media=mediaBuilder.build();
+      vodOwner.setMediaItem(media);
+      vodOwner.prepare();
+      if(startPosition>0)vodOwner.seekTo(startPosition);
+      vodOwner.play();
+      vodProgressSaver=new Runnable(){@Override public void run(){
+        if(vodPlayer==vodOwner&&activeVodItem==item){
+          saveVodHistory(item,vodOwner.getCurrentPosition(),vodOwner.getDuration());
+          uiHandler.postDelayed(this,5000);
+        }
+      }};
+      uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
