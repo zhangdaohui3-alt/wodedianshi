@@ -76,6 +76,7 @@ public final class ParentRemoteLockManager {
 
     private static final class Config {
         boolean lockEnable;
+        boolean forceLock;
         String startTime = "08:00";
         String endTime = "21:30";
         int maxDayMinute;
@@ -246,6 +247,10 @@ public final class ParentRemoteLockManager {
             setLocked(false, "");
             return;
         }
+        if (c.forceLock) {
+            setLocked(true, "家长已从云端发出立即锁定指令");
+            return;
+        }
         if (isClockAnchorInvalid()) {
             setLocked(true, "系统时间与最近联网时间不一致");
             return;
@@ -325,6 +330,7 @@ public final class ParentRemoteLockManager {
     private Config parseConfig(JSONObject j) throws Exception {
         Config c = new Config();
         c.lockEnable = j.getBoolean("lock_enable");
+        c.forceLock = j.optBoolean("force_lock", false);
         c.startTime = j.optString("start_time", "00:00");
         c.endTime = j.optString("end_time", "23:59");
         c.maxDayMinute = Math.max(0, j.optInt("max_day_minute", 0));
