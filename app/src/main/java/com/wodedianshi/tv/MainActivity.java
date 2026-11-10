@@ -4081,21 +4081,31 @@ public class MainActivity extends Activity {
   }
 
   private void configureRemoteParentLock(){
+    LinearLayout fields=new LinearLayout(this);fields.setOrientation(1);fields.setPadding(dp(20),dp(8),dp(20),dp(4));
     EditText endpoint=new EditText(this);
     endpoint.setSingleLine(true);
     endpoint.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
-    endpoint.setHint("https://你的域名/api/parent-lock");
+    endpoint.setHint("HTTPS 接口地址");
     endpoint.setText(getSharedPreferences("mytv_remote_parent_lock",0).getString("endpoint",""));
+    EditText token=new EditText(this);
+    token.setSingleLine(true);
+    token.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    token.setHint("可选：设备 API 令牌（加密保存）");
+    if(remoteParentLockManager!=null)token.setText(remoteParentLockManager.getApiToken());
+    fields.addView(endpoint);fields.addView(token);
     new AlertDialog.Builder(this).setTitle("云端家长锁接口")
-      .setMessage("填写 HTTPS 配置接口地址；留空可关闭云端家长锁。服务端需支持 GET 配置，建议同时支持 POST 离线时长上报。")
-      .setView(endpoint).setPositiveButton("保存",(d,w)->{
+      .setMessage("填写 HTTPS 配置接口地址和可选设备令牌。服务端需支持 GET 配置，建议同时支持 POST 离线时长上报。")
+      .setView(fields).setPositiveButton("保存",(d,w)->{
         String url=endpoint.getText().toString().trim();
         if(!url.isEmpty()&&!url.toLowerCase(Locale.ROOT).startsWith("https://")){
           toast("为保护管理员密码，只允许 HTTPS 接口");return;
         }
         getSharedPreferences("mytv_remote_parent_lock",0).edit()
           .putString("endpoint",url).putBoolean("remote_enabled",!url.isEmpty()).apply();
-        if(remoteParentLockManager!=null)remoteParentLockManager.requestPoll();
+        if(remoteParentLockManager!=null){
+          remoteParentLockManager.setApiToken(token.getText().toString());
+          remoteParentLockManager.requestPoll();
+        }
         toast(url.isEmpty()?"已关闭云端家长锁":"云端家长锁接口已保存");
       }).setNegativeButton("取消",null).show();
   }
