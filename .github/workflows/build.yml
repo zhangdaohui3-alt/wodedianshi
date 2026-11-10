@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - 'fix/**'
+      - 'fix/**'
 
 concurrency:
   group: my-tv-apk-build
