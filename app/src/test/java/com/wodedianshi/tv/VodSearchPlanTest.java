@@ -28,6 +28,26 @@ public class VodSearchPlanTest {
         assertEquals(2, plan.get(3).page);
     }
 
+    @Test public void titleSearchFansOutAcrossMetadataAndTokens() {
+        List<String> queries = VodSearchPlan.archiveQueries("The Matrix 1999");
+        assertTrue(queries.size() >= 2);
+        assertTrue(queries.get(0).contains("title:"));
+        assertTrue(queries.get(0).contains("description:"));
+        assertTrue(queries.get(0).contains("subject:"));
+        assertTrue(queries.get(0).contains("creator:"));
+        assertTrue(queries.get(queries.size() - 1).contains(" AND "));
+    }
+
+    @Test public void titleSearchSanitizesQuerySyntaxAndHandlesChinese() {
+        List<String> queries = VodSearchPlan.archiveQueries("霸王别姬 (1993) OR *");
+        assertFalse(queries.isEmpty());
+        for (String query : queries) {
+            assertFalse(query.contains("*"));
+            assertFalse(query.contains(" OR *"));
+        }
+        assertTrue(VodSearchPlan.archiveQueries("   ").isEmpty());
+    }
+
     @Test public void rejectsEmptyPlans() {
         assertTrue(VodSearchPlan.orderedPages(0, 3).isEmpty());
         assertTrue(VodSearchPlan.orderedPages(3, 0).isEmpty());
