@@ -1800,7 +1800,7 @@ public class MainActivity extends Activity {
           renderVodItems(category,result,status,results,false);
           status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
         }else if(cached.isEmpty()){
-          status.setText(err==null?"暂时没有检索到符合授权条件且包含 MP4 文件的影片。可稍后重试。":"点播目录暂时无法连接："+err);
+          status.setText(err==null?"暂时没有检索到匹配的影片资料或可验证直播放源。可换关键词或稍后重试。":"点播目录暂时无法连接："+err);
         }else{
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
