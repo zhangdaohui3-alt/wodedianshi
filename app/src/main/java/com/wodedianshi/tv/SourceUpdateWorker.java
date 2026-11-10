@@ -148,7 +148,7 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(!visitedUrls.add(e.url))continue;
+        if(!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url)))continue;
         checked++;
         ProbeResult measured=probe(e.url);
         // A previously good source that now fails its probe must lose its old high score.
