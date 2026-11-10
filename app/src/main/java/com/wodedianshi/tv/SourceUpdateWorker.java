@@ -150,6 +150,7 @@ public class SourceUpdateWorker extends Worker {
         // A previously good source that now fails its probe must lose its old high score.
         // Keep the URL as a fallback, but rank it below sources that still pass validation.
         measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
+        measuredScores.remove(legacyScoreKey(e.url));
         if(!measured.valid)continue;
         // Known sources are re-tested and re-scored, but never inserted twice.
         if(knownUrls.contains(e.url))continue;
@@ -225,7 +226,8 @@ public class SourceUpdateWorker extends Worker {
     long latencyMs;
     long bitrate;
   }
-  private String scoreKey(String url){return Integer.toHexString(url.hashCode())+":"+url.length();}
+  private String scoreKey(String url){return StableKey.url(url);}
+  private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
   // Match MainActivity's QoE aging so background ranking and playback ranking
   // do not disagree about the same source history.
   private double sourceHistoryWeight(long updatedAt){
@@ -235,8 +237,11 @@ public class SourceUpdateWorker extends Worker {
     return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
   }
   private double combinedScore(String url,JSONObject probes,JSONObject qoe){
-    double score=probes.optDouble(scoreKey(url),0.0)+sourceQualityScore(url)*0.01;
-    JSONObject m=qoe.optJSONObject(scoreKey(url));
+    String key=scoreKey(url),legacyKey=legacyScoreKey(url);
+    double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
+    double score=probeScore+sourceQualityScore(url)*0.01;
+    JSONObject m=qoe.optJSONObject(key);
+    if(m==null)m=qoe.optJSONObject(legacyKey);
     if(m!=null&&m.optInt("attempts",0)>=2){
       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;

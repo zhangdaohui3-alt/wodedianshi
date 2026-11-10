@@ -3326,7 +3326,7 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",20);
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
     if(configured<=0)return;
     // Keep first startup bounded, but make failover attempts deliberately faster.
     // A source that has already failed should not make the viewer wait another 20-30s.
@@ -3648,7 +3648,8 @@ public class MainActivity extends Activity {
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
     String remembered=SourceMemoryStore.getLastGood(this,
-        SourceMemoryStore.channelKey(c.name,c.group,c.url));
+        SourceMemoryStore.channelKey(c.name,c.group,c.url),
+        SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
     if(remembered==null)return;
     int index=c.backups.indexOf(remembered);
     if(index>=0)c.activeSource=index;
@@ -3658,8 +3659,11 @@ public class MainActivity extends Activity {
     try{
       android.content.SharedPreferences p=getSharedPreferences("mytv",0);
       org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
-      String key=Integer.toHexString(url.hashCode())+":"+url.length();
-      org.json.JSONObject m=all.optJSONObject(key);if(m==null)m=new org.json.JSONObject();
+      String key=StableKey.url(url);
+      String legacyKey=StableKey.legacyUrl(url);
+      org.json.JSONObject m=all.optJSONObject(key);
+      if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
+      if(m==null)m=new org.json.JSONObject();
       if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
       else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
       else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
@@ -3686,11 +3690,14 @@ public class MainActivity extends Activity {
   private double observedSourceScore(String url){
     int label=sourceQualityScore(url);
     try{
-      String key=Integer.toHexString(url.hashCode())+":"+url.length();
+      String key=StableKey.url(url);
+      String legacyKey=StableKey.legacyUrl(url);
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
       org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      double probeScore=measured.optDouble(key,0.0);
-      org.json.JSONObject m=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}")).optJSONObject(key);
+      double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
+      org.json.JSONObject allQoe=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}"));
+      org.json.JSONObject m=allQoe.optJSONObject(key);
+      if(m==null)m=allQoe.optJSONObject(legacyKey);
       if(m==null||m.optInt("attempts",0)<2)return probeScore+label*0.01;
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);

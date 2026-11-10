@@ -16,8 +16,11 @@ public final class SourceMemoryStore {
     private SourceMemoryStore() {}
 
     public static String channelKey(String name, String group, String primaryUrl) {
-        String raw = safe(name) + "\n" + safe(group) + "\n" + safe(primaryUrl);
-        return Integer.toHexString(raw.hashCode()) + ":" + raw.length();
+        return StableKey.channel(name, group, primaryUrl);
+    }
+
+    public static String legacyChannelKey(String name, String group, String primaryUrl) {
+        return StableKey.legacyChannel(name, group, primaryUrl);
     }
 
     public static void saveLastGood(Context context, String channelKey, String url) {
@@ -36,11 +39,16 @@ public final class SourceMemoryStore {
     }
 
     public static String getLastGood(Context context, String channelKey) {
+        return getLastGood(context, channelKey, null);
+    }
+
+    public static String getLastGood(Context context, String channelKey, String legacyChannelKey) {
         if (context == null || channelKey == null || channelKey.isEmpty()) return null;
         try {
             JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(LAST_GOOD, "{}"));
             JSONObject entry = all.optJSONObject(channelKey);
+            if (entry == null && legacyChannelKey != null) entry = all.optJSONObject(legacyChannelKey);
             if (entry == null) return null;
             long age = System.currentTimeMillis() - entry.optLong("at", 0L);
             if (age < 0L || age > LAST_GOOD_MAX_AGE_MS) return null;
@@ -60,7 +68,8 @@ public final class SourceMemoryStore {
                 String key = it.next();
                 if (all.optLong(key, 0L) <= now) it.remove();
             }
-            all.put(urlKey(url), now + durationMs);
+            all.put(StableKey.url(url), now + durationMs);
+            all.remove(StableKey.legacyUrl(url));
             trimOldest(all);
             prefs.edit().putString(COOLDOWNS, all.toString()).apply();
         } catch (Exception ignored) {}
@@ -71,15 +80,11 @@ public final class SourceMemoryStore {
         try {
             JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(COOLDOWNS, "{}"));
-            return all.optLong(urlKey(url), 0L) > System.currentTimeMillis();
+            long until = all.optLong(StableKey.url(url), 0L);
+            if (until <= 0L) until = all.optLong(StableKey.legacyUrl(url), 0L);
+            return until > System.currentTimeMillis();
         } catch (Exception ignored) { return false; }
     }
-
-    private static String urlKey(String url) {
-        return Integer.toHexString(url.hashCode()) + ":" + url.length();
-    }
-
-    private static String safe(String value) { return value == null ? "" : value; }
 
     private static void trimOldest(JSONObject object) throws Exception {
         while (object.length() > MAX_ENTRIES) {
