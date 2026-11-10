@@ -3328,9 +3328,10 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",20);
     if(configured<=0)return;
-    // Initial live startup can legitimately take longer than a mid-stream rebuffer.
-    // Do not abandon a healthy but slow-to-start source after only 3-5 seconds.
-    int seconds=sourceReadyRecorded?configured:30;
+    // Keep first startup bounded, but make failover attempts deliberately faster.
+    // A source that has already failed should not make the viewer wait another 20-30s.
+    int seconds=BufferingFailoverPolicy.timeoutSeconds(
+        sourceReadyRecorded,automaticSwitchCount,configured);
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
