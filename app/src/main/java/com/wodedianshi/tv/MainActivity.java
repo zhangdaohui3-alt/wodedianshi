@@ -611,23 +611,23 @@ public class MainActivity extends Activity {
     prefs.edit().putBoolean("source_bootstrap_scheduled_v1",true).apply();
     WorkManager wm=WorkManager.getInstance(this);
     wm.enqueueUniqueWork("mytv_initial_source_bootstrap",ExistingWorkPolicy.KEEP,request);
-    wm.getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=wm.getWorkInfoById(request.getId()).get();
+    wm.getWorkInfoByIdLiveData(request.getId()).observeForever(new androidx.lifecycle.Observer<WorkInfo>(){
+      @Override public void onChanged(WorkInfo result){
         if(result==null)return;
-        if(result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{
-            if(!isFinishing()){
-              reloadChannelsAfterSourceUpdate();
-              if(info!=null)info.setText("首次频道目录检查完成，已合并通过连通性初筛的频道与备用线路");
-            }
-          });
-        }else if(result.getState()==WorkInfo.State.FAILED){
+        WorkInfo.State state=result.getState();
+        if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED&&state!=WorkInfo.State.CANCELLED)return;
+        wm.getWorkInfoByIdLiveData(request.getId()).removeObserver(this);
+        if(state==WorkInfo.State.SUCCEEDED){
+          if(!isFinishing()){
+            reloadChannelsAfterSourceUpdate();
+            if(info!=null)info.setText("首次频道目录检查完成，已合并通过连通性初筛的频道与备用线路");
+          }
+        }else{
           // Allow a later app launch or manual retry to schedule the bootstrap again.
           prefs.edit().putBoolean("source_bootstrap_scheduled_v1",false).apply();
         }
-      }catch(Exception ignored){}
-    },worker);
+      }
+    });
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -641,16 +641,20 @@ public class MainActivity extends Activity {
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
     WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
     toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
-        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
-        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
-          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
+    WorkManager wm=WorkManager.getInstance(this);
+    wm.getWorkInfoByIdLiveData(request.getId()).observeForever(new androidx.lifecycle.Observer<WorkInfo>(){
+      @Override public void onChanged(WorkInfo result){
+        if(result==null)return;
+        WorkInfo.State state=result.getState();
+        if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED&&state!=WorkInfo.State.CANCELLED)return;
+        wm.getWorkInfoByIdLiveData(request.getId()).removeObserver(this);
+        if(state==WorkInfo.State.SUCCEEDED){
+          if(!isFinishing()){reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();}
+        }else if(!isFinishing()){
+          toast("频道源更新失败，请检查网络后重试");
         }
-      }catch(Exception ignored){}
-    },worker);
+      }
+    });
   }
   private void reloadChannelsAfterSourceUpdate(){
     String keepIdentity="";
