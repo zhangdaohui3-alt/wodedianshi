@@ -1570,18 +1570,19 @@ public class MainActivity extends Activity {
         ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
         ExecutorCompletionService<org.json.JSONArray> pageCompletion=new ExecutorCompletionService<>(vodSourceWorker);
         int submitted=0,completed=0;
-        // Start independent catalogue pages together. The slowest page no longer blocks
-        // the next query; only four HTTP page requests run at once on low-memory TV boxes.
-        for(String query:queries){
-          for(int page=1;page<=3;page++){
-            if(Thread.currentThread().isInterrupted())break;
-            final String pageQuery=query;final int pageNumber=page;
-            pageTasks.add(pageCompletion.submit(()->{
-              String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(pageQuery,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+pageNumber+"&output=json&sort[]=downloads+desc";
-              org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
-              return root.getJSONObject("response").getJSONArray("docs");
-            }));
-          }
+        // Prioritize page 1 across every independent query before deeper pages.
+        // This avoids letting one broad query occupy the queue with pages 1-3 while
+        // Chinese/regional query variants wait behind it. Later pages still run,
+        // preserving catalogue breadth after the first-page coverage is queued.
+        for(VodSearchPlan.PageRequest pageRequest:VodSearchPlan.orderedPages(queries.size(),3)){
+          if(Thread.currentThread().isInterrupted())break;
+          final String pageQuery=queries.get(pageRequest.queryIndex);
+          final int pageNumber=pageRequest.page;
+          pageTasks.add(pageCompletion.submit(()->{
+            String api="https://archive.org/advancedsearch.php?q="+URLEncoder.encode(pageQuery,"UTF-8")+"&fl[]=identifier&fl[]=title&rows=100&page="+pageNumber+"&output=json&sort[]=downloads+desc";
+            org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
+            return root.getJSONObject("response").getJSONArray("docs");
+          }));
         }
         long pageDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
         int pagesRemaining=pageTasks.size();
