@@ -1505,6 +1505,7 @@ public class MainActivity extends Activity {
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh){
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
+    final String requestRegion=activeVodRegion;
     ArrayList<VodItem> cached=readVodCache(category);
     if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
     else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,4);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
@@ -1576,7 +1577,7 @@ public class MainActivity extends Activity {
         else if(!titleSearch&&!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
 
         ArrayList<String> queries=new ArrayList<>();
-        if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm,activeVodRegion));
+        if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm,requestRegion));
         else queries.add(q);
         if("戏曲".equals(category)){
           queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
@@ -1714,7 +1715,7 @@ public class MainActivity extends Activity {
         else if("恐怖片".equals(category))commonsQuery="horror film";
         else if("动作片".equals(category))commonsQuery="action film";
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))commonsQuery=category;
-        if(titleSearch)commonsQuery=searchTerm+("中国".equals(activeVodRegion)?" Chinese film":" international film");
+        if(titleSearch)commonsQuery=searchTerm+("中国".equals(requestRegion)?" Chinese film":" international film");
          if(commonsQuery!=null&&found.size()<80){final String term=commonsQuery;sourceFutures.add(sourceCompletion.submit(()->fetchCommonsSearchVod(term)));}
         String locQuery=null;
         if("中国电影".equals(category)||"华语经典".equals(category)||"中国老电影".equals(category))locQuery="Chinese film";
