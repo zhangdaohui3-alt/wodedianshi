@@ -1,7 +1,8 @@
 package com.wodedianshi.tv;
 
 import java.nio.charset.StandardCharsets;
-import javax.crypto.SecretKeyFactory;\nimport javax.crypto.spec.PBEKeySpec;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 import java.util.Calendar;
 import java.util.Locale;
 
@@ -43,7 +44,7 @@ public final class ChildLockPolicy {
             throw new IllegalStateException("PBKDF2 unavailable", e);
         } finally {
             spec.clearPassword();
-            java.util.Arrays.fill(password, '\\0');
+            java.util.Arrays.fill(password, (char)0);
         }
     }
 }
