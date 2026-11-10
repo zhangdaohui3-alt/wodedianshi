@@ -613,6 +613,7 @@ public class MainActivity extends Activity {
   private Runnable vodProgressSaver;
   private boolean resumeLiveAfterVod=false;
   private void vodDialog(){
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     resumeLiveAfterVod=player!=null&&player.isPlaying();
     setSourceUpdatePlaybackActive(true);
@@ -1870,6 +1871,7 @@ public class MainActivity extends Activity {
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.19 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
   }
   private void playVodInside(VodItem item){
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
     if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
@@ -1892,6 +1894,7 @@ public class MainActivity extends Activity {
     return null;
   }
   private void startVodPlayback(VodItem item,long startPosition){
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     final SeekBar[] vodSeekHolder=new SeekBar[1];
@@ -3860,7 +3863,7 @@ public class MainActivity extends Activity {
   private void updateChildUsage(){
     long now=android.os.SystemClock.elapsedRealtime();
     if(childLockLastElapsed<=0L){childLockLastElapsed=now;return;}
-    long delta=Math.max(0L,Math.min(60000L,now-childLockLastElapsed));
+    long delta=Math.max(0L,Math.min(43200000L,now-childLockLastElapsed));
     childLockLastElapsed=now;
     if(delta==0L)return;
     android.content.SharedPreferences p=childPrefs();
@@ -3886,6 +3889,8 @@ public class MainActivity extends Activity {
   private void enforceChildLock(){
     if(!isChildLockCurrentlyActive()||isFinishing()||isDestroyed())return;
     if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
+    if(vodPlayer!=null){try{vodPlayer.pause();vodPlayer.stop();}catch(Exception ignored){}}
+    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
     if(fullScreenPlayback)exitFullScreenPlayback();
     if(childLockDialog!=null&&childLockDialog.isShowing())return;
     EditText pin=new EditText(this);
