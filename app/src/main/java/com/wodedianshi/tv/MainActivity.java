@@ -2268,8 +2268,8 @@ public class MainActivity extends Activity {
         }
         @Override public void onPlayerError(PlaybackException error){
           if(vodPlayer!=vodOwner||activeVodItem!=item)return;
-          android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.errorCodeName,error);
-          toast("点播播放失败："+error.errorCodeName+"，可尝试兼容解码或更换正版来源");
+          android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.getErrorCodeName(),error);
+          toast("点播播放失败："+error.getErrorCodeName()+"，可尝试兼容解码或更换正版来源");
         }
       });
       String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT);
