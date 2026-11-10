@@ -594,6 +594,40 @@ public class MainActivity extends Activity {
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+    scheduleInitialSourceBootstrap();
+  }
+  // A clean install must not wait up to 24 hours for its first catalogue discovery.
+  // Run the same validated source worker once, off the UI thread, then refresh the
+  // channel list when it completes. Existing playback is protected by the worker's
+  // source_update_playback_active guard, which defers the scan rather than interrupting it.
+  private void scheduleInitialSourceBootstrap(){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    if(!prefs.getBoolean("auto_source_update",true))return;
+    if(prefs.getBoolean("source_bootstrap_scheduled_v1",false))return;
+    if(!prefs.getString("source_update_time","").isEmpty())return;
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .build();
+    prefs.edit().putBoolean("source_bootstrap_scheduled_v1",true).apply();
+    WorkManager wm=WorkManager.getInstance(this);
+    wm.enqueueUniqueWork("mytv_initial_source_bootstrap",ExistingWorkPolicy.KEEP,request);
+    wm.getWorkInfoById(request.getId()).addListener(()->{
+      try{
+        WorkInfo result=wm.getWorkInfoById(request.getId()).get();
+        if(result==null)return;
+        if(result.getState()==WorkInfo.State.SUCCEEDED){
+          runOnUiThread(()->{
+            if(!isFinishing()){
+              reloadChannelsAfterSourceUpdate();
+              if(info!=null)info.setText("首次频道目录检查完成，已合并通过连通性初筛的频道与备用线路");
+            }
+          });
+        }else if(result.getState()==WorkInfo.State.FAILED){
+          // Allow a later app launch or manual retry to schedule the bootstrap again.
+          prefs.edit().putBoolean("source_bootstrap_scheduled_v1",false).apply();
+        }
+      }catch(Exception ignored){}
+    },worker);
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
