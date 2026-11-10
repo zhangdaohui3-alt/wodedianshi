@@ -15,6 +15,12 @@ public final class ChildLockPolicy {
      * the after-midnight portion belongs to the previous day's selected bit.
      * startMinute == endMinute disables the window.
      */
+    /** Returns stored usage only when it belongs to the requested local calendar day. */
+    public static long usageForDate(String storedDay, String currentDay, long storedUsageMs) {
+        if (storedDay == null || currentDay == null || !storedDay.equals(currentDay)) return 0L;
+        return Math.max(0L, storedUsageMs);
+    }
+
     public static boolean isBlocked(Calendar now, int startMinute, int endMinute, int daysMask) {
         if (now == null || startMinute < 0 || startMinute >= 1440
                 || endMinute < 0 || endMinute >= 1440 || startMinute == endMinute) return false;
