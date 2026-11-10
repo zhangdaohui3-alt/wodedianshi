@@ -628,10 +628,14 @@ public class MainActivity extends Activity {
   private VodItem activeVodItem;
   private Runnable vodProgressSaver;
   private boolean resumeLiveAfterVod=false;
+  private View vodCategoryFocusTarget;
   private void vodDialog(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     resumeLiveAfterVod=player!=null&&player.isPlaying();
+    // A VOD catalogue session owns the screen; explicitly revoke live audio before
+    // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
+    if(player!=null){try{player.setPlayWhenReady(false);player.pause();}catch(RuntimeException ignored){}}
     activeVodRegion=getSharedPreferences("mytv",0).getString("vod_search_region","中国");
     if(!"国外".equals(activeVodRegion))activeVodRegion="中国";
     setSourceUpdatePlaybackActive(true);
@@ -664,6 +668,7 @@ public class MainActivity extends Activity {
     };
     panel.setOrientation(1);panel.setPadding(dp(8),0,dp(8),dp(2));panel.setBackgroundColor(Color.rgb(12,20,34));
     LinearLayout titleBar=new LinearLayout(this);titleBar.setOrientation(0);titleBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+    Button backToVodCategories=new Button(this);backToVodCategories.setText("返回分类");backToVodCategories.setAllCaps(false);backToVodCategories.setTextSize(12);backToVodCategories.setMinWidth(0);backToVodCategories.setMinHeight(0);backToVodCategories.setPadding(dp(6),0,dp(6),0);styleTvButton(backToVodCategories,Color.rgb(35,78,112));titleBar.addView(backToVodCategories,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button refreshVodButton=new Button(this);refreshVodButton.setText("重新抓取");refreshVodButton.setAllCaps(false);refreshVodButton.setTextSize(12);refreshVodButton.setMinWidth(0);refreshVodButton.setMinHeight(0);refreshVodButton.setPadding(dp(6),0,dp(6),0);styleTvButton(refreshVodButton,Color.rgb(26,100,160));titleBar.addView(refreshVodButton,new LinearLayout.LayoutParams(dp(88),dp(38)));
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
@@ -691,6 +696,7 @@ public class MainActivity extends Activity {
         // active film category or let the refresh button search for "正版平台".
         if("正版平台".equals(chosen)){openOfficialVodPlatforms();return;}
         activeVodCategory=chosen;activeVodQuery="";query.setText("");
+        vodCategoryFocusTarget=clicked;
         updateVodCategoryHighlight(categoryButtons,chosen);
         if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
       });
@@ -701,6 +707,7 @@ public class MainActivity extends Activity {
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
+    vodCategoryFocusTarget=categoryButtons.get("电影");
     updateVodCategoryHighlight(categoryButtons,"电影");
     Button chinaRegionButton=new Button(this);chinaRegionButton.setText("中国");chinaRegionButton.setAllCaps(false);chinaRegionButton.setTextSize(12);styleTvButton(chinaRegionButton,"中国".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
     Button foreignRegionButton=new Button(this);foreignRegionButton.setText("国外");foreignRegionButton.setAllCaps(false);foreignRegionButton.setTextSize(12);styleTvButton(foreignRegionButton,"国外".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
@@ -735,6 +742,14 @@ public class MainActivity extends Activity {
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
+    backToVodCategories.setOnClickListener(v->{
+      View target=vodCategoryFocusTarget;
+      if(target!=null&&target.isShown()){
+        target.requestFocus();
+        categoryScroll.smoothScrollTo(0,0);
+        setVodCategoryHover(null);
+      }else categoryScroll.requestFocus();
+    });
     refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodQuery.isEmpty()?activeVodCategory:"搜索："+activeVodQuery,panel,status,results,true));
     searchButton.setOnClickListener(v->{
        String q=query.getText().toString().trim();
@@ -1158,7 +1173,14 @@ public class MainActivity extends Activity {
         if(event.getAction()!=android.view.KeyEvent.ACTION_DOWN||!(parent instanceof GridView))return false;
         GridView owner=(GridView)parent;int current=owner.getPositionForView(card);
         if(current<0)return false;int target=current;int count=owner.getAdapter()==null?0:owner.getAdapter().getCount();int columns=Math.max(1,owner.getNumColumns());
-        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP)target=current-columns;
+        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP){
+          if(current<columns){
+            View categoryTarget=vodCategoryFocusTarget;
+            if(categoryTarget!=null&&categoryTarget.isShown()){categoryTarget.requestFocus();return true;}
+            return false;
+          }
+          target=current-columns;
+        }
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_DOWN)target=current+columns;
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT){if(current%columns==0)return false;target=current-1;}
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT){if(current%columns==columns-1||current+1>=count)return false;target=current+1;}
@@ -3430,9 +3452,12 @@ public class MainActivity extends Activity {
   private void releaseLivePlayerSafely(){
     ExoPlayer old=player;
     player=null;
+    if(old!=null){
+      try{old.setPlayWhenReady(false);old.pause();}catch(RuntimeException ignored){}
+    }
     if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
     if(old!=null){
-      try{old.pause();old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
+      try{old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
       try{old.release();}catch(RuntimeException ignored){}
     }
   }
