@@ -209,7 +209,7 @@ public final class ParentRemoteLockManager {
         long wallDelta = nowWall - lastWall;
         lastElapsed = nowElapsed;
         lastWall = nowWall;
-        if (Math.abs(wallDelta - elapsedDelta) > CLOCK_TOLERANCE_MS) {
+        if (ParentRemoteLockPolicy.clockJumped(wallDelta, elapsedDelta, CLOCK_TOLERANCE_MS)) {
             setLocked(true, "检测到系统时间被修改，已触发安全锁定");
             log("clock jump detected wallDelta=" + wallDelta + " elapsedDelta=" + elapsedDelta);
         }
@@ -221,7 +221,7 @@ public final class ParentRemoteLockManager {
         String today = dayKey(wallNow);
         long used = prefs.getLong("usage_ms", 0L);
         if (!today.equals(prefs.getString("usage_day", ""))) used = 0L;
-        used += delta;
+        used = ParentRemoteLockPolicy.safeUsage(used, delta);
         SharedPreferences.Editor edit = prefs.edit().putString("usage_day", today).putLong("usage_ms", used);
         if (!isOnline()) edit.putLong("pending_upload_ms", prefs.getLong("pending_upload_ms", 0L) + delta);
         edit.apply();
@@ -265,12 +265,11 @@ public final class ParentRemoteLockManager {
 
     private void applyOfflinePolicy() {
         Config c = config;
-        if (c != null && c.offlineStrict) {
-            setLocked(true, "网络已断开，离线严格策略要求管理员解锁");
+        boolean enabled = prefs.getBoolean("remote_enabled", false);
+        if (ParentRemoteLockPolicy.shouldLockOffline(c != null && c.offlineStrict, c != null, enabled)) {
+            setLocked(true, c == null ? "尚无有效云端缓存，无法确认家长规则" : "网络已断开，离线严格策略要求管理员解锁");
         } else if (c != null) {
             evaluate();
-        } else if (prefs.getBoolean("remote_enabled", false)) {
-            setLocked(true, "尚无有效云端缓存，无法确认家长规则");
         }
     }
 
@@ -287,7 +286,7 @@ public final class ParentRemoteLockManager {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(now);
         int m = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE);
-        return s < e ? (m >= s && m < e) : (m >= s || m < e);
+        return ParentRemoteLockPolicy.isInsideWindow(m, s, e);
     }
 
     private int minuteOfDay(String value) {
@@ -303,7 +302,8 @@ public final class ParentRemoteLockManager {
         long oldElapsed = prefs.getLong("anchor_elapsed_ms", 0L);
         long oldWall = prefs.getLong("anchor_wall_ms", 0L);
         long elapsed = SystemClock.elapsedRealtime();
-        if (oldServer <= 0L || oldElapsed <= 0L || elapsed < oldElapsed) return false;
+        if (oldServer <= 0L) return false;
+        if (oldElapsed <= 0L || elapsed < oldElapsed) return Math.abs(System.currentTimeMillis() - serverTime) > CLOCK_TOLERANCE_MS;
         long expectedServer = oldServer + (elapsed - oldElapsed);
         long expectedWall = oldWall + (elapsed - oldElapsed);
         long wallError = Math.abs(System.currentTimeMillis() - expectedWall);
