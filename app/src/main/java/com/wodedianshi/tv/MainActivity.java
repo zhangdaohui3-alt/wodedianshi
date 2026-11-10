@@ -378,7 +378,7 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
+    return getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1;
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
