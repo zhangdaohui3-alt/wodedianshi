@@ -1125,7 +1125,8 @@ public class MainActivity extends Activity {
           if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
         }
       });
-      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);holder.meta.setText(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放");
+      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);
+      holder.meta.setText(item.identifier.startsWith("meta:")?"影片资料 · 暂无已验证直播放源":(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放"));
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
@@ -1145,7 +1146,13 @@ public class MainActivity extends Activity {
       holder.poster.setOnClickListener(openItem);
       holder.title.setOnClickListener(openItem);
       holder.meta.setOnClickListener(openItem);
-      card.setOnClickListener(v->playVodInside(item));
+      card.setOnClickListener(v->{
+        if(item.identifier.startsWith("meta:")){
+          new AlertDialog.Builder(MainActivity.this).setTitle(item.title)
+              .setMessage("已从公开影片资料目录检索到这部影片。\n\n当前没有找到可验证的公开授权直播放源，因此不会伪造播放地址，也不会把资料网页当作影片播放。\n\n可稍后刷新目录，继续检查其他公开片库和正版平台入口。")
+              .setPositiveButton("知道了",null).show();
+        }else playVodInside(item);
+      });
       // Deterministic D-pad navigation: up/down preserve the current column.
       card.setOnKeyListener((v,keyCode,event)->{
         if(event.getAction()!=android.view.KeyEvent.ACTION_DOWN||!(parent instanceof GridView))return false;
@@ -1160,7 +1167,7 @@ public class MainActivity extends Activity {
         owner.post(()->{int childIndex=destination-owner.getFirstVisiblePosition();if(childIndex>=0&&childIndex<owner.getChildCount()){View next=owner.getChildAt(childIndex);if(next!=null)next.requestFocus();}else owner.smoothScrollToPosition(destination);});
         return true;
       });
-      card.setOnLongClickListener(v->{toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
+      card.setOnLongClickListener(v->{if(item.identifier.startsWith("meta:")){toast("这是影片资料结果，暂不能作为播放收藏");return true;}toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
       return card;
     }
   }
@@ -1472,6 +1479,19 @@ public class MainActivity extends Activity {
       return new VodItem(title,"loc:"+id,urls.get(0),"Library of Congress · "+rights.trim());
     }catch(Exception ignored){return null;}
   }
+  private ArrayList<VodItem> fetchMetadataVod(String query,String region){
+    ArrayList<VodItem> items=new ArrayList<>();
+    try{
+      for(VodTitleRecord record:VodMetadataSearch.search(query,region)){
+        if(record==null||record.title.isEmpty())continue;
+        String metadataPage=record.metadataUrl;
+        items.add(new VodItem(record.title,"meta:"+record.id,"",
+            "影片资料 · "+record.metadataProvider+" · 暂无已验证直播放源"+(metadataPage.isEmpty()?"":" · "+metadataPage)));
+      }
+    }catch(Exception ignored){}
+    return items;
+  }
+
   private ArrayList<VodItem> fetchLocPublicDomainVod(String query){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
@@ -1697,6 +1717,11 @@ public class MainActivity extends Activity {
         // each Future in submission order can accidentally add three full timeouts
         // together when the first provider is slow.
         CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+        // Metadata recall is independent of direct-stream lookup. A film can therefore
+        // appear in search even when no openly licensed MP4 exists in public archives.
+        if(titleSearch&&!searchTerm.isEmpty()){
+          sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
+        }
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
         if(useCommonsPublic)sourceFutures.add(sourceCompletion.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category))));
         String commonsQuery=null;
