@@ -3891,14 +3891,16 @@ public class MainActivity extends Activity {
     if(p.getString("child_pin_hash","").isEmpty())return false;
     if(p.getLong("child_unlock_until",0L)>System.currentTimeMillis())return false;
     if(childQuietTimeNow())return true;
+    if(!p.getBoolean("child_daily_limit_enabled",false))return false;
     int limit=p.getInt("child_daily_limit_min",0);
-    return limit>0&&childTodayUsage()>=limit*60000L;
+    return childTodayUsage()>=limit*60000L;
   }
   private String childLockReason(){
     android.content.SharedPreferences p=childPrefs();
     if(childQuietTimeNow())return "当前处于家长设置的禁止使用时段";
     int limit=p.getInt("child_daily_limit_min",0);
-    return "今天的观看时长已达到 "+limit+" 分钟";
+    if(limit==0)return "家长已将每日观看时长设为 0，今天禁止观看";
+    return "今天的观看时长已达到 "+formatChildDuration(limit);
   }
   private void refreshChildLockState(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
@@ -3972,7 +3974,7 @@ public class MainActivity extends Activity {
       "设置开始时间："+String.format(Locale.ROOT,"%02d:%02d",start/60,start%60),
       "设置结束时间："+String.format(Locale.ROOT,"%02d:%02d",end/60,end%60)+"（跨午夜自动算到次日）",
       "设置每周重复日",
-      "每日观看限额："+(limit==0?"不限制":limit+" 分钟"),
+      "每日观看限额："+(!p.getBoolean("child_daily_limit_enabled",false)?"不限制":formatChildDuration(limit)) ,
       "修改家长密码",
       "查看今日观看时长"
     };
@@ -3999,20 +4001,55 @@ public class MainActivity extends Activity {
               p.edit().putInt("child_block_days",result).apply();showChildLockOptions();
             }).setNegativeButton("取消",null).show();
       }else if(which==4){
-        String[] labels={"不限制","30 分钟","1 小时","1.5 小时","2 小时","3 小时","4 小时"};
-        int[] values={0,30,60,90,120,180,240};
-        int current=0;for(int i=0;i<values.length;i++)if(values[i]==limit)current=i;
-        new AlertDialog.Builder(this).setTitle("每日观看限额").setSingleChoiceItems(labels,current,(dd,index)->{
-          p.edit().putInt("child_daily_limit_min",values[index]).apply();dd.dismiss();showChildLockOptions();
-        }).setNegativeButton("取消",null).show();
+        editChildDailyLimit();
       }else if(which==5){
         changeChildParentPin();
       }else{
         long used=childTodayUsage()/60000L;
         int max=p.getInt("child_daily_limit_min",0);
-        toast("今日已使用约 "+used+" 分钟"+(max>0?" / 限额 "+max+" 分钟":""));
+        toast("今日已使用约 "+formatChildDuration((int)used)+(p.getBoolean("child_daily_limit_enabled",false)?" / 限额 "+formatChildDuration(max):" / 不限制"));
       }
     }).setNegativeButton("关闭",null).show();
+  }
+  private String formatChildDuration(int minutes){
+    if(minutes<=0)return "0 分钟";
+    int hours=minutes/60,mins=minutes%60;
+    if(hours==0)return mins+" 分钟";
+    if(mins==0)return hours+" 小时";
+    return hours+" 小时 "+mins+" 分钟";
+  }
+  private void editChildDailyLimit(){
+    android.content.SharedPreferences p=childPrefs();
+    boolean unlimited=!p.getBoolean("child_daily_limit_enabled",false);
+    int current=p.getInt("child_daily_limit_min",120);
+    LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
+    CheckBox noLimit=new CheckBox(this);noLimit.setText("不限制每日使用时长");noLimit.setChecked(unlimited);
+    LinearLayout fields=new LinearLayout(this);fields.setOrientation(0);
+    EditText hours=new EditText(this);hours.setSingleLine(true);hours.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);hours.setHint("小时");hours.setText(unlimited?"2":String.valueOf(current/60));hours.setEms(4);
+    EditText minutes=new EditText(this);minutes.setSingleLine(true);minutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);minutes.setHint("分钟");minutes.setText(unlimited?"0":String.valueOf(current%60));minutes.setEms(4);
+    TextView hourLabel=new TextView(this);hourLabel.setText(" 小时  ");
+    TextView minuteLabel=new TextView(this);minuteLabel.setText(" 分钟");
+    fields.addView(hours);fields.addView(hourLabel);fields.addView(minutes);fields.addView(minuteLabel);
+    TextView hint=new TextView(this);hint.setText("可自定义 0 分钟至 24 小时。设为 0 分钟表示当天禁止观看。");
+    hint.setPadding(0,dp(8),0,0);
+    box.addView(noLimit);box.addView(fields);box.addView(hint);
+    Runnable updateFields=()->{boolean enabled=!noLimit.isChecked();hours.setEnabled(enabled);minutes.setEnabled(enabled);};
+    noLimit.setOnCheckedChangeListener((button,checked)->updateFields.run());updateFields.run();
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("自定义每日使用时长").setView(box)
+        .setPositiveButton("保存",null).setNegativeButton("取消",null).create();
+    dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
+      if(noLimit.isChecked()){
+        p.edit().putBoolean("child_daily_limit_enabled",false).apply();
+      }else{
+        int h,m;
+        try{h=Integer.parseInt(hours.getText().toString().trim());m=Integer.parseInt(minutes.getText().toString().trim());}
+        catch(Exception e){toast("请输入小时和分钟");return;}
+        if(h<0||h>24||m<0||m>59||(h==24&&m!=0)){toast("范围为 0–24 小时，分钟为 0–59；24 小时不能再加分钟");return;}
+        p.edit().putInt("child_daily_limit_min",h*60+m).putBoolean("child_daily_limit_enabled",true).apply();
+      }
+      dialog.dismiss();showChildLockOptions();refreshChildLockState();
+    }));
+    dialog.show();
   }
   private void changeChildParentPin(){
     LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(20),dp(8),dp(20),dp(4));
