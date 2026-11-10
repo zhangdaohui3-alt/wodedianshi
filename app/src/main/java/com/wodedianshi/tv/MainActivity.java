@@ -715,8 +715,8 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit().putString("vod_search_region",activeVodRegion).apply();
       styleTvButton(chinaRegionButton,"中国".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
       styleTvButton(foreignRegionButton,"国外".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
-      if(!activeVodQuery.isEmpty())loadVodCatalogue("搜索："+activeVodQuery,panel,status,results,true);
-      else status.setText("已切换到"+activeVodRegion+"影视搜索，请输入片名或关键词");
+      if(!activeVodQuery.isEmpty())loadVodCatalogue("搜索："+activeVodQuery,panel);
+      else if(currentVodStatus!=null)currentVodStatus.setText("已切换到"+activeVodRegion+"影视搜索，请输入片名或关键词");
     };
     chinaRegionButton.setOnClickListener(regionClick);
     foreignRegionButton.setOnClickListener(regionClick);
