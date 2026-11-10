@@ -2115,6 +2115,20 @@ public class MainActivity extends Activity {
     final int[] activeChoice={selectedIndex};
     final int[] hoveredChoice={-1};
     android.widget.ListView listView=new android.widget.ListView(this);
+    listView.setFocusable(true);
+    listView.setFocusableInTouchMode(true);
+    // Redraw hover and D-pad selection independently. A mouse movement must
+    // never mutate the ListView's actual selected/focused row.
+    final Runnable redrawChoiceRows=()->{
+      for(int i=0;i<listView.getChildCount();i++){
+        View child=listView.getChildAt(i);
+        int childPosition=listView.getFirstVisiblePosition()+i;
+        if(childPosition==hoveredChoice[0]){
+          GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+          bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
+        }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
+      }
+    };
     listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
     listView.setDividerHeight(dp(1));
     listView.setSelector(android.R.color.transparent);
@@ -2127,27 +2141,17 @@ public class MainActivity extends Activity {
         row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
         row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
         row.setMinHeight(dp(48));row.setFocusable(false);row.setClickable(false);
-        row.setBackground(makeButtonBg(normal,position==activeChoice[0]||position==hoveredChoice[0]));
+        row.setBackground(makeButtonBg(normal,position==activeChoice[0]));
         row.setOnHoverListener((v,event)->{
           int act=event.getActionMasked();
           int rowPosition=v.getTag() instanceof Integer?(Integer)v.getTag():-1;
           if(act==android.view.MotionEvent.ACTION_HOVER_ENTER||act==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            if(rowPosition>=0){
-              activeChoice[0]=rowPosition;hoveredChoice[0]=rowPosition;
-              listView.setSelection(rowPosition);
-              for(int i=0;i<listView.getChildCount();i++){
-                View child=listView.getChildAt(i);
-                int childPosition=listView.getFirstVisiblePosition()+i;
-                if(childPosition==hoveredChoice[0]){
-                  GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
-                  bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
-                }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
-              }
-            }
+            if(rowPosition>=0)hoveredChoice[0]=rowPosition;
+            redrawChoiceRows.run();
             return true;
           }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
             if(hoveredChoice[0]==rowPosition)hoveredChoice[0]=-1;
-            v.setBackground(makeButtonBg(normal,rowPosition==activeChoice[0]));
+            redrawChoiceRows.run();
             return true;
           }
           return false;
@@ -2160,14 +2164,7 @@ public class MainActivity extends Activity {
     listView.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
       public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){
         activeChoice[0]=position;
-        for(int i=0;i<listView.getChildCount();i++){
-          View child=listView.getChildAt(i);
-          int childPosition=listView.getFirstVisiblePosition()+i;
-          if(childPosition==hoveredChoice[0]){
-            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
-            bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
-          }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
-        }
+        redrawChoiceRows.run();
       }
       public void onNothingSelected(android.widget.AdapterView<?> parent){}
     });
@@ -2175,24 +2172,11 @@ public class MainActivity extends Activity {
       int act=event.getActionMasked();
       if(act==android.view.MotionEvent.ACTION_HOVER_MOVE||act==android.view.MotionEvent.ACTION_HOVER_ENTER){
         int position=listView.pointToPosition((int)event.getX(),(int)event.getY());
-        if(position>=0){
-          activeChoice[0]=position;hoveredChoice[0]=position;listView.setSelection(position);
-        }else hoveredChoice[0]=-1;
-        for(int i=0;i<listView.getChildCount();i++){
-          View child=listView.getChildAt(i);
-          int childPosition=listView.getFirstVisiblePosition()+i;
-          if(childPosition==hoveredChoice[0]){
-            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
-            bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
-          }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
-        }
+        hoveredChoice[0]=position>=0?position:-1;
+        redrawChoiceRows.run();
       }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
         hoveredChoice[0]=-1;
-        for(int i=0;i<listView.getChildCount();i++){
-          View child=listView.getChildAt(i);
-          int childPosition=listView.getFirstVisiblePosition()+i;
-          child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
-        }
+        redrawChoiceRows.run();
       }
       return false;
     });
@@ -2215,6 +2199,13 @@ public class MainActivity extends Activity {
       action.onChoice(actual);
     });
     dialog.show();
+    // Give D-pad users a deterministic starting point in the choice list.
+    listView.post(()->{
+      if(!dialog.isShowing()||choices.length==0)return;
+      int initial=selectedIndex>=0&&selectedIndex<choices.length?selectedIndex:0;
+      listView.setSelection(initial);
+      listView.requestFocus();
+    });
     if(dialog.getWindow()!=null){
       int screenW=getResources().getDisplayMetrics().widthPixels;
       int screenH=getResources().getDisplayMetrics().heightPixels;
