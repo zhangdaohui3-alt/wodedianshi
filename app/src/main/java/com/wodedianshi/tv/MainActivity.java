@@ -3905,7 +3905,7 @@ public class MainActivity extends Activity {
     if(childLockDialog!=null&&childLockDialog.isShowing()){
       childLockDialog.dismiss();childLockDialog=null;
       toast("限制时段已结束，可以继续使用");
-      if(!resumeLiveAfterVod&&selected>=0&&selected<channels.size())startCurrentSource();
+      if(!resumeLiveAfterVod&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}
     }
   }
   private void enforceChildLock(){
