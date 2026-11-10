@@ -3855,11 +3855,10 @@ public class MainActivity extends Activity {
   private long childTodayUsage(){
     android.content.SharedPreferences p=childPrefs();
     String day=childTodayKey();
-    if(!day.equals(p.getString("child_usage_day",""))){
-      p.edit().putString("child_usage_day",day).putLong("child_usage_ms",0L).apply();
-      return 0L;
-    }
-    return Math.max(0L,p.getLong("child_usage_ms",0L));
+    // Reading the limit must not reset the stored date. updateChildUsage() owns
+    // rollover accounting so it can split a foreground interval at midnight.
+    return ChildLockPolicy.usageForDate(
+        p.getString("child_usage_day",""),day,p.getLong("child_usage_ms",0L));
   }
   private void updateChildUsage(){
     long now=android.os.SystemClock.elapsedRealtime();
