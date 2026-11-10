@@ -22,7 +22,11 @@ public class SourceUpdateWorker extends Worker {
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
-    if(!getInputData().getBoolean("manual",false)&&!prefs.getBoolean("auto_source_update",true))return Result.success();
+    if(!getInputData().getBoolean("manual",false)&&!prefs.getBoolean("auto_source_update",true)){
+      // A one-time first-run bootstrap must be retriable after automatic updates are
+      // re-enabled; periodic runs can simply finish quietly while the feature is off.
+      return getInputData().getBoolean("bootstrap",false)?Result.failure():Result.success();
+    }
     if(prefs.getBoolean("source_update_playback_active",false)){
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
       return Result.retry();
