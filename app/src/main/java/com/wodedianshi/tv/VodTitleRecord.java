@@ -17,6 +17,13 @@ public final class VodTitleRecord {
 
     public VodTitleRecord(String id, String title, String alternateTitle,
                           String synopsis, String region, String metadataProvider,
+                          String metadataUrl, int year) {
+        this(id, title, alternateTitle, synopsis, region, metadataProvider,
+                metadataUrl, year, "");
+    }
+
+    public VodTitleRecord(String id, String title, String alternateTitle,
+                          String synopsis, String region, String metadataProvider,
                           String metadataUrl, int year, String posterUrl) {
         this.id = safe(id);
         this.title = safe(title);
