@@ -628,10 +628,14 @@ public class MainActivity extends Activity {
   private VodItem activeVodItem;
   private Runnable vodProgressSaver;
   private boolean resumeLiveAfterVod=false;
+  private View vodCategoryFocusTarget;
   private void vodDialog(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     resumeLiveAfterVod=player!=null&&player.isPlaying();
+    // A VOD catalogue session owns the screen; explicitly revoke live audio before
+    // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
+    if(player!=null){try{player.setPlayWhenReady(false);player.pause();}catch(RuntimeException ignored){}}
     activeVodRegion=getSharedPreferences("mytv",0).getString("vod_search_region","中国");
     if(!"国外".equals(activeVodRegion))activeVodRegion="中国";
     setSourceUpdatePlaybackActive(true);
@@ -691,6 +695,7 @@ public class MainActivity extends Activity {
         // active film category or let the refresh button search for "正版平台".
         if("正版平台".equals(chosen)){openOfficialVodPlatforms();return;}
         activeVodCategory=chosen;activeVodQuery="";query.setText("");
+        vodCategoryFocusTarget=clicked;
         updateVodCategoryHighlight(categoryButtons,chosen);
         if("播放记录".equals(chosen))loadVodHistory(panel);else if("我的收藏".equals(chosen))loadVodFavorites(panel);else loadVodCatalogue(chosen,panel);
       });
@@ -701,6 +706,7 @@ public class MainActivity extends Activity {
       }
     }
     panel.addView(categoryScroll,new LinearLayout.LayoutParams(-1,dp(38)));
+    vodCategoryFocusTarget=categoryButtons.get("电影");
     updateVodCategoryHighlight(categoryButtons,"电影");
     Button chinaRegionButton=new Button(this);chinaRegionButton.setText("中国");chinaRegionButton.setAllCaps(false);chinaRegionButton.setTextSize(12);styleTvButton(chinaRegionButton,"中国".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
     Button foreignRegionButton=new Button(this);foreignRegionButton.setText("国外");foreignRegionButton.setAllCaps(false);foreignRegionButton.setTextSize(12);styleTvButton(foreignRegionButton,"国外".equals(activeVodRegion)?Color.rgb(26,112,190):Color.rgb(35,55,78));
@@ -1158,7 +1164,14 @@ public class MainActivity extends Activity {
         if(event.getAction()!=android.view.KeyEvent.ACTION_DOWN||!(parent instanceof GridView))return false;
         GridView owner=(GridView)parent;int current=owner.getPositionForView(card);
         if(current<0)return false;int target=current;int count=owner.getAdapter()==null?0:owner.getAdapter().getCount();int columns=Math.max(1,owner.getNumColumns());
-        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP)target=current-columns;
+        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP){
+          if(current<columns){
+            View categoryTarget=vodCategoryFocusTarget;
+            if(categoryTarget!=null&&categoryTarget.isShown()){categoryTarget.requestFocus();return true;}
+            return false;
+          }
+          target=current-columns;
+        }
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_DOWN)target=current+columns;
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT){if(current%columns==0)return false;target=current-1;}
         else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT){if(current%columns==columns-1||current+1>=count)return false;target=current+1;}
@@ -3430,9 +3443,12 @@ public class MainActivity extends Activity {
   private void releaseLivePlayerSafely(){
     ExoPlayer old=player;
     player=null;
+    if(old!=null){
+      try{old.setPlayWhenReady(false);old.pause();}catch(RuntimeException ignored){}
+    }
     if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
     if(old!=null){
-      try{old.pause();old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
+      try{old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
       try{old.release();}catch(RuntimeException ignored){}
     }
   }
