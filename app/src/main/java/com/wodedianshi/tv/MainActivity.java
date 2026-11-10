@@ -2100,6 +2100,7 @@ public class MainActivity extends Activity {
     final int normal=Color.rgb(25,39,59);
     final int hoverColor=Color.rgb(35,91,139);
     final int[] activeChoice={selectedIndex};
+    final int[] hoveredChoice={-1};
     android.widget.ListView listView=new android.widget.ListView(this);
     listView.setDivider(new android.graphics.drawable.ColorDrawable(Color.rgb(55,72,94)));
     listView.setDividerHeight(dp(1));
@@ -2113,16 +2114,26 @@ public class MainActivity extends Activity {
         row.setText(getItem(position));row.setTextColor(Color.WHITE);row.setTextSize(16);
         row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(18),dp(11),dp(12),dp(11));
         row.setMinHeight(dp(48));row.setFocusable(false);row.setClickable(false);
-        row.setBackground(makeButtonBg(normal,position==activeChoice[0]));
+        row.setBackground(makeButtonBg(normal,position==activeChoice[0]||position==hoveredChoice[0]));
         row.setOnHoverListener((v,event)->{
           int act=event.getActionMasked();
           int rowPosition=v.getTag() instanceof Integer?(Integer)v.getTag():-1;
           if(act==android.view.MotionEvent.ACTION_HOVER_ENTER||act==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            if(rowPosition>=0){activeChoice[0]=rowPosition;listView.setSelection(rowPosition);}
-            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
-            bg.setStroke(dp(2),Color.rgb(125,205,255));v.setBackground(bg);
+            if(rowPosition>=0){
+              activeChoice[0]=rowPosition;hoveredChoice[0]=rowPosition;
+              listView.setSelection(rowPosition);
+              for(int i=0;i<listView.getChildCount();i++){
+                View child=listView.getChildAt(i);
+                int childPosition=listView.getFirstVisiblePosition()+i;
+                if(childPosition==hoveredChoice[0]){
+                  GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+                  bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
+                }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
+              }
+            }
             return true;
           }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
+            if(hoveredChoice[0]==rowPosition)hoveredChoice[0]=-1;
             v.setBackground(makeButtonBg(normal,rowPosition==activeChoice[0]));
             return true;
           }
@@ -2139,8 +2150,10 @@ public class MainActivity extends Activity {
         for(int i=0;i<listView.getChildCount();i++){
           View child=listView.getChildAt(i);
           int childPosition=listView.getFirstVisiblePosition()+i;
-          if(childPosition!=position)child.setBackground(makeButtonBg(normal,false));
-          else child.setBackground(makeButtonBg(normal,true));
+          if(childPosition==hoveredChoice[0]){
+            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+            bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
+          }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
         }
       }
       public void onNothingSelected(android.widget.AdapterView<?> parent){}
@@ -2150,18 +2163,25 @@ public class MainActivity extends Activity {
       if(act==android.view.MotionEvent.ACTION_HOVER_MOVE||act==android.view.MotionEvent.ACTION_HOVER_ENTER){
         int position=listView.pointToPosition((int)event.getX(),(int)event.getY());
         if(position>=0){
-          activeChoice[0]=position;listView.setSelection(position);
-          for(int i=0;i<listView.getChildCount();i++){
-            View child=listView.getChildAt(i);
-            int childPosition=listView.getFirstVisiblePosition()+i;
-            if(childPosition==position){
-              GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
-              bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
-            }else child.setBackground(makeButtonBg(normal,childPosition==selectedIndex));
-          }
+          activeChoice[0]=position;hoveredChoice[0]=position;listView.setSelection(position);
+        }else hoveredChoice[0]=-1;
+        for(int i=0;i<listView.getChildCount();i++){
+          View child=listView.getChildAt(i);
+          int childPosition=listView.getFirstVisiblePosition()+i;
+          if(childPosition==hoveredChoice[0]){
+            GradientDrawable bg=new GradientDrawable();bg.setColor(hoverColor);bg.setCornerRadius(dp(6));
+            bg.setStroke(dp(2),Color.rgb(125,205,255));child.setBackground(bg);
+          }else child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
+        }
+      }else if(act==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        hoveredChoice[0]=-1;
+        for(int i=0;i<listView.getChildCount();i++){
+          View child=listView.getChildAt(i);
+          int childPosition=listView.getFirstVisiblePosition()+i;
+          child.setBackground(makeButtonBg(normal,childPosition==activeChoice[0]));
         }
       }
-      return true;
+      return false;
     });
     LinearLayout content=new LinearLayout(this);content.setOrientation(1);
     LinearLayout topRow=new LinearLayout(this);topRow.setOrientation(0);topRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -2780,7 +2800,7 @@ public class MainActivity extends Activity {
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");channels.add(c);rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(channels.indexOf(c));}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
-    if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setTextColor(Color.WHITE);fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
+    if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
     if(fullscreenAspectMenuItem.getParent()==null&&categoryMenuItems!=null)categoryMenuItems.addView(fullscreenAspectMenuItem,0,new LinearLayout.LayoutParams(-1,dp(48)));
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
     if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
