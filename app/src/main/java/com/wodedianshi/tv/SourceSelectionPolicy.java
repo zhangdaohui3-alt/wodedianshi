@@ -15,9 +15,9 @@ public final class SourceSelectionPolicy {
     }
 
     /**
-     * Walks forward from the active source, skipping blocked entries and preferring
-     * sources outside cooldown. If every unblocked source is cooling down, returns
-     * the first unblocked source as a last-resort recovery attempt.
+     * Walks forward from the active source, skipping duplicate URLs, blocked entries
+     * and preferring sources outside cooldown. If every distinct unblocked source is
+     * cooling down, returns the first distinct unblocked source as a last-resort attempt.
      */
     public static int findNext(List<String> sources, int currentIndex,
                                Set<String> blocked, Set<String> coolingDown) {
@@ -25,10 +25,13 @@ public final class SourceSelectionPolicy {
         int fallback = -1;
         int size = sources.size();
         int start = wrapIndex(currentIndex, size);
+        String activeUrl = sources.get(start);
+        String activeKey = activeUrl == null ? "" : activeUrl.trim();
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()
+                    || url.trim().equals(activeKey)
                     || (blocked != null && blocked.contains(url))) continue;
             if (fallback < 0) fallback = index;
             if (coolingDown == null || !coolingDown.contains(url)) return index;
