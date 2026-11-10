@@ -20,10 +20,12 @@ public class VodSearchPlanTest {
         List<VodSearchPlan.PageRequest> plan = VodSearchPlan.orderedPages(2, 2);
         assertEquals(0, plan.get(0).queryIndex);
         assertEquals(1, plan.get(1).queryIndex);
-        assertEquals(1, plan.get(2).page);
-        assertEquals(2, plan.get(2).page);
+        assertEquals(1, plan.get(0).page);
+        assertEquals(1, plan.get(1).page);
         assertEquals(0, plan.get(2).queryIndex);
         assertEquals(1, plan.get(3).queryIndex);
+        assertEquals(2, plan.get(2).page);
+        assertEquals(2, plan.get(3).page);
     }
 
     @Test public void rejectsEmptyPlans() {
