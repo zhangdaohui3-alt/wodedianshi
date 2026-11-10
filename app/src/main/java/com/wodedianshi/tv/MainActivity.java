@@ -213,23 +213,18 @@ public class MainActivity extends Activity {
     b.setTextColor(Color.WHITE);
     applyLiveChannelRowStyle(b,normalColor);
     b.setOnFocusChangeListener((v,focused)->{
-      saveLiveDiagnostic("CHANNEL_FOCUS",(b.getText()==null?"频道":b.getText().toString())+" focused="+focused);
       if(!b.isHovered())applyLiveChannelRowStyle(b,normalColor);
-      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
-      b.setElevation(focused?dp(8):0);
+      b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
-          saveLiveDiagnostic("CHANNEL_HOVER",(b.getText()==null?"频道":b.getText().toString())+" focus="+b.hasFocus());
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
-        b.setBackground(hover);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
+        b.setBackground(hover);b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         applyLiveChannelRowStyle(b,normalColor);
-        boolean focused=b.hasFocus();
-        b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }
       return false;
     });
@@ -287,21 +282,18 @@ public class MainActivity extends Activity {
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
-      saveLiveDiagnostic("UI_FOCUS",(b.getText()==null?"按钮":b.getText().toString())+" focused="+focused);
       if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
+      b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
-          saveLiveDiagnostic("UI_HOVER",(b.getText()==null?"按钮":b.getText().toString())+" focus="+b.hasFocus());
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(35,91,139));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
-        b.setBackground(hover);b.setScaleX(1.025f);b.setScaleY(1.025f);b.setElevation(dp(6));
+        b.setBackground(hover);b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         boolean focused=b.hasFocus();b.setBackground(makeButtonBg(normalColor,focused));
-        b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }
       return false;
     });
@@ -1014,28 +1006,18 @@ public class MainActivity extends Activity {
     if(grid==null){
       grid=new GridView(this){
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
-          int action=event.getActionMasked();
-          // Snapshot coordinates before dispatching to children. Android 9 TV firmware
-          // can offset raw coordinates inconsistently when GridView is scrolled.
-          final float localX=event.getX(),localY=event.getY();
-          boolean handled=super.dispatchHoverEvent(event);
-          if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            View hit=null;
-            // Child hit rectangles are already expressed in GridView-local coordinates.
-            // This avoids mixing screen coordinates, recycled adapter positions and columns.
-            for(int i=0;i<getChildCount();i++){
-              View child=getChildAt(i);
-              android.graphics.Rect bounds=new android.graphics.Rect();
-              child.getHitRect(bounds);
-              if(bounds.contains(Math.round(localX),Math.round(localY))){hit=child;break;}
-            }
-            if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
-          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-            clearVodMouseHover();
-          }
-          return handled;
-        }
-        @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
+           int action=event.getActionMasked();
+           // GridView hit testing accounts for scroll offsets, spacing and padding.
+           boolean handled=super.dispatchHoverEvent(event);
+           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+             int position=pointToPosition(Math.round(event.getX()),Math.round(event.getY()));
+             int childIndex=position-getFirstVisiblePosition();
+             View hit=(position>=0&&childIndex>=0&&childIndex<getChildCount())?getChildAt(childIndex):null;
+             if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
+           }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){clearVodMouseHover();}
+           return handled;
+         }
+         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
           if(handleVodGridScroll(this,event))return true;
           return super.onGenericMotionEvent(event);
         }
@@ -1187,20 +1169,6 @@ public class MainActivity extends Activity {
     // Keep the fixed GridView cell geometry from 2.8; no scaling/reflow.
     card.setScaleX(1f);card.setScaleY(1f);card.setElevation(dp(8));
   }
-  private boolean handleVodCardHover(View card,android.view.MotionEvent event){
-    if(card==null||event==null)return false;
-    int action=event.getActionMasked();
-    if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-      showVodMouseHover(card);
-    }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT&&hoveredVodCard==card){
-      int[] location=new int[2];card.getLocationOnScreen(location);
-      float x=event.getRawX(),y=event.getRawY();
-      boolean stillInside=x>=location[0]&&x<location[0]+card.getWidth()
-          &&y>=location[1]&&y<location[1]+card.getHeight();
-      if(!stillInside)clearVodMouseHover();
-    }
-    return false;
-  }
   private void configureVodMouseTarget(View card,View... surfaces){
     // GridView alone owns hover state; child-level listeners race at Android 9 row boundaries.
     if(Build.VERSION.SDK_INT>=24){
@@ -1208,6 +1176,15 @@ public class MainActivity extends Activity {
       if(card!=null)card.setPointerIcon(arrow);
       if(surfaces!=null)for(View surface:surfaces)if(surface!=null)surface.setPointerIcon(arrow);
     }
+  }
+  private String vodSourceLabel(VodItem item){
+    if(item==null||item.identifier==null)return "来源待识别";
+    String id=item.identifier;
+    if(id.startsWith("cctv:"))return "来源：央视网";
+    if(id.startsWith("loc:"))return "来源：美国国会图书馆";
+    if(id.startsWith("commons:")||id.startsWith("commons-search:"))return "来源：维基共享资源";
+    if(id.startsWith("meta:"))return "影片资料（非播放源）";
+    return "来源：Internet Archive";
   }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
@@ -1244,7 +1221,7 @@ public class MainActivity extends Activity {
         }
       });
       holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);
-      holder.meta.setText(item.identifier.startsWith("meta:")?"影片资料 · 暂无已验证直播放源":(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放"));
+      holder.meta.setText(vodSourceLabel(item)+" · "+(item.identifier.startsWith("cctv:")?"官方播放":(item.license==null||item.license.trim().isEmpty()?"公开可播放":item.license.trim())));
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
@@ -1253,11 +1230,7 @@ public class MainActivity extends Activity {
       loadVodPoster(holder.poster,item.identifier,item.title,item.posterUrl);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
-      View.OnHoverListener cardHover=(view,event)->handleVodCardHover(card,event);
-      card.setOnHoverListener(cardHover);
-      holder.poster.setOnHoverListener(cardHover);
-      holder.title.setOnHoverListener(cardHover);
-      holder.meta.setOnHoverListener(cardHover);
+      // GridView owns hover mapping; child listeners can double-dispatch at cell edges.
       configureVodMouseTarget(card,holder.poster,holder.title,holder.meta);
       // Make every visible poster/text surface an explicit mouse click target.
       // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
