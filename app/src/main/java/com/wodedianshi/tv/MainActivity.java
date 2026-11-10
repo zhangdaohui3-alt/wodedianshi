@@ -1555,7 +1555,9 @@ public class MainActivity extends Activity {
         else if("短片".equals(category))q+=" AND (subject:short film OR subject:shorts)";
         else if(!titleSearch&&!Arrays.asList("世界公版电影","精选电影","多源精选","电影","公开电视剧","公开综艺","纪录片·历史","纪录片·自然","纪录片·科学","中国电影","中国老电影","华语经典","中国经典影像","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","戏曲","1080P高清电影","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","战争片","恐怖片","动作片","动画","喜剧","科幻","剧情","欧美经典","默片经典","短片","国产短片").contains(category))q+=" AND title:("+category.replace(" "," AND ")+")";
 
-        ArrayList<String> queries=new ArrayList<>();queries.add(q);
+        ArrayList<String> queries=new ArrayList<>();
+        if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm));
+        else queries.add(q);
         if("戏曲".equals(category)){
           queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
           queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
