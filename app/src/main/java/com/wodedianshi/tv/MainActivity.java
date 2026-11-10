@@ -1094,7 +1094,9 @@ public class MainActivity extends Activity {
     button.setOnFocusChangeListener((v,focused)->{
       if(hoveredVodCategoryButton!=button){
         button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
-        button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
+        button.setTextColor(focused?Color.rgb(255,235,165):(button.isSelected()?Color.rgb(170,220,255):Color.WHITE));
+        button.setTypeface(null,(focused||button.isSelected())?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+        button.setScaleX(1f);button.setScaleY(1f);button.setElevation(focused?dp(5):0f);
       }
     });
     button.setOnHoverListener((v,event)->{
@@ -1133,9 +1135,9 @@ public class MainActivity extends Activity {
       button.setSelected(active);
       if(hoveredVodCategoryButton==button)continue;
       button.setBackground(makeVodCategoryBg(active,button.isFocused()));
-      button.setTextColor(active?Color.rgb(170,220,255):Color.WHITE);
-      button.setTypeface(null,active?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
-      button.setElevation(button.isFocused()?dp(3):0);
+      button.setTextColor(active?Color.rgb(170,220,255):(button.isFocused()?Color.rgb(255,235,165):Color.WHITE));
+      button.setTypeface(null,(active||button.isFocused())?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+      button.setElevation(button.isFocused()?dp(5):0);
     }
   }
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
