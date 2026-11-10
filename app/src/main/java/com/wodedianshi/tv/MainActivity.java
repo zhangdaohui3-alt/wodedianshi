@@ -1598,6 +1598,10 @@ public class MainActivity extends Activity {
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
       ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
+      CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+      boolean titleSearch=category.startsWith("搜索：");
+      String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
+      if(titleSearch&&!searchTerm.isEmpty())sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
@@ -1607,8 +1611,6 @@ public class MainActivity extends Activity {
           for(VodItem item:cctvItems)if(found.size()<80)addUniqueVodItem(found,foundIds,foundTitleKeys,item);
         }
 
-        boolean titleSearch=category.startsWith("搜索：");
-        String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
         String q="mediatype:movies";
         if(titleSearch){
           String term=searchTerm.replace("\\"," ").replace("\""," ").replaceAll("[\\r\\n]+"," ").trim();
@@ -1771,12 +1773,7 @@ public class MainActivity extends Activity {
         // Collect independent catalogue providers by completion order. Waiting on
         // each Future in submission order can accidentally add three full timeouts
         // together when the first provider is slow.
-        CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
-        // Metadata recall is independent of direct-stream lookup. A film can therefore
-        // appear in search even when no openly licensed MP4 exists in public archives.
-        if(titleSearch&&!searchTerm.isEmpty()){
-          sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
-        }
+        // Metadata search is already running in parallel with direct-stream search.
         boolean useCommonsPublic=Arrays.asList("世界公版电影","精选电影","中国电影","中国老电影","华语经典","中国动画","中文动画").contains(category)&&found.size()<48;
         if(useCommonsPublic)sourceFutures.add(sourceCompletion.submit(()->fetchCommonsPublicDomainVod(!"世界公版电影".equals(category))));
         String commonsQuery=null;
