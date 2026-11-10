@@ -122,6 +122,8 @@ public final class ParentRemoteLockManager {
         executor.shutdownNow();
     }
 
+    public void requestPoll() { if (running) executor.execute(this::pollSafely); }
+
     public void pollNow() {
         if (!running) return;
         String endpoint = prefs.getString("endpoint", "").trim();
@@ -211,10 +213,8 @@ public final class ParentRemoteLockManager {
             setLocked(true, "检测到系统时间被修改，已触发安全锁定");
             log("clock jump detected wallDelta=" + wallDelta + " elapsedDelta=" + elapsedDelta);
         }
-        if (elapsedDelta > 0L) {
-            addUsage(elapsedDelta, nowWall);
-        }
-        evaluate();
+        if (elapsedDelta > 0L) addUsage(elapsedDelta, nowWall);
+        if (!isOnline()) applyOfflinePolicy(); else evaluate();
     }
 
     private void addUsage(long delta, long wallNow) {
