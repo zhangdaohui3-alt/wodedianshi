@@ -22,12 +22,26 @@ public class PlaylistParserTest {
         assertEquals("湖南卫视", items.get(0).name);
     }
 
-    @Test public void usesExtGroupUnlessGroupTitleOverridesIt() {
+    @Test public void usesExtGroupBeforeExtinfUnlessGroupTitleOverridesIt() {
         String m3u = "#EXTGRP:地方频道\n#EXTINF:-1,福建综合\nhttps://a.example/live\n"
                 + "#EXTGRP:临时分组\n#EXTINF:-1 group-title=\"卫视\",湖南卫视\nhttps://b.example/live";
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
         assertEquals("地方频道", items.get(0).group);
         assertEquals("卫视", items.get(1).group);
+    }
+
+    @Test public void appliesExtGroupAfterExtinfToCurrentEntry() {
+        String m3u = "#EXTINF:-1,福建综合\n#EXTGRP:福建地方台\nhttps://a.example/live";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(1, items.size());
+        assertEquals("福建地方台", items.get(0).group);
+    }
+
+    @Test public void groupTitleWinsOverExtGroupAfterExtinf() {
+        String m3u = "#EXTINF:-1 group-title=\"省级卫视\",湖南卫视\n"
+                + "#EXTGRP:错误分组\nhttps://a.example/live";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals("省级卫视", items.get(0).group);
     }
 
     @Test public void ignoresUrlsWithoutPendingExtinfAndNonHttpSchemes() {

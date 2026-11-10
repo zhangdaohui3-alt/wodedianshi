@@ -31,6 +31,7 @@ public final class PlaylistParser {
         String name = null;
         String group = "";
         String pendingGroup = "";
+        boolean groupTitlePresent = false;
         String normalized = data.replace("\uFEFF", "");
         String[] lines = normalized.split("\\r\\n|\\n|\\r");
         for (String raw : lines) {
@@ -38,7 +39,15 @@ public final class PlaylistParser {
             String line = raw.trim();
             if (line.isEmpty()) continue;
             if (line.startsWith("#EXTGRP:")) {
-                pendingGroup = line.substring(8).trim();
+                String extGroup = line.substring(8).trim();
+                // EXTGRP is found both before EXTINF and between EXTINF and its URL.
+                // Apply it to the current entry when possible, but never override the
+                // more explicit group-title attribute.
+                if (name != null) {
+                    if (!groupTitlePresent) group = extGroup;
+                } else {
+                    pendingGroup = extGroup;
+                }
                 continue;
             }
             if (line.startsWith("#EXTINF")) {
@@ -51,9 +60,11 @@ public final class PlaylistParser {
                 if (name.isEmpty()) name = "未命名频道";
                 group = pendingGroup;
                 pendingGroup = "";
+                groupTitlePresent = false;
                 Matcher groupMatcher = GROUP_TITLE.matcher(line);
                 if (groupMatcher.find() && !groupMatcher.group(1).trim().isEmpty()) {
                     group = groupMatcher.group(1).trim();
+                    groupTitlePresent = true;
                 }
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
@@ -62,6 +73,7 @@ public final class PlaylistParser {
                 }
                 name = null;
                 group = "";
+                groupTitlePresent = false;
             }
         }
         return result;
