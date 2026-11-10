@@ -67,6 +67,18 @@ public class SourceSelectionPolicyTest {
                 0, Collections.emptySet(), Collections.emptySet()));
     }
 
+    @Test public void canonicalEndpointKeyMatchesSchemeHostAndDefaultPortAliases() {
+        assertEquals(SourceSelectionPolicy.endpointKey("HTTP://Example.COM:80/live.m3u8"),
+                SourceSelectionPolicy.endpointKey("http://example.com/live.m3u8"));
+    }
+
+    @Test public void canonicalEndpointKeyPreservesCaseSensitivePathAndQuery() {
+        assertNotEquals(SourceSelectionPolicy.endpointKey("http://example.com/Live?token=AbC"),
+                SourceSelectionPolicy.endpointKey("http://example.com/live?token=AbC"));
+        assertNotEquals(SourceSelectionPolicy.endpointKey("http://example.com/live?token=AbC"),
+                SourceSelectionPolicy.endpointKey("http://example.com/live?token=abc"));
+    }
+
     @Test public void blockedEndpointAliasesAreAlsoBlocked() {
         assertEquals(2, SourceSelectionPolicy.findNext(
                 Arrays.asList("http://active/live", "HTTP://Blocked.Example:80/live",

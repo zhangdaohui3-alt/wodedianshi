@@ -28,12 +28,12 @@ public final class SourceSelectionPolicy {
         int size = sources.size();
         int start = wrapIndex(currentIndex, size);
         String activeUrl = sources.get(start);
-        String activeKey = duplicateKey(activeUrl);
+        String activeKey = endpointKey(activeUrl);
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()
-                    || duplicateKey(url).equals(activeKey)
+                    || endpointKey(url).equals(activeKey)
                     || containsEquivalent(blocked, url)) continue;
             if (fallback < 0) fallback = index;
             if (!containsEquivalent(coolingDown, url)) return index;
@@ -43,9 +43,9 @@ public final class SourceSelectionPolicy {
 
     private static boolean containsEquivalent(Set<String> values, String candidate) {
         if (values == null || values.isEmpty()) return false;
-        String key = duplicateKey(candidate);
+        String key = endpointKey(candidate);
         for (String value : values) {
-            if (duplicateKey(value).equals(key)) return true;
+            if (endpointKey(value).equals(key)) return true;
         }
         return false;
     }
@@ -55,7 +55,7 @@ public final class SourceSelectionPolicy {
      * Scheme and DNS host are case-insensitive; default HTTP(S) ports are
      * equivalent. Path and query remain case-sensitive and byte-preserving.
      */
-    private static String duplicateKey(String value) {
+    public static String endpointKey(String value) {
         if (value == null) return "";
         String trimmed = value.trim();
         try {
