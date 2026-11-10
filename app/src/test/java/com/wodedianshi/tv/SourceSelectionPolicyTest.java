@@ -47,4 +47,16 @@ public class SourceSelectionPolicyTest {
                 Arrays.asList("a", "b", null, " ", "d"), 0,
                 Collections.singleton("b"), Collections.emptySet()));
     }
+
+    @Test public void doesNotTreatDuplicateActiveUrlAsARealBackup() {
+        assertEquals(-1, SourceSelectionPolicy.findNext(
+                Arrays.asList("a", "b", "a"), 0,
+                Collections.singleton("b"), Collections.emptySet()));
+    }
+
+    @Test public void skipsDuplicateActiveUrlAndContinuesToDistinctBackup() {
+        assertEquals(3, SourceSelectionPolicy.findNext(
+                Arrays.asList("a", "b", "a", "c"), 0,
+                Collections.singleton("b"), Collections.emptySet()));
+    }
 }
