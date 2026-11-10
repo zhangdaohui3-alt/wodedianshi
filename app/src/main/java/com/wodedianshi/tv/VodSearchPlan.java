@@ -25,6 +25,10 @@ public final class VodSearchPlan {
      * spaces before being inserted into the Archive.org query language.
      */
     public static List<String> archiveQueries(String raw) {
+        return archiveQueries(raw, "全部");
+    }
+
+    public static List<String> archiveQueries(String raw, String region) {
         String cleaned = raw == null ? "" : raw
                 .replaceAll("[\\p{Punct}\\p{Z}\\s]+", " ")
                 .replaceAll("[^\\p{L}\\p{N} ]", " ")
@@ -33,16 +37,29 @@ public final class VodSearchPlan {
 
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         String phrase = quote(cleaned);
+        String regionClause = "";
+        if ("中国".equals(region)) {
+            regionClause = " AND (language:Chinese OR language:chi OR language:zho"
+                    + " OR language:Mandarin OR title:Chinese OR title:China"
+                    + " OR subject:Chinese OR subject:China OR title:中文 OR title:中国"
+                    + " OR title:华语 OR description:Chinese OR description:China)";
+        } else if ("国外".equals(region)) {
+            regionClause = " AND (language:English OR language:eng OR language:Spanish"
+                    + " OR language:French OR language:German OR language:Japanese"
+                    + " OR language:Korean OR language:Italian OR language:Russian"
+                    + " OR subject:international OR title:foreign)";
+        }
         queries.add("mediatype:movies AND (title:" + phrase
                 + " OR description:" + phrase + " OR subject:" + phrase
-                + " OR creator:" + phrase + ")");
+                + " OR creator:" + phrase + ")" + regionClause);
         StringBuilder titleTokens = new StringBuilder("mediatype:movies AND (");
         for (int i = 0; i < termsCount(cleaned); i++) {
             if (i > 0) titleTokens.append(" AND ");
             titleTokens.append("title:").append(quote(cleaned.split(" ")[i]));
         }
         titleTokens.append(")");
-        queries.add(titleTokens.toString());
+        queries.add(titleTokens.toString().replace("mediatype:movies AND (",
+                "mediatype:movies AND (") + (regionClause.isEmpty() ? "" : regionClause));
 
         String[] terms = cleaned.split(" ");
         if (terms.length > 1) {
@@ -55,14 +72,14 @@ public final class VodSearchPlan {
                         .append(" OR subject:").append(term)
                         .append(" OR creator:").append(term).append(")");
             }
-            queries.add(allFields.toString());
+            queries.add(allFields.toString() + regionClause);
         }
         // A broad all-fields query catches catalogue records whose title is
         // incomplete but whose creator/subject/description carries the name.
         if (cleaned.length() >= 3) {
             queries.add("mediatype:movies AND (title:" + phrase
                     + " OR description:" + phrase + " OR subject:" + phrase
-                    + " OR creator:" + phrase + ")");
+                    + " OR creator:" + phrase + ")" + regionClause);
         }
         return Collections.unmodifiableList(new ArrayList<>(queries));
     }
