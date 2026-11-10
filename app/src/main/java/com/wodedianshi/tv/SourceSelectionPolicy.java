@@ -55,7 +55,7 @@ public final class SourceSelectionPolicy {
      * Scheme and DNS host are case-insensitive; default HTTP(S) ports are
      * equivalent. Path and query remain case-sensitive and byte-preserving.
      */
-    private static String endpointKey(String value) {
+    public static String endpointKey(String value) {
         if (value == null) return "";
         String trimmed = value.trim();
         try {
