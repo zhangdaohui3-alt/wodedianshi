@@ -66,7 +66,7 @@ public final class VodMetadataSearch {
                     .replace("&#39;", "'")
                     .replace("&amp;", "&"));
             String page = "https://" + host + "/?curid=" + pageId;
-            out.putIfAbsent(key, new VodTitleRecord(key, title, "", snippet,
+            if (!out.containsKey(key)) out.put(key, new VodTitleRecord(key, title, "", snippet,
                     region, "Wikipedia (" + language + ")", page, 0));
         }
     }
