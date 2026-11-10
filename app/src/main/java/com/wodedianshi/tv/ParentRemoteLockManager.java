@@ -173,6 +173,7 @@ public final class ParentRemoteLockManager {
             prefs.edit().putLong("anchor_server_ms", serverTime)
                     .putLong("anchor_wall_ms", System.currentTimeMillis())
                     .putLong("anchor_elapsed_ms", SystemClock.elapsedRealtime())
+                    .putLong("anchor_boot_ms", System.currentTimeMillis() - SystemClock.elapsedRealtime())
                     .apply();
             cacheConfig(json);
             lastOnline = true;
@@ -224,7 +225,11 @@ public final class ParentRemoteLockManager {
         if (!today.equals(prefs.getString("usage_day", ""))) used = 0L;
         used = ParentRemoteLockPolicy.safeUsage(used, delta);
         SharedPreferences.Editor edit = prefs.edit().putString("usage_day", today).putLong("usage_ms", used);
-        if (!isOnline()) edit.putLong("pending_upload_ms", prefs.getLong("pending_upload_ms", 0L) + delta);
+        if (!isOnline()) {
+            edit.putLong("pending_upload_ms", prefs.getLong("pending_upload_ms", 0L) + delta);
+            if (prefs.getString("pending_batch_id", "").isEmpty())
+                edit.putString("pending_batch_id", UUID.randomUUID().toString());
+        }
         edit.apply();
         if (!today.equals(lastUsageDay)) {
             lastUsageDay = today;
@@ -307,9 +312,14 @@ public final class ParentRemoteLockManager {
         long oldServer = prefs.getLong("anchor_server_ms", 0L);
         long oldElapsed = prefs.getLong("anchor_elapsed_ms", 0L);
         long oldWall = prefs.getLong("anchor_wall_ms", 0L);
+        long oldBoot = prefs.getLong("anchor_boot_ms", 0L);
         long elapsed = SystemClock.elapsedRealtime();
+        long currentBoot = System.currentTimeMillis() - elapsed;
         if (oldServer <= 0L) return false;
-        if (oldElapsed <= 0L || elapsed < oldElapsed) return Math.abs(System.currentTimeMillis() - serverTime) > CLOCK_TOLERANCE_MS;
+        if (oldBoot > 0L && Math.abs(currentBoot - oldBoot) > CLOCK_TOLERANCE_MS)
+            return Math.abs(System.currentTimeMillis() - serverTime) > CLOCK_TOLERANCE_MS;
+        if (oldElapsed <= 0L || elapsed < oldElapsed)
+            return Math.abs(System.currentTimeMillis() - serverTime) > CLOCK_TOLERANCE_MS;
         long expectedServer = oldServer + (elapsed - oldElapsed);
         long expectedWall = oldWall + (elapsed - oldElapsed);
         long wallError = Math.abs(System.currentTimeMillis() - expectedWall);
@@ -320,9 +330,13 @@ public final class ParentRemoteLockManager {
     private boolean isClockAnchorInvalid() {
         long oldServer = prefs.getLong("anchor_server_ms", 0L);
         long oldElapsed = prefs.getLong("anchor_elapsed_ms", 0L);
+        long oldBoot = prefs.getLong("anchor_boot_ms", 0L);
         if (oldServer <= 0L || oldElapsed <= 0L) return false;
         long elapsed = SystemClock.elapsedRealtime();
-        if (elapsed < oldElapsed) return false; // device reboot: wait for next trusted sync
+        long currentBoot = System.currentTimeMillis() - elapsed;
+        if (oldBoot > 0L && Math.abs(currentBoot - oldBoot) > CLOCK_TOLERANCE_MS)
+            return false; // reboot: wait for next trusted network timestamp
+        if (elapsed < oldElapsed) return false;
         long expected = oldServer + elapsed - oldElapsed;
         return Math.abs(System.currentTimeMillis() - expected) > CLOCK_TOLERANCE_MS;
     }
@@ -407,6 +421,7 @@ public final class ParentRemoteLockManager {
         try {
             JSONObject payload = new JSONObject();
             payload.put("device_id", deviceId());
+            payload.put("batch_id", prefs.getString("pending_batch_id", ""));
             payload.put("offline_usage_ms", pending);
             payload.put("usage_day", prefs.getString("usage_day", ""));
             payload.put("client_time_ms", System.currentTimeMillis());
@@ -418,7 +433,7 @@ public final class ParentRemoteLockManager {
             c.getOutputStream().write(bytes);
             int code = c.getResponseCode();
             if (code >= 200 && code < 300) {
-                prefs.edit().putLong("pending_upload_ms", 0L).apply();
+                 prefs.edit().putLong("pending_upload_ms", 0L).remove("pending_batch_id").apply();
                 log("offline usage uploaded " + pending + "ms");
             } else log("usage upload HTTP " + code);
         } catch (Exception e) { log("usage upload failed"); }
@@ -463,8 +478,8 @@ public final class ParentRemoteLockManager {
 
     private String readAll(InputStream in) throws Exception {
         try (InputStream input = in; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] b = new byte[4096]; int n;
-            while ((n = input.read(b)) != -1) out.write(b, 0, n);
+            byte[] b = new byte[4096]; int n; int total = 0;
+            while ((n = input.read(b)) != -1) { total += n; if (total > 65536) throw new IllegalStateException("配置响应超过 64KB"); out.write(b, 0, n); }
             return new String(out.toByteArray(), StandardCharsets.UTF_8);
         }
     }
