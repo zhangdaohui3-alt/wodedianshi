@@ -76,7 +76,8 @@ public final class SourceSelectionPolicy {
             if (port >= 0) key.append(':').append(port);
             if (uri.getRawPath() != null) key.append(uri.getRawPath());
             if (uri.getRawQuery() != null) key.append('?').append(uri.getRawQuery());
-            if (uri.getRawFragment() != null) key.append('#').append(uri.getRawFragment());
+            // URL fragments are client-side only and are never sent to the server.
+            // Exclude them so cosmetic aliases do not look like separate backups.
             return key.toString();
         } catch (Exception ignored) {
             return trimmed;
