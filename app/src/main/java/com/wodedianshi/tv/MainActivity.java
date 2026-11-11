@@ -935,7 +935,7 @@ public class MainActivity extends Activity {
   private String vodCacheKey(String category){
     // These two catalogue categories had an incorrect CCTV documentary mapping.
     // Use a fresh cache namespace so an older, duplicated result list is not reused.
-    String revision="10";
+    String revision="11"; // Invalidate legacy cache entries that included metadata-only poster cards.
     String regionKey=category.startsWith("搜索：")?"_"+activeVodRegion:"";
     return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode())+regionKey;
   }
@@ -956,7 +956,7 @@ public class MainActivity extends Activity {
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
         String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license",""),poster=o.optString("poster","");
-        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))items.add(new VodItem(title,id,url,license,poster));
+        if(!title.isEmpty()&&!id.isEmpty()&&!id.startsWith("meta:")&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license,poster));
       }
     }catch(Exception ignored){}
     return items;
@@ -977,6 +977,9 @@ public class MainActivity extends Activity {
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
+        // Persist playable entries only. Metadata records may have posters, but
+        // must never reappear as clickable movie cards after an app restart.
+        if(item==null||item.identifier==null||item.identifier.startsWith("meta:")||item.url==null||!item.url.startsWith("https://"))continue;
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
       }
       android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
