@@ -38,8 +38,8 @@ public class SourceUpdateWorker extends Worker {
     StringBuilder errors=new StringBuilder();
      String[] feeds={
        // Prefer status exports first: they carry declared resolution and remote response-time hints.
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/master/cn_cctv_status.m3u8",
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/master/cn_province_status.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv_status.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province_status.m3u8",
        // Ordinary lists remain as fallbacks if a status export is unavailable.
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
