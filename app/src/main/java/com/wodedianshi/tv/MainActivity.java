@@ -1267,7 +1267,8 @@ public class MainActivity extends Activity {
           if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
         }
       });
-      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);
+      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")
+           +(item.identifier.startsWith("meta:")?"资料 · ":"")+item.title);
       holder.meta.setText(vodSourceLabel(item)+" · "+(item.identifier.startsWith("cctv:")?"官方播放":vodRightsLabel(item.license)));
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
@@ -1718,6 +1719,8 @@ public class MainActivity extends Activity {
       CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
       boolean titleSearch=category.startsWith("搜索：");
       String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
+       Future<ArrayList<VodItem>> metadataSearchFuture=titleSearch
+           ?sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)):null;
       // Search results must be directly playable catalogue entries, not metadata-only cards.
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
@@ -1927,7 +1930,8 @@ public class MainActivity extends Activity {
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(titleSearch)locQuery=searchTerm;
          if(locQuery!=null&&found.size()<80){final String term=locQuery;sourceFutures.add(sourceCompletion.submit(()->fetchLocPublicDomainVod(term)));}
-        long sourceDeadline=android.os.SystemClock.elapsedRealtime()+6500L;
+        if(metadataSearchFuture!=null)sourceFutures.add(metadataSearchFuture);
+         long sourceDeadline=android.os.SystemClock.elapsedRealtime()+(titleSearch?8500L:6500L);
         for(int completedSources=0;completedSources<sourceFutures.size()&&!Thread.currentThread().isInterrupted();completedSources++){
           long remaining=sourceDeadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0L)break;
@@ -1940,6 +1944,11 @@ public class MainActivity extends Activity {
         }
         // Enforce one shared provider budget, not 6.5 seconds per provider.
         for(Future<ArrayList<VodItem>> pendingSource:sourceFutures)if(!pendingSource.isDone())pendingSource.cancel(true);
+         if(titleSearch){
+           boolean hasPlayable=false;
+           for(VodItem item:found)if(!item.identifier.startsWith("meta:")){hasPlayable=true;break;}
+           if(hasPlayable)found.removeIf(item->item.identifier.startsWith("meta:"));
+         }
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
       finally{
         // A cancelled catalogue request must release every child request too.
@@ -1962,7 +1971,9 @@ public class MainActivity extends Activity {
         if(!result.isEmpty()){
           writeVodCache(category,result,true);
           renderVodItems(category,result,status,results,false);
-          status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
+          int metadataOnly=0;for(VodItem item:result)if(item.identifier.startsWith("meta:"))metadataOnly++;
+           status.setText("「"+category+"」 · 找到 "+result.size()+" 项"
+               +(metadataOnly>0?"，其中 "+metadataOnly+" 项为影片资料（暂无已验证授权播放源）":" · 多目录公开授权内容"));
         }else if(cached.isEmpty()){
           status.setText(err==null?"暂时没有找到可直接播放且权利状态可核验的影片。可尝试简短片名、原名或中英文名称。":"点播目录暂时无法连接："+err);
         }else{
