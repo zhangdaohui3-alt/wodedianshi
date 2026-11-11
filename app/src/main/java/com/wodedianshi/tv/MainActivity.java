@@ -545,6 +545,10 @@ public class MainActivity extends Activity {
   }
   // Start every fresh live session in the CCTV list; user category changes remain available during the session.
   private String activeCategory="央视";
+  // Cache the remote channel order so repeated UP/DOWN zaps do not rescan and
+  // re-sort the entire catalogue on every key event.
+  private String cachedRemoteOrderKey="";
+  private ArrayList<Integer> cachedRemoteOrder=null;
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
@@ -2683,6 +2687,7 @@ public class MainActivity extends Activity {
   }
   private void refresh(){
     if(list==null||search==null)return;
+    cachedRemoteOrderKey="";cachedRemoteOrder=null;
     int previousFocusedIndex=-1;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
@@ -3354,8 +3359,12 @@ public class MainActivity extends Activity {
     return super.dispatchKeyEvent(event);
   }
   private ArrayList<Integer> currentRemoteChannelOrder(){
-    ArrayList<Integer> order=new ArrayList<>();
     String q=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    String cacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channels.size()+"|"
+        +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
+        +(activeLocalProvince==null?"":activeLocalProvince)+"|"+(activeLocalCity==null?"":activeLocalCity);
+    if(cacheKey.equals(cachedRemoteOrderKey)&&cachedRemoteOrder!=null)return new ArrayList<>(cachedRemoteOrder);
+    ArrayList<Integer> order=new ArrayList<>();
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
@@ -3374,6 +3383,8 @@ public class MainActivity extends Activity {
         });
       }
     }
+    cachedRemoteOrderKey=cacheKey;
+    cachedRemoteOrder=new ArrayList<>(order);
     return order;
   }
   private void stepChannel(int delta){
