@@ -313,7 +313,13 @@ public class SourceUpdateWorker extends Worker {
           &&!prefs.getBoolean("source_update_playback_active",false)){
         long wait=deadline-android.os.SystemClock.elapsedRealtime();
         if(wait<=0L)break;
-        Future<PlaylistFetchResult> finished=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);
+        Future<PlaylistFetchResult> finished;
+        try{
+          finished=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);
+        }catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();
+          break;
+        }
         if(finished==null)continue;
         remaining--;
         try{
