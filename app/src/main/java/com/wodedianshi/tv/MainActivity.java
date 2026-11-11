@@ -702,7 +702,7 @@ public class MainActivity extends Activity {
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
     int current=prefs.getInt("decoder_mode",1);
-    String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
+    String[] modes={"自动解码（系统选择）","系统解码器回退（不额外增加 FFmpeg 等解码库）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
       dialog.dismiss();
@@ -711,7 +711,7 @@ public class MainActivity extends Activity {
         releaseLivePlayerSafely();
         play(channel);
       }
-      toast(which==0?"已切换为自动解码":"已切换为兼容解码；如果仍无声音，可能是音频格式或音轨不兼容");
+      toast(which==0?"已切换为自动解码":"已启用系统解码器回退；这不会额外增加新的音视频格式解码库");
     }).setNegativeButton("关闭",null).show();
   }
   private static class VodItem {
