@@ -417,6 +417,8 @@ public class MainActivity extends Activity {
         }
       }
       channels.clear();channels.addAll(compact);
+      channelCatalogueRevision++;
+      liveCategoryIndexCache.clear();
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
@@ -549,6 +551,10 @@ public class MainActivity extends Activity {
   // re-sort the entire catalogue on every key event.
   private String cachedRemoteOrderKey="";
   private ArrayList<Integer> cachedRemoteOrder=null;
+  private int channelCatalogueRevision=0;
+  private final LinkedHashMap<String,ArrayList<Integer>> liveCategoryIndexCache=new LinkedHashMap<String,ArrayList<Integer>>(16,0.75f,true){
+    protected boolean removeEldestEntry(Map.Entry<String,ArrayList<Integer>> entry){return size()>24;}
+  };
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
@@ -2707,26 +2713,34 @@ public class MainActivity extends Activity {
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
     final int maxRows=24;int shown=0,totalMatches=0;
-    ArrayList<Integer> visibleIndexes=new ArrayList<>();
+    ArrayList<Integer> visibleIndexes=null;
+    String categoryCacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channelCatalogueRevision+"|"
+        +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
+        +(activeLocalProvince==null?"":activeLocalProvince)+"|"+(activeLocalCity==null?"":activeLocalCity);
     synchronized(channels){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(localRegionFilterActive&&activeCategory.equals("地方")){
-          if(!matchesLocalRegion(c))continue;
-        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
-        visibleIndexes.add(i);
-      }
-      if(activeCategory.equals("央视")){
-        visibleIndexes.sort((a,b)->{
-          Channel ca=channels.get(a),cb=channels.get(b);
-          int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
-          if(oa!=ob)return Integer.compare(oa,ob);
-          return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
-        });
+      visibleIndexes=liveCategoryIndexCache.get(categoryCacheKey);
+      if(visibleIndexes==null){
+        visibleIndexes=new ArrayList<>();
+        for(int i=0;i<channels.size();i++){
+          Channel c=channels.get(i);
+          if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
+          if(favoriteMode&&!favorites.contains(c.key()))continue;
+          if(localRegionFilterActive&&activeCategory.equals("地方")){
+            if(!matchesLocalRegion(c))continue;
+          }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+          if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+              &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+          visibleIndexes.add(i);
+        }
+        if(activeCategory.equals("央视")){
+          visibleIndexes.sort((a,b)->{
+            Channel ca=channels.get(a),cb=channels.get(b);
+            int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
+            if(oa!=ob)return Integer.compare(oa,ob);
+            return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
+          });
+        }
+        liveCategoryIndexCache.put(categoryCacheKey,new ArrayList<>(visibleIndexes));
       }
       totalMatches=visibleIndexes.size();
       int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
@@ -3127,6 +3141,7 @@ public class MainActivity extends Activity {
         name=null;group="";
       }
     }
+    if(added>0){channelCatalogueRevision++;liveCategoryIndexCache.clear();cachedRemoteOrderKey="";cachedRemoteOrder=null;}
     return added;
   }
   protected void onActivityResult(int req,int result,Intent data){
