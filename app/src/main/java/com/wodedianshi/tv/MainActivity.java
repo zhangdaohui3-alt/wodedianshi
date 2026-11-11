@@ -566,7 +566,7 @@ public class MainActivity extends Activity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+23)/24);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -1712,7 +1712,7 @@ public class MainActivity extends Activity {
     // the first partial batch or fails before a complete result is published.
     if(forceRefresh)invalidateVodCacheFreshness(category);
     activeVodCatalogueTask=vodWorker.submit(()->{
-      ArrayList<VodItem> found=new ArrayList<>();String error=null;
+      ArrayList<VodItem> found=new ArrayList<>();String error=null;int metadataOnlyMatches=0;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
       ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
@@ -1945,9 +1945,11 @@ public class MainActivity extends Activity {
         // Enforce one shared provider budget, not 6.5 seconds per provider.
         for(Future<ArrayList<VodItem>> pendingSource:sourceFutures)if(!pendingSource.isDone())pendingSource.cancel(true);
          if(titleSearch){
-           boolean hasPlayable=false;
-           for(VodItem item:found)if(!item.identifier.startsWith("meta:")){hasPlayable=true;break;}
-           if(hasPlayable)found.removeIf(item->item.identifier.startsWith("meta:"));
+           for(VodItem item:found)if(item.identifier.startsWith("meta:"))metadataOnlyMatches++;
+           // Metadata records have no media URL. Never place them in the playable
+           // grid, even when no direct result exists; otherwise users see fake
+           // MY TV poster tiles that cannot start playback.
+           found.removeIf(item->item.identifier.startsWith("meta:")||item.url==null||item.url.trim().isEmpty());
          }
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
       finally{
@@ -1965,6 +1967,7 @@ public class MainActivity extends Activity {
       }
 
       final String err=error;
+      final int metadataCountForUi=metadataOnlyMatches;
       final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
         if(isFinishing()||request!=vodRequestId)return;
@@ -1975,7 +1978,9 @@ public class MainActivity extends Activity {
            status.setText("「"+category+"」 · 找到 "+result.size()+" 项"
                +(metadataOnly>0?"，其中 "+metadataOnly+" 项为影片资料（暂无已验证授权播放源）":" · 多目录公开授权内容"));
         }else if(cached.isEmpty()){
-          status.setText(err==null?"暂时没有找到可直接播放且权利状态可核验的影片。可尝试简短片名、原名或中英文名称。":"点播目录暂时无法连接："+err);
+          status.setText(metadataCountForUi>0
+              ?"找到 "+metadataCountForUi+" 条影片资料，但没有查到可直接播放且权利状态可核验的视频源。为避免误导，暂不显示不可播放的缩略图。"
+              :err==null?"暂时没有找到可直接播放且权利状态可核验的影片。可尝试简短片名、原名或中英文名称。":"点播目录暂时无法连接："+err);
         }else{
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
@@ -2030,12 +2035,11 @@ public class MainActivity extends Activity {
     for(int x=14;x<w;x+=24){c.drawRoundRect(x,12,x+9,h-12,3,3,p);}
     p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(85,255,255,255));c.drawCircle(w-48,48,25,p);
     p.setColor(Color.WHITE);p.setTextAlign(Paint.Align.CENTER);p.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));
-    p.setTextSize(20);c.drawText("MY TV",w/2f,h*0.38f,p);
     String text=android.text.TextUtils.isEmpty(title)?"暂无海报":title.trim();
     p.setTextSize(text.length()>15?19:25);p.setColor(Color.rgb(255,238,190));
     if(text.length()>18)text=text.substring(0,18)+"…";
     c.drawText(text,w/2f,h*0.66f,p);
-    p.setTextSize(13);p.setColor(Color.rgb(190,210,230));c.drawText("影片封面",w/2f,h*0.84f,p);
+    p.setTextSize(13);p.setColor(Color.rgb(190,210,230));c.drawText("暂无海报",w/2f,h*0.84f,p);
     return b;
   }
   private String fetchCommonsPosterUrl(String identifier){
@@ -2697,7 +2701,7 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=60;int shown=0,totalMatches=0;
+    final int maxRows=24;int shown=0,totalMatches=0;
     ArrayList<Integer> visibleIndexes=new ArrayList<>();
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
@@ -2779,7 +2783,7 @@ public class MainActivity extends Activity {
     return count;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+59)/60);
+    int pages=Math.max(1,(total+23)/24);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){
@@ -3790,9 +3794,9 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    sortSourcesByObservedQuality(channels.get(ix));
-    // A newly selected channel always starts at its highest-ranked current source.
-    // Manual source changes continue to use startCurrentSource() directly.
+    // Do not parse source-quality history and persist a reordered source list on
+    // the UI thread for every remote channel zap. Keep the current source order;
+    // background source maintenance and the source picker can refresh its ranking.
     channels.get(ix).activeSource=0;
     startCurrentSource();
   }
