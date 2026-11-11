@@ -69,7 +69,8 @@ jobs:
           echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
           echo "$BADGING" | grep -F "sdkVersion:'23'"
           echo "$BADGING" | grep -F "targetSdkVersion:'28'"
-          echo "APK archive, package ID, minSdk and targetSdk checks passed."
+          echo "$BADGING" | grep -F "versionCode='148' versionName='2.66.0'"
+          echo "APK archive, package ID, version, minSdk and targetSdk checks passed."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
