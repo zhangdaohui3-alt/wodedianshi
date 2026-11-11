@@ -69,7 +69,7 @@ jobs:
           echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
           echo "$BADGING" | grep -F "sdkVersion:'23'"
           echo "$BADGING" | grep -F "targetSdkVersion:'28'"
-          echo "$BADGING" | grep -F "versionCode='153' versionName='2.71.0'"
+          echo "$BADGING" | grep -F "versionCode='154' versionName='2.72.0'"
           echo "APK archive, package ID, version, minSdk and targetSdk checks passed."
 
       - name: Upload APK
