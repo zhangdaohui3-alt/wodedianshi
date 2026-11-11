@@ -2373,6 +2373,26 @@ public class MainActivity extends Activity {
       final ExoPlayer vodOwner=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
       vodPlayer=vodOwner;
       pv.setPlayer(vodOwner);pv.setKeepScreenOn(true);
+      // Record the actual decoder selected for VOD as well as live TV. This
+      // distinguishes unsupported audio/video codecs from network failures.
+      vodOwner.addAnalyticsListener(new AnalyticsListener(){
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            android.util.Log.i("MyTV-VOD","AUDIO_DECODER name="+decoderName+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            android.util.Log.i("MyTV-VOD","VIDEO_DECODER name="+decoderName+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            android.util.Log.w("MyTV-VOD","AUDIO_CODEC_ERROR "+(error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage()));
+        }
+        @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            android.util.Log.w("MyTV-VOD","VIDEO_CODEC_ERROR "+(error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage()));
+        }
+      });
       // Register listeners before setMediaItem/prepare: some sources fail or
       // transition state immediately during preparation on TV decoders.
       vodOwner.addListener(new Player.Listener(){
