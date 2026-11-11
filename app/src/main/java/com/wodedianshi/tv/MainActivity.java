@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 @UnstableApi
 public class MainActivity extends Activity {
+  private static final int LIVE_CHANNELS_PER_PAGE=36;
   private volatile boolean activityResumed=false;
   private ExoPlayer player;
   private PlayerView video;
@@ -378,7 +379,7 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
+    return getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1;
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -576,7 +577,7 @@ public class MainActivity extends Activity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+23)/24);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+LIVE_CHANNELS_PER_PAGE-1)/LIVE_CHANNELS_PER_PAGE);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -700,7 +701,7 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",0);
+    int current=prefs.getInt("decoder_mode",1);
     String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
@@ -2715,7 +2716,7 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=24;int shown=0,totalMatches=0;
+    final int maxRows=LIVE_CHANNELS_PER_PAGE;int shown=0,totalMatches=0;
     ArrayList<Integer> visibleIndexes=null;
     String categoryCacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channelCatalogueRevision+"|"
         +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
@@ -2805,7 +2806,7 @@ public class MainActivity extends Activity {
     return count;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+23)/24);
+    int pages=Math.max(1,(total+LIVE_CHANNELS_PER_PAGE-1)/LIVE_CHANNELS_PER_PAGE);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){
@@ -3378,7 +3379,7 @@ public class MainActivity extends Activity {
   }
   private ArrayList<Integer> currentRemoteChannelOrder(){
     String q=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
-    String cacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channels.size()+"|"
+    String cacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channelCatalogueRevision+"|"+channels.size()+"|"
         +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
         +(activeLocalProvince==null?"":activeLocalProvince)+"|"+(activeLocalCity==null?"":activeLocalCity);
     if(cacheKey.equals(cachedRemoteOrderKey)&&cachedRemoteOrder!=null)return new ArrayList<>(cachedRemoteOrder);
@@ -3386,8 +3387,11 @@ public class MainActivity extends Activity {
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
+        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
         if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(localRegionFilterActive&&activeCategory.equals("地方")){
+          if(!matchesLocalRegion(c))continue;
+        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
             &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
         order.add(i);
@@ -3637,8 +3641,34 @@ public class MainActivity extends Activity {
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
   private Runnable audioTrackCheck;
+  private Runnable renderedFrameFallback;
+  private volatile boolean hasRenderedFirstFrame=false;
+  private volatile long lastRenderedFrameAt=0L;
   private void cancelAudioTrackCheck(){
     if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
+  }
+  private void cancelRenderedFrameFallback(){
+    if(renderedFrameFallback!=null){uiHandler.removeCallbacks(renderedFrameFallback);renderedFrameFallback=null;}
+  }
+  private void scheduleRenderedFrameFallback(){
+    cancelRenderedFrameFallback();
+    if(player==null||player.getPlaybackState()!=Player.STATE_READY||!videoTrackSelected
+        ||hasRenderedFirstFrame||sourceReadyAt<=0L)return;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    long elapsed=Math.max(0L,android.os.SystemClock.elapsedRealtime()-sourceReadyAt);
+    long delay=Math.max(0L,10000L-elapsed);
+    renderedFrameFallback=()->{
+      renderedFrameFallback=null;
+      if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
+          ||player.getPlaybackState()!=Player.STATE_READY)return;
+      if(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(videoTrackSelected,hasRenderedFirstFrame,
+          sourceReadyAt,android.os.SystemClock.elapsedRealtime(),10000L)){
+        saveLiveDiagnostic("NO_RENDERED_FRAME","video track selected but no frame reached display output in 10s");
+        advanceToNextSourceAutomatically("有视频轨但 10 秒内没有真正输出画面，正在跳过该源");
+      }
+    };
+    uiHandler.postDelayed(renderedFrameFallback,delay);
   }
   private void scheduleAudioTrackCheck(){
     cancelAudioTrackCheck();
@@ -3743,12 +3773,12 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
     if(configured<=0)return;
     // Keep first startup bounded, but make failover attempts deliberately faster.
     // A source that has already failed should not make the viewer wait another 20-30s.
     int seconds=BufferingFailoverPolicy.timeoutSeconds(
-        sourceReadyRecorded,automaticSwitchCount,configured);
+        sourceReadyRecorded,automaticSwitchCount,automaticChannelSwitchCount,configured);
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
@@ -3796,12 +3826,17 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size()||channels.isEmpty())return;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(channels.size()<=1||automaticChannelSwitchCount>=channels.size()-1){
+    cancelAudioTrackCheck();
+    cancelRenderedFrameFallback();
+    ArrayList<Integer> order=currentRemoteChannelOrder();
+    int currentPosition=order.indexOf(selected);
+    if(order.size()<=1||automaticChannelSwitchCount>=order.size()-1){
       setSourceUpdatePlaybackActive(false);
-      info.setText(reason+"；已检查完本轮频道，没有可确认可播放的频道，请手动选择");
+      info.setText(reason+"；已检查完当前分类的频道，没有确认可播放的频道，请手动选择");
       return;
     }
-    int next=(selected+1)%channels.size();
+    int nextPosition=currentPosition<0?0:SourceSelectionPolicy.wrapIndex(currentPosition+1,order.size());
+    int next=order.get(nextPosition);
     automaticChannelSwitchCount++;
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
@@ -3809,8 +3844,8 @@ public class MainActivity extends Activity {
     selected=next;
     updateLiveChannelPresentation();
     Channel target=channels.get(selected);
-    if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
-    info.setText(reason+"，自动切换到下一频道："+target.name);
+    applyLastKnownGoodSource(target);
+    info.setText(reason+"，正在尝试当前分类的下一频道："+target.name);
     startCurrentSource();
   }
   private void play(int ix){
@@ -3823,10 +3858,9 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    // Do not parse source-quality history and persist a reordered source list on
-    // the UI thread for every remote channel zap. Keep the current source order;
-    // background source maintenance and the source picker can refresh its ranking.
-    channels.get(ix).activeSource=0;
+    // Prefer a source that has actually rendered on this device. If none is
+    // known, keep the background probe's ranked order; do not sort or probe on key presses.
+    applyLastKnownGoodSource(channels.get(ix));
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -3840,6 +3874,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
+    cancelRenderedFrameFallback();
     audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
@@ -3852,6 +3887,9 @@ public class MainActivity extends Activity {
     sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
     firstFrameUiPostPending.set(false);
+    hasRenderedFirstFrame=false;
+    lastRenderedFrameAt=0L;
+    cancelRenderedFrameFallback();
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
     liveWindowRecoveryAttempted=false;
@@ -3888,6 +3926,34 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
+          if(listenerOwner!=MainActivity.this.player||eventTime==null||eventTime.timeline.isEmpty()
+              ||eventTime.windowIndex<0||eventTime.windowIndex>=eventTime.timeline.getWindowCount())return;
+          Timeline.Window renderedWindow=new Timeline.Window();
+          eventTime.timeline.getWindow(eventTime.windowIndex,renderedWindow);
+          if(!currentMediaId.equals(renderedWindow.mediaItem.mediaId))return;
+          long renderedAtElapsed=android.os.SystemClock.elapsedRealtime();
+          hasRenderedFirstFrame=true;
+          // renderTimeMs is wall-clock time; use elapsedRealtime for duration math.
+          lastRenderedFrameAt=renderedAtElapsed;
+          cancelRenderedFrameFallback();
+          if(!sourceFirstFrameRecorded){
+            sourceFirstFrameRecorded=true;
+            String renderedUrl=currentSourceUrl();
+            recordSourceMetric(renderedUrl,"firstFrame",Math.max(0L,renderedAtElapsed-sourceAttemptStartedAt));
+            if(selected>=0&&selected<channels.size()){
+              Channel renderedChannel=channels.get(selected);
+              SourceMemoryStore.saveLastGood(MainActivity.this,
+                  SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                  renderedUrl);
+            }
+            saveLiveDiagnostic("VIDEO_RENDERED","first frame reached display output");
+          }
+        }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)
+            saveLiveDiagnostic("VIDEO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
@@ -3903,9 +3969,10 @@ public class MainActivity extends Activity {
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          // Keep video decoder diagnostics separate from confirmed source failures.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player){
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
+            saveLiveDiagnostic("VIDEO_CODEC_ERROR",error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage());
+          }
         }
       });
       // Real decoded-frame callbacks: the old watchdog fields existed but were never
@@ -3918,27 +3985,8 @@ public class MainActivity extends Activity {
         lastVideoFrameAt=frameAt;
         hasReceivedVideoFrame=true;
         videoFrameMonitoringActive=true;
-        if(firstFrameUiPostPending.compareAndSet(false,true)){
-          uiHandler.post(()->{
-            if(listenerOwner!=MainActivity.this.player)return;
-            MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-            if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId)){
-              firstFrameUiPostPending.set(false);
-              return;
-            }
-            if(!sourceFirstFrameRecorded){
-              sourceFirstFrameRecorded=true;
-              String renderedUrl=currentSourceUrl();
-              recordSourceMetric(renderedUrl,"firstFrame",frameAt-sourceAttemptStartedAt);
-              if(selected>=0&&selected<channels.size()){
-                Channel renderedChannel=channels.get(selected);
-                SourceMemoryStore.saveLastGood(MainActivity.this,
-                    SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
-                    renderedUrl);
-              }
-            }
-          });
-        }
+        // Decoded-frame metadata is not proof that the TV Surface displayed it.
+        // Successful-source memory is written only from onRenderedFirstFrame().
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
@@ -3964,6 +4012,7 @@ public class MainActivity extends Activity {
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
           videoFrameMonitoringActive=videoSelected;
+          if(videoSelected&&player.getPlaybackState()==Player.STATE_READY)scheduleRenderedFrameFallback();
         }
         private boolean isCurrent(){
           if(listenerOwner!=MainActivity.this.player)return false;
@@ -3996,6 +4045,7 @@ public class MainActivity extends Activity {
           if(st==Player.STATE_BUFFERING){
             cancelPlaybackWatchdog();
             cancelAudioTrackCheck();
+            cancelRenderedFrameFallback();
             boolean firstBuffering=!sourceWasBuffering;
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
@@ -4014,8 +4064,9 @@ public class MainActivity extends Activity {
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
-            // Start the frame-stall timer only after the player reports READY.
+            // READY is not proof of visible video: require a real rendered-frame callback.
             lastVideoFrameAt=watchdogLastAdvanceAt;
+            if(videoTrackSelected)scheduleRenderedFrameFallback();
             schedulePlaybackWatchdog();
             // Run the audio-track/output check only after READY; buffering can
             // legitimately pause audio advancement and must not trigger a false failover.
@@ -4070,9 +4121,19 @@ public class MainActivity extends Activity {
     String remembered=SourceMemoryStore.getLastGood(this,
         SourceMemoryStore.channelKey(c.name,c.group,c.url),
         SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
-    if(remembered==null)return;
-    int index=c.backups.indexOf(remembered);
-    if(index>=0)c.activeSource=index;
+    if(remembered!=null){
+      int index=c.backups.indexOf(remembered);
+      if(index>=0&&!isSourceBlocked(remembered)&&!SourceMemoryStore.isCoolingDown(this,remembered)){
+        c.activeSource=index;
+        return;
+      }
+    }
+    if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
+    String active=c.backups.get(c.activeSource);
+    if(isSourceBlocked(active)||SourceMemoryStore.isCoolingDown(this,active)){
+      int next=findNextAutomaticSource(c,c.activeSource);
+      if(next>=0)c.activeSource=next;
+    }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
@@ -4095,10 +4156,10 @@ public class MainActivity extends Activity {
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
         m.put("lastSuccess",System.currentTimeMillis());
       }else if("firstFrame".equals(event)){
-        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
-        m.put("firstFrames",count+1);
-        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastFirstFrame",System.currentTimeMillis());
+        int count=m.optInt("renderedFirstFrames",0);long avg=m.optLong("avgRenderedFirstFrameMs",0L);
+        m.put("renderedFirstFrames",count+1);
+        m.put("avgRenderedFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+        m.put("lastRenderedFirstFrame",System.currentTimeMillis());
       }else if("stable".equals(event)){
         m.put("stablePlays",m.optInt("stablePlays",0)+1);
         m.put("lastStable",System.currentTimeMillis());
@@ -4122,10 +4183,10 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
-      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
+      double firstFrameRate=(double)m.optInt("renderedFirstFrames",0)/attempts;
       double stableRate=(double)m.optInt("stablePlays",0)/attempts;
       double readyPenalty=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
-      double firstFramePenalty=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
+      double firstFramePenalty=Math.min(180.0,m.optLong("avgRenderedFirstFrameMs",0L)/180.0);
       // Decoder/sink warnings are weaker evidence than failed playback. Apply only
       // a small capped ranking penalty; never convert them into an automatic failure.
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
@@ -4192,8 +4253,8 @@ public class MainActivity extends Activity {
     uiHandler.postDelayed(networkSpeedUpdater,1000L);
   }
   private void bufferingSwitchSettingsDialog(){
-    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
-    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换","12 秒后切换（推荐）","15 秒后切换","关闭自动卡顿切换"};
+    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
+    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换（推荐）","12 秒后切换","15 秒后切换","关闭自动卡顿切换"};
     int[] values={3,5,8,12,15,0};
     int checked=current==3?0:current==5?1:current==8?2:current==15?4:current==0?5:3;
     new AlertDialog.Builder(this).setTitle("卡顿自动切换备用源")

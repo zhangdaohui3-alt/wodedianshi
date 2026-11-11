@@ -12,7 +12,7 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_PROBES_PER_RUN = 24;
+  private static final int MAX_PROBES_PER_RUN = 36;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
@@ -267,11 +267,11 @@ public class SourceUpdateWorker extends Worker {
     if(m==null)m=qoe.optJSONObject(legacyKey);
     if(m!=null&&m.optInt("attempts",0)>=2){
       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
+      double firstFrameRate=(double)m.optInt("renderedFirstFrames",0)/attempts;
       double stableRate=(double)m.optInt("stablePlays",0)/attempts;
       double qoeAdjustment=(double)ready/attempts*450.0+firstFrameRate*450.0+stableRate*700.0;
       qoeAdjustment-=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
-      qoeAdjustment-=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
+      qoeAdjustment-=Math.min(180.0,m.optLong("avgRenderedFirstFrameMs",0L)/180.0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
       qoeAdjustment-=Math.min(60.0,codecWarnings*8.0);
       qoeAdjustment-=fail*90.0+buffers*55.0;

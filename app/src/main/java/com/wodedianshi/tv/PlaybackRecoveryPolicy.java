@@ -20,4 +20,12 @@ public final class PlaybackRecoveryPolicy {
         long reference = hasReceivedVideoFrame ? lastVideoFrameAtMs : sourceReadyAtMs;
         return reference > 0L && nowMs >= reference && nowMs - reference >= timeoutMs;
     }
+    public static boolean isFirstRenderedFrameMissing(boolean videoTrackSelected,
+                                                      boolean hasRenderedFirstFrame,
+                                                      long readyAtMs, long nowMs,
+                                                      long timeoutMs) {
+        return videoTrackSelected && !hasRenderedFirstFrame && timeoutMs > 0L
+                && readyAtMs > 0L && nowMs >= readyAtMs
+                && nowMs - readyAtMs >= timeoutMs;
+    }
 }
