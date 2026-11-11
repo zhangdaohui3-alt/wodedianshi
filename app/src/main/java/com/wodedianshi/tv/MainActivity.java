@@ -378,7 +378,7 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1;
+    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -690,7 +690,7 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",1);
+    int current=prefs.getInt("decoder_mode",0);
     String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
@@ -2595,9 +2595,7 @@ public class MainActivity extends Activity {
     return "";
   }
   private boolean isSatelliteChannel(Channel c){
-    String metadata=regionalMetadata(c);
-    String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
+    return c!=null&&ChannelCategoryPolicy.isSatellite(c.name,c.group);
   }
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null||isSatelliteChannel(c))return false;
@@ -2621,7 +2619,7 @@ public class MainActivity extends Activity {
     for(String province:provinces)for(String city:citiesForProvince(province)){
       if(hasRegionalToken(metadata,city))return true;
     }
-    return false;
+    return ChannelCategoryPolicy.isMainlandLocalCandidate(c.name,c.group);
   }
   private boolean matchesProvinceCity(Channel c,String province,String city){
     if(c==null||province==null||city==null||isSatelliteChannel(c))return false;
@@ -2658,7 +2656,7 @@ public class MainActivity extends Activity {
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
-    if(cat.equals("卫视"))return x.contains("卫视")||g.equals("卫视")||g.contains("satellite");
+    if(cat.equals("卫视"))return isSatelliteChannel(c);
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
     if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
@@ -2995,18 +2993,42 @@ public class MainActivity extends Activity {
     });
   }
   private void loadRegionChannels(){
-    if(regionLoading){info.setText("港澳台频道正在载入，请稍候…");return;}
-    regionLoading=true;info.setText("正在载入香港、澳门、台湾公开频道目录…");
+    if(regionLoading){info.setText("港澳台目录正在后台补充，已有频道仍可使用");return;}
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    final int feedVersion=2;
+    final long last=prefs.getLong("region_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    if(prefs.getInt("region_supplement_feed_version",0)>=feedVersion
+        &&last>0L&&System.currentTimeMillis()-last<refreshInterval){
+      info.setText("已使用港澳台本地频道缓存");return;
+    }
+    regionLoading=true;info.setText("正在补充香港、澳门、台湾频道目录（原有频道和备用源保留）…");
     worker.execute(()->{
       int added=0;StringBuilder errors=new StringBuilder();
       String[] feeds={
+        "https://iptv-org.github.io/iptv/countries/hk.m3u",
+        "https://iptv-org.github.io/iptv/countries/mo.m3u",
+        "https://iptv-org.github.io/iptv/countries/tw.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      added=fetchAndMergePlaylists(feeds,22000,errors);
-      final int total=added;final String err=errors.toString();
-      runOnUiThread(()->{persist();refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
+      try{
+        added=fetchAndMergePlaylists(feeds,22000,errors);
+        final int total=added;final String err=errors.toString();
+        int failed=err.isEmpty()?0:Math.max(0,err.split(";").length-1);
+        if(failed<feeds.length)prefs.edit().putLong("region_supplement_last_success",System.currentTimeMillis())
+            .putInt("region_supplement_feed_version",feedVersion).apply();
+        runOnUiThread(()->{
+          if(isFinishing())return;
+          if(total>0)persist();
+          refresh();regionLoading=false;
+          info.setText("港澳台目录补充完成：新增 "+total+" 个频道条目；原有频道均保留。"
+              +(err.isEmpty()?"":"部分目录暂不可用："+err));
+        });
+      }catch(Exception error){
+        runOnUiThread(()->{regionLoading=false;info.setText("港澳台补充失败，已保留原有频道："+error.getMessage());});
+      }
     });
   }
   private void loadEntertainmentChannels(){
@@ -3207,8 +3229,9 @@ public class MainActivity extends Activity {
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
     video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-    // Rebuild the list so the currently playing channel keeps its marker and selected tint.
-    refresh();
+    // Keep the already-mounted channel rows and scroll position. Rebuilding up to
+    // 60 focusable buttons here made the Back transition unnecessarily expensive.
+    updateLiveChannelPresentation();
     View restoreFocus=list.getChildAt(0);
     if(selected>=0){
       for(int i=0;i<list.getChildCount();i++){
@@ -3969,10 +3992,8 @@ public class MainActivity extends Activity {
         }
       });
     }
-    // Explicitly drain the previous live item before assigning another source. This
-    // prevents stale audio/renderers from surviving rapid channel/source changes.
-    player.stop();
-    player.clearMediaItems();
+    // setMediaItem replaces the previous playlist. Avoid an extra renderer teardown
+    // via stop()+clearMediaItems() on every live channel zap.
     MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();
     player.setMediaItem(item);
     player.prepare();
