@@ -3109,43 +3109,52 @@ public class MainActivity extends Activity {
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
-    String name=null,group="",pendingGroup="";int added=0;
-    if(data==null)return 0;
-    data=data.replace("\uFEFF","").replace("\r\n","\n").replace('\r','\n');
-    for(String raw:data.split("\n")){
-      String line=raw.trim();
-      if(line.isEmpty())continue;
-      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
-      if(line.startsWith("#EXTINF")){
-        int comma=extinfComma(line);
-        name=comma>=0?line.substring(comma+1).trim():"";
-        java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
-        String tvgName=nm.find()?nm.group(1).trim():"";
-        if(name.isEmpty())name=tvgName;
-        if(name.isEmpty())name="频道 "+(channels.size()+1);
-        group=pendingGroup;pendingGroup="";
-        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);
-        if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
-        continue;
-      }
-      if(line.startsWith("#"))continue;
-      if(line.startsWith("http://")||line.startsWith("https://")){
-        if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
-        synchronized(channels){
-          if(!channelsByUrl.containsKey(line)){
-            String key=identity(name,group,line);Channel same=channelsByIdentity.get(key);
-            if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
-            else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
+    if(data==null||data.isEmpty())return 0;
+    // Use the same parser exercised by PlaylistParserTest in production imports.
+    // Keep channel identity/backup merging here so imported lists preserve the
+    // app's existing de-duplication and geographic-catalogue behavior.
+    List<PlaylistParser.ChannelSource> parsed=PlaylistParser.parse(data,50000);
+    int added=0;
+    for(PlaylistParser.ChannelSource item:parsed){
+      String name=item.name==null||item.name.trim().isEmpty()
+          ?"频道 "+(channels.size()+1):item.name.trim();
+      String group=item.group==null?"":item.group.trim();
+      String url=item.url==null?"":item.url.trim();
+      if(url.isEmpty())continue;
+      Channel scoped=null;
+      synchronized(channels){
+        if(!channelsByUrl.containsKey(url)){
+          String key=identity(name,group,url);
+          Channel same=channelsByIdentity.get(key);
+          if(same!=null){
+            if(!same.backups.contains(url)){
+              same.backups.add(url);
+              channelsByUrl.put(url,same);
+              added++;
+            }
+            scoped=same;
+          }else{
+            Channel fresh=new Channel(name,url,group);
+            channels.add(fresh);
+            channelsByIdentity.put(key,fresh);
+            channelsByUrl.put(url,fresh);
+            added++;
+            scoped=fresh;
           }
+        }else{
+          scoped=channelsByUrl.get(url);
         }
-        if(parsingGeoChannelKeys!=null){
-          Channel scoped=channelsByUrl.get(line);
-          if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
-        }
-        name=null;group="";
+      }
+      if(parsingGeoChannelKeys!=null&&scoped!=null){
+        parsingGeoChannelKeys.add(scoped.key());
       }
     }
-    if(added>0){channelCatalogueRevision++;liveCategoryIndexCache.clear();cachedRemoteOrderKey="";cachedRemoteOrder=null;}
+    if(added>0){
+      channelCatalogueRevision++;
+      liveCategoryIndexCache.clear();
+      cachedRemoteOrderKey="";
+      cachedRemoteOrder=null;
+    }
     return added;
   }
   protected void onActivityResult(int req,int result,Intent data){
