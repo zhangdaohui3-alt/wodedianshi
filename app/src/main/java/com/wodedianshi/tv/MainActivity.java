@@ -3599,13 +3599,45 @@ public class MainActivity extends Activity {
       p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
     }catch(Exception ignored){}
   }
+  private String buildDeviceCompatibilityReport(){
+    StringBuilder report=new StringBuilder();
+    android.util.DisplayMetrics metrics=new android.util.DisplayMetrics();
+    try{getWindowManager().getDefaultDisplay().getRealMetrics(metrics);}catch(Exception ignored){
+      metrics.setTo(getResources().getDisplayMetrics());
+    }
+    report.append("设备兼容性信息\\n")
+        .append("Manufacturer: ").append(android.os.Build.MANUFACTURER).append('\\n')
+        .append("Model: ").append(android.os.Build.MODEL).append('\\n')
+        .append("Device: ").append(android.os.Build.DEVICE).append('\\n')
+        .append("Hardware: ").append(android.os.Build.HARDWARE).append('\\n')
+        .append("Android: ").append(android.os.Build.VERSION.RELEASE)
+        .append(" / API ").append(android.os.Build.VERSION.SDK_INT).append('\\n')
+        .append("Build: ").append(android.os.Build.DISPLAY).append('\\n')
+        .append("Screen: ").append(metrics.widthPixels).append('x').append(metrics.heightPixels)
+        .append(" / ").append(metrics.densityDpi).append(" dpi")
+        .append(" / density ").append(String.format(Locale.ROOT,"%.2f",metrics.density)).append('\\n')
+        .append("ABIs: ").append(Arrays.toString(android.os.Build.SUPPORTED_ABIS)).append('\\n');
+    if(android.os.Build.VERSION.SDK_INT>=26){
+      try{
+        android.content.pm.PackageInfo web=android.webkit.WebView.getCurrentWebViewPackage();
+        report.append("WebView package: ").append(web==null?"unknown":web.packageName)
+            .append(" / ").append(web==null?"unknown":web.versionName).append('\\n');
+      }catch(Exception e){report.append("WebView package: unavailable (").append(e.getClass().getSimpleName()).append(")\\n");}
+    }else report.append("WebView package: API below 26\\n");
+    try{
+      report.append("WebView UA: ").append(android.webkit.WebSettings.getDefaultUserAgent(this)).append('\\n');
+    }catch(Exception e){report.append("WebView UA: unavailable (").append(e.getClass().getSimpleName()).append(")\\n");}
+    return report.toString();
+  }
+
   private void showLiveDiagnostics(){
-    String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
-    new AlertDialog.Builder(this).setTitle("直播诊断记录")
-        .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
+    String live=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    String details=buildDeviceCompatibilityReport()+"\\n直播播放诊断\\n"+live;
+    new AlertDialog.Builder(this).setTitle("设备与直播诊断")
+        .setMessage(details+"\\n\\n提示：点击“复制”可把设备信息和诊断记录发给我；不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",details));toast("诊断记录已复制");}
+          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视设备与直播诊断",details));toast("诊断记录已复制");}
         }).setNegativeButton("关闭",null).show();
   }
 
