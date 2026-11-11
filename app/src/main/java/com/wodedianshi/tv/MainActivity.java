@@ -2858,7 +2858,7 @@ public class MainActivity extends Activity {
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
     final long now=System.currentTimeMillis();
     final long last=cachePrefs.getLong("china_supplement_last_success",0L);
-    final int feedVersion=2;
+    final int feedVersion=3;
     final int cachedFeedVersion=cachePrefs.getInt("china_supplement_feed_version",0);
     final long refreshInterval=12L*60L*60L*1000L;
     if(cachedFeedVersion>=feedVersion&&last>0L&&now-last<refreshInterval){
