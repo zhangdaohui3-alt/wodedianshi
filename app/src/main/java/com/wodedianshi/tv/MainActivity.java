@@ -3994,6 +3994,10 @@ public class MainActivity extends Activity {
           if(listenerOwner==MainActivity.this.player)
             saveLiveDiagnostic("VIDEO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
         }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)
+            saveLiveDiagnostic("AUDIO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
