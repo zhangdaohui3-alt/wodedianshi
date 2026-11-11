@@ -90,6 +90,18 @@ public class PlaylistParserTest {
         assertEquals("", items.get(1).declaredStatus);
     }
 
+    @Test public void metadataFromIncompleteEntryDoesNotLeakIntoNextChannel() {
+        String m3u = "#EXTINF:-1 tvg-name=\"Broken[1080][S]\" response-time=\"35ms\",未完成频道\n"
+                + "file:///not-a-stream\n"
+                + "#EXTINF:-1,普通频道\nhttps://example.com/plain.m3u8";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(1, items.size());
+        assertEquals("普通频道", items.get(0).name);
+        assertEquals(0, items.get(0).declaredHeight);
+        assertEquals(0L, items.get(0).responseTimeMs);
+        assertEquals("", items.get(0).declaredStatus);
+    }
+
     @Test public void sourceQualityMetadataRemainsASecondarySignal() {
         assertTrue(SourceQualityScorer.metadataScore(1080, 35)
                 > SourceQualityScorer.metadataScore(576, 1200));

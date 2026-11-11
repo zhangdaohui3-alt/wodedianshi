@@ -66,6 +66,11 @@ public final class PlaylistParser {
                 continue;
             }
             if (line.startsWith("#EXTINF")) {
+                // Every EXTINF starts a fresh entry. Do not let incomplete or
+                // malformed previous entries leak quality hints into this one.
+                declaredHeight = 0;
+                responseTimeMs = 0L;
+                declaredStatus = "";
                 int comma = firstCommaOutsideQuotes(line);
                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
                 if (name.isEmpty()) {
