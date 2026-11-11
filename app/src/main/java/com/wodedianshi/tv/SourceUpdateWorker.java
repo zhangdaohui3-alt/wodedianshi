@@ -9,10 +9,13 @@ import java.io.*;
 import java.net.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_PROBES_PER_RUN = 36;
+  private static final int MAX_PROBES_PER_RUN = 72;
+  private static final int MAX_PARALLEL_PROBES = 8;
+  private static final int MAX_PARALLEL_FEED_DOWNLOADS = 8;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
@@ -34,7 +37,10 @@ public class SourceUpdateWorker extends Worker {
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
-       // China-first discovery: domestic and regional channels are read before the global index.
+       // Prefer status exports first: they carry declared resolution and remote response-time hints.
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/master/cn_cctv_status.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/master/cn_province_status.m3u8",
+       // Ordinary lists remain as fallbacks if a status export is unavailable.
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
        "https://iptv-org.github.io/iptv/countries/cn.m3u",
@@ -85,10 +91,10 @@ public class SourceUpdateWorker extends Worker {
         JSONArray sources=channel.optJSONArray("sources");
         if(sources!=null)for(int j=0;j<sources.length();j++){
           String u=sources.optString(j,"");
-          if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
+          if((u.startsWith("http://")||u.startsWith("https://"))&&!hasShortLivedSignature(u))channelUrls.add(u);
         }
         String primary=channel.optString("url","");
-        if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
+        if((primary.startsWith("http://")||primary.startsWith("https://"))&&!hasShortLivedSignature(primary))channelUrls.add(primary);
         for(String u:channelUrls){
           if(savedPool.size()>=20000)break;
           // A shared URL only needs one network probe, even if several channel
@@ -96,38 +102,12 @@ public class SourceUpdateWorker extends Worker {
           if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(channelName,u,channelGroup,true));
         }
       }
-      for(String feed:feeds){
-        if(isStopped())return Result.retry();
-        if(prefs.getBoolean("source_update_playback_active",false)){
-          saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
-          return Result.retry();
-        }
-        HttpURLConnection c=null;
-        try{
-          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
-          c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
-          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\uFEFF","").trim();
-          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
-          ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates);
-          // Deduplicate across all directories before spending the small rotating
-          // probe budget. Public IPTV indexes often repeat the same endpoint in
-          // country, category and global playlists; duplicates must not crowd out
-          // distinct regional backups in the next scan window.
-          int addedFromFeed=0;
-          for(Entry candidate:feedCandidates){
-            if(candidates.size()>=MAX_DISCOVERY_CANDIDATES)break;
-            if(addedFromFeed>=MAX_DISCOVERY_PER_FEED)break;
-            if(SourceSelectionPolicy.markEndpointIfNew(discoveredEndpoints,candidate.url)){
-              candidates.add(candidate);
-              addedFromFeed++;
-            }
-          }
-          feedsOk++;
-        }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();}
+      FeedSummary feedSummary=collectFeeds(feeds,prefs,candidates,discoveredEndpoints,errors);
+      feedsOk=feedSummary.ok;
+      feedsFailed=feedSummary.failed;
+      if(prefs.getBoolean("source_update_playback_active",false)){
+        saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+        return Result.retry();
       }
       int savedScanStart=savedPool.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
       int savedWindow=Math.min(Math.max(1,MAX_PROBES_PER_RUN/3),savedPool.size());
@@ -145,57 +125,110 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
-      // Use independent rotating cursors and a fixed per-run budget for discovery
-      // and saved-source health checks. A moving 5,000-item window combined with one
-      // cursor could skip most saved URLs forever as the window changed between runs.
+      // Probe concurrently. Advance each rotating cursor only across the completed
+      // prefix so timed-out candidates are retried on the next scheduled run.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
       int savedScanned=0,discoveryScanned=0;
+      int scheduledProbes=0;
       HashSet<String> visitedUrls=new HashSet<>();
-      for(int offset=0;offset<probeCandidates.size();offset++){
-        if(prefs.getBoolean("source_update_playback_active",false)){
-          saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
-          return Result.retry();
-        }
-        if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
-        Entry e=probeCandidates.get(offset);
-        if(e.savedSource)savedScanned++;else discoveryScanned++;
-        if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url)))continue;
-        checked++;
-        ProbeResult measured=probe(e.url);
-        // A previously good source that now fails its probe must lose its old high score.
-        // Keep the URL as a fallback, but rank it below sources that still pass validation.
-        measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
-        measuredScores.remove(legacyScoreKey(e.url));
-        if(!measured.valid)continue;
-        // Known sources are re-tested and re-scored, but never inserted twice.
-        String endpointKey=SourceSelectionPolicy.endpointKey(e.url);
-         if(knownUrls.contains(endpointKey))continue;
-        String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
-        if(target==null){
-          target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
-          target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
-          saved.put(target);byIdentity.put(key,target);added++;
-        }else{
-          JSONArray sources=target.optJSONArray("sources");
-          if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
-          boolean duplicate=false;String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
-           for(int i=0;i<sources.length();i++)if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){duplicate=true;break;}
-          if(!duplicate){
-            if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);added++;}
-            else{
-              int worstIndex=-1,worstScore=Integer.MAX_VALUE;
-              for(int i=0;i<sources.length();i++){
-                String old=sources.optString(i);
-                int oldScore=(int)Math.round(combinedScore(old,measuredScores,observedQoe));
-                if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
-              }
-              int candidateScore=(int)Math.round(combinedScore(e.url,measuredScores,observedQoe));
-              if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);added++;}
-            }
+      boolean[] completedPrefix=new boolean[probeCandidates.size()];
+      ExecutorService probePool=Executors.newFixedThreadPool(MAX_PARALLEL_PROBES);
+      CompletionService<ProbeOutcome> probeCompletion=new ExecutorCompletionService<>(probePool);
+      ArrayList<Future<ProbeOutcome>> probeTasks=new ArrayList<>();
+      try{
+        for(int offset=0;offset<probeCandidates.size();offset++){
+          if(scheduledProbes>=MAX_PROBES_PER_RUN||isStopped()
+              ||prefs.getBoolean("source_update_playback_active",false))break;
+          Entry e=probeCandidates.get(offset);
+          if(e==null||e.url==null||hasShortLivedSignature(e.url)
+              ||(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))
+              ||!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url))){
+            completedPrefix[offset]=true;
+            continue;
           }
+          final int taskIndex=offset;
+          Future<ProbeOutcome> task=probeCompletion.submit(
+              ()->new ProbeOutcome(taskIndex,e,probe(e.url)));
+          probeTasks.add(task);
+          scheduledProbes++;
         }
-        knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
+        int remaining=probeTasks.size();
+        while(remaining>0&&!isStopped()
+            &&android.os.SystemClock.elapsedRealtime()<probeDeadline){
+          if(prefs.getBoolean("source_update_playback_active",false))break;
+          long wait=probeDeadline-android.os.SystemClock.elapsedRealtime();
+          if(wait<=0L)break;
+          Future<ProbeOutcome> done=probeCompletion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);
+          if(done==null)continue;
+          remaining--;
+          try{
+            ProbeOutcome outcome=done.get();
+            if(outcome==null)continue;
+            completedPrefix[outcome.index]=true;
+            checked++;
+            Entry e=outcome.entry;
+            ProbeResult measured=outcome.result;
+            if(measured==null)continue;
+            if(measured.valid){
+              measured.score+=SourceQualityScorer.metadataScore(e.declaredHeight,e.responseTimeMs);
+            }
+            measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
+            measuredScores.remove(legacyScoreKey(e.url));
+            if(!measured.valid)continue;
+            String endpointKey=SourceSelectionPolicy.endpointKey(e.url);
+            if(knownUrls.contains(endpointKey))continue;
+            String key=identity(e.name,e.group,e.url);
+            JSONObject target=byIdentity.get(key);
+            if(target==null){
+              target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
+              target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
+              saved.put(target);byIdentity.put(key,target);added++;
+            }else{
+              JSONArray sources=target.optJSONArray("sources");
+              if(sources==null){
+                sources=new JSONArray();
+                String primary=target.optString("url");
+                if(!primary.isEmpty())sources.put(primary);
+                target.put("sources",sources);
+              }
+              boolean duplicate=false;
+              String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
+              for(int i=0;i<sources.length();i++){
+                if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){
+                  duplicate=true;break;
+                }
+              }
+              if(!duplicate){
+                if(sources.length()<MAX_SOURCES_PER_CHANNEL){
+                  sources.put(e.url);added++;
+                }else{
+                  int worstIndex=-1,worstScore=Integer.MAX_VALUE;
+                  for(int i=0;i<sources.length();i++){
+                    String old=sources.optString(i);
+                    int oldScore=(int)Math.round(combinedScore(old,measuredScores,observedQoe));
+                    if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
+                  }
+                  int candidateScore=(int)Math.round(combinedScore(e.url,measuredScores,observedQoe));
+                  if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);added++;}
+                }
+              }
+            }
+            knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
+          }catch(Exception ignored){}
+        }
+      }finally{
+        for(Future<?> task:probeTasks)if(!task.isDone())task.cancel(true);
+        probePool.shutdownNow();
+      }
+      int completedCount=0;
+      while(completedCount<completedPrefix.length&&completedPrefix[completedCount])completedCount++;
+      for(int i=0;i<completedCount;i++){
+        if(probeCandidates.get(i).savedSource)savedScanned++;
+        else discoveryScanned++;
+      }
+      if(prefs.getBoolean("source_update_playback_active",false)){
+        saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
+        return Result.retry();
       }
       if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
       // Keep each channel's best few distinct sources together, ranked by measured
@@ -229,14 +262,124 @@ public class SourceUpdateWorker extends Worker {
       return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
+  private static class FeedSummary{int ok,failed;}
+  private static class PlaylistFetchResult{
+    final int index;final String address,data,error;
+    PlaylistFetchResult(int index,String address,String data,String error){
+      this.index=index;this.address=address;this.data=data;this.error=error;
+    }
+  }
+  private static class ProbeOutcome{
+    final int index;final Entry entry;final ProbeResult result;
+    ProbeOutcome(int index,Entry entry,ProbeResult result){
+      this.index=index;this.entry=entry;this.result=result;
+    }
+  }
+  private PlaylistFetchResult downloadPlaylistFeed(int index,String address){
+    HttpURLConnection connection=null;
+    try{
+      connection=(HttpURLConnection)new URL(address).openConnection();
+      connection.setConnectTimeout(6000);connection.setReadTimeout(12000);
+      connection.setInstanceFollowRedirects(true);
+      connection.setRequestProperty("User-Agent","MyTV/2.71 Android TV");
+      connection.setRequestProperty("Accept","*/*");
+      int code=connection.getResponseCode();
+      if(code<200||code>=300)return new PlaylistFetchResult(index,address,null,"HTTP "+code);
+      String body;
+      try(InputStream input=connection.getInputStream()){body=read(input,15*1024*1024);}
+      return new PlaylistFetchResult(index,address,body,null);
+    }catch(Exception error){
+      return new PlaylistFetchResult(index,address,null,
+          error.getClass().getSimpleName()+": "+error.getMessage());
+    }finally{if(connection!=null)connection.disconnect();}
+  }
+  private FeedSummary collectFeeds(String[] feeds,SharedPreferences prefs,
+                                   ArrayList<Entry> candidates,Set<String> discoveredEndpoints,
+                                   StringBuilder errors){
+    FeedSummary summary=new FeedSummary();
+    ExecutorService pool=Executors.newFixedThreadPool(MAX_PARALLEL_FEED_DOWNLOADS);
+    CompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(pool);
+    ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
+    PlaylistFetchResult[] orderedResults=new PlaylistFetchResult[feeds.length];
+    try{
+      for(int i=0;i<feeds.length;i++){
+        final int feedIndex=i;final String address=feeds[i];
+        tasks.add(completion.submit(()->downloadPlaylistFeed(feedIndex,address)));
+      }
+      long deadline=android.os.SystemClock.elapsedRealtime()+45000L;
+      int remaining=tasks.size();
+      while(remaining>0&&!isStopped()
+          &&android.os.SystemClock.elapsedRealtime()<deadline
+          &&!prefs.getBoolean("source_update_playback_active",false)){
+        long wait=deadline-android.os.SystemClock.elapsedRealtime();
+        if(wait<=0L)break;
+        Future<PlaylistFetchResult> finished=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);
+        if(finished==null)continue;
+        remaining--;
+        try{
+          PlaylistFetchResult result=finished.get();
+          if(result!=null&&result.index>=0&&result.index<orderedResults.length)
+            orderedResults[result.index]=result;
+        }catch(Exception ignored){}
+      }
+    }finally{
+      for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
+      pool.shutdownNow();
+    }
+    // Merge status feeds before plain feeds even if their HTTP response was slower.
+    for(int i=0;i<orderedResults.length;i++){
+      PlaylistFetchResult result=orderedResults[i];
+      if(result==null||result.error!=null){
+        summary.failed++;
+        if(errors!=null&&errors.length()<350){
+          String address=result==null?feeds[i]:result.address;
+          errors.append(address.substring(address.lastIndexOf('/')+1)).append(": ")
+              .append(result==null?"download timeout":result.error).append("; ");
+        }
+        continue;
+      }
+      String normalized=result.data==null?"":result.data.replace(String.valueOf((char)0xFEFF),"").trim();
+      if(!normalized.startsWith("#EXTM3U")){
+        summary.failed++;
+        if(errors!=null&&errors.length()<350)errors.append("目录格式无效; ");
+        continue;
+      }
+      ArrayList<Entry> feedCandidates=new ArrayList<>();
+      parsePlaylist(result.data,feedCandidates);
+      int accepted=0;
+      for(Entry candidate:feedCandidates){
+        if(candidates.size()>=MAX_DISCOVERY_CANDIDATES||accepted>=MAX_DISCOVERY_PER_FEED)break;
+        if(!hasShortLivedSignature(candidate.url)
+            &&SourceSelectionPolicy.markEndpointIfNew(discoveredEndpoints,candidate.url)){
+          candidates.add(candidate);accepted++;
+        }
+      }
+      summary.ok++;
+    }
+    return summary;
+  }
+  private boolean hasShortLivedSignature(String url){
+    if(url==null)return false;
+    String lower=url.toLowerCase(Locale.ROOT);
+    return lower.matches(".*[?&](?:auth_key|token|signature|sig|expires|expire|validto|timestamp)=.*");
+  }
+
   private static class Entry{
-    String name,url,group;boolean savedSource;
-    Entry(String n,String u,String g){this(n,u,g,false);}
-    Entry(String n,String u,String g,boolean saved){name=n;url=u;group=g;savedSource=saved;}
+    String name,url,group,declaredStatus;
+    int declaredHeight;
+    long responseTimeMs;
+    boolean savedSource;
+    Entry(String n,String u,String g){this(n,u,g,false,0,0L,"");}
+    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,0,0L,"");}
+    Entry(String n,String u,String g,boolean saved,int height,long response,String status){
+      name=n;url=u;group=g;savedSource=saved;
+      declaredHeight=height;responseTimeMs=response;declaredStatus=status==null?"":status;
+    }
   }
   private void parsePlaylist(String data,List<Entry> out){
     for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
-      out.add(new Entry(source.name,source.url,source.group));
+      out.add(new Entry(source.name,source.url,source.group,false,
+          source.declaredHeight,source.responseTimeMs,source.declaredStatus));
     }
   }
   private int sourceQualityScore(String address){
