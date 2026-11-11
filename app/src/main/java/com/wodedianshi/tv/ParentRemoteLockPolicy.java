@@ -20,6 +20,12 @@ public final class ParentRemoteLockPolicy {
         return strict;
     }
 
+    /** Never substitute the device wall clock for a missing network time source. */
+    public static long trustedServerTime(long payloadTimeMs, long httpDateMs) {
+        if (payloadTimeMs > 0L) return payloadTimeMs;
+        return Math.max(0L, httpDateMs);
+    }
+
     public static boolean clockJumped(long wallDeltaMs, long elapsedDeltaMs,
                                       long toleranceMs) {
         return toleranceMs >= 0L && Math.abs(wallDeltaMs - elapsedDeltaMs) > toleranceMs;

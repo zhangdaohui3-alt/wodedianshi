@@ -148,6 +148,9 @@ public final class ParentRemoteLockManager {
         try {
             log("network online; requesting config");
             c = (HttpURLConnection) new URL(endpoint).openConnection();
+            // Do not follow redirects: an HTTPS endpoint must never downgrade a
+            // credential-bearing request to an HTTP destination.
+            c.setInstanceFollowRedirects(false);
             c.setRequestMethod("GET");
             c.setConnectTimeout(8000);
             c.setReadTimeout(8000);
@@ -160,9 +163,10 @@ public final class ParentRemoteLockManager {
             String body = readAll(c.getInputStream());
             JSONObject json = new JSONObject(body);
             Config next = parseConfig(json);
-            long serverTime = json.optLong("server_time_ms", 0L);
-            if (serverTime <= 0L && c.getDate() > 0L) serverTime = c.getDate();
-            if (serverTime <= 0L) serverTime = System.currentTimeMillis();
+            long serverTime = ParentRemoteLockPolicy.trustedServerTime(
+                    json.optLong("server_time_ms", 0L), c.getDate());
+            if (serverTime <= 0L)
+                throw new IllegalStateException("服务端未提供可信时间戳（server_time_ms 或 HTTP Date）");
             next.serverTimeMs = serverTime;
             if (detectClockTamper(serverTime)) {
                 config = next;
@@ -466,6 +470,8 @@ public final class ParentRemoteLockManager {
             payload.put("usage_day", prefs.getString("usage_day", ""));
             payload.put("client_time_ms", System.currentTimeMillis());
             c = (HttpURLConnection) new URL(endpoint).openConnection();
+            // Usage reports carry a device identifier and must stay on HTTPS.
+            c.setInstanceFollowRedirects(false);
             c.setRequestMethod("POST");
             c.setConnectTimeout(8000); c.setReadTimeout(8000);
             c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json; charset=utf-8");

@@ -30,6 +30,16 @@ public class ParentRemoteLockPolicyTest {
         assertTrue(ParentRemoteLockPolicy.shouldLockOffline(false, false, true));
     }
 
+    @Test public void trustedTimeNeverFallsBackToLocalDeviceClock() {
+        assertEquals(1794200000000L,
+                ParentRemoteLockPolicy.trustedServerTime(1794200000000L, 0L));
+        assertEquals(1794200001000L,
+                ParentRemoteLockPolicy.trustedServerTime(0L, 1794200001000L));
+        assertEquals(0L, ParentRemoteLockPolicy.trustedServerTime(0L, 0L));
+        assertEquals(1794200000000L,
+                ParentRemoteLockPolicy.trustedServerTime(-1L, 1794200000000L));
+    }
+
     @Test public void clockJumpRequiresToleranceExceeded() {
         assertFalse(ParentRemoteLockPolicy.clockJumped(10000, 10000, 120000));
         assertTrue(ParentRemoteLockPolicy.clockJumped(200000, 10000, 120000));
