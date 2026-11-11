@@ -1497,13 +1497,26 @@ public class MainActivity extends Activity {
     return found;
   }
 
+  private String metadataField(org.json.JSONObject metadata,String key){
+    Object value=metadata==null?null:metadata.opt(key);
+    return value==null?"":String.valueOf(value);
+  }
+
   private VodItem fetchAuthorizedVod(org.json.JSONObject doc){return fetchAuthorizedVod(doc,false);}
   private VodItem fetchAuthorizedVod(org.json.JSONObject doc,boolean require1080p){
+    return fetchAuthorizedVod(doc,require1080p,"");
+  }
+  private VodItem fetchAuthorizedVod(org.json.JSONObject doc,boolean require1080p,String category){
     String id=doc.optString("identifier",""),title=doc.optString("title",id);
     if(id.isEmpty())return null;
     try{
       org.json.JSONObject meta=new org.json.JSONObject(httpGetFast("https://archive.org/metadata/"+URLEncoder.encode(id,"UTF-8")));
       org.json.JSONObject md=meta.optJSONObject("metadata");if(md==null)return null;
+      String metadataTitle=md.optString("title",title);
+      if(!VodCategoryMetadataPolicy.accepts(category,metadataTitle,
+          metadataField(md,"description"),metadataField(md,"subject"),
+          metadataField(md,"collection")))return null;
+      if(!metadataTitle.trim().isEmpty())title=metadataTitle;
       String license=md.optString("licenseurl",md.optString("rights",""));
       String low=license.toLowerCase(Locale.US);
       boolean allowed=low.contains("creativecommons.org/licenses/by/")||low.contains("creativecommons.org/licenses/by-sa/")||low.contains("creativecommons.org/publicdomain/")||low.contains("creativecommons.org/zero/")||low.contains("public domain");
@@ -1824,7 +1837,7 @@ public class MainActivity extends Activity {
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
               final org.json.JSONObject candidate=doc;
-              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate,"1080P高清电影".equals(category))));
+              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate,"1080P高清电影".equals(category),category)));
               submitted++;
             }
           }catch(Exception ignored){}
