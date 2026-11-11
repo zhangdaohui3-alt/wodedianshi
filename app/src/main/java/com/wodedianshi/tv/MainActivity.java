@@ -3932,15 +3932,14 @@ public class MainActivity extends Activity {
           Timeline.Window renderedWindow=new Timeline.Window();
           eventTime.timeline.getWindow(eventTime.windowIndex,renderedWindow);
           if(!currentMediaId.equals(renderedWindow.mediaItem.mediaId))return;
-          long renderedAtElapsed=android.os.SystemClock.elapsedRealtime();
           hasRenderedFirstFrame=true;
-          // renderTimeMs is wall-clock time; use elapsedRealtime for duration math.
-          lastRenderedFrameAt=renderedAtElapsed;
+          // Media3 reports renderTimeMs using elapsedRealtime's time base.
+          lastRenderedFrameAt=renderTimeMs>0L?renderTimeMs:android.os.SystemClock.elapsedRealtime();
           cancelRenderedFrameFallback();
           if(!sourceFirstFrameRecorded){
             sourceFirstFrameRecorded=true;
             String renderedUrl=currentSourceUrl();
-            recordSourceMetric(renderedUrl,"firstFrame",Math.max(0L,renderedAtElapsed-sourceAttemptStartedAt));
+            recordSourceMetric(renderedUrl,"firstFrame",Math.max(0L,lastRenderedFrameAt-sourceAttemptStartedAt));
             if(selected>=0&&selected<channels.size()){
               Channel renderedChannel=channels.get(selected);
               SourceMemoryStore.saveLastGood(MainActivity.this,
