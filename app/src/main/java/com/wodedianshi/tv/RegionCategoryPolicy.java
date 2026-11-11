@@ -28,8 +28,12 @@ final class RegionCategoryPolicy {
     }
 
     private static boolean containsRegionName(String value) {
-        return value.contains("香港") || value.contains("澳门")
-                || value.contains("台湾") || value.contains("港澳台")
-                || value.contains("港澳") || value.contains("港台");
+        if(value.contains("香港")||value.contains("澳门")||value.contains("台湾")
+                ||value.contains("港澳台")||value.contains("港澳")||value.contains("港台")
+                ||value.contains("hong kong")||value.contains("hongkong")
+                ||value.contains("macau")||value.contains("macao")||value.contains("taiwan"))return true;
+        return value.contains("tvb")||value.contains("viutv")||value.contains("rthk")
+                ||value.contains("tdm")||value.contains("tvbs")||value.contains("pts")
+                ||value.contains("formosa tv");
     }
 }

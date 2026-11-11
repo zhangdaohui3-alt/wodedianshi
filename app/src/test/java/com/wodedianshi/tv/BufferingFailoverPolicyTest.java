@@ -28,4 +28,13 @@ public class BufferingFailoverPolicyTest {
         assertEquals(0, BufferingFailoverPolicy.timeoutSeconds(false, 0, 0));
         assertEquals(0, BufferingFailoverPolicy.timeoutSeconds(false, 3, 0));
     }
+
+    @Test public void subsequentChannelAttemptsAreCappedAtFiveSeconds() {
+        assertEquals(5, BufferingFailoverPolicy.timeoutSeconds(false, 0, 1, 12));
+        assertEquals(3, BufferingFailoverPolicy.timeoutSeconds(false, 0, 2, 3));
+    }
+
+    @Test public void sameChannelBackupKeepsSixSecondCap() {
+        assertEquals(6, BufferingFailoverPolicy.timeoutSeconds(false, 1, 0, 12));
+    }
 }

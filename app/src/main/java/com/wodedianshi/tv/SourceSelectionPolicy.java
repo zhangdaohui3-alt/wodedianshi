@@ -51,6 +51,17 @@ public final class SourceSelectionPolicy {
     }
 
     /**
+     * Adds an endpoint to a caller-owned set only when no equivalent endpoint
+     * has been seen. The original URL remains untouched for playback.
+     */
+    public static boolean markEndpointIfNew(Set<String> seen, String url) {
+        if (seen == null) throw new IllegalArgumentException("seen set must not be null");
+        String key = endpointKey(url);
+        if (key.isEmpty()) return false;
+        return seen.add(key);
+    }
+
+    /**
      * Compares endpoint identity without changing the URL sent to the player.
      * Scheme and DNS host are case-insensitive; default HTTP(S) ports are
      * equivalent. Path and query remain case-sensitive and byte-preserving.
@@ -76,7 +87,8 @@ public final class SourceSelectionPolicy {
             if (port >= 0) key.append(':').append(port);
             if (uri.getRawPath() != null) key.append(uri.getRawPath());
             if (uri.getRawQuery() != null) key.append('?').append(uri.getRawQuery());
-            if (uri.getRawFragment() != null) key.append('#').append(uri.getRawFragment());
+            // URL fragments are client-side only and are never sent to the server.
+            // Exclude them so cosmetic aliases do not look like separate backups.
             return key.toString();
         } catch (Exception ignored) {
             return trimmed;

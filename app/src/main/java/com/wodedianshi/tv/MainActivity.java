@@ -39,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 
 @UnstableApi
 public class MainActivity extends Activity {
+  private static final int LIVE_CHANNELS_PER_PAGE=36;
+  private volatile boolean activityResumed=false;
   private ExoPlayer player;
   private PlayerView video;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
@@ -212,23 +214,18 @@ public class MainActivity extends Activity {
     b.setTextColor(Color.WHITE);
     applyLiveChannelRowStyle(b,normalColor);
     b.setOnFocusChangeListener((v,focused)->{
-      saveLiveDiagnostic("CHANNEL_FOCUS",(b.getText()==null?"频道":b.getText().toString())+" focused="+focused);
       if(!b.isHovered())applyLiveChannelRowStyle(b,normalColor);
-      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);
-      b.setElevation(focused?dp(8):0);
+      b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
-          saveLiveDiagnostic("CHANNEL_HOVER",(b.getText()==null?"频道":b.getText().toString())+" focus="+b.hasFocus());
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(32,78,118));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
-        b.setBackground(hover);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
+        b.setBackground(hover);b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         applyLiveChannelRowStyle(b,normalColor);
-        boolean focused=b.hasFocus();
-        b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }
       return false;
     });
@@ -258,13 +255,9 @@ public class MainActivity extends Activity {
         applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
       }
     }
-    if(channelNameOverlay!=null){
-      if(selected>=0&&selected<channels.size()){
-        Channel channel=channels.get(selected);
-        channelNameOverlay.setText("正在播放  ·  "+(isCctvChannel(channel)?displayChannelName(channel.name):channel.name));
-        channelNameOverlay.setVisibility(fullScreenPlayback?View.VISIBLE:View.GONE);
-      }else channelNameOverlay.setVisibility(View.GONE);
-    }
+    // Keep the live picture clean: channel selection stays highlighted in the list,
+    // but the full-screen player never overlays a persistent “正在播放” channel label.
+    if(channelNameOverlay!=null)channelNameOverlay.setVisibility(View.GONE);
   }
   private void styleVodPageButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
@@ -290,21 +283,18 @@ public class MainActivity extends Activity {
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
-      saveLiveDiagnostic("UI_FOCUS",(b.getText()==null?"按钮":b.getText().toString())+" focused="+focused);
       if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
+      b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
-          saveLiveDiagnostic("UI_HOVER",(b.getText()==null?"按钮":b.getText().toString())+" focus="+b.hasFocus());
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(35,91,139));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
-        b.setBackground(hover);b.setScaleX(1.025f);b.setScaleY(1.025f);b.setElevation(dp(6));
+        b.setBackground(hover);b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
         boolean focused=b.hasFocus();b.setBackground(makeButtonBg(normalColor,focused));
-        b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
+        b.setScaleX(1f);b.setScaleY(1f);b.setElevation(0f);
       }
       return false;
     });
@@ -346,8 +336,39 @@ public class MainActivity extends Activity {
   }
   private GradientDrawable makeVodTopControlHoverBg(int color){
     GradientDrawable bg=new GradientDrawable();bg.setColor(color);bg.setCornerRadius(dp(8));
-    bg.setStroke(dp(2),Color.rgb(105,185,245));
+    bg.setStroke(dp(3),Color.rgb(255,190,35));
     return bg;
+  }
+  // Bright, consistent mouse and D-pad feedback for the live full-screen overlay buttons.
+  private void styleFullscreenTextControl(TextView control,int normalColor){
+    if(control==null)return;
+    control.setTextColor(Color.WHITE);
+    control.setBackground(makeVodTopControlBg(normalColor,false));
+    control.setOnFocusChangeListener((v,focused)->{
+      if(!control.isHovered())control.setBackground(makeVodTopControlBg(normalColor,focused));
+      control.setTextColor(Color.WHITE);
+      control.setElevation(dp(focused?12:5));
+      control.setScaleX(focused?1.05f:1f);control.setScaleY(focused?1.05f:1f);
+    });
+    control.setOnHoverListener((v,event)->{
+      int action=event.getActionMasked();
+      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+        control.setBackground(makeVodTopControlHoverBg(Color.rgb(30,105,150)));
+        control.setTextColor(Color.WHITE);control.setElevation(dp(12));
+        control.setScaleX(1.04f);control.setScaleY(1.04f);
+      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
+        boolean focused=control.hasFocus();
+        control.setBackground(makeVodTopControlBg(normalColor,focused));
+        control.setElevation(dp(focused?12:5));
+        control.setScaleX(focused?1.05f:1f);control.setScaleY(focused?1.05f:1f);
+      }
+      return false;
+    });
+  }
+  private GradientDrawable makeVodCardRing(int color,int strokeDp){
+    GradientDrawable ring=new GradientDrawable();
+    ring.setColor(Color.TRANSPARENT);ring.setCornerRadius(dp(7));
+    ring.setStroke(dp(strokeDp),color);return ring;
   }
   private GradientDrawable makeButtonBg(int color,boolean focused){
     GradientDrawable d=new GradientDrawable(); d.setColor(focused?Color.rgb(22,105,185):color);
@@ -358,7 +379,7 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
+    return getSharedPreferences("mytv",0).getInt("decoder_mode",1)==1;
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -397,6 +418,8 @@ public class MainActivity extends Activity {
         }
       }
       channels.clear();channels.addAll(compact);
+      channelCatalogueRevision++;
+      liveCategoryIndexCache.clear();
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
@@ -523,7 +546,16 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
     } catch(Exception ignored) {}
   }
-  private String activeCategory="全部";
+  // Start every fresh live session in the CCTV list; user category changes remain available during the session.
+  private String activeCategory="央视";
+  // Cache the remote channel order so repeated UP/DOWN zaps do not rescan and
+  // re-sort the entire catalogue on every key event.
+  private String cachedRemoteOrderKey="";
+  private ArrayList<Integer> cachedRemoteOrder=null;
+  private int channelCatalogueRevision=0;
+  private final LinkedHashMap<String,ArrayList<Integer>> liveCategoryIndexCache=new LinkedHashMap<String,ArrayList<Integer>>(16,0.75f,true){
+    protected boolean removeEldestEntry(Map.Entry<String,ArrayList<Integer>> entry){return size()>24;}
+  };
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
@@ -545,13 +577,13 @@ public class MainActivity extends Activity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+LIVE_CHANNELS_PER_PAGE-1)/LIVE_CHANNELS_PER_PAGE);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     video=new PlayerView(this);int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);video.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));styleFullscreenTextControl(fullscreenMenuButton,Color.rgb(20,35,58));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);video.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);styleFullscreenTextControl(fullscreenSourceButton,Color.rgb(20,35,58));fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);styleFullscreenTextControl(fullscreenFavoriteButton,Color.rgb(20,35,58));fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
@@ -573,6 +605,41 @@ public class MainActivity extends Activity {
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+    scheduleInitialSourceBootstrap();
+  }
+  // A clean install must not wait up to 24 hours for its first catalogue discovery.
+  // Run the same validated source worker once, off the UI thread, then refresh the
+  // channel list when it completes. Existing playback is protected by the worker's
+  // source_update_playback_active guard, which defers the scan rather than interrupting it.
+  private void scheduleInitialSourceBootstrap(){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    if(!prefs.getBoolean("auto_source_update",true))return;
+    if(prefs.getBoolean("source_bootstrap_scheduled_v1",false))return;
+    if(!prefs.getString("source_update_time","").isEmpty())return;
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .setInputData(new Data.Builder().putBoolean("bootstrap",true).build())
+        .build();
+    prefs.edit().putBoolean("source_bootstrap_scheduled_v1",true).apply();
+    WorkManager wm=WorkManager.getInstance(this);
+    wm.enqueueUniqueWork("mytv_initial_source_bootstrap",ExistingWorkPolicy.KEEP,request);
+    wm.getWorkInfoByIdLiveData(request.getId()).observeForever(new androidx.lifecycle.Observer<WorkInfo>(){
+      @Override public void onChanged(WorkInfo result){
+        if(result==null)return;
+        WorkInfo.State state=result.getState();
+        if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED&&state!=WorkInfo.State.CANCELLED)return;
+        wm.getWorkInfoByIdLiveData(request.getId()).removeObserver(this);
+        if(state==WorkInfo.State.SUCCEEDED){
+          if(!isFinishing()){
+            reloadChannelsAfterSourceUpdate();
+            if(info!=null)info.setText("首次频道目录检查完成，已合并通过连通性初筛的频道与备用线路");
+          }
+        }else{
+          // Allow a later app launch or re-enable action to schedule the bootstrap again.
+          prefs.edit().putBoolean("source_bootstrap_scheduled_v1",false).apply();
+        }
+      }
+    });
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -586,16 +653,20 @@ public class MainActivity extends Activity {
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
     WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
     toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
-        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
-        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
-          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
+    WorkManager wm=WorkManager.getInstance(this);
+    wm.getWorkInfoByIdLiveData(request.getId()).observeForever(new androidx.lifecycle.Observer<WorkInfo>(){
+      @Override public void onChanged(WorkInfo result){
+        if(result==null)return;
+        WorkInfo.State state=result.getState();
+        if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED&&state!=WorkInfo.State.CANCELLED)return;
+        wm.getWorkInfoByIdLiveData(request.getId()).removeObserver(this);
+        if(state==WorkInfo.State.SUCCEEDED){
+          if(!isFinishing()){reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();}
+        }else if(!isFinishing()){
+          toast("频道源更新失败，请检查网络后重试");
         }
-      }catch(Exception ignored){}
-    },worker);
+      }
+    });
   }
   private void reloadChannelsAfterSourceUpdate(){
     String keepIdentity="";
@@ -630,7 +701,7 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",0);
+    int current=prefs.getInt("decoder_mode",1);
     String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
@@ -719,7 +790,7 @@ public class MainActivity extends Activity {
     Button closeButton=new Button(this);closeButton.setText("关闭");closeButton.setAllCaps(false);closeButton.setTextSize(13);closeButton.setMinWidth(0);closeButton.setMinHeight(0);closeButton.setIncludeFontPadding(false);closeButton.setPadding(dp(8),0,dp(8),0);styleTvButton(closeButton,Color.rgb(65,78,96));titleBar.setPadding(dp(4),dp(3),dp(4),dp(3));titleBar.addView(closeButton,new LinearLayout.LayoutParams(dp(82),dp(38)));panel.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(38)));
     LinearLayout filters=new LinearLayout(this);filters.setOrientation(0);filters.setGravity(Gravity.CENTER_VERTICAL);
     java.util.HashMap<String,Button> categoryButtons=new java.util.HashMap<>();
-    String[] categories={"我的收藏","播放记录","电影","电视剧","综艺","纪录片","动漫","正版平台"};
+    String[] categories={"我的收藏","播放记录","电影","电视剧","综艺","纪录片","动漫"};
     // Hover is tracked by the dialog root so leaving the strip is observable.
     HorizontalScrollView categoryScroll=new HorizontalScrollView(this);
     categoryScroll.setHorizontalScrollBarEnabled(false);categoryScroll.addView(filters);
@@ -738,9 +809,6 @@ public class MainActivity extends Activity {
         // Resolve the clicked view at click time; never reuse a stale hover/focus row.
         Button clicked=(Button)v;String chosen=clicked.getText().toString();
         setVodCategoryHover(null);
-        // Platform navigation is not a catalogue category: do not overwrite the
-        // active film category or let the refresh button search for "正版平台".
-        if("正版平台".equals(chosen)){openOfficialVodPlatforms();return;}
         activeVodCategory=chosen;activeVodQuery="";query.setText("");
         vodCategoryFocusTarget=clicked;
         updateVodCategoryHighlight(categoryButtons,chosen);
@@ -868,7 +936,7 @@ public class MainActivity extends Activity {
   private String vodCacheKey(String category){
     // These two catalogue categories had an incorrect CCTV documentary mapping.
     // Use a fresh cache namespace so an older, duplicated result list is not reused.
-    String revision=("多源精选".equals(category)||"精选电影".equals(category))?"9":"8";
+    String revision="11"; // Invalidate legacy cache entries that included metadata-only poster cards.
     String regionKey=category.startsWith("搜索：")?"_"+activeVodRegion:"";
     return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode())+regionKey;
   }
@@ -889,16 +957,13 @@ public class MainActivity extends Activity {
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
         String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license",""),poster=o.optString("poster","");
-        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))items.add(new VodItem(title,id,url,license,poster));
+        if(!title.isEmpty()&&!id.isEmpty()&&!id.startsWith("meta:")&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license,poster));
       }
     }catch(Exception ignored){}
     return items;
   }
   private String vodTitleIdentity(String title){
-    if(title==null)return "";
-    String key=title.toLowerCase(Locale.ROOT).replaceAll("\\(.*?\\)|（.*?）|\\[.*?\\]|【.*?】","");
-    key=key.replaceAll("(19|20)\\d{2}","").replaceAll("(?:1080p|720p|4k|高清|超清|国语|粤语|中字)","");
-    return key.replaceAll("[^\\p{L}\\p{N}]","");
+    return VodItemTitleIdentity.key(title);
   }
   private boolean addUniqueVodItem(ArrayList<VodItem> items,Set<String> ids,Set<String> titles,VodItem item){
     if(item==null||item.identifier==null||item.identifier.isEmpty()||!ids.add(item.identifier))return false;
@@ -913,6 +978,9 @@ public class MainActivity extends Activity {
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
+        // Persist playable entries only. Metadata records may have posters, but
+        // must never reappear as clickable movie cards after an app restart.
+        if(item==null||item.identifier==null||item.identifier.startsWith("meta:")||item.url==null||!item.url.startsWith("https://"))continue;
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
       }
       android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
@@ -988,28 +1056,18 @@ public class MainActivity extends Activity {
     if(grid==null){
       grid=new GridView(this){
         @Override public boolean dispatchHoverEvent(android.view.MotionEvent event){
-          int action=event.getActionMasked();
-          // Snapshot coordinates before dispatching to children. Android 9 TV firmware
-          // can offset raw coordinates inconsistently when GridView is scrolled.
-          final float localX=event.getX(),localY=event.getY();
-          boolean handled=super.dispatchHoverEvent(event);
-          if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-            View hit=null;
-            // Child hit rectangles are already expressed in GridView-local coordinates.
-            // This avoids mixing screen coordinates, recycled adapter positions and columns.
-            for(int i=0;i<getChildCount();i++){
-              View child=getChildAt(i);
-              android.graphics.Rect bounds=new android.graphics.Rect();
-              child.getHitRect(bounds);
-              if(bounds.contains(Math.round(localX),Math.round(localY))){hit=child;break;}
-            }
-            if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
-          }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-            clearVodMouseHover();
-          }
-          return handled;
-        }
-        @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
+           int action=event.getActionMasked();
+           // GridView hit testing accounts for scroll offsets, spacing and padding.
+           boolean handled=super.dispatchHoverEvent(event);
+           if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
+             int position=pointToPosition(Math.round(event.getX()),Math.round(event.getY()));
+             int childIndex=position-getFirstVisiblePosition();
+             View hit=(position>=0&&childIndex>=0&&childIndex<getChildCount())?getChildAt(childIndex):null;
+             if(hit!=null)showVodMouseHover(hit);else clearVodMouseHover();
+           }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){clearVodMouseHover();}
+           return handled;
+         }
+         @Override public boolean onGenericMotionEvent(android.view.MotionEvent event){
           if(handleVodGridScroll(this,event))return true;
           return super.onGenericMotionEvent(event);
         }
@@ -1068,7 +1126,9 @@ public class MainActivity extends Activity {
     button.setOnFocusChangeListener((v,focused)->{
       if(hoveredVodCategoryButton!=button){
         button.setBackground(makeVodCategoryBg(button.isSelected(),focused));
-        button.setScaleX(1f);button.setScaleY(1f);button.setElevation(0f);
+        button.setTextColor(focused?Color.rgb(255,235,165):(button.isSelected()?Color.rgb(170,220,255):Color.WHITE));
+        button.setTypeface(null,(focused||button.isSelected())?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+        button.setScaleX(1f);button.setScaleY(1f);button.setElevation(focused?dp(5):0f);
       }
     });
     button.setOnHoverListener((v,event)->{
@@ -1090,11 +1150,12 @@ public class MainActivity extends Activity {
     });
   }
   private GradientDrawable makeVodCategoryBg(boolean selected,boolean focused){
-    int fill=selected?Color.rgb(26,100,160):(focused?Color.rgb(48,70,96):Color.rgb(35,55,78));
+    int fill=selected?Color.rgb(20,92,150):(focused?Color.rgb(24,76,120):Color.rgb(35,55,78));
     GradientDrawable drawable=new GradientDrawable();
     drawable.setColor(fill);
     drawable.setCornerRadius(dp(7));
-    drawable.setStroke(dp(selected?2:1),selected?Color.rgb(105,180,235):Color.rgb(76,91,112));
+    drawable.setStroke(dp(focused?3:(selected?2:1)),
+        focused?Color.rgb(255,195,45):(selected?Color.rgb(90,205,255):Color.rgb(112,137,164)));
     return drawable;
   }
   // Keep the active VOD category visibly selected across mouse and D-pad input.
@@ -1106,9 +1167,9 @@ public class MainActivity extends Activity {
       button.setSelected(active);
       if(hoveredVodCategoryButton==button)continue;
       button.setBackground(makeVodCategoryBg(active,button.isFocused()));
-      button.setTextColor(active?Color.rgb(170,220,255):Color.WHITE);
-      button.setTypeface(null,active?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
-      button.setElevation(button.isFocused()?dp(3):0);
+      button.setTextColor(active?Color.rgb(170,220,255):(button.isFocused()?Color.rgb(255,235,165):Color.WHITE));
+      button.setTypeface(null,(active||button.isFocused())?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL);
+      button.setElevation(button.isFocused()?dp(5):0);
     }
   }
   // Keep mouse hover separate from D-pad focus. Consuming hover on every
@@ -1120,7 +1181,7 @@ public class MainActivity extends Activity {
     View old=hoveredVodCard;
     hoveredVodCard=null;
     if(old!=null){
-      old.setForeground(null);
+      old.setForeground(old.hasFocus()?makeVodCardRing(Color.rgb(255,195,45),4):null);
       Object tag=old.getTag();
       if(tag instanceof VodCardHolder){
         VodCardHolder h=(VodCardHolder)tag;
@@ -1166,6 +1227,26 @@ public class MainActivity extends Activity {
       if(surfaces!=null)for(View surface:surfaces)if(surface!=null)surface.setPointerIcon(arrow);
     }
   }
+  private String vodSourceLabel(VodItem item){
+    if(item==null||item.identifier==null)return "来源待识别";
+    String id=item.identifier;
+    if(id.startsWith("cctv:"))return "来源：央视网";
+    if(id.startsWith("loc:"))return "来源：美国国会图书馆";
+    if(id.startsWith("commons:")||id.startsWith("commons-search:"))return "来源：维基共享资源";
+    if(id.startsWith("meta:"))return "影片资料（非播放源）";
+    return "来源：Internet Archive";
+  }
+  private String vodRightsLabel(String rights){
+    if(rights==null||rights.trim().isEmpty())return "公开授权";
+    String value=rights.toLowerCase(Locale.ROOT);
+    if(value.contains("public domain"))return "公有领域";
+    if(value.contains("creativecommons.org/licenses/by-sa")||value.contains("cc by-sa"))return "CC BY-SA";
+    if(value.contains("creativecommons.org/licenses/by")||value.contains("cc by"))return "CC BY";
+    if(value.contains("creativecommons.org/zero")||value.equals("cc0"))return "CC0";
+    if(value.contains("no known restrictions"))return "无已知限制";
+    if(value.contains("u.s. government work")||value.contains("united states government work"))return "美国政府作品";
+    return "公开授权";
+  }
   private static class VodCardHolder{ImageView poster;TextView title,meta;VodCardHolder(ImageView p,TextView t,TextView m){poster=p;title=t;meta=m;}}
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
@@ -1191,16 +1272,18 @@ public class MainActivity extends Activity {
       }
       card.setOnFocusChangeListener((v,focused)->{
         if(hoveredVodCard!=card){
-          card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
-          card.setScaleX(1f);card.setScaleY(1f);card.setElevation(focused?dp(4):0);
+          card.setBackground(makeButtonBg(focused?Color.rgb(24,76,120):Color.rgb(25,39,59),focused));
+          card.setForeground(focused?makeVodCardRing(Color.rgb(255,195,45),4):null);
+          card.setScaleX(1f);card.setScaleY(1f);card.setElevation(focused?dp(7):0);
         }
         if(focused&&parent instanceof GridView){
           GridView owner=(GridView)parent;
           if(position<owner.getFirstVisiblePosition()||position>owner.getLastVisiblePosition())owner.smoothScrollToPosition(position);
         }
       });
-      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")+item.title);
-      holder.meta.setText(item.identifier.startsWith("meta:")?"影片资料 · 暂无已验证直播放源":(item.identifier.startsWith("cctv:")?"央视网官方节目 · HLS":"开放授权 · 可尝试播放"));
+      holder.title.setText((favoriteIds.contains(item.identifier)?"★ ":"☆ ")
+           +(item.identifier.startsWith("meta:")?"资料 · ":"")+item.title);
+      holder.meta.setText(vodSourceLabel(item)+" · "+(item.identifier.startsWith("cctv:")?"官方播放":vodRightsLabel(item.license)));
       card.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
@@ -1209,6 +1292,7 @@ public class MainActivity extends Activity {
       loadVodPoster(holder.poster,item.identifier,item.title,item.posterUrl);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
+      // GridView owns hover mapping; child listeners can double-dispatch at cell edges.
       configureVodMouseTarget(card,holder.poster,holder.title,holder.meta);
       // Make every visible poster/text surface an explicit mouse click target.
       // Forward child clicks to the card so Android 9 TV mouse dispatch cannot
@@ -1428,13 +1512,26 @@ public class MainActivity extends Activity {
     return found;
   }
 
+  private String metadataField(org.json.JSONObject metadata,String key){
+    Object value=metadata==null?null:metadata.opt(key);
+    return value==null?"":String.valueOf(value);
+  }
+
   private VodItem fetchAuthorizedVod(org.json.JSONObject doc){return fetchAuthorizedVod(doc,false);}
   private VodItem fetchAuthorizedVod(org.json.JSONObject doc,boolean require1080p){
+    return fetchAuthorizedVod(doc,require1080p,"");
+  }
+  private VodItem fetchAuthorizedVod(org.json.JSONObject doc,boolean require1080p,String category){
     String id=doc.optString("identifier",""),title=doc.optString("title",id);
     if(id.isEmpty())return null;
     try{
       org.json.JSONObject meta=new org.json.JSONObject(httpGetFast("https://archive.org/metadata/"+URLEncoder.encode(id,"UTF-8")));
       org.json.JSONObject md=meta.optJSONObject("metadata");if(md==null)return null;
+      String metadataTitle=md.optString("title",title);
+      if(!VodCategoryMetadataPolicy.accepts(category,metadataTitle,
+          metadataField(md,"description"),metadataField(md,"subject"),
+          metadataField(md,"collection")))return null;
+      if(!metadataTitle.trim().isEmpty())title=metadataTitle;
       String license=md.optString("licenseurl",md.optString("rights",""));
       String low=license.toLowerCase(Locale.US);
       boolean allowed=low.contains("creativecommons.org/licenses/by/")||low.contains("creativecommons.org/licenses/by-sa/")||low.contains("creativecommons.org/publicdomain/")||low.contains("creativecommons.org/zero/")||low.contains("public domain");
@@ -1629,14 +1726,16 @@ public class MainActivity extends Activity {
     // the first partial batch or fails before a complete result is published.
     if(forceRefresh)invalidateVodCacheFreshness(category);
     activeVodCatalogueTask=vodWorker.submit(()->{
-      ArrayList<VodItem> found=new ArrayList<>();String error=null;
+      ArrayList<VodItem> found=new ArrayList<>();String error=null;int metadataOnlyMatches=0;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
       ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
       CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
       boolean titleSearch=category.startsWith("搜索：");
       String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
-      if(titleSearch&&!searchTerm.isEmpty())sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
+       Future<ArrayList<VodItem>> metadataSearchFuture=titleSearch
+           ?sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)):null;
+      // Search results must be directly playable catalogue entries, not metadata-only cards.
       HashSet<String> submittedIds=new HashSet<>(),foundIds=new HashSet<>(),foundTitleKeys=new HashSet<>();
       try{
 
@@ -1690,38 +1789,33 @@ public class MainActivity extends Activity {
 
         ArrayList<String> queries=new ArrayList<>();
         if(titleSearch)queries.addAll(VodSearchPlan.archiveQueries(searchTerm,requestRegion));
+        else if(VodCategoryQueryPolicy.handles(category))queries.addAll(VodCategoryQueryPolicy.queriesFor(category));
         else queries.add(q);
-        if("戏曲".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
-          queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
-        }else if("1080P高清电影".equals(category)){
-          queries.add("mediatype:movies AND (title:1080p OR title:1080i OR description:1080p OR description:1920x1080)");
-          queries.add("mediatype:movies AND (title:full HD OR title:fullhd OR subject:1080p)");
-        }
-        // Chinese film records are inconsistently catalogued; search several independent
-        // title/language/region vocabularies rather than trusting one query field.
-        if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
-          String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
-          String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
-          String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
-          String silent="mediatype:movies AND (title:Chinese silent OR subject:Chinese silent film OR title:China film)";
-          for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
-        }else if("中国经典影像".equals(category)){
-          queries.add("mediatype:movies AND (language:chi OR language:zho OR title:Chinese OR title:Mandarin OR subject:Chinese cinema) AND (title:classic OR subject:classic film OR subject:feature film)");
-          queries.add("mediatype:movies AND (title:Hong Kong classic OR title:Taiwan classic OR subject:Hong Kong cinema OR subject:Chinese cinema)");
-        }else if("中国动画".equals(category)||"中文动画".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
-        }else if("中国历史影像".equals(category)){
-          queries.add("mediatype:movies AND (title:Chinese history documentary OR title:China history documentary OR subject:Chinese history OR subject:Chinese historical documentary)");
-          queries.add("mediatype:movies AND (title:China newsreel OR title:Chinese archive footage OR subject:China historical footage)");
-        }else if("中国纪录片".equals(category)){
-          queries.add("mediatype:movies AND (title:China documentary OR title:Chinese documentary OR subject:Chinese documentary OR language:chi OR language:zho)");
-        }else if("多源精选".equals(category)){
-          queries.add("mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy) AND (language:English OR language:eng)");
-          queries.add("mediatype:movies AND (subject:science_fiction OR subject:short film OR subject:educational film) AND (language:English OR language:eng)");
-        }else if("精选电影".equals(category)||"世界公版电影".equals(category)){
-          queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
-          queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema)");
+        if(!VodCategoryQueryPolicy.handles(category)){
+          if("戏曲".equals(category)){
+            queries.add("mediatype:movies AND (title:Chinese opera OR title:traditional Chinese opera OR subject:Chinese opera OR title:Peking opera)");
+            queries.add("mediatype:movies AND (title:京剧 OR title:越剧 OR title:黄梅戏 OR title:豫剧 OR title:粤剧 OR title:戏曲)");
+          }else if("1080P高清电影".equals(category)){
+            queries.add("mediatype:movies AND (title:1080p OR title:1080i OR description:1080p OR description:1920x1080)");
+            queries.add("mediatype:movies AND (title:full HD OR title:fullhd OR subject:1080p)");
+          }
+          // Chinese film records are inconsistently catalogued; search several independent
+          // title/language/region vocabularies rather than trusting one query field.
+          if("中国电影".equals(category)||"中国老电影".equals(category)||"华语经典".equals(category)){
+            String broad="mediatype:movies AND (title:Mandarin OR title:Chinese OR title:China OR subject:Chinese OR subject:China OR language:chi OR language:zho)";
+            String chineseTitle="mediatype:movies AND (title:中国 OR title:中文 OR title:华语 OR title:国语 OR title:民国 OR title:上海 OR subject:Chinese)";
+            String regional="mediatype:movies AND (title:Hong Kong OR title:Taiwan OR title:Shanghai OR title:Mandarin OR subject:Hong Kong cinema OR subject:Chinese cinema)";
+            String silent="mediatype:movies AND (title:Chinese silent OR subject:Chinese silent film OR title:China film)";
+            for(String extra:Arrays.asList(broad,chineseTitle,regional,silent))if(!queries.contains(extra))queries.add(extra);
+          }else if("中国动画".equals(category)||"中文动画".equals(category)){
+            queries.add("mediatype:movies AND (title:Chinese animation OR title:China animation OR subject:Chinese animation OR language:chi OR language:zho)");
+          }else if("多源精选".equals(category)){
+            queries.add("mediatype:movies AND (subject:documentary OR subject:animation OR subject:comedy) AND (language:English OR language:eng)");
+            queries.add("mediatype:movies AND (subject:science_fiction OR subject:short film OR subject:educational film) AND (language:English OR language:eng)");
+          }else if("精选电影".equals(category)||"世界公版电影".equals(category)){
+            queries.add("mediatype:movies AND (collection:feature_films OR subject:public_domain OR title:classic feature film)");
+            queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema)");
+          }
         }
         if("精选电影".equals(category)){
           queries.add("collection:feature_films AND mediatype:movies AND (language:English OR language:eng) AND (title:classic OR subject:classic film OR subject:feature film)");
@@ -1735,7 +1829,7 @@ public class MainActivity extends Activity {
         // This avoids letting one broad query occupy the queue with pages 1-3 while
         // Chinese/regional query variants wait behind it. Later pages still run,
         // preserving catalogue breadth after the first-page coverage is queued.
-        for(VodSearchPlan.PageRequest pageRequest:VodSearchPlan.orderedPages(queries.size(),3)){
+        for(VodSearchPlan.PageRequest pageRequest:VodSearchPlan.orderedPages(queries.size(),titleSearch?4:3)){
           if(Thread.currentThread().isInterrupted())break;
           final String pageQuery=queries.get(pageRequest.queryIndex);
           final int pageNumber=pageRequest.page;
@@ -1760,7 +1854,7 @@ public class MainActivity extends Activity {
               String id=doc.optString("identifier","");
               if(id.isEmpty()||!submittedIds.add(id))continue;
               final org.json.JSONObject candidate=doc;
-              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate,"1080P高清电影".equals(category))));
+              pendingVodChecks.add(completion.submit(()->fetchAuthorizedVod(candidate,"1080P高清电影".equals(category),category)));
               submitted++;
             }
           }catch(Exception ignored){}
@@ -1850,7 +1944,8 @@ public class MainActivity extends Activity {
         else if(!Arrays.asList("我的收藏","播放记录","多源精选","精选电影","中国电影","中国老电影","中国经典影像","华语经典","中国历史影像","中国动画","中文动画","中国纪录片","中文纪录片","世界公版电影","欧美经典","默片经典","纪录片","科学纪录片","历史纪录片","自然纪录片","NASA影像","动画","喜剧","科幻","剧情","短片").contains(category))locQuery=category;
         if(titleSearch)locQuery=searchTerm;
          if(locQuery!=null&&found.size()<80){final String term=locQuery;sourceFutures.add(sourceCompletion.submit(()->fetchLocPublicDomainVod(term)));}
-        long sourceDeadline=android.os.SystemClock.elapsedRealtime()+6500L;
+        if(metadataSearchFuture!=null)sourceFutures.add(metadataSearchFuture);
+         long sourceDeadline=android.os.SystemClock.elapsedRealtime()+(titleSearch?8500L:6500L);
         for(int completedSources=0;completedSources<sourceFutures.size()&&!Thread.currentThread().isInterrupted();completedSources++){
           long remaining=sourceDeadline-android.os.SystemClock.elapsedRealtime();
           if(remaining<=0L)break;
@@ -1863,6 +1958,13 @@ public class MainActivity extends Activity {
         }
         // Enforce one shared provider budget, not 6.5 seconds per provider.
         for(Future<ArrayList<VodItem>> pendingSource:sourceFutures)if(!pendingSource.isDone())pendingSource.cancel(true);
+         if(titleSearch){
+           for(VodItem item:found)if(item.identifier.startsWith("meta:"))metadataOnlyMatches++;
+           // Metadata records have no media URL. Never place them in the playable
+           // grid, even when no direct result exists; otherwise users see fake
+           // MY TV poster tiles that cannot start playback.
+           found.removeIf(item->item.identifier.startsWith("meta:")||item.url==null||item.url.trim().isEmpty());
+         }
       }catch(Exception e){error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
       finally{
         // A cancelled catalogue request must release every child request too.
@@ -1879,15 +1981,20 @@ public class MainActivity extends Activity {
       }
 
       final String err=error;
+      final int metadataCountForUi=metadataOnlyMatches;
       final ArrayList<VodItem> result=new ArrayList<>(found);
       uiHandler.post(()->{
         if(isFinishing()||request!=vodRequestId)return;
         if(!result.isEmpty()){
           writeVodCache(category,result,true);
           renderVodItems(category,result,status,results,false);
-          status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
+          int metadataOnly=0;for(VodItem item:result)if(item.identifier.startsWith("meta:"))metadataOnly++;
+           status.setText("「"+category+"」 · 找到 "+result.size()+" 项"
+               +(metadataOnly>0?"，其中 "+metadataOnly+" 项为影片资料（暂无已验证授权播放源）":" · 多目录公开授权内容"));
         }else if(cached.isEmpty()){
-          status.setText(err==null?"暂时没有检索到匹配的影片资料或可验证直播放源。可换关键词或稍后重试。":"点播目录暂时无法连接："+err);
+          status.setText(metadataCountForUi>0
+              ?"找到 "+metadataCountForUi+" 条影片资料，但没有查到可直接播放且权利状态可核验的视频源。为避免误导，暂不显示不可播放的缩略图。"
+              :err==null?"暂时没有找到可直接播放且权利状态可核验的影片。可尝试简短片名、原名或中英文名称。":"点播目录暂时无法连接："+err);
         }else{
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
@@ -1942,12 +2049,11 @@ public class MainActivity extends Activity {
     for(int x=14;x<w;x+=24){c.drawRoundRect(x,12,x+9,h-12,3,3,p);}
     p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(85,255,255,255));c.drawCircle(w-48,48,25,p);
     p.setColor(Color.WHITE);p.setTextAlign(Paint.Align.CENTER);p.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));
-    p.setTextSize(20);c.drawText("MY TV",w/2f,h*0.38f,p);
     String text=android.text.TextUtils.isEmpty(title)?"暂无海报":title.trim();
     p.setTextSize(text.length()>15?19:25);p.setColor(Color.rgb(255,238,190));
     if(text.length()>18)text=text.substring(0,18)+"…";
     c.drawText(text,w/2f,h*0.66f,p);
-    p.setTextSize(13);p.setColor(Color.rgb(190,210,230));c.drawText("影片封面",w/2f,h*0.84f,p);
+    p.setTextSize(13);p.setColor(Color.rgb(190,210,230));c.drawText("暂无海报",w/2f,h*0.84f,p);
     return b;
   }
   private String fetchCommonsPosterUrl(String identifier){
@@ -2031,7 +2137,7 @@ public class MainActivity extends Activity {
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
-    if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
+    if(savedPosition>10000){android.app.AlertDialog resumeDialog=new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).create();resumeDialog.show();Button resumeButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE);Button restartButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE);Button cancelButton=resumeDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL);if(resumeButton!=null)styleTvButton(resumeButton,Color.rgb(25,39,59));if(restartButton!=null)styleTvButton(restartButton,Color.rgb(25,39,59));if(cancelButton!=null)styleTvButton(cancelButton,Color.rgb(25,39,59));return;}
     startVodPlayback(item,0);
   }
   private VodItem findNextVodItem(VodItem current){
@@ -2171,11 +2277,11 @@ public class MainActivity extends Activity {
     Button replayEnded=new Button(this);replayEnded.setText("重新播放");replayEnded.setAllCaps(false);
     Button nextEnded=new Button(this);nextEnded.setText("下一部");nextEnded.setAllCaps(false);
     Button backEnded=new Button(this);backEnded.setText("返回影片列表");backEnded.setAllCaps(false);
-    for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
+    for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setFocusableInTouchMode(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);styleTvButton(action,Color.rgb(25,39,59));endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
     endedPanel.addView(endedTitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedSubtitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedActions,new LinearLayout.LayoutParams(-1,-2));
     FrameLayout.LayoutParams endedParams=new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER);endedParams.leftMargin=dp(24);endedParams.rightMargin=dp(24);stage.addView(endedPanel,endedParams);
     replayEnded.setOnClickListener(v->{endedPanel.setVisibility(View.GONE);if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
-    nextEnded.setOnClickListener(v->{VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}d.dismiss();stage.postDelayed(()->startVodPlayback(next,0),250);});
+    nextEnded.setOnClickListener(v->{VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}d.dismiss();uiHandler.postDelayed(()->{if(!isFinishing()&&!isDestroyed()&&activityResumed&&vodPlayerDialog==null)startVodPlayback(next,0);},250L);});
     backEnded.setOnClickListener(v->d.dismiss());
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
     TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodPlayer!=null){if(vodPlayer.isPlaying())vodPlayer.pause();else vodPlayer.play();playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");}});
@@ -2246,15 +2352,69 @@ public class MainActivity extends Activity {
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
      Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
-     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){
+        // Invalidate callbacks first, then persist progress and stop audio before
+        // detaching the view. Isolate cleanup steps so one OEM/player exception
+        // cannot prevent the decoder from being released.
+        final ExoPlayer closingPlayer=vodPlayer;
+        final VodItem closingItem=activeVodItem;
+        vodPlayer=null;
+        activeVodItem=null;
+        try{if(closingItem!=null)saveVodHistory(closingItem,closingPlayer.getCurrentPosition(),closingPlayer.getDuration());}catch(RuntimeException ignored){}
+        try{closingPlayer.setPlayWhenReady(false);}catch(RuntimeException ignored){}
+        try{closingPlayer.pause();}catch(RuntimeException ignored){}
+        try{closingPlayer.stop();}catch(RuntimeException ignored){}
+        try{closingPlayer.clearMediaItems();}catch(RuntimeException ignored){}
+        try{pv.setKeepScreenOn(false);}catch(RuntimeException ignored){}
+        try{pv.setPlayer(null);}catch(RuntimeException ignored){}
+        try{closingPlayer.release();}catch(RuntimeException ignored){}
+      }else{activeVodItem=null;}getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
-      vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
-      pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
-       String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT).split("\\?")[0];
-       MediaItem.Builder mediaBuilder=new MediaItem.Builder().setUri(item.url);
-       if(mediaPath.endsWith(".m3u8"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8);
-       else if(mediaPath.endsWith(".mpd"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD);
-       MediaItem media=mediaBuilder.build();vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+      final ExoPlayer vodOwner=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
+      vodPlayer=vodOwner;
+      pv.setPlayer(vodOwner);pv.setKeepScreenOn(true);
+      // Register listeners before setMediaItem/prepare: some sources fail or
+      // transition state immediately during preparation on TV decoders.
+      vodOwner.addListener(new Player.Listener(){
+        @Override public void onPlaybackStateChanged(int state){
+          if(vodPlayer!=vodOwner||activeVodItem!=item)return;
+          if(state==Player.STATE_ENDED){
+            saveVodHistory(item,0,vodOwner.getDuration());
+            endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();
+            if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);
+            if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+            if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+            for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+            replayEnded.requestFocus();
+          }
+        }
+        @Override public void onPlayerError(PlaybackException error){
+          if(vodPlayer!=vodOwner||activeVodItem!=item)return;
+          android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.getErrorCodeName(),error);
+          toast("点播播放失败："+error.getErrorCodeName()+"，可尝试兼容解码或更换正版来源");
+        }
+      });
+      String mediaPath=item.url==null?"":item.url.toLowerCase(Locale.ROOT);
+      int queryAt=mediaPath.indexOf('?'),fragmentAt=mediaPath.indexOf('#');
+      int pathEnd=mediaPath.length();
+      if(queryAt>=0)pathEnd=Math.min(pathEnd,queryAt);
+      if(fragmentAt>=0)pathEnd=Math.min(pathEnd,fragmentAt);
+      mediaPath=mediaPath.substring(0,pathEnd);
+      MediaItem.Builder mediaBuilder=new MediaItem.Builder().setUri(item.url);
+      if(mediaPath.endsWith(".m3u8"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8);
+      else if(mediaPath.endsWith(".mpd"))mediaBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD);
+      MediaItem media=mediaBuilder.build();
+      vodOwner.setMediaItem(media);
+      vodOwner.prepare();
+      if(startPosition>0)vodOwner.seekTo(startPosition);
+      vodOwner.play();
+      vodProgressSaver=new Runnable(){@Override public void run(){
+        if(vodPlayer==vodOwner&&activeVodItem==item){
+          saveVodHistory(item,vodOwner.getCurrentPosition(),vodOwner.getDuration());
+          uiHandler.postDelayed(this,5000);
+        }
+      }};
+      uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
@@ -2464,9 +2624,7 @@ public class MainActivity extends Activity {
     return "";
   }
   private boolean isSatelliteChannel(Channel c){
-    String metadata=regionalMetadata(c);
-    String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
+    return c!=null&&ChannelCategoryPolicy.isSatellite(c.name,c.group);
   }
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null||isSatelliteChannel(c))return false;
@@ -2490,7 +2648,7 @@ public class MainActivity extends Activity {
     for(String province:provinces)for(String city:citiesForProvince(province)){
       if(hasRegionalToken(metadata,city))return true;
     }
-    return false;
+    return ChannelCategoryPolicy.isMainlandLocalCandidate(c.name,c.group);
   }
   private boolean matchesProvinceCity(Channel c,String province,String city){
     if(c==null||province==null||city==null||isSatelliteChannel(c))return false;
@@ -2527,7 +2685,7 @@ public class MainActivity extends Activity {
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
-    if(cat.equals("卫视"))return x.contains("卫视")||g.equals("卫视")||g.contains("satellite");
+    if(cat.equals("卫视"))return isSatelliteChannel(c);
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
     if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
@@ -2539,6 +2697,7 @@ public class MainActivity extends Activity {
   }
   private void refresh(){
     if(list==null||search==null)return;
+    cachedRemoteOrderKey="";cachedRemoteOrder=null;
     int previousFocusedIndex=-1;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
@@ -2557,27 +2716,35 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=60;int shown=0,totalMatches=0;
-    ArrayList<Integer> visibleIndexes=new ArrayList<>();
+    final int maxRows=LIVE_CHANNELS_PER_PAGE;int shown=0,totalMatches=0;
+    ArrayList<Integer> visibleIndexes=null;
+    String categoryCacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channelCatalogueRevision+"|"
+        +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
+        +(activeLocalProvince==null?"":activeLocalProvince)+"|"+(activeLocalCity==null?"":activeLocalCity);
     synchronized(channels){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(localRegionFilterActive&&activeCategory.equals("地方")){
-          if(!matchesLocalRegion(c))continue;
-        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
-        visibleIndexes.add(i);
-      }
-      if(activeCategory.equals("央视")){
-        visibleIndexes.sort((a,b)->{
-          Channel ca=channels.get(a),cb=channels.get(b);
-          int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
-          if(oa!=ob)return Integer.compare(oa,ob);
-          return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
-        });
+      visibleIndexes=liveCategoryIndexCache.get(categoryCacheKey);
+      if(visibleIndexes==null){
+        visibleIndexes=new ArrayList<>();
+        for(int i=0;i<channels.size();i++){
+          Channel c=channels.get(i);
+          if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
+          if(favoriteMode&&!favorites.contains(c.key()))continue;
+          if(localRegionFilterActive&&activeCategory.equals("地方")){
+            if(!matchesLocalRegion(c))continue;
+          }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+          if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+              &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+          visibleIndexes.add(i);
+        }
+        if(activeCategory.equals("央视")){
+          visibleIndexes.sort((a,b)->{
+            Channel ca=channels.get(a),cb=channels.get(b);
+            int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
+            if(oa!=ob)return Integer.compare(oa,ob);
+            return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
+          });
+        }
+        liveCategoryIndexCache.put(categoryCacheKey,new ArrayList<>(visibleIndexes));
       }
       totalMatches=visibleIndexes.size();
       int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
@@ -2639,7 +2806,7 @@ public class MainActivity extends Activity {
     return count;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+59)/60);
+    int pages=Math.max(1,(total+LIVE_CHANNELS_PER_PAGE-1)/LIVE_CHANNELS_PER_PAGE);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){
@@ -2718,16 +2885,18 @@ public class MainActivity extends Activity {
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
     final long now=System.currentTimeMillis();
     final long last=cachePrefs.getLong("china_supplement_last_success",0L);
+    final int feedVersion=3;
+    final int cachedFeedVersion=cachePrefs.getInt("china_supplement_feed_version",0);
     final long refreshInterval=12L*60L*60L*1000L;
-    if(last>0L&&now-last<refreshInterval){
+    if(cachedFeedVersion>=feedVersion&&last>0L&&now-last<refreshInterval){
       info.setText("已使用本地频道缓存 · 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
       return;
     }
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
     worker.execute(()->{
       String[] feeds={
-        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
         "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u",
         "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
@@ -2746,7 +2915,8 @@ public class MainActivity extends Activity {
       // actual additions and avoid a full list rebuild when nothing changed.
       if(total>0)persist();
       if(err.split(";").length<feeds.length){
-        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
+        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis())
+            .putInt("china_supplement_feed_version",feedVersion).apply();
       }
       runOnUiThread(()->{
         if(isFinishing())return;
@@ -2861,18 +3031,42 @@ public class MainActivity extends Activity {
     });
   }
   private void loadRegionChannels(){
-    if(regionLoading){info.setText("港澳台频道正在载入，请稍候…");return;}
-    regionLoading=true;info.setText("正在载入香港、澳门、台湾公开频道目录…");
+    if(regionLoading){info.setText("港澳台目录正在后台补充，已有频道仍可使用");return;}
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    final int feedVersion=2;
+    final long last=prefs.getLong("region_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    if(prefs.getInt("region_supplement_feed_version",0)>=feedVersion
+        &&last>0L&&System.currentTimeMillis()-last<refreshInterval){
+      info.setText("已使用港澳台本地频道缓存");return;
+    }
+    regionLoading=true;info.setText("正在补充香港、澳门、台湾频道目录（原有频道和备用源保留）…");
     worker.execute(()->{
       int added=0;StringBuilder errors=new StringBuilder();
       String[] feeds={
+        "https://iptv-org.github.io/iptv/countries/hk.m3u",
+        "https://iptv-org.github.io/iptv/countries/mo.m3u",
+        "https://iptv-org.github.io/iptv/countries/tw.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      added=fetchAndMergePlaylists(feeds,22000,errors);
-      final int total=added;final String err=errors.toString();
-      runOnUiThread(()->{persist();refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
+      try{
+        added=fetchAndMergePlaylists(feeds,22000,errors);
+        final int total=added;final String err=errors.toString();
+        int failed=err.isEmpty()?0:Math.max(0,err.split(";").length-1);
+        if(failed<feeds.length)prefs.edit().putLong("region_supplement_last_success",System.currentTimeMillis())
+            .putInt("region_supplement_feed_version",feedVersion).apply();
+        runOnUiThread(()->{
+          if(isFinishing())return;
+          if(total>0)persist();
+          refresh();regionLoading=false;
+          info.setText("港澳台目录补充完成：新增 "+total+" 个频道条目；原有频道均保留。"
+              +(err.isEmpty()?"":"部分目录暂不可用："+err));
+        });
+      }catch(Exception error){
+        runOnUiThread(()->{regionLoading=false;info.setText("港澳台补充失败，已保留原有频道："+error.getMessage());});
+      }
     });
   }
   private void loadEntertainmentChannels(){
@@ -2915,41 +3109,51 @@ public class MainActivity extends Activity {
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
-    String name=null,group="",pendingGroup="";int added=0;
-    if(data==null)return 0;
-    data=data.replace("\uFEFF","").replace("\r\n","\n").replace('\r','\n');
-    for(String raw:data.split("\n")){
-      String line=raw.trim();
-      if(line.isEmpty())continue;
-      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
-      if(line.startsWith("#EXTINF")){
-        int comma=extinfComma(line);
-        name=comma>=0?line.substring(comma+1).trim():"";
-        java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
-        String tvgName=nm.find()?nm.group(1).trim():"";
-        if(name.isEmpty())name=tvgName;
-        if(name.isEmpty())name="频道 "+(channels.size()+1);
-        group=pendingGroup;pendingGroup="";
-        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);
-        if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
-        continue;
-      }
-      if(line.startsWith("#"))continue;
-      if(line.startsWith("http://")||line.startsWith("https://")){
-        if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
-        synchronized(channels){
-          if(!channelsByUrl.containsKey(line)){
-            String key=identity(name,group,line);Channel same=channelsByIdentity.get(key);
-            if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
-            else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
+    if(data==null||data.isEmpty())return 0;
+    // Use the same parser exercised by PlaylistParserTest in production imports.
+    // Keep channel identity/backup merging here so imported lists preserve the
+    // app's existing de-duplication and geographic-catalogue behavior.
+    List<PlaylistParser.ChannelSource> parsed=PlaylistParser.parse(data,50000);
+    int added=0;
+    for(PlaylistParser.ChannelSource item:parsed){
+      String name=item.name==null||item.name.trim().isEmpty()
+          ?"频道 "+(channels.size()+1):item.name.trim();
+      String group=item.group==null?"":item.group.trim();
+      String url=item.url==null?"":item.url.trim();
+      if(url.isEmpty())continue;
+      Channel scoped=null;
+      synchronized(channels){
+        if(!channelsByUrl.containsKey(url)){
+          String key=identity(name,group,url);
+          Channel same=channelsByIdentity.get(key);
+          if(same!=null){
+            if(!same.backups.contains(url)){
+              same.backups.add(url);
+              channelsByUrl.put(url,same);
+              added++;
+            }
+            scoped=same;
+          }else{
+            Channel fresh=new Channel(name,url,group);
+            channels.add(fresh);
+            channelsByIdentity.put(key,fresh);
+            channelsByUrl.put(url,fresh);
+            added++;
+            scoped=fresh;
           }
+        }else{
+          scoped=channelsByUrl.get(url);
         }
-        if(parsingGeoChannelKeys!=null){
-          Channel scoped=channelsByUrl.get(line);
-          if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
-        }
-        name=null;group="";
       }
+      if(parsingGeoChannelKeys!=null&&scoped!=null){
+        parsingGeoChannelKeys.add(scoped.key());
+      }
+    }
+    if(added>0){
+      channelCatalogueRevision++;
+      liveCategoryIndexCache.clear();
+      cachedRemoteOrderKey="";
+      cachedRemoteOrder=null;
     }
     return added;
   }
@@ -3073,8 +3277,9 @@ public class MainActivity extends Activity {
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
     video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-    // Rebuild the list so the currently playing channel keeps its marker and selected tint.
-    refresh();
+    // Keep the already-mounted channel rows and scroll position. Rebuilding up to
+    // 60 focusable buttons here made the Back transition unnecessarily expensive.
+    updateLiveChannelPresentation();
     View restoreFocus=list.getChildAt(0);
     if(selected>=0){
       for(int i=0;i<list.getChildCount();i++){
@@ -3182,13 +3387,20 @@ public class MainActivity extends Activity {
     return super.dispatchKeyEvent(event);
   }
   private ArrayList<Integer> currentRemoteChannelOrder(){
-    ArrayList<Integer> order=new ArrayList<>();
     String q=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    String cacheKey=activeCategory+"|"+q+"|"+favoriteMode+"|"+favorites.hashCode()+"|"+channelCatalogueRevision+"|"+channels.size()+"|"
+        +(activeGeoChannelKeys==null?"":activeGeoChannelKeys.hashCode())+"|"+localRegionFilterActive+"|"
+        +(activeLocalProvince==null?"":activeLocalProvince)+"|"+(activeLocalCity==null?"":activeLocalCity);
+    if(cacheKey.equals(cachedRemoteOrderKey)&&cachedRemoteOrder!=null)return new ArrayList<>(cachedRemoteOrder);
+    ArrayList<Integer> order=new ArrayList<>();
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
+        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
         if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(localRegionFilterActive&&activeCategory.equals("地方")){
+          if(!matchesLocalRegion(c))continue;
+        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
             &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
         order.add(i);
@@ -3202,6 +3414,8 @@ public class MainActivity extends Activity {
         });
       }
     }
+    cachedRemoteOrderKey=cacheKey;
+    cachedRemoteOrder=new ArrayList<>(order);
     return order;
   }
   private void stepChannel(int delta){
@@ -3394,13 +3608,45 @@ public class MainActivity extends Activity {
       p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
     }catch(Exception ignored){}
   }
+  private String buildDeviceCompatibilityReport(){
+    StringBuilder report=new StringBuilder();
+    android.util.DisplayMetrics metrics=new android.util.DisplayMetrics();
+    try{getWindowManager().getDefaultDisplay().getRealMetrics(metrics);}catch(Exception ignored){
+      metrics.setTo(getResources().getDisplayMetrics());
+    }
+    report.append("设备兼容性信息\n")
+        .append("Manufacturer: ").append(android.os.Build.MANUFACTURER).append('\n')
+        .append("Model: ").append(android.os.Build.MODEL).append('\n')
+        .append("Device: ").append(android.os.Build.DEVICE).append('\n')
+        .append("Hardware: ").append(android.os.Build.HARDWARE).append('\n')
+        .append("Android: ").append(android.os.Build.VERSION.RELEASE)
+        .append(" / API ").append(android.os.Build.VERSION.SDK_INT).append('\n')
+        .append("Build: ").append(android.os.Build.DISPLAY).append('\n')
+        .append("Screen: ").append(metrics.widthPixels).append('x').append(metrics.heightPixels)
+        .append(" / ").append(metrics.densityDpi).append(" dpi")
+        .append(" / density ").append(String.format(Locale.ROOT,"%.2f",metrics.density)).append('\n')
+        .append("ABIs: ").append(Arrays.toString(android.os.Build.SUPPORTED_ABIS)).append('\n');
+    if(android.os.Build.VERSION.SDK_INT>=26){
+      try{
+        android.content.pm.PackageInfo web=android.webkit.WebView.getCurrentWebViewPackage();
+        report.append("WebView package: ").append(web==null?"unknown":web.packageName)
+            .append(" / ").append(web==null?"unknown":web.versionName).append('\n');
+      }catch(Exception e){report.append("WebView package: unavailable (").append(e.getClass().getSimpleName()).append(")\\n");}
+    }else report.append("WebView package: API below 26\\n");
+    try{
+      report.append("WebView UA: ").append(android.webkit.WebSettings.getDefaultUserAgent(this)).append('\n');
+    }catch(Exception e){report.append("WebView UA: unavailable (").append(e.getClass().getSimpleName()).append(")\\n");}
+    return report.toString();
+  }
+
   private void showLiveDiagnostics(){
-    String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
-    new AlertDialog.Builder(this).setTitle("直播诊断记录")
-        .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
+    String live=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    String details=buildDeviceCompatibilityReport()+"\n直播播放诊断\n"+live;
+    new AlertDialog.Builder(this).setTitle("设备与直播诊断")
+        .setMessage(details+"\n\n提示：点击“复制”可把设备信息和诊断记录发给我；不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",details));toast("诊断记录已复制");}
+          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视设备与直播诊断",details));toast("诊断记录已复制");}
         }).setNegativeButton("关闭",null).show();
   }
 
@@ -3436,8 +3682,34 @@ public class MainActivity extends Activity {
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
   private Runnable audioTrackCheck;
+  private Runnable renderedFrameFallback;
+  private volatile boolean hasRenderedFirstFrame=false;
+  private volatile long lastRenderedFrameAt=0L;
   private void cancelAudioTrackCheck(){
     if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
+  }
+  private void cancelRenderedFrameFallback(){
+    if(renderedFrameFallback!=null){uiHandler.removeCallbacks(renderedFrameFallback);renderedFrameFallback=null;}
+  }
+  private void scheduleRenderedFrameFallback(){
+    cancelRenderedFrameFallback();
+    if(player==null||player.getPlaybackState()!=Player.STATE_READY||!videoTrackSelected
+        ||hasRenderedFirstFrame||sourceReadyAt<=0L)return;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    long elapsed=Math.max(0L,android.os.SystemClock.elapsedRealtime()-sourceReadyAt);
+    long delay=Math.max(0L,10000L-elapsed);
+    renderedFrameFallback=()->{
+      renderedFrameFallback=null;
+      if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
+          ||player.getPlaybackState()!=Player.STATE_READY)return;
+      if(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(videoTrackSelected,hasRenderedFirstFrame,
+          sourceReadyAt,android.os.SystemClock.elapsedRealtime(),10000L)){
+        saveLiveDiagnostic("NO_RENDERED_FRAME","video track selected but no frame reached display output in 10s");
+        advanceToNextSourceAutomatically("有视频轨但 10 秒内没有真正输出画面，正在跳过该源");
+      }
+    };
+    uiHandler.postDelayed(renderedFrameFallback,delay);
   }
   private void scheduleAudioTrackCheck(){
     cancelAudioTrackCheck();
@@ -3542,12 +3814,12 @@ public class MainActivity extends Activity {
   }
   private void scheduleBufferingFallback(){
     cancelBufferingFallback();
-    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    int configured=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
     if(configured<=0)return;
     // Keep first startup bounded, but make failover attempts deliberately faster.
     // A source that has already failed should not make the viewer wait another 20-30s.
     int seconds=BufferingFailoverPolicy.timeoutSeconds(
-        sourceReadyRecorded,automaticSwitchCount,configured);
+        sourceReadyRecorded,automaticSwitchCount,automaticChannelSwitchCount,configured);
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     bufferingFallback=()->{
@@ -3595,12 +3867,17 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size()||channels.isEmpty())return;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(channels.size()<=1||automaticChannelSwitchCount>=channels.size()-1){
+    cancelAudioTrackCheck();
+    cancelRenderedFrameFallback();
+    ArrayList<Integer> order=currentRemoteChannelOrder();
+    int currentPosition=order.indexOf(selected);
+    if(order.size()<=1||automaticChannelSwitchCount>=order.size()-1){
       setSourceUpdatePlaybackActive(false);
-      info.setText(reason+"；已检查完本轮频道，没有可确认可播放的频道，请手动选择");
+      info.setText(reason+"；已检查完当前分类的频道，没有确认可播放的频道，请手动选择");
       return;
     }
-    int next=(selected+1)%channels.size();
+    int nextPosition=currentPosition<0?0:SourceSelectionPolicy.wrapIndex(currentPosition+1,order.size());
+    int next=order.get(nextPosition);
     automaticChannelSwitchCount++;
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
@@ -3608,8 +3885,8 @@ public class MainActivity extends Activity {
     selected=next;
     updateLiveChannelPresentation();
     Channel target=channels.get(selected);
-    if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
-    info.setText(reason+"，自动切换到下一频道："+target.name);
+    applyLastKnownGoodSource(target);
+    info.setText(reason+"，正在尝试当前分类的下一频道："+target.name);
     startCurrentSource();
   }
   private void play(int ix){
@@ -3622,10 +3899,9 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    sortSourcesByObservedQuality(channels.get(ix));
-    // A newly selected channel always starts at its highest-ranked current source.
-    // Manual source changes continue to use startCurrentSource() directly.
-    channels.get(ix).activeSource=0;
+    // Prefer a source that has actually rendered on this device. If none is
+    // known, keep the background probe's ranked order; do not sort or probe on key presses.
+    applyLastKnownGoodSource(channels.get(ix));
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -3639,6 +3915,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
+    cancelRenderedFrameFallback();
     audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
@@ -3651,6 +3928,9 @@ public class MainActivity extends Activity {
     sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
     firstFrameUiPostPending.set(false);
+    hasRenderedFirstFrame=false;
+    lastRenderedFrameAt=0L;
+    cancelRenderedFrameFallback();
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
     liveWindowRecoveryAttempted=false;
@@ -3687,6 +3967,33 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
+          if(listenerOwner!=MainActivity.this.player||eventTime==null||eventTime.timeline.isEmpty()
+              ||eventTime.windowIndex<0||eventTime.windowIndex>=eventTime.timeline.getWindowCount())return;
+          Timeline.Window renderedWindow=new Timeline.Window();
+          eventTime.timeline.getWindow(eventTime.windowIndex,renderedWindow);
+          if(!currentMediaId.equals(renderedWindow.mediaItem.mediaId))return;
+          hasRenderedFirstFrame=true;
+          // Media3 reports renderTimeMs using elapsedRealtime's time base.
+          lastRenderedFrameAt=renderTimeMs>0L?renderTimeMs:android.os.SystemClock.elapsedRealtime();
+          cancelRenderedFrameFallback();
+          if(!sourceFirstFrameRecorded){
+            sourceFirstFrameRecorded=true;
+            String renderedUrl=currentSourceUrl();
+            recordSourceMetric(renderedUrl,"firstFrame",Math.max(0L,lastRenderedFrameAt-sourceAttemptStartedAt));
+            if(selected>=0&&selected<channels.size()){
+              Channel renderedChannel=channels.get(selected);
+              SourceMemoryStore.saveLastGood(MainActivity.this,
+                  SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                  renderedUrl);
+            }
+            saveLiveDiagnostic("VIDEO_RENDERED","first frame reached display output");
+          }
+        }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)
+            saveLiveDiagnostic("VIDEO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
@@ -3702,9 +4009,10 @@ public class MainActivity extends Activity {
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
-          // Keep video decoder diagnostics separate from confirmed source failures.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player){
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
+            saveLiveDiagnostic("VIDEO_CODEC_ERROR",error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage());
+          }
         }
       });
       // Real decoded-frame callbacks: the old watchdog fields existed but were never
@@ -3717,27 +4025,8 @@ public class MainActivity extends Activity {
         lastVideoFrameAt=frameAt;
         hasReceivedVideoFrame=true;
         videoFrameMonitoringActive=true;
-        if(firstFrameUiPostPending.compareAndSet(false,true)){
-          uiHandler.post(()->{
-            if(listenerOwner!=MainActivity.this.player)return;
-            MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-            if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId)){
-              firstFrameUiPostPending.set(false);
-              return;
-            }
-            if(!sourceFirstFrameRecorded){
-              sourceFirstFrameRecorded=true;
-              String renderedUrl=currentSourceUrl();
-              recordSourceMetric(renderedUrl,"firstFrame",frameAt-sourceAttemptStartedAt);
-              if(selected>=0&&selected<channels.size()){
-                Channel renderedChannel=channels.get(selected);
-                SourceMemoryStore.saveLastGood(MainActivity.this,
-                    SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
-                    renderedUrl);
-              }
-            }
-          });
-        }
+        // Decoded-frame metadata is not proof that the TV Surface displayed it.
+        // Successful-source memory is written only from onRenderedFirstFrame().
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
@@ -3763,6 +4052,7 @@ public class MainActivity extends Activity {
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
           videoFrameMonitoringActive=videoSelected;
+          if(videoSelected&&player.getPlaybackState()==Player.STATE_READY)scheduleRenderedFrameFallback();
         }
         private boolean isCurrent(){
           if(listenerOwner!=MainActivity.this.player)return false;
@@ -3795,6 +4085,7 @@ public class MainActivity extends Activity {
           if(st==Player.STATE_BUFFERING){
             cancelPlaybackWatchdog();
             cancelAudioTrackCheck();
+            cancelRenderedFrameFallback();
             boolean firstBuffering=!sourceWasBuffering;
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
@@ -3813,8 +4104,9 @@ public class MainActivity extends Activity {
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
-            // Start the frame-stall timer only after the player reports READY.
+            // READY is not proof of visible video: require a real rendered-frame callback.
             lastVideoFrameAt=watchdogLastAdvanceAt;
+            if(videoTrackSelected)scheduleRenderedFrameFallback();
             schedulePlaybackWatchdog();
             // Run the audio-track/output check only after READY; buffering can
             // legitimately pause audio advancement and must not trigger a false failover.
@@ -3822,10 +4114,10 @@ public class MainActivity extends Activity {
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
               info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
-              if(manualSourceSwitch){
-                showChannelZapMessage(channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
-                manualSourceSwitch=false;
-              }
+              // Briefly identify the channel that actually reached READY. This is
+              // especially useful after automatic failover changes the selected channel.
+              showChannelZapMessage("正在播放："+channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
+              if(manualSourceSwitch)manualSourceSwitch=false;
             }
           }else if(st==Player.STATE_IDLE||st==Player.STATE_ENDED){
             cancelPlaybackWatchdog();
@@ -3835,10 +4127,8 @@ public class MainActivity extends Activity {
         }
       });
     }
-    // Explicitly drain the previous live item before assigning another source. This
-    // prevents stale audio/renderers from surviving rapid channel/source changes.
-    player.stop();
-    player.clearMediaItems();
+    // setMediaItem replaces the previous playlist. Avoid an extra renderer teardown
+    // via stop()+clearMediaItems() on every live channel zap.
     MediaItem item=new MediaItem.Builder().setUri(c.backups.get(c.activeSource)).setMediaId(currentMediaId).build();
     player.setMediaItem(item);
     player.prepare();
@@ -3871,9 +4161,19 @@ public class MainActivity extends Activity {
     String remembered=SourceMemoryStore.getLastGood(this,
         SourceMemoryStore.channelKey(c.name,c.group,c.url),
         SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
-    if(remembered==null)return;
-    int index=c.backups.indexOf(remembered);
-    if(index>=0)c.activeSource=index;
+    if(remembered!=null){
+      int index=c.backups.indexOf(remembered);
+      if(index>=0&&!isSourceBlocked(remembered)&&!SourceMemoryStore.isCoolingDown(this,remembered)){
+        c.activeSource=index;
+        return;
+      }
+    }
+    if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
+    String active=c.backups.get(c.activeSource);
+    if(isSourceBlocked(active)||SourceMemoryStore.isCoolingDown(this,active)){
+      int next=findNextAutomaticSource(c,c.activeSource);
+      if(next>=0)c.activeSource=next;
+    }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
@@ -3896,10 +4196,10 @@ public class MainActivity extends Activity {
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
         m.put("lastSuccess",System.currentTimeMillis());
       }else if("firstFrame".equals(event)){
-        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
-        m.put("firstFrames",count+1);
-        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastFirstFrame",System.currentTimeMillis());
+        int count=m.optInt("renderedFirstFrames",0);long avg=m.optLong("avgRenderedFirstFrameMs",0L);
+        m.put("renderedFirstFrames",count+1);
+        m.put("avgRenderedFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+        m.put("lastRenderedFirstFrame",System.currentTimeMillis());
       }else if("stable".equals(event)){
         m.put("stablePlays",m.optInt("stablePlays",0)+1);
         m.put("lastStable",System.currentTimeMillis());
@@ -3923,10 +4223,10 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       double successRate=(double)ready/attempts;
-      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
+      double firstFrameRate=(double)m.optInt("renderedFirstFrames",0)/attempts;
       double stableRate=(double)m.optInt("stablePlays",0)/attempts;
       double readyPenalty=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
-      double firstFramePenalty=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
+      double firstFramePenalty=Math.min(180.0,m.optLong("avgRenderedFirstFrameMs",0L)/180.0);
       // Decoder/sink warnings are weaker evidence than failed playback. Apply only
       // a small capped ranking penalty; never convert them into an automatic failure.
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
@@ -3993,8 +4293,8 @@ public class MainActivity extends Activity {
     uiHandler.postDelayed(networkSpeedUpdater,1000L);
   }
   private void bufferingSwitchSettingsDialog(){
-    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
-    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换","12 秒后切换（推荐）","15 秒后切换","关闭自动卡顿切换"};
+    int current=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",8);
+    String[] labels={"3 秒后切换（灵敏）","5 秒后切换","8 秒后切换（推荐）","12 秒后切换","15 秒后切换","关闭自动卡顿切换"};
     int[] values={3,5,8,12,15,0};
     int checked=current==3?0:current==5?1:current==8?2:current==15?4:current==0?5:3;
     new AlertDialog.Builder(this).setTitle("卡顿自动切换备用源")
@@ -4352,6 +4652,8 @@ public class MainActivity extends Activity {
   }
 
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+  @Override protected void onResume(){super.onResume();activityResumed=true;}
+  @Override protected void onPause(){activityResumed=false;super.onPause();}
   protected void onStart(){
     super.onStart();
     remoteLockUiActive=true;

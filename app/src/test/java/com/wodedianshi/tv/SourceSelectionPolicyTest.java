@@ -72,6 +72,33 @@ public class SourceSelectionPolicyTest {
                 SourceSelectionPolicy.endpointKey("http://example.com/live.m3u8"));
     }
 
+    @Test public void discoveryDeduplicatesEquivalentEndpointsAcrossFeeds() {
+        HashSet<String> seen = new HashSet<>();
+        assertTrue(SourceSelectionPolicy.markEndpointIfNew(
+                seen, "https://EXAMPLE.com:443/live.m3u8#feed-a"));
+        assertFalse(SourceSelectionPolicy.markEndpointIfNew(
+                seen, "https://example.com/live.m3u8#feed-b"));
+        assertTrue(SourceSelectionPolicy.markEndpointIfNew(
+                seen, "https://backup.example/live.m3u8"));
+        assertEquals(2, seen.size());
+    }
+
+    @Test public void discoveryKeepsDistinctTokensAndCaseSensitivePaths() {
+        HashSet<String> seen = new HashSet<>();
+        assertTrue(SourceSelectionPolicy.markEndpointIfNew(seen,
+                "https://example.com/live.m3u8?token=One"));
+        assertTrue(SourceSelectionPolicy.markEndpointIfNew(seen,
+                "https://example.com/live.m3u8?token=Two"));
+        assertTrue(SourceSelectionPolicy.markEndpointIfNew(seen,
+                "https://example.com/Live.m3u8?token=One"));
+        assertEquals(3, seen.size());
+    }
+
+    @Test public void canonicalEndpointKeyIgnoresClientSideFragment() {
+        assertEquals(SourceSelectionPolicy.endpointKey("https://example.com/live.m3u8#player-a"),
+                SourceSelectionPolicy.endpointKey("https://example.com/live.m3u8#player-b"));
+    }
+
     @Test public void canonicalEndpointKeyPreservesCaseSensitivePathAndQuery() {
         assertNotEquals(SourceSelectionPolicy.endpointKey("http://example.com/Live?token=AbC"),
                 SourceSelectionPolicy.endpointKey("http://example.com/live?token=AbC"));

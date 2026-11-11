@@ -35,4 +35,19 @@ public class PlaybackRecoveryPolicyTest {
         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 9999L, 20000L));
         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 0L, 90000L, 20000L));
     }
+
+    @Test public void missingRenderedFrameTriggersOnlyAfterDeadline() {
+        assertFalse(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(true, false, 10000L, 19999L, 10000L));
+        assertTrue(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(true, false, 10000L, 20000L, 10000L));
+    }
+
+    @Test public void renderedFrameOrNoSelectedVideoPreventsStartupFailover() {
+        assertFalse(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(true, true, 10000L, 30000L, 10000L));
+        assertFalse(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(false, false, 10000L, 30000L, 10000L));
+    }
+
+    @Test public void invalidClockOrReadyTimeDoesNotFailOver() {
+        assertFalse(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(true, false, 0L, 30000L, 10000L));
+        assertFalse(PlaybackRecoveryPolicy.isFirstRenderedFrameMissing(true, false, 10000L, 9999L, 10000L));
+    }
 }

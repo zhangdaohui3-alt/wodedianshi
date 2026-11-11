@@ -64,4 +64,47 @@ public class PlaylistParserTest {
         assertTrue(PlaylistParser.parse(m3u, 0).isEmpty());
         assertTrue(PlaylistParser.parse(null, 10).isEmpty());
     }
+
+    @Test public void extractsResolutionAndResponseTimeAsUnverifiedHints() {
+        String m3u = "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=\"CCTV1[1080][S]\" group-title=\"央视\" response-time=\"35ms\",CCTV-1\n"
+                + "https://example.com/live.m3u8\n";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(1, items.size());
+        assertEquals(1080, items.get(0).declaredHeight);
+        assertEquals(35L, items.get(0).responseTimeMs);
+        assertEquals("S", items.get(0).declaredStatus);
+    }
+
+    @Test public void parsesSecondsAndResetsHintsForTheNextChannel() {
+        String m3u = "#EXTINF:-1 tvg-name=\"Hunan[720][F]\" response-time=\"0.2s\",湖南卫视\n"
+                + "https://example.com/hunan.m3u8\n"
+                + "#EXTINF:-1,普通频道\nhttps://example.com/plain.m3u8";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(2, items.size());
+        assertEquals(720, items.get(0).declaredHeight);
+        assertEquals(200L, items.get(0).responseTimeMs);
+        assertEquals("F", items.get(0).declaredStatus);
+        assertEquals(0, items.get(1).declaredHeight);
+        assertEquals(0L, items.get(1).responseTimeMs);
+        assertEquals("", items.get(1).declaredStatus);
+    }
+
+    @Test public void metadataFromIncompleteEntryDoesNotLeakIntoNextChannel() {
+        String m3u = "#EXTINF:-1 tvg-name=\"Broken[1080][S]\" response-time=\"35ms\",未完成频道\n"
+                + "file:///not-a-stream\n"
+                + "#EXTINF:-1,普通频道\nhttps://example.com/plain.m3u8";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(1, items.size());
+        assertEquals("普通频道", items.get(0).name);
+        assertEquals(0, items.get(0).declaredHeight);
+        assertEquals(0L, items.get(0).responseTimeMs);
+        assertEquals("", items.get(0).declaredStatus);
+    }
+
+    @Test public void sourceQualityMetadataRemainsASecondarySignal() {
+        assertTrue(SourceQualityScorer.metadataScore(1080, 35)
+                > SourceQualityScorer.metadataScore(576, 1200));
+        assertEquals(0, SourceQualityScorer.metadataScore(0, 0));
+    }
 }

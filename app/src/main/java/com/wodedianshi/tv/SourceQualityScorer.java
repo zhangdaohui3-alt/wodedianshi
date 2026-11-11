@@ -11,6 +11,21 @@ import java.util.Locale;
 public final class SourceQualityScorer {
     private SourceQualityScorer() {}
 
+    /**
+     * Small tie-breaker for publisher metadata. It cannot make an unreachable
+     * URL valid and remains weaker than local probes/device QoE.
+     * responseTimeMs is remote directory telemetry, not this device's RTT.
+     */
+    public static int metadataScore(int declaredHeight, long responseTimeMs) {
+        int score = declaredHeight >= 1080 ? 24
+                : declaredHeight >= 720 ? 14
+                : declaredHeight >= 576 ? 6 : 0;
+        if (responseTimeMs > 0L && responseTimeMs <= 60L) score += 8;
+        else if (responseTimeMs > 60L && responseTimeMs <= 120L) score += 5;
+        else if (responseTimeMs > 120L && responseTimeMs <= 250L) score += 2;
+        return score;
+    }
+
     public static int labelScore(String source) {
         if (source == null) return 0;
         String u = source.toLowerCase(Locale.ROOT);

@@ -27,8 +27,8 @@ public final class PlaybackPlayerFactory {
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
                 .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3")
                 .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(20000);
+                .setConnectTimeoutMs(8000)
+                .setReadTimeoutMs(12000);
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setBufferDurationsMs(12000, 30000, 1500, 3000)

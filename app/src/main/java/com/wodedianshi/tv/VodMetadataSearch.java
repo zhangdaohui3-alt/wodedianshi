@@ -82,7 +82,12 @@ public final class VodMetadataSearch {
                     List<VodTitleRecord> records = ready.get();
                     for (VodTitleRecord record : records) {
                         if (record == null || record.id.isEmpty() || record.title.isEmpty()) continue;
-                        merged.putIfAbsent(record.id, record);
+                        String dedupeKey = VodTitleDeduplication.key(record);
+                        VodTitleRecord existing = merged.get(dedupeKey);
+                        if (VodTitleDeduplication.prefer(record, existing,
+                                china ? "中国" : "国外")) {
+                            merged.put(dedupeKey, record);
+                        }
                     }
                 } catch (Exception ignored) {}
             }
