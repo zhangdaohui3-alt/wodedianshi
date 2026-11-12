@@ -3722,7 +3722,15 @@ public class MainActivity extends Activity {
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
           if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视设备与直播诊断",details));toast("诊断记录已复制");}
-        }).setNeutralButton("分享记录",(d,w)->{\n          try{\n            Intent share=new Intent(Intent.ACTION_SEND);\n            share.setType("text/plain");\n            share.putExtra(Intent.EXTRA_SUBJECT,"我的电视设备与播放器诊断");\n            share.putExtra(Intent.EXTRA_TEXT,details);\n            startActivity(Intent.createChooser(share,"分享诊断记录"));\n          }catch(Exception e){toast("暂时无法打开分享面板");}\n        }).setNegativeButton("关闭",null).show();
+        }).setNeutralButton("分享记录",(d,w)->{
+          try{
+            Intent share=new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_SUBJECT,"我的电视设备与播放器诊断");
+            share.putExtra(Intent.EXTRA_TEXT,details);
+            startActivity(Intent.createChooser(share,"分享诊断记录"));
+          }catch(Exception e){toast("暂时无法打开分享面板");}
+        }).setNegativeButton("关闭",null).show();
   }
 
   private int automaticSwitchCount=0;
