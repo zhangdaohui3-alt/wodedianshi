@@ -25,7 +25,7 @@ public class VodGridNavigationPolicyTest {
 
     @Test public void horizontalMovementDoesNotWrapRows() {
         assertEquals(VodGridNavigationPolicy.NATIVE_FOCUS,
-                VodGridNavigationPolicy.targetPosition(4, 10, 4, VodGridNavigationPolicy.RIGHT));
+                VodGridNavigationPolicy.targetPosition(7, 10, 4, VodGridNavigationPolicy.RIGHT));
         assertEquals(VodGridNavigationPolicy.NATIVE_FOCUS,
                 VodGridNavigationPolicy.targetPosition(4, 10, 4, VodGridNavigationPolicy.LEFT));
         assertEquals(5, VodGridNavigationPolicy.targetPosition(5, 10, 4, VodGridNavigationPolicy.RIGHT));
