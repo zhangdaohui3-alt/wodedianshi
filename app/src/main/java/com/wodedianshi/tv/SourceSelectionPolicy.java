@@ -82,4 +82,32 @@ public final class SourceSelectionPolicy {
             return trimmed;
         }
     }
+
+    /**
+     * Resumes a rotating scan after the last URL identity rather than relying only
+     * on a list index. This keeps progress stable when a playlist inserts or removes
+     * entries between scheduled runs.
+     */
+    public static int nextScanStart(List<String> urls, String lastScannedKey, int fallbackIndex) {
+        if (urls == null || urls.isEmpty()) return -1;
+        if (lastScannedKey != null && !lastScannedKey.isEmpty()) {
+            // Choose the last occurrence: duplicate feed entries for one URL should
+            // not make the scanner repeatedly restart before the same endpoint.
+            int lastMatch = -1;
+            for (int i = 0; i < urls.size(); i++) {
+                if (StableKey.url(urls.get(i)).equals(lastScannedKey)) lastMatch = i;
+            }
+            if (lastMatch >= 0) return (lastMatch + 1) % urls.size();
+        }
+        return wrapIndex(fallbackIndex, urls.size());
+    }
+
+    /** Returns the stable key of the last item consumed by a scan window. */
+    public static String lastScannedKey(List<String> urls, int startIndex, int scannedCount) {
+        if (urls == null || urls.isEmpty() || scannedCount <= 0) return "";
+        int start = wrapIndex(startIndex, urls.size());
+        if (start < 0) return "";
+        int last = (start + scannedCount - 1) % urls.size();
+        return StableKey.url(urls.get(last));
+    }
 }
