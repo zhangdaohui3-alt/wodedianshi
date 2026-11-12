@@ -57,6 +57,27 @@ jobs:
           PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
           ./include/download-sdk.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("include/download-deps.sh")
+          text = p.read_text()
+          old = """if [ ! -d lua ]; then
+          	mkdir lua
+          	$WGET https://www.lua.org/ftp/lua-$v_lua.tar.gz -O - | \\
+          		tar -xz -C lua --strip-components=1
+          fi"""
+          new = """if [ ! -d lua ]; then
+          	mkdir lua
+          	archive="lua-$v_lua.tar.gz"
+          	$WGET "https://mirror.nju.edu.cn/buildroot/lua/$archive" -O "$archive"
+          	echo "b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b  $archive" | sha256sum -c -
+          	tar -xz -C lua --strip-components=1 -f "$archive"
+          	rm "$archive"
+          fi"""
+          if old not in text:
+              raise SystemExit("Lua download block changed; refusing an unverified source substitution")
+          p.write_text(text.replace(old, new))
+          PY
           ./include/download-deps.sh
 
       - name: Pin native source revisions and select LGPL-only build
@@ -126,6 +147,8 @@ jobs:
 
       - name: Package native engine audit outputs
         working-directory: mpv-android
+        env:
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
           set -euo pipefail
           mkdir -p audit-output
