@@ -41,14 +41,6 @@ A larger APK is acceptable when the additional engine demonstrably improves play
 - **Critical license gate:** mpv is GPLv2+ by default, with an LGPLv2.1+ build mode when configured with `-Dgpl=false`. The inspected mpv-android FFmpeg script currently enables `gpl` and `version3`, and its mpv script does not disable GPL. Do not import its unmodified binaries. A compliant candidate build must change FFmpeg to `--disable-gpl --disable-version3`, set mpv `-Dgpl=false`, audit every enabled FFmpeg component and linked library, and ship all required notices/source access.
 - The upstream build scripts are Linux/macOS oriented; our GitHub Actions Linux runner can host a dedicated reproducible ARMv7 build. Pin the mpv-android commit, mpv/FFmpeg revisions, dependency versions and NDK. Do not depend on the moving `master` branch for a release build.
 
-- The upstream Bilibili IJKPlayer's published Android artifacts are version 0.8.8 from 2018, built with NDK r10e / old Gradle tooling and FFmpeg 3.x-era sources. The published `ijkplayer-armv7a` artifact is listed as LGPL-2.1, but its age and historical Bintray/JCenter publication path make it unsuitable as an automatic drop-in for this AGP 8.13.2 / Java 17 app.
-- The community `brainShake/ijkplayer-android` repo advertises JDK 17 and ARMv7 modules, but its README's example installation command is `all64Debug`; that is not proof that an ARMv7 APK is correctly packaged. It also bundles prebuilt FFmpeg binaries, so exact source revision, build flags, notices and per-ABI binary provenance must be checked before use.
-- The preferred route is to build from a pinned, audited source revision in a separate Android sample module/CI job, with `armeabi-v7a` as a required artifact and `arm64-v8a` optional. Do not copy opaque `.so` files into the production APK.
-
-- Bilibili IJKPlayer documents LGPL-2.1-or-later and an old Android package/build setup (0.8.8, NDK r10e, API 9–23). It is not a safe drop-in for this project's AGP 8.13.2 / Java 17 build. Audit FFmpeg configuration and every optional component license.
-- brainShake/ijkplayer-android advertises JDK 17, CMake, NDK 30 and ARMv7/ARM64 packaging. Its community-maintained code and bundled prebuilt FFmpeg still require source, provenance, ABI and license audit before use.
-- VideoLAN's official Android repository publishes LibVLC as an SDK (org.videolan.android:libvlc-all). LibVLC engine is LGPLv2 while VLC Android application is GPL. Review the exact release/AAR, notices, transitive components and distribution obligations; verify the artifact still contains ARMv7 before integration.
-
 ## Controlled fallback rules
 
 PlaybackEnginePolicy is a pure, unit-tested decision layer. It does not instantiate players and does not claim IJK/LibVLC is installed.
