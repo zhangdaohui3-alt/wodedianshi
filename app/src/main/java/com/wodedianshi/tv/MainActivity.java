@@ -2426,7 +2426,7 @@ public class MainActivity extends Activity {
         @Override public void onPlayerError(PlaybackException error){
           if(vodPlayer!=vodOwner||activeVodItem!=item)return;
           android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.getErrorCodeName(),error);
-          saveLiveDiagnostic("VOD_PLAYER_ERROR","title="+item.title+" code="+error.errorCode+" name="+error.getErrorCodeName()+" cause="+(error.getCause()==null?"":error.getCause().getClass().getSimpleName()+": "+error.getCause().getMessage()));
+          saveLiveDiagnostic("VOD_PLAYER_ERROR","title="+item.title+" code="+error.errorCode+" name="+error.getErrorCodeName()+" class="+PlaybackFailureClassifier.classify(error.errorCode).name()+" cause="+(error.getCause()==null?"":error.getCause().getClass().getSimpleName()+": "+error.getCause().getMessage()));
           toast("点播播放失败："+error.getErrorCodeName()+"，可尝试兼容解码或更换正版来源");
         }
       });
@@ -4163,7 +4163,7 @@ public class MainActivity extends Activity {
         }
         public void onPlayerError(PlaybackException e){
           if(!isCurrent())return;
-          saveLiveDiagnostic("PLAYER_ERROR","code="+e.errorCode+" name="+e.getErrorCodeName()+" cause="+(e.getCause()==null?"":e.getCause().getClass().getSimpleName()+": "+e.getCause().getMessage()));
+          saveLiveDiagnostic("PLAYER_ERROR","code="+e.errorCode+" name="+e.getErrorCodeName()+" class="+PlaybackFailureClassifier.classify(e.errorCode).name()+" cause="+(e.getCause()==null?"":e.getCause().getClass().getSimpleName()+": "+e.getCause().getMessage()));
           // HLS live playback can fail only because its playback position fell
           // behind the sliding live window. Re-seek to the live edge once before
           // marking this URL failed; switching sources immediately would be wasteful.
