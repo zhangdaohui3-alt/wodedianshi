@@ -167,8 +167,16 @@ jobs:
           fi
           CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/config.mak"
           test -s "$CONFIG"
-          grep -E '^CONFIG_GPL=no$' "$CONFIG"
-          grep -E '^CONFIG_VERSION3=yes$' "$CONFIG"
+          echo "FFmpeg license-related configuration values:"
+          grep -E '^(CONFIG_GPL|CONFIG_VERSION3|CONFIG_NONFREE|CONFIG_LIB*)=' "$CONFIG" || true
+          if ! grep -qx 'CONFIG_GPL=no' "$CONFIG"; then
+            echo "Expected CONFIG_GPL=no; actual values are shown above."
+            exit 1
+          fi
+          if ! grep -qx 'CONFIG_VERSION3=yes' "$CONFIG"; then
+            echo "Expected CONFIG_VERSION3=yes; actual values are shown above."
+            exit 1
+          fi
           echo "ARMv7 APK, no-GPL and LGPLv3 FFmpeg configure flags verified."
 
       - name: Package native engine audit outputs
