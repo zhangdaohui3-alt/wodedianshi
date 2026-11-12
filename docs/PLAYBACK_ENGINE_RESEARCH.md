@@ -64,3 +64,24 @@ Primary source: https://github.com/mpv-player/mpv/blob/master/Copyright
 4. Transport/source failures rotate to a distinct backup URL; decoder/render failures may try a verified engine/decoder candidate; configuration errors do not trigger blind switching.
 5. Never allow two playback engines to own the display Surface simultaneously.
 6. Never make the user repeatedly reproduce a system-level hard freeze. Use automated build checks and diagnostic evidence first.
+
+
+### 5. LibVLC is a viable independent fallback candidate
+
+VideoLAN documents LibVLC as an embeddable Android engine and publishes an Android AAR; the official Android project supports Android TV. The engine itself is LGPLv2-or-later, while the complete VLC Android application and some optional plugins have different, more restrictive licensing. The exact Maven artifact and plugin set must therefore be audited before inclusion.
+
+- https://github.com/videolan/vlc-android
+- https://github.com/videolan/vlc/blob/master/doc/standalone/libvlc.md
+- https://github.com/videolan/vlc-android/blob/master/README.md
+
+The project's separate LibVLC 3.7.7 ARMv7 prototype already demonstrated successful packaging of a 47.37 MB ARMv7-only APK, but it has not yet been connected to My TV's playback UI or validated on the Dangbei device. Its standard Android video-output API exposes explicit attach/detach operations, which may be easier to integrate than copying MPV's JNI singleton, but it still needs the same single-owner Surface gate and lifecycle tests.
+
+### Engine comparison for this project
+
+| Engine | Strength | Main risk / next proof |
+|---|---|---|
+| Media3 | Already integrated; good HLS, track diagnostics, and Android platform integration | Device/vendor decoder behavior remains a risk; preserve as primary baseline |
+| MPV | Broad FFmpeg demux/codec coverage; flexible hardware/software decoder and video-output modes | JNI and Surface teardown are subtle; prove native teardown and ARMv7 behavior before app integration |
+| LibVLC | Official Android AAR and embeddable API; Android TV support; broad protocols/codecs | Larger native package; exact plugin/license set and ARMv7 runtime behavior need validation |
+
+Do not choose an engine based on feature lists alone. Compare them with the same authorized H.264/AAC HLS test streams, identical network conditions, and the same device. Record time-to-first-frame, sustained playback, decoder name, dropped frames, audio continuity, source switch recovery, and whether teardown/reopen survives repeated cycles.
