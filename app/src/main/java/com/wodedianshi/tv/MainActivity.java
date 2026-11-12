@@ -4021,7 +4021,8 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      long lastSuccess=m.optLong("lastSuccess",0L);
+      long lastSuccess=SourceSuccessTimestampPolicy.latestVerifiedSuccess(
+           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L));
       double recentSuccessBonus=0.0;
       if(lastSuccess>0L){
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
