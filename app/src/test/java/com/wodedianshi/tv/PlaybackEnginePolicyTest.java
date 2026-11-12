@@ -81,7 +81,7 @@ public class PlaybackEnginePolicyTest {
         assertNotEquals(gpu, embed);
         PlaybackEnginePolicy.Decision d = PlaybackEnginePolicy.decide(
                 PlaybackEnginePolicy.FailureKind.VIDEO_RENDER,
-                PlaybackEnginePolicy.orderedCandidates(Arrays.asList(embed)), gpu);
+                PlaybackEnginePolicy.orderedCandidates(Arrays.asList(gpu, embed)), gpu);
         assertFalse(d.switchEngine);
         assertFalse(d.changeDecoderMode);
         assertTrue(d.changeOutputMode);
