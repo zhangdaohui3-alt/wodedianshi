@@ -153,7 +153,25 @@ jobs:
           echo "Native libraries packaged in reference APK:"
           unzip -Z1 "$APK" | grep '^lib/' || true
           ZIP_LIST="$(unzip -Z1 "$APK")"
-          printf '%s\n' "$ZIP_LIST" | grep -Eq '^lib/armeabi-v7a/libmpv\.so      - name: Package native engine audit outputs
+          echo "$ZIP_LIST" | grep -Fqx 'lib/armeabi-v7a/libmpv.so' || {
+            echo "libmpv.so missing from ARMv7 APK"
+            exit 1
+          }
+          echo "$ZIP_LIST" | grep -Fqx 'lib/armeabi-v7a/libplayer.so' || {
+            echo "libplayer.so missing from ARMv7 APK"
+            exit 1
+          }
+          if echo "$ZIP_LIST" | grep -q '^lib/arm64-v8a/'; then
+            echo "Unexpected non-ARMv7 ABI in ARMv7 audit APK"
+            exit 1
+          fi
+          CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/config.mak"
+          test -s "$CONFIG"
+          grep -E '^CONFIG_GPL=no$' "$CONFIG"
+          grep -E '^CONFIG_VERSION3=yes$' "$CONFIG"
+          echo "ARMv7 APK, no-GPL and LGPLv3 FFmpeg configure flags verified."
+
+      - name: Package native engine audit outputs
         working-directory: mpv-android
         env:
           PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
