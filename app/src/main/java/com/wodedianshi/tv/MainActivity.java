@@ -4051,8 +4051,12 @@ public class MainActivity extends Activity {
     saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size());
     try{
     if(player==null){
-      liveEngineCoordinator.activate(new PlaybackEnginePolicy.Candidate(
-          PlaybackEnginePolicy.Engine.MEDIA3,PlaybackEnginePolicy.DecoderMode.PLATFORM_AUTO));
+      try{
+        liveEngineCoordinator.activate(new PlaybackEnginePolicy.Candidate(
+            PlaybackEnginePolicy.Engine.MEDIA3,PlaybackEnginePolicy.DecoderMode.PLATFORM_AUTO));
+      }catch(Exception activationError){
+        throw new IllegalStateException("Unable to activate the verified Media3 live session",activationError);
+      }
       if(player==null)throw new IllegalStateException("Media3 session created without a player");
       video.setPlayer(player);
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
