@@ -77,6 +77,11 @@ public final class PlaybackEngineCoordinator {
         return active == null ? null : active.candidate;
     }
 
+    /** True when a prior native teardown failed and no further engine may be started. */
+    public synchronized boolean isBlocked() {
+        return terminalReleaseFailure != null;
+    }
+
     private void releaseActiveLocked() {
         Activation previous = active;
         active = null;
