@@ -1,6 +1,6 @@
 # Multi-engine playback implementation gates
 
-Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. No secondary engine is integrated or enabled in the app yet.
+Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. MPV ARMv7 LGPL build workflow is being repaired: the first failure was caused by fetching abbreviated Git object IDs from shallow clones, not by compiler or ABI incompatibility. The workflow now pins full immutable commit SHAs. No secondary engine is integrated or enabled in the app yet.
 
 ## Device-first constraints
 
@@ -55,13 +55,14 @@ PlaybackFailureClassifier maps Media3 1.11.x error codes into transport, configu
 
 ## Next implementation sequence
 
-1. Complete IJK source/FFmpeg configure/license review; verify ARMv7 shared libraries and native symbol compatibility.
-2. Build an isolated IJK sample artifact on the research branch; verify ARMv7 packaging, load, HLS/TS/MP4, MediaCodec mode, software mode and repeated clean release. Do not integrate until this passes.
-3. Define a narrow player adapter around MainActivity's direct ExoPlayer use. Convert live playback first and keep VOD stable; add explicit surface ownership and attempt-generation checks.
-4. Integrate IJK behind a non-default developer switch, then test authorized known-good and failure samples.
-5. Evaluate official LibVLC only after IJK comparison demonstrates a real gap.
-6. Add runtime tests: cold start, channel zap, 30-minute playback, source failover, A/V sync, audio-only/black-screen, stop/release/recreate, background/foreground and remote input.
-7. Promote only after CI and real Dangbei tests; keep main unchanged until all release gates pass.
+1. Complete the isolated MPV ARMv7 LGPL native build using full commit SHAs; verify ELF ABI, FFmpeg GPL/version3 flags, mpv GPL mode and native dependency closure.
+2. Build a minimal MPVLib/BaseMPVView surface-lifecycle sample. Explicitly test `hwdec=no` software decode separately from MediaCodec hardware decode; verify HLS/TS/MP4 and repeated clean release.
+3. Build an isolated LibVLC 3.7.7 ARMv7 sample and compare its MediaCodec-disabled software path, Surface lifecycle, startup, CPU/memory and release behavior against MPV.
+4. Complete IJK source/FFmpeg configure/license review; build a source-pinned ARMv7 sample because IJK is common to all three supplied reference APKs. Do not use opaque prebuilt FFmpeg binaries.
+5. Define a narrow player adapter around MainActivity's direct ExoPlayer use. Convert live playback first and keep VOD stable; add explicit surface ownership and attempt-generation checks.
+6. Integrate only one secondary engine at a time behind a non-default developer switch; never run two engines against one surface. Use known-good authorized samples first.
+7. Add runtime tests: cold start, channel zap, 30-minute playback, source failover, A/V sync, audio-only/black-screen, stop/release/recreate, background/foreground and remote input.
+8. Promote only after CI and real Dangbei tests; keep main unchanged until all release gates pass.
 
 ## Current limitation
 
