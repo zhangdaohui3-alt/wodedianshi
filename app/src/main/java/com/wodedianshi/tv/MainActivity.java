@@ -567,12 +567,27 @@ public class MainActivity extends Activity {
   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
   private void scheduleAutomaticSourceUpdates(){
     WorkManager wm=WorkManager.getInstance(this);
-    boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
-    if(!enabled){wm.cancelUniqueWork("mytv_periodic_source_update");return;}
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    boolean enabled=prefs.getBoolean("auto_source_update",true);
+    if(!enabled){
+      wm.cancelUniqueWork("mytv_periodic_source_update");
+      wm.cancelUniqueWork("mytv_initial_source_discovery");
+      return;
+    }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+
+    // Do not make a first-time user wait for the first 24-hour periodic window.
+    // The worker already defers/retries while playback is active, so startup
+    // discovery can be queued safely without interrupting auto-resume playback.
+    String lastUpdate=prefs.getString("source_update_time","");
+    if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(enabled,lastUpdate)){
+      OneTimeWorkRequest initial=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+          .setConstraints(constraints).build();
+      wm.enqueueUniqueWork("mytv_initial_source_discovery",ExistingWorkPolicy.KEEP,initial);
+    }
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
