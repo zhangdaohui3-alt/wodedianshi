@@ -2375,6 +2375,32 @@ public class MainActivity extends Activity {
       pv.setPlayer(vodOwner);pv.setKeepScreenOn(true);
       // Register listeners before setMediaItem/prepare: some sources fail or
       // transition state immediately during preparation on TV decoders.
+      vodOwner.addAnalyticsListener(new AnalyticsListener(){
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            saveLiveDiagnostic("VOD_VIDEO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            saveLiveDiagnostic("VOD_AUDIO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,DecoderReuseEvaluation evaluation){
+          if(vodPlayer==vodOwner&&activeVodItem==item&&format!=null)
+            saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+format.codecs+" size="+format.width+"x"+format.height+" fps="+format.frameRate+" bitrate="+format.bitrate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,DecoderReuseEvaluation evaluation){
+          if(vodPlayer==vodOwner&&activeVodItem==item&&format!=null)
+            saveLiveDiagnostic("VOD_AUDIO_FORMAT","mime="+format.sampleMimeType+" codecs="+format.codecs+" channels="+format.channelCount+" sampleRate="+format.sampleRate+" bitrate="+format.bitrate);
+        }
+        @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            saveLiveDiagnostic("VOD_VIDEO_CODEC_ERROR",error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage());
+        }
+        @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            saveLiveDiagnostic("VOD_AUDIO_CODEC_ERROR",error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage());
+        }
+      });
       vodOwner.addListener(new Player.Listener(){
         @Override public void onPlaybackStateChanged(int state){
           if(vodPlayer!=vodOwner||activeVodItem!=item)return;
@@ -2391,6 +2417,7 @@ public class MainActivity extends Activity {
         @Override public void onPlayerError(PlaybackException error){
           if(vodPlayer!=vodOwner||activeVodItem!=item)return;
           android.util.Log.e("MyTV-VOD","Playback failed: "+item.title+"; "+error.getErrorCodeName(),error);
+          saveLiveDiagnostic("VOD_PLAYER_ERROR","title="+item.title+" code="+error.errorCode+" name="+error.getErrorCodeName()+" cause="+(error.getCause()==null?"":error.getCause().getClass().getSimpleName()+": "+error.getCause().getMessage()));
           toast("点播播放失败："+error.getErrorCodeName()+"，可尝试兼容解码或更换正版来源");
         }
       });
@@ -3625,7 +3652,8 @@ public class MainActivity extends Activity {
         .append("Screen: ").append(metrics.widthPixels).append('x').append(metrics.heightPixels)
         .append(" / ").append(metrics.densityDpi).append(" dpi")
         .append(" / density ").append(String.format(Locale.ROOT,"%.2f",metrics.density)).append('\n')
-        .append("ABIs: ").append(Arrays.toString(android.os.Build.SUPPORTED_ABIS)).append('\n');
+        .append("ABIs: ").append(Arrays.toString(android.os.Build.SUPPORTED_ABIS)).append('\n')
+        .append("MediaCodec decoder inventory:\n").append(MediaCodecInventory.describe()).append('\n');
     if(android.os.Build.VERSION.SDK_INT>=26){
       try{
         android.content.pm.PackageInfo web=android.webkit.WebView.getCurrentWebViewPackage();
@@ -3641,8 +3669,8 @@ public class MainActivity extends Activity {
 
   private void showLiveDiagnostics(){
     String live=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
-    String details=buildDeviceCompatibilityReport()+"\n直播播放诊断\n"+live;
-    new AlertDialog.Builder(this).setTitle("设备与直播诊断")
+    String details=buildDeviceCompatibilityReport()+"\n播放诊断记录（直播/点播）\n"+live;
+    new AlertDialog.Builder(this).setTitle("设备与播放器诊断")
         .setMessage(details+"\n\n提示：点击“复制”可把设备信息和诊断记录发给我；不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
@@ -3992,7 +4020,19 @@ public class MainActivity extends Activity {
         }
         @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
           if(listenerOwner==MainActivity.this.player)
-            saveLiveDiagnostic("VIDEO_DECODER","name="+decoderName+" initMs="+initializationDurationMs);
+            saveLiveDiagnostic("VIDEO_DECODER","name="+decoderName+" initializedAt="+initializedTimestampMs+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)
+            saveLiveDiagnostic("AUDIO_DECODER","name="+decoderName+" initializedAt="+initializedTimestampMs+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)
+            saveLiveDiagnostic("VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+format.codecs+" size="+format.width+"x"+format.height+" fps="+format.frameRate+" bitrate="+format.bitrate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)
+            saveLiveDiagnostic("AUDIO_FORMAT","mime="+format.sampleMimeType+" codecs="+format.codecs+" channels="+format.channelCount+" sampleRate="+format.sampleRate+" bitrate="+format.bitrate);
         }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
@@ -4000,8 +4040,10 @@ public class MainActivity extends Activity {
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
           // and the sustained-output watchdog decide whether the source actually failed.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player){
             recordSourceMetric(currentSourceUrl(),"audioCodecError",0L);
+            saveLiveDiagnostic("AUDIO_CODEC_ERROR",error==null?"unknown":error.getClass().getSimpleName()+": "+error.getMessage());
+          }
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
           // A single sink warning is not proof of a dead stream; avoid premature failover.
