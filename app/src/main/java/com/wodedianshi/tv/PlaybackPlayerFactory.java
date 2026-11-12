@@ -23,6 +23,8 @@ public final class PlaybackPlayerFactory {
      * Builds the same correctly typed MediaItem for both live and VOD.
      * Unknown/progressive containers deliberately retain Media3 extractor
      * sniffing; only unambiguous streaming formats receive an explicit MIME.
+     * RTSP is routed by URI scheme when the Media3 RTSP module is present.
+     * SmoothStreaming manifests are routed by their explicit MIME hint.
      */
     public static MediaItem buildMediaItem(String uri, String mediaId) {
         MediaItem.Builder builder = new MediaItem.Builder().setUri(uri);
