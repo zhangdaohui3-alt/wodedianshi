@@ -44,9 +44,9 @@ public final class PlaybackEngineRegistry {
             boolean available;
             try {
                 available = probe.isReady(candidate);
-            } catch (RuntimeException unavailable) {
-                // A broken optional engine must never prevent the primary player
-                // from starting or suppress other independently verified engines.
+            } catch (RuntimeException | LinkageError unavailable) {
+                // Native load/link failures (for example UnsatisfiedLinkError) are
+                // just as optional as adapter exceptions: never block Media3.
                 available = false;
             }
             if (available) ready.add(candidate);

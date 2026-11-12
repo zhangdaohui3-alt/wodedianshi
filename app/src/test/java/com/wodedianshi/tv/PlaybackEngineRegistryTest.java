@@ -81,6 +81,21 @@ public class PlaybackEngineRegistryTest {
         assertEquals(Collections.singletonList(vlc), result);
     }
 
+    @Test public void nativeLinkageErrorDoesNotBlockPrimaryOrOtherEngines() {
+        PlaybackEnginePolicy.Candidate mpv = c(PlaybackEnginePolicy.Engine.MPV,
+                PlaybackEnginePolicy.DecoderMode.MEDIACODEC_COPY);
+        PlaybackEnginePolicy.Candidate vlc = c(PlaybackEnginePolicy.Engine.LIBVLC,
+                PlaybackEnginePolicy.DecoderMode.HARDWARE);
+        List<PlaybackEnginePolicy.Candidate> result = PlaybackEngineRegistry.verifiedFallbacks(
+                Arrays.asList(mpv, vlc), (engine, mode) -> {
+                    if (engine == PlaybackEnginePolicy.Engine.MPV) {
+                        throw new UnsatisfiedLinkError("missing ARMv7 native library");
+                    }
+                    return true;
+                });
+        assertEquals(Collections.singletonList(vlc), result);
+    }
+
     @Test public void emptyOrMissingProbeLeavesOnlyPrimaryEngine() {
         assertTrue(PlaybackEngineRegistry.verifiedFallbacks(
                 Arrays.asList(c(PlaybackEnginePolicy.Engine.MPV,
