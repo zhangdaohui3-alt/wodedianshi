@@ -32,6 +32,10 @@ public class PlaybackEnginePolicyTest {
         PlaybackEnginePolicy.Decision d=PlaybackEnginePolicy.decide(PlaybackEnginePolicy.FailureKind.UNKNOWN,all,PlaybackEnginePolicy.Engine.MEDIA3);
         assertFalse(d.tryNextEngine); assertFalse(d.changeSource);
     }
+    @Test public void configurationFailureDoesNotSwitchSourceOrEngine() {
+        PlaybackEnginePolicy.Decision d=PlaybackEnginePolicy.decide(PlaybackEnginePolicy.FailureKind.CONFIGURATION,all,PlaybackEnginePolicy.Engine.MEDIA3);
+        assertFalse(d.tryNextEngine); assertFalse(d.changeSource);
+    }
     @Test public void unavailableEnginesAreNeverSelected() {
         List<PlaybackEnginePolicy.Engine> available=PlaybackEnginePolicy.orderedEngines(false,true);
         PlaybackEnginePolicy.Decision d=PlaybackEnginePolicy.decide(PlaybackEnginePolicy.FailureKind.DECODER_INITIALIZATION,available,PlaybackEnginePolicy.Engine.MEDIA3);
