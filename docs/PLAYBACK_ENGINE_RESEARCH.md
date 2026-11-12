@@ -25,6 +25,8 @@ The upstream Android view uses `vo=gpu`, `gpu-context=android`, and hardware-dec
 
 Therefore the integration must treat decoder mode and video-output mode as separate compatibility dimensions. Do not assume that switching from Media3 to MPV automatically avoids a vendor MediaCodec bug.
 
+The MPV manual also warns that Android `mediacodec` can force RGB conversion and reduce output bit depth, while `mediacodec-copy` copies frames back to system memory. The direct `mediacodec_embed` path can remove some GPU work but loses subtitles, OSD, and filters. For this app, test three explicit candidates rather than inheriting the upstream phone default: GPU + `mediacodec-copy`; GPU + software decode; and direct `mediacodec_embed` + `mediacodec`. Record the active decoder and output path for each. Do not assume an engine's default hardware mode is best for this TV box.
+
 ### 3. TV-box hardware-decoder failures are documented upstream
 
 There are public MPV Android reports of green/corrupted frames on Android TV boxes using `mediacodec-copy`, black screens and UI freezes with hardware decoding, and decoder failures on Android 9 devices. These reports are device-specific and do not prove the same fault on this project's Dangbei box, but they show why a universal hardware-decoding default would be unsafe.
