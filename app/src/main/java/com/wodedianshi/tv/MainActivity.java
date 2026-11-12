@@ -2403,6 +2403,10 @@ public class MainActivity extends Activity {
         }
       });
       vodOwner.addListener(new Player.Listener(){
+        @Override public void onTracksChanged(Tracks tracks){
+          if(vodPlayer==vodOwner&&activeVodItem==item)
+            recordTrackDiagnostics("VOD:"+item.title,tracks);
+        }
         @Override public void onPlaybackStateChanged(int state){
           if(vodPlayer!=vodOwner||activeVodItem!=item)return;
           if(state==Player.STATE_ENDED){
@@ -3622,6 +3626,48 @@ public class MainActivity extends Activity {
     clean=clean.replaceAll("[\\r\\n\\t]+"," ");
     return clean.length()>260?clean.substring(0,260):clean;
   }
+  private String lastLiveTrackDiagnostic="";
+  private String lastVodTrackDiagnostic="";
+  private String describeTrackSupport(int support){
+    if(support==C.FORMAT_HANDLED)return "handled";
+    if(support==C.FORMAT_EXCEEDS_CAPABILITIES)return "exceeds-capabilities";
+    if(support==C.FORMAT_UNSUPPORTED_DRM)return "unsupported-drm";
+    if(support==C.FORMAT_UNSUPPORTED_SUBTYPE)return "unsupported-subtype";
+    if(support==C.FORMAT_UNSUPPORTED_TYPE)return "unsupported-type";
+    return "unknown-"+support;
+  }
+  private void recordTrackDiagnostics(String scope,Tracks tracks){
+    if(tracks==null)return;
+    StringBuilder summary=new StringBuilder();
+    int listed=0;
+    for(Tracks.Group group:tracks.getGroups()){
+      for(int i=0;i<group.length;i++){
+        if(listed>=12)break;
+        Format format=group.getTrackFormat(i);
+        if(format==null)continue;
+        summary.append("type=").append(group.getType())
+            .append(" mime=").append(format.sampleMimeType)
+            .append(" codecs=").append(format.codecs)
+            .append(" size=").append(format.width).append('x').append(format.height)
+            .append(" fps=").append(format.frameRate)
+            .append(" audio=").append(format.channelCount).append("ch/").append(format.sampleRate).append("Hz")
+            .append(" support=").append(describeTrackSupport(group.getTrackSupport(i)))
+            .append(" selected=").append(group.isTrackSelected(i)).append(';');
+        listed++;
+      }
+      if(listed>=12)break;
+    }
+    String value=scope+"|"+summary;
+    if(scope.startsWith("LIVE")){
+      if(value.equals(lastLiveTrackDiagnostic))return;
+      lastLiveTrackDiagnostic=value;
+    }else{
+      if(value.equals(lastVodTrackDiagnostic))return;
+      lastVodTrackDiagnostic=value;
+    }
+    saveLiveDiagnostic(scope.startsWith("LIVE")?"LIVE_TRACKS":"VOD_TRACKS",
+        summary.length()==0?"no audio/video tracks exposed":summary.toString());
+  }
   private void saveLiveDiagnostic(String stage,String detail){
     String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
         +" | "+stage+" | "+safeDiagnosticDetail(detail);
@@ -4074,6 +4120,7 @@ public class MainActivity extends Activity {
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
           if(listenerOwner!=MainActivity.this.player)return;
+          recordTrackDiagnostics("LIVE:"+currentMediaId,tracks);
           boolean audioPresent=false,audioSupported=false,audioSelected=false,videoPresent=false,videoSupported=false,videoSelected=false;
           for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()==C.TRACK_TYPE_AUDIO){
