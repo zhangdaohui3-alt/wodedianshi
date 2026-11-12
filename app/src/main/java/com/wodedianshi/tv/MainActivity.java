@@ -901,10 +901,32 @@ public class MainActivity extends Activity {
     return key.replaceAll("[^\\p{L}\\p{N}]","");
   }
   private boolean addUniqueVodItem(ArrayList<VodItem> items,Set<String> ids,Set<String> titles,VodItem item){
-    if(item==null||item.identifier==null||item.identifier.isEmpty()||!ids.add(item.identifier))return false;
+    if(item==null||item.identifier==null||item.identifier.isEmpty()||ids.contains(item.identifier))return false;
     String titleKey=vodTitleIdentity(item.title);
+    boolean incomingPlayable=item.url!=null&&!item.url.trim().isEmpty()&&!item.identifier.startsWith("meta:");
     // Very short names are common labels rather than reliable film identities.
-    if(titleKey.length()>=6&&!titles.add(titleKey))return false;
+    if(titleKey.length()>=6&&titles.contains(titleKey)){
+      // Provider completion order is nondeterministic. Never let a metadata-only
+      // card hide a real direct video that arrives later for the same title.
+      if(incomingPlayable){
+        for(int i=0;i<items.size();i++){
+          VodItem existing=items.get(i);
+          if(!titleKey.equals(vodTitleIdentity(existing.title)))continue;
+          boolean existingPlayable=existing.url!=null&&!existing.url.trim().isEmpty()
+              &&!existing.identifier.startsWith("meta:");
+          if(VodResultMergePolicy.shouldReplace(existingPlayable,incomingPlayable)){
+            ids.remove(existing.identifier);
+            items.set(i,item);
+            ids.add(item.identifier);
+            return true;
+          }
+          return false;
+        }
+      }
+      return false;
+    }
+    ids.add(item.identifier);
+    if(titleKey.length()>=6)titles.add(titleKey);
     items.add(item);
     if(titleKey.length()<6)titles.add(item.identifier);
     return true;
