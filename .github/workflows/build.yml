@@ -8,6 +8,7 @@ on:
       - 'fix/**'
       - 'upgrade/**'
       - 'research/player-engine-decoder-matrix'
+      - 'prototype/**'
 
 concurrency:
   group: my-tv-apk-build
