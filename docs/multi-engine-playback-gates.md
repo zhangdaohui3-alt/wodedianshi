@@ -1,6 +1,6 @@
 # Multi-engine playback implementation gates
 
-Status: architecture policy added on the research branch; no secondary engine is integrated or enabled in the app yet.
+Status: engine fallback policy and Media3 error classifier are implemented and unit-tested on the research branch. No secondary engine is integrated or enabled in the app yet.
 
 ## Device-first constraints
 
@@ -21,6 +21,12 @@ A larger APK is acceptable when the additional engine demonstrably improves play
 
 ## Public upstream evidence and gates
 
+### IJK
+
+- The upstream Bilibili IJKPlayer's published Android artifacts are version 0.8.8 from 2018, built with NDK r10e / old Gradle tooling and FFmpeg 3.x-era sources. The published `ijkplayer-armv7a` artifact is listed as LGPL-2.1, but its age and historical Bintray/JCenter publication path make it unsuitable as an automatic drop-in for this AGP 8.13.2 / Java 17 app.
+- The community `brainShake/ijkplayer-android` repo advertises JDK 17 and ARMv7 modules, but its README's example installation command is `all64Debug`; that is not proof that an ARMv7 APK is correctly packaged. It also bundles prebuilt FFmpeg binaries, so exact source revision, build flags, notices and per-ABI binary provenance must be checked before use.
+- The preferred route is to build from a pinned, audited source revision in a separate Android sample module/CI job, with `armeabi-v7a` as a required artifact and `arm64-v8a` optional. Do not copy opaque `.so` files into the production APK.
+
 - Bilibili IJKPlayer documents LGPL-2.1-or-later and an old Android package/build setup (0.8.8, NDK r10e, API 9–23). It is not a safe drop-in for this project's AGP 8.13.2 / Java 17 build. Audit FFmpeg configuration and every optional component license.
 - brainShake/ijkplayer-android advertises JDK 17, CMake, NDK 30 and ARMv7/ARM64 packaging. Its community-maintained code and bundled prebuilt FFmpeg still require source, provenance, ABI and license audit before use.
 - VideoLAN's official Android repository publishes LibVLC as an SDK (org.videolan.android:libvlc-all). LibVLC engine is LGPLv2 while VLC Android application is GPL. Review the exact release/AAR, notices, transitive components and distribution obligations; verify the artifact still contains ARMv7 before integration.
@@ -31,6 +37,7 @@ PlaybackEnginePolicy is a pure, unit-tested decision layer. It does not instanti
 
 - Transport error -> try a distinct backup URL; do not switch decoder for a network failure.
 - Unsupported container/codec, demux, decoder initialization/runtime, video-render or audio-output error -> try the next verified available engine.
+- Local network-policy/configuration error (for example, cleartext not permitted) -> fix configuration; do not rotate URLs or engines.
 - Unknown error -> do not blindly switch.
 - Never select an unavailable engine.
 - Before runtime switching: invalidate previous attempt generation; detach its surface/listeners; cancel timers; stop and release it; only then create and attach the next engine. Exactly one engine owns a surface.
