@@ -4,6 +4,22 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class PlaybackRecoveryPolicyTest {
+    @Test public void audioFailureAloneDoesNotTriggerSourceFailover() {
+        assertFalse(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(true, false));
+    }
+
+    @Test public void missingVideoTriggersSourceFailoverEvenWhenAudioExists() {
+        assertTrue(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(false, true));
+    }
+
+    @Test public void bothTracksMissingTriggersSourceFailover() {
+        assertTrue(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(true, true));
+    }
+
+    @Test public void healthyTracksDoNotTriggerSourceFailover() {
+        assertFalse(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(false, false));
+    }
+
     @Test public void timelineRequiresFullTimeout() {
         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(44999L, 0L, 45000L));
         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(54999L, 10000L, 45000L));
