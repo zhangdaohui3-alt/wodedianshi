@@ -121,7 +121,6 @@ public class MainActivity extends Activity {
   private String currentMediaId = "";
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
   // per source so no ExoPlayer getter is ever called from that callback thread.
-  private final java.util.concurrent.atomic.AtomicBoolean firstFrameUiPostPending = new java.util.concurrent.atomic.AtomicBoolean(false);
   private static class Channel {
     String name, url, group;
     ArrayList<String> backups = new ArrayList<>();
@@ -3691,7 +3690,6 @@ public class MainActivity extends Activity {
     sourceReadyRecorded=false;
     sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
-    firstFrameUiPostPending.set(false);
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
     liveWindowRecoveryAttempted=false;
@@ -3732,6 +3730,23 @@ public class MainActivity extends Activity {
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
         }
+        @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
+          if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;
+          MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
+          if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId))return;
+          // Only count a frame after Media3 confirms it was rendered to the output.
+          // Frame-metadata callbacks are retained separately for the stall watchdog.
+          sourceFirstFrameRecorded=true;
+          String renderedUrl=currentSourceUrl();
+          recordSourceMetric(renderedUrl,"firstFrame",
+              android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+          if(selected>=0&&selected<channels.size()){
+            Channel renderedChannel=channels.get(selected);
+            SourceMemoryStore.saveLastGood(MainActivity.this,
+                SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                renderedUrl);
+          }
+        }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
           // and the sustained-output watchdog decide whether the source actually failed.
@@ -3759,27 +3774,6 @@ public class MainActivity extends Activity {
         lastVideoFrameAt=frameAt;
         hasReceivedVideoFrame=true;
         videoFrameMonitoringActive=true;
-        if(firstFrameUiPostPending.compareAndSet(false,true)){
-          uiHandler.post(()->{
-            if(listenerOwner!=MainActivity.this.player)return;
-            MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-            if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId)){
-              firstFrameUiPostPending.set(false);
-              return;
-            }
-            if(!sourceFirstFrameRecorded){
-              sourceFirstFrameRecorded=true;
-              String renderedUrl=currentSourceUrl();
-              recordSourceMetric(renderedUrl,"firstFrame",frameAt-sourceAttemptStartedAt);
-              if(selected>=0&&selected<channels.size()){
-                Channel renderedChannel=channels.get(selected);
-                SourceMemoryStore.saveLastGood(MainActivity.this,
-                    SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
-                    renderedUrl);
-              }
-            }
-          });
-        }
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
