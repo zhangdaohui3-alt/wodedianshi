@@ -81,13 +81,14 @@ For every test stream record:
 ## Controlled fallback state machine
 
 1. Validate transport and media payload; reject HTML/error pages masquerading as media.
-2. Start with the best known engine/decoder combination for the source profile and device.
+2. Start with the best verified engine+decoder candidate for the source profile and device.
 3. If transport fails, retry a distinct authorized backup URL; do not waste time changing decoder.
-4. If the container/codec is unsupported or decoder initialization fails, try a compatible decoder/backend, then another engine.
-5. If audio advances but no video frame renders, classify as video decode/render failure and try the next compatible backend within a short bounded deadline.
+4. If the container/demux is unsupported, move to the next engine with a different demuxer. If decoder initialization/runtime fails, prefer a verified SOFTWARE candidate that avoids the suspected MediaCodec path before trying another hardware path.
+5. If audio advances but no video frame renders, distinguish decoder failure from surface/render failure. A software decoder may avoid a MediaCodec fault, but a separate render path may be required for a GPU/surface fault.
 6. If a rendered stream later stalls, first distinguish network starvation from decoder/render stall using load and frame telemetry.
-7. Stop and release the previous player, detach its surface/listeners, cancel timers and invalidate callbacks before creating the next attempt.
-8. After all source/backend attempts fail, show a useful reason and continue to the next channel only according to the user's channel-zap policy.
+7. Invalidate the prior attempt generation, detach its surface/listeners, cancel timers, stop and release it, and only then create the next attempt. Exactly one engine may own the video surface.
+8. A full Android/driver freeze cannot be recovered reliably by an in-app watchdog. Prevent recurrence by blacklisting the risky hardware-decoder path after confirmed failures; do not repeatedly reproduce hard freezes on the user's box.
+9. After all source/backend attempts fail, show a useful reason and continue to the next channel only according to the user's channel-zap policy.
 
 ## Immediate implementation sequence
 
