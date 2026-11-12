@@ -1,6 +1,6 @@
 # Multi-engine playback implementation gates
 
-Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. MPV ARMv7 LGPL build workflow is being repaired: the first failure was caused by fetching abbreviated Git object IDs from shallow clones, not by compiler or ABI incompatibility. The workflow now pins full immutable commit SHAs. No secondary engine is integrated or enabled in the app yet. The tested PlaybackEngineCoordinator is now wired into MainActivity for the live Media3 session: the coordinator creates the only currently verified candidate, owns its teardown, detaches the PlayerView before stopping/releasing, and keeps VOD on its existing separate path. This is a lifecycle integration step, not multi-engine fallback.
+Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. MPV ARMv7 LGPL build workflow is being repaired. Full immutable source SHAs now fetch and verify correctly. A first native build exposed an upstream mbedTLS script expecting a 3.6.x-only entropy option while the audited build pins 2.28.10; the workflow now conditionally applies that option only when the selected header exposes it (2.28.10's Linux entropy poll uses /dev/urandom by default). The next native build is pending. No secondary engine is integrated or enabled in the app yet. The tested PlaybackEngineCoordinator is now wired into MainActivity for the live Media3 session: the coordinator creates the only currently verified candidate, owns its teardown, detaches the PlayerView before stopping/releasing, and keeps VOD on its existing separate path. This is a lifecycle integration step, not multi-engine fallback.
 
 ## Device-first constraints
 
@@ -50,16 +50,16 @@ PlaybackFailureClassifier maps Media3 1.11.x error codes into transport, configu
 - Local network-policy/configuration error (for example, cleartext not permitted) -> fix configuration; do not rotate URLs or engines.
 - Unknown error -> do not blindly switch.
 - Never select an unavailable engine.
-- Before runtime switching: invalidate previous attempt generation; detach its surface/listeners; cancel timers; stop and release it; only then create and attach the next engine. Exactly one engine owns a surface.
+- Before runtime switching: invalidate previous attempt generation; detach its surface/listeners; cancel timers; stop and release it; only then create and attach the next engine. Exactly one engine owns a surface. If any teardown stage throws, the coordinator enters a terminal blocked state; it will not create another engine, and live source failover is stopped rather than repeatedly retrying on uncertain native ownership.
 - Bound each attempt and record engine, decoder mode, source index (never full signed URLs), media format, first-frame timing and failure category.
 
 ## Next implementation sequence
 
-1. Complete the isolated MPV ARMv7 LGPL native build using full commit SHAs; verify ELF ABI, FFmpeg GPL/version3 flags, mpv GPL mode and native dependency closure.
+1. Complete the isolated MPV ARMv7 LGPL native build using full commit SHAs; verify ELF ABI, FFmpeg GPL/version3 flags, mpv GPL mode and native dependency closure. Current build is testing the mbedTLS 2.28 entropy-script compatibility fix.
 2. Build a minimal MPVLib/BaseMPVView surface-lifecycle sample. Explicitly test `hwdec=no` software decode separately from MediaCodec hardware decode; verify HLS/TS/MP4 and repeated clean release.
 3. Build an isolated LibVLC 3.7.7 ARMv7 sample and compare its MediaCodec-disabled software path, Surface lifecycle, startup, CPU/memory and release behavior against MPV.
 4. Complete IJK source/FFmpeg configure/license review; build a source-pinned ARMv7 sample because IJK is common to all three supplied reference APKs. Do not use opaque prebuilt FFmpeg binaries.
-5. **Completed on research branch (2026-11-12):** route the existing live Media3 player through PlaybackEngineCoordinator, preserving existing analytics/player listeners, buffering policy and PlayerView attachment; centralize detach/stop/clear/release in the owned session. VOD remains unchanged. CI must pass before treating this integration as build-verified.
+5. **Completed on research branch (2026-11-12):** route the existing live Media3 player through PlaybackEngineCoordinator, preserving existing analytics/player listeners, buffering policy and PlayerView attachment; centralize detach/stop/clear/release in the owned session. VOD remains unchanged. A subsequent safety review found that swallowed release exceptions could falsely permit a later engine; teardown errors now propagate into a terminal coordinator block, and automatic source rotation stops when ownership is uncertain. The latest CI run is validating this hardened path.
 6. Integrate only one secondary engine at a time behind a non-default developer switch; never run two engines against one surface. Use known-good authorized samples first.
 7. Add runtime tests: cold start, channel zap, 30-minute playback, source failover, A/V sync, audio-only/black-screen, stop/release/recreate, background/foreground and remote input.
 8. Promote only after CI and real Dangbei tests; keep main unchanged until all release gates pass.
