@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
         }
         final ExoPlayer owned=PlaybackPlayerFactory.createLivePlayer(
             MainActivity.this,isDecoderFallbackEnabled());
+        player=owned;
         return () -> releaseOwnedLivePlayer(owned);
       });
   private PlayerView video;
