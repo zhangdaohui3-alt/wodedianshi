@@ -34,6 +34,7 @@ public final class PlaybackEngineCoordinator {
     private final Factory factory;
     private long generation;
     private Activation active;
+    private RuntimeException terminalReleaseFailure;
 
     public PlaybackEngineCoordinator(Factory factory) {
         this.factory = Objects.requireNonNull(factory, "factory");
@@ -45,6 +46,11 @@ public final class PlaybackEngineCoordinator {
      */
     public synchronized Activation activate(PlaybackEnginePolicy.Candidate candidate) throws Exception {
         Objects.requireNonNull(candidate, "candidate");
+        if (terminalReleaseFailure != null) {
+            throw new IllegalStateException(
+                    "Playback coordinator is blocked after a failed native-resource release",
+                    terminalReleaseFailure);
+        }
         releaseActiveLocked();
         long token = ++generation;
         Session created = factory.create(candidate);
@@ -75,7 +81,12 @@ public final class PlaybackEngineCoordinator {
         Activation previous = active;
         active = null;
         if (previous != null) {
-            previous.session.stopAndRelease();
+            try {
+                previous.session.stopAndRelease();
+            } catch (RuntimeException failure) {
+                terminalReleaseFailure = failure;
+                throw failure;
+            }
         }
     }
 }
