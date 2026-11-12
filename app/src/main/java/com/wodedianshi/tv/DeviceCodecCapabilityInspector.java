@@ -6,8 +6,6 @@ import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-
 /**
  * Reports decoder implementations advertised by the current Android device.
  * This is a diagnostic inventory only: a listed codec is not proof that every
