@@ -908,20 +908,18 @@ public class MainActivity extends Activity {
     if(titleKey.length()>=6&&titles.contains(titleKey)){
       // Provider completion order is nondeterministic. Never let a metadata-only
       // card hide a real direct video that arrives later for the same title.
-      if(incomingPlayable){
-        for(int i=0;i<items.size();i++){
-          VodItem existing=items.get(i);
-          if(!titleKey.equals(vodTitleIdentity(existing.title)))continue;
-          boolean existingPlayable=existing.url!=null&&!existing.url.trim().isEmpty()
-              &&!existing.identifier.startsWith("meta:");
-          if(VodResultMergePolicy.shouldReplace(existingPlayable,incomingPlayable)){
-            ids.remove(existing.identifier);
-            items.set(i,item);
-            ids.add(item.identifier);
-            return true;
-          }
-          return false;
+      for(int i=0;i<items.size();i++){
+        VodItem existing=items.get(i);
+        if(!titleKey.equals(vodTitleIdentity(existing.title)))continue;
+        boolean existingPlayable=existing.url!=null&&!existing.url.trim().isEmpty()
+            &&!existing.identifier.startsWith("meta:");
+        if(VodResultMergePolicy.shouldReplace(existingPlayable,incomingPlayable)){
+          ids.remove(existing.identifier);
+          items.set(i,item);
+          ids.add(item.identifier);
+          return true;
         }
+        return false;
       }
       return false;
     }
