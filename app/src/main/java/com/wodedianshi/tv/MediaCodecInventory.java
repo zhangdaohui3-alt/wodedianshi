@@ -8,11 +8,12 @@ import java.util.Locale;
 import java.util.TreeSet;
 
 /**
- * Read-only inventory of the decoder implementations exposed by this device.
+ * Read-only inventory of decoder implementations and advertised capabilities.
  * It intentionally does not create codecs or attempt to play media.
  */
 public final class MediaCodecInventory {
     private static final int MAX_LISTED_ENTRIES = 32;
+    private static final int MAX_PROFILE_LEVELS = 4;
 
     private MediaCodecInventory() {}
 
@@ -37,7 +38,8 @@ public final class MediaCodecInventory {
                     String mime = type.toLowerCase(Locale.ROOT);
                     if (!mime.startsWith("video/") && !mime.startsWith("audio/")) continue;
                     decoderTypeCount++;
-                    entries.add(mime + " -> " + name + " [" + classification + "]");
+                    entries.add(mime + " -> " + name + " [" + classification + "]"
+                            + capabilitySummary(codec, type, mime));
                 }
             }
         } catch (Exception e) {
@@ -61,6 +63,47 @@ public final class MediaCodecInventory {
         if (omitted > 0) result.append("\n... ").append(omitted).append(" entries omitted");
         if (decoderCount == 0) result.append("\nNo decoders reported by MediaCodecList");
         return result.toString();
+    }
+
+    private static String capabilitySummary(MediaCodecInfo codec, String type, String mime) {
+        try {
+            MediaCodecInfo.CodecCapabilities caps = codec.getCapabilitiesForType(type);
+            StringBuilder out = new StringBuilder();
+            MediaCodecInfo.CodecProfileLevel[] levels = caps.profileLevels;
+            if (levels != null && levels.length > 0) {
+                out.append(" profiles=");
+                int count = Math.min(levels.length, MAX_PROFILE_LEVELS);
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) out.append(',');
+                    out.append(levels[i].profile).append('/').append(levels[i].level);
+                }
+                if (levels.length > count) out.append("+").append(levels.length - count);
+            }
+            if (mime.startsWith("video/") && caps.getVideoCapabilities() != null) {
+                MediaCodecInfo.VideoCapabilities video = caps.getVideoCapabilities();
+                out.append(" size=").append(video.getSupportedWidths())
+                        .append('x').append(video.getSupportedHeights());
+                out.append(" bitrate=").append(video.getBitrateRange());
+            } else if (mime.startsWith("audio/") && caps.getAudioCapabilities() != null) {
+                int[] rates = caps.getAudioCapabilities().getSupportedSampleRates();
+                if (rates != null && rates.length > 0) {
+                    out.append(" sampleRates=");
+                    int count = Math.min(rates.length, 8);
+                    for (int i = 0; i < count; i++) {
+                        if (i > 0) out.append(',');
+                        out.append(rates[i]);
+                    }
+                    if (rates.length > count) out.append("+").append(rates.length - count);
+                }
+                out.append(" channels=")
+                        .append(caps.getAudioCapabilities().getMaxInputChannelCount());
+            }
+            return out.toString();
+        } catch (Exception e) {
+            return " capabilities=unavailable(" + e.getClass().getSimpleName() + ")";
+        } catch (LinkageError e) {
+            return " capabilities=unavailable(" + e.getClass().getSimpleName() + ")";
+        }
     }
 
     private static String classification(MediaCodecInfo codec) {
