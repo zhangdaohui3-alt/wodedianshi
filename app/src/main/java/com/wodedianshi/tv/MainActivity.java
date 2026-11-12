@@ -2251,6 +2251,31 @@ public class MainActivity extends Activity {
     try{
       recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
+      final ExoPlayer vodListenerOwner=vodPlayer;
+      vodPlayer.addAnalyticsListener(new AnalyticsListener(){
+        private boolean isCurrentVod(){return vodListenerOwner==MainActivity.this.vodPlayer;}
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentVod())saveLiveDiagnostic("VOD_VIDEO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentVod())saveLiveDiagnostic("VOD_AUDIO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_AUDIO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" sampleRate="+format.sampleRate+" channels="+format.channelCount);
+        }
+        @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
+          if(isCurrentVod())saveLiveDiagnostic("VOD_FIRST_FRAME","renderTimeMs="+renderTimeMs);
+        }
+        @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
+          if(isCurrentVod()&&droppedFrames>0)saveLiveDiagnostic("VOD_DROPPED_FRAMES","count="+droppedFrames+" windowMs="+elapsedMs);
+        }
+        @Override public void onPlayerError(AnalyticsListener.EventTime eventTime,PlaybackException error){
+          if(isCurrentVod())saveLiveDiagnostic("VOD_PLAYER_ERROR","code="+error.errorCode+" name="+error.getErrorCodeName()+" cause="+(error.getCause()==null?"":error.getCause().getClass().getSimpleName()));
+        }
+      });
       pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
        MediaItem media=PlaybackPlayerFactory.buildMediaItem(item.url,item.identifier);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
