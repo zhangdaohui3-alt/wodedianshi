@@ -98,12 +98,12 @@ jobs:
             esac
             echo "$repo -> $actual (verified)"
           }
-          checkout_pinned deps/ffmpeg 094a2f8
-          checkout_pinned deps/dav1d 362bc11
-          checkout_pinned deps/libass b2fe9d8
-          checkout_pinned deps/libplacebo 3330a51
+          checkout_pinned deps/ffmpeg 094a2f8a2a5e7fa64736e067de224ce28fdf5979
+          checkout_pinned deps/dav1d 362bc1138228390a0a521ecf3af18b23c6afeb9e
+          checkout_pinned deps/libass b2fe9d8770678a7b5271387d38c20657ebf3429a
+          checkout_pinned deps/libplacebo 3330a515d62139259c26239014f286e233bd3a5c
           git -C deps/libplacebo submodule update --init --recursive
-          checkout_pinned deps/mpv 0b7ed67
+          checkout_pinned deps/mpv 0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6
           python3 - <<'PY'
           from pathlib import Path
           ffmpeg = Path("scripts/ffmpeg.sh")
