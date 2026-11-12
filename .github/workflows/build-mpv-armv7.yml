@@ -89,7 +89,14 @@ jobs:
             git -C "$repo" fetch --no-tags --depth=1 origin "$revision"
             git -C "$repo" checkout --detach FETCH_HEAD
             actual="$(git -C "$repo" rev-parse HEAD)"
-            echo "$repo -> $actual"
+            case "$actual" in
+              "$revision"*) ;;
+              *)
+                echo "Pinned revision mismatch for $repo: expected prefix $revision, got $actual"
+                exit 1
+                ;;
+            esac
+            echo "$repo -> $actual (verified)"
           }
           checkout_pinned deps/ffmpeg 094a2f8
           checkout_pinned deps/dav1d 362bc11
