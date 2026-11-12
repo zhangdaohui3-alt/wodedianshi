@@ -46,7 +46,7 @@ jobs:
             mpv-android/buildscripts/sdk
             mpv-android/buildscripts/deps
             mpv-android/buildscripts/prefix
-          key: mpv-armv7-lgpl-v2-mbedtls22810-${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
+          key: mpv-armv7-lgpl-v3-mbedtls22810-${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
           restore-keys: |
             mpv-armv7-lgpl-v2-mbedtls22810-
 
@@ -148,6 +148,26 @@ jobs:
           PY
           grep -n -- '--disable-gpl --disable-version3' scripts/ffmpeg.sh
           grep -n -- '-Dgpl=false' scripts/mpv.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("scripts/mbedtls.sh")
+          text = p.read_text()
+          old = '''# since 3.6.6 mbedTLS defaults to /dev/random, which is known to block unnecessarily
+          ./scripts/config.py set MBEDTLS_PLATFORM_DEV_RANDOM '"/dev/urandom"'
+          '''
+          new = '''# Mbed TLS 2.28.x has no MBEDTLS_PLATFORM_DEV_RANDOM option.
+          # Its Linux entropy_poll implementation already reads /dev/urandom.
+          if grep -q 'MBEDTLS_PLATFORM_DEV_RANDOM' include/mbedtls/config.h; then
+          \t./scripts/config.py set MBEDTLS_PLATFORM_DEV_RANDOM '"/dev/urandom"'
+          else
+          \techo "Using Mbed TLS platform default entropy source (/dev/urandom)."
+          fi
+          '''
+          if old not in text:
+              raise SystemExit("Expected Mbed TLS entropy configuration block not found")
+          p.write_text(text.replace(old, new, 1))
+          PY
+          grep -n -A5 -B1 'PLATFORM_DEV_RANDOM' scripts/mbedtls.sh
           python3 - <<'PY'
           from pathlib import Path
           script = Path("scripts/mpv-android.sh")
