@@ -12,7 +12,7 @@ public final class PlaybackEnginePolicy {
     public enum Engine { MEDIA3, MPV, IJK, LIBVLC }
 
     /** Decoder strategy is independent of the engine and output surface path. */
-    public enum DecoderMode { PLATFORM_AUTO, HARDWARE, SOFTWARE }
+    public enum DecoderMode { PLATFORM_AUTO, HARDWARE, MEDIACODEC_DIRECT, MEDIACODEC_COPY, SOFTWARE }
 
     /** Video output path is explicit because Android hardware decode paths differ materially. */
     public enum OutputMode { DEFAULT, GPU, MEDIACODEC_EMBED }

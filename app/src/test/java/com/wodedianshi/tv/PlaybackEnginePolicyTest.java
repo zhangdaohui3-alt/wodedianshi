@@ -71,6 +71,22 @@ public class PlaybackEnginePolicyTest {
         assertEquals(mpvSoftware, d.nextCandidate);
     }
 
+    @Test public void mediacodecDirectAndCopyAreSeparateDecoderCandidates() {
+        PlaybackEnginePolicy.Candidate direct = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.MEDIACODEC_DIRECT,
+                PlaybackEnginePolicy.OutputMode.GPU);
+        PlaybackEnginePolicy.Candidate copy = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.MEDIACODEC_COPY,
+                PlaybackEnginePolicy.OutputMode.GPU);
+        PlaybackEnginePolicy.Decision d = PlaybackEnginePolicy.decide(
+                PlaybackEnginePolicy.FailureKind.DECODER_RUNTIME,
+                PlaybackEnginePolicy.orderedCandidates(Arrays.asList(direct, copy)), direct);
+        assertFalse(d.switchEngine);
+        assertTrue(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
+        assertEquals(copy, d.nextCandidate);
+    }
+
     @Test public void outputModeCanChangeWithoutPretendingTheDecoderChanged() {
         PlaybackEnginePolicy.Candidate gpu = new PlaybackEnginePolicy.Candidate(
                 PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.HARDWARE,
