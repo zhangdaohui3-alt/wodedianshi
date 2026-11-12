@@ -4034,6 +4034,10 @@ public class MainActivity extends Activity {
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    if(liveEngineCoordinator.isBlocked()){
+      info.setText("播放器释放异常，已停止自动切换以保护设备，请重新启动应用");
+      return;
+    }
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
@@ -4286,6 +4290,10 @@ public class MainActivity extends Activity {
       String failedMediaId=currentMediaId;
       recordCurrentSourceFailure();
       releaseLivePlayerSafely();
+      if(liveEngineCoordinator.isBlocked()){
+        info.setText("播放器释放异常，已停止自动切换以保护设备，请重新启动应用");
+        return;
+      }
       info.setText("直播播放器启动异常，正在尝试备用源…");
       if(!failedMediaId.isEmpty())advanceToNextSourceAutomatically("直播播放器启动异常");
     }
