@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: mpv-armv7-lgpl-audit
+  group: mpv-armv7-lgpl-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -177,7 +177,7 @@ jobs:
           from pathlib import Path
           rows = [line.strip().split() for line in Path("audit-mpv-meson-config.txt").read_text().splitlines()]
           gpl = [row for row in rows if row and row[0].lower() == "gpl"]
-          if not gpl or gpl[-1][-1].lower() != "false":
+          if not gpl or gpl[-1][1].lower() != "false":
               raise SystemExit("MPV Meson gpl option is not explicitly false")
           PY
           echo "FFmpeg: no-GPL, no-nonfree, version-3 configuration verified"
