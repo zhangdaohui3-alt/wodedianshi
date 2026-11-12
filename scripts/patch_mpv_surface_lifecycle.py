@@ -82,6 +82,7 @@ view.write_text(dedent("""\
         private var voInUse: String = "gpu"
         private var configDir: String = ""
         private var cacheDir: String = ""
+        private var created = false
         private var initialized = false
         private var callbackRegistered = false
 
@@ -98,6 +99,7 @@ view.write_text(dedent("""\
         private fun initializeMpv() {
             if (initialized) return
             MPVLib.create(context.applicationContext)
+            created = true
             MPVLib.setOptionString("config", "yes")
             MPVLib.setOptionString("config-dir", configDir)
             for (opt in arrayOf("gpu-shader-cache-dir", "icc-cache-dir"))
@@ -117,6 +119,7 @@ view.write_text(dedent("""\
             // JNI releases its retained Surface only after that has completed.
             MPVLib.destroy()
             initialized = false
+            created = false
         }
 
         fun destroy() {
@@ -137,7 +140,7 @@ view.write_text(dedent("""\
 
         fun setVo(vo: String) {
             voInUse = vo
-            if (initialized) MPVLib.setOptionString("vo", vo)
+            if (created) MPVLib.setOptionString("vo", vo)
         }
 
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -169,4 +172,10 @@ view.write_text(dedent("""\
     }
     """).lstrip())
 
-print("Applied MPV Surface teardown patch to pinned upstream source.")
+patched_view = view.read_text()
+if "MPVLib.detachSurface()" in patched_view or "if (created) MPVLib.setOptionString(\"vo\", vo)" not in patched_view:
+    raise SystemExit("Patched BaseMPVView failed lifecycle/initialization assertions")
+if "releaseSurfaceReference(env);" not in main.read_text():
+    raise SystemExit("Native destroy does not release the Surface reference after MPV termination")
+
+print("Applied and verified MPV Surface teardown patch to pinned upstream source.")
