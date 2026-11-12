@@ -3,6 +3,16 @@
 Status: research branch; no runtime engine switch is enabled by this document.
 Baseline: `fix/vod-player-init-diagnostics` at the time this plan was created.
 
+## Current implementation snapshot (2026-11-12)
+
+The research branch now contains a first diagnostic implementation, but it is not yet a multi-engine player:
+
+- Added `MediaCodecInventory`: reads the device's Android decoder list and audio/video MIME types; on API 29+ reports Android's hardware/software/vendor classification where available.
+- Extended live and VOD Media3 analytics to record selected audio/video decoder names, initialization timing, input media format (codec MIME, resolution, frame rate, audio channels/sample rate), codec errors and player errors.
+- Expanded the device/player diagnostic dialog so these records and the device decoder inventory can be copied without exposing full stream URLs.
+- The research branch's CI trigger was enabled. Run #687 passed unit tests, APK assembly, package/version/SDK checks and archive validation. The generated APK is about 6.38 MB and contains no bundled native player libraries. This is a diagnostic build, not an IJK/VLC-enabled release and not proof of playback on a Dangbei device.
+- No runtime engine selector or IJK/LibVLC dependency has been added. The next gate is to collect actual Dangbei codec inventory and failure records, then test one secondary engine in an isolated prototype.
+
 ## Why this work is necessary
 
 The current application uses Media3/ExoPlayer only. Its `PlaybackPlayerFactory` enables MediaCodec decoder fallback, but that is fallback among Android platform decoders; it does not add IJK/FFmpeg or LibVLC. The current APK therefore does not yet have the multiple independent playback engines observed in the reference apps.
