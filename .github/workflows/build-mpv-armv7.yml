@@ -167,17 +167,70 @@ jobs:
           fi
           CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/config.mak"
           test -s "$CONFIG"
-          echo "FFmpeg license-related configuration values:"
-          grep -E '^(CONFIG_GPL|CONFIG_VERSION3|CONFIG_NONFREE|CONFIG_LIB*)=' "$CONFIG" || true
-          if ! grep -qx 'CONFIG_GPL=no' "$CONFIG"; then
-            echo "Expected CONFIG_GPL=no; actual values are shown above."
+          echo "FFmpeg config.mak license-related lines:"
+          grep -inE 'gpl|version3|nonfree' "$CONFIG" || true
+          CONFIG_H="buildscripts/deps/ffmpeg/_build_armv7l/config.h"
+          if [ -s "$CONFIG_H" ]; then
+            echo "FFmpeg config.h license macros:"
+            grep -nE 'CONFIG_(GPL|VERSION3|NONFREE)' "$CONFIG_H" || true
+          fi
+          if grep -qx 'CONFIG_GPL=no' "$CONFIG"; then
+            GPL_OK=yes
+          elif [ -s "$CONFIG_H" ] && grep -Eq '^#define CONFIG_GPL 0
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        env:
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.mak audit-output/ffmpeg-config.mak
+          meson configure buildscripts/deps/mpv/_build_armv7l > audit-output/mpv-meson-config.txt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPLv3-audit
+          path: mpv-android/audit-output/*
+ "$CONFIG_H"; then
+            GPL_OK=yes
+          else
+            echo "Cannot prove CONFIG_GPL is disabled; refusing audit."
             exit 1
           fi
-          if ! grep -qx 'CONFIG_VERSION3=yes' "$CONFIG"; then
-            echo "Expected CONFIG_VERSION3=yes; actual values are shown above."
+          if grep -qx 'CONFIG_VERSION3=yes' "$CONFIG"; then
+            VERSION3_OK=yes
+          elif [ -s "$CONFIG_H" ] && grep -Eq '^#define CONFIG_VERSION3 1
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        env:
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.mak audit-output/ffmpeg-config.mak
+          meson configure buildscripts/deps/mpv/_build_armv7l > audit-output/mpv-meson-config.txt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPLv3-audit
+          path: mpv-android/audit-output/*
+ "$CONFIG_H"; then
+            VERSION3_OK=yes
+          else
+            echo "Cannot prove LGPLv3 compatibility flag is enabled; refusing audit."
             exit 1
           fi
-          echo "ARMv7 APK, no-GPL and LGPLv3 FFmpeg configure flags verified."
+          test "$GPL_OK" = yes
+          test "$VERSION3_OK" = yes
+          echo "ARMv7 APK, no-GPL and LGPLv3 FFmpeg configuration verified."
 
       - name: Package native engine audit outputs
         working-directory: mpv-android
