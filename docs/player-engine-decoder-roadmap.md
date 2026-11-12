@@ -60,8 +60,8 @@ No engine should be added to the production APK solely on the basis of library n
 
 - The upstream `mpv-android` project is actively maintained, supports Android TV, offers hardware and software video decoding, and publishes ARMv7 builds. Its September 17, 2026 build uses NDK r30, FFmpeg 9.0.2 and minSdk 23, so its platform requirements align with the target's Android 9 / API 28.
 - It is explicitly not an AAR/library. We must build and integrate the native `libmpv` stack, JNI bridge and SurfaceView lifecycle rather than embedding the standalone app or launching an external player.
-- **License gate:** mpv defaults to GPLv2+; it can be built LGPLv2.1+ with `-Dgpl=false`. The inspected upstream FFmpeg script currently enables GPL/version3. The isolated audit workflow patches FFmpeg to `--disable-gpl --disable-version3` and mpv to `-Dgpl=false`, pins the September 2026 source revisions, builds ARMv7 in Linux CI, and verifies the configure flags before accepting an artifact.
-- This build is currently running on the dedicated prototype branch. Even a successful native build will prove compilation/packaging only; we still need Android 9 device playback and software-decoder performance measurements.
+- **License gate (corrected 2026-11-12):** mpv defaults to GPLv2+ and the pinned build selects its no-GPL mode with `-Dgpl=false`. FFmpeg treats mbedTLS as a version3-licensed dependency regardless of the mbedTLS major version, so `--disable-version3` is incompatible with this dependency set. The compliant no-GPL route is `--disable-gpl --enable-version3`; the resulting FFmpeg build is LGPLv3, not LGPLv2.1. CI must verify `CONFIG_GPL=no`, `CONFIG_VERSION3=yes`, the mpv `gpl=false` setting, the ARMv7 ELF files and the full linked-library/license notice set.
+- The isolated ARMv7 native build is running on the dedicated prototype branch. Even a successful build proves compilation/packaging only; the next gate is a minimal in-app MPVLib/JNI/SurfaceView adapter, followed by Android 9 playback and software-decoder performance measurements.
 
 ### Media3
 
@@ -96,10 +96,12 @@ For every test stream record:
 - [x] Add Media3 failure-domain classification to live/VOD diagnostics and test it.
 - [x] Add engine+decoder-mode candidate policy with unit tests for engine switching versus same-engine hardware-to-software fallback.
 - [x] Verify official LibVLC 3.7.7 ARMv7 packaging in an isolated build; measure ABI-specific APK size.
-- [ ] Complete the isolated LGPL-mode libmpv ARMv7 native build; verify FFmpeg/mpv GPL flags and all packaged ABIs.
+- [ ] Complete the isolated no-GPL LGPLv3 libmpv ARMv7 native build; verify FFmpeg/mpv flags, ELF ABI, dependency closure and notices.
+- [ ] Build a minimal MPVLib/JNI/SurfaceView ARMv7 sample and test HLS/TS/MP4, `hwdec=no` software decode, MediaCodec hardware decode, surface recreation and repeated release.
 - [ ] Build a minimal LibVLC 3.7.7 ARMv7 playback sample and test HLS/TS/MP4, hardware/software decode and repeated release.
 - [ ] Audit and build IJK from pinned source with complete FFmpeg provenance and notices; do not use opaque community binaries.
-- [ ] Define a narrow player adapter around MainActivity's direct ExoPlayer use. Convert live playback first, keep VOD stable, and replace PlayerView coupling with a single surface host owned by one engine at a time.
+- [x] Route the live Media3 session through `PlaybackEngineCoordinator`; retain the existing PlayerView path and keep VOD unchanged. Teardown failure now blocks further engine activation and live source rotation.
+- [ ] Define a narrow cross-engine surface host/player adapter. The current Media3 coordinator is not yet a generic adapter; preserve the known-good Media3 path while introducing one secondary engine behind a developer-only switch.
 - [ ] Integrate one secondary engine behind a non-default developer switch, then compare on authorized known-good/failure samples.
 - [ ] Preserve stable main; do not merge until CI and real Dangbei tests pass.
 
