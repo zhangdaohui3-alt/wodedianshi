@@ -43,6 +43,18 @@ public class MainActivity extends Activity {
   private static final int LIVE_CHANNELS_PER_PAGE=36;
   private volatile boolean activityResumed=false;
   private ExoPlayer player;
+  // The live player is now owned by one lifecycle coordinator. Only Media3 is
+  // registered until a secondary engine passes ARMv7/runtime/surface validation.
+  private final PlaybackEngineCoordinator liveEngineCoordinator =
+      new PlaybackEngineCoordinator(candidate -> {
+        if(candidate.engine!=PlaybackEnginePolicy.Engine.MEDIA3
+            ||candidate.decoderMode!=PlaybackEnginePolicy.DecoderMode.PLATFORM_AUTO){
+          throw new IllegalStateException("Unverified live playback engine: "+candidate);
+        }
+        final ExoPlayer owned=PlaybackPlayerFactory.createLivePlayer(
+            MainActivity.this,isDecoderFallbackEnabled());
+        return () -> releaseOwnedLivePlayer(owned);
+      });
   private PlayerView video;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
@@ -3884,17 +3896,24 @@ public class MainActivity extends Activity {
   // A given live stream may report error, buffering timeout and ENDED almost together.
   // Only allow one automatic failover for each playback generation.
   private String lastAutoFailoverMediaId="";
-  private void releaseLivePlayerSafely(){
-    ExoPlayer old=player;
-    player=null;
-    if(old!=null){
-      try{old.setPlayWhenReady(false);old.pause();}catch(RuntimeException ignored){}
-    }
+  // Called only by the coordinator's active Media3 session. Detach the
+  // surface before stopping/releasing the codec so no next session can inherit it.
+  private void releaseOwnedLivePlayer(ExoPlayer owned){
+    if(owned==null)return;
+    if(player==owned)player=null;
     if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
-    if(old!=null){
-      try{old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
-      try{old.release();}catch(RuntimeException ignored){}
-    }
+    try{owned.setPlayWhenReady(false);owned.pause();}catch(RuntimeException ignored){}
+    try{owned.stop();}catch(RuntimeException ignored){}
+    try{owned.clearMediaItems();}catch(RuntimeException ignored){}
+    try{owned.release();}catch(RuntimeException ignored){}
+  }
+  private void releaseLivePlayerSafely(){
+    // The coordinator clears ownership before invoking teardown. This makes
+    // repeated onStop/onDestroy and channel-zap cleanup idempotent.
+    liveEngineCoordinator.release();
+    // Defensive cleanup for a player created by a pre-coordinator code path.
+    ExoPlayer orphan=player;
+    if(orphan!=null)releaseOwnedLivePlayer(orphan);
   }
   private void cancelBufferingFallback(){
     if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
@@ -4031,7 +4050,9 @@ public class MainActivity extends Activity {
     saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size());
     try{
     if(player==null){
-      player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
+      liveEngineCoordinator.activate(new PlaybackEnginePolicy.Candidate(
+          PlaybackEnginePolicy.Engine.MEDIA3,PlaybackEnginePolicy.DecoderMode.PLATFORM_AUTO));
+      if(player==null)throw new IllegalStateException("Media3 session created without a player");
       video.setPlayer(player);
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
       // watchdog below monitors the player timeline without touching codec callbacks.
