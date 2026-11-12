@@ -42,6 +42,8 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-hls:1.11.1"
     implementation "androidx.media3:media3-exoplayer-dash:1.11.1"
     implementation "androidx.media3:media3-ui:1.11.1"
+    // Isolated compatibility audit: official VideoLAN LibVLC 3.7.7 SDK.
+    implementation "org.videolan.android:libvlc-all:3.7.7"
     implementation "androidx.work:work-runtime:2.10.1"
     testImplementation "junit:junit:4.13.2"
 }
