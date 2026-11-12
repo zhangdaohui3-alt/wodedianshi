@@ -45,6 +45,7 @@ public class PlaybackEngineCoordinatorTest {
         }
         assertEquals("second engine must not be created while first may still own resources", 1, creates[0]);
         assertNull(coordinator.activeCandidate());
+        assertTrue(coordinator.isBlocked());
 
         try {
             coordinator.activate(candidate(PlaybackEnginePolicy.Engine.MEDIA3));
