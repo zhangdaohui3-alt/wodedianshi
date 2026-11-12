@@ -2,6 +2,7 @@ package com.wodedianshi.tv;
 
 import android.content.Context;
 
+import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
@@ -17,6 +18,19 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 @UnstableApi
 public final class PlaybackPlayerFactory {
     private PlaybackPlayerFactory() {}
+
+    /**
+     * Builds the same correctly typed MediaItem for both live and VOD.
+     * Unknown/progressive containers deliberately retain Media3 extractor
+     * sniffing; only unambiguous streaming formats receive an explicit MIME.
+     */
+    public static MediaItem buildMediaItem(String uri, String mediaId) {
+        MediaItem.Builder builder = new MediaItem.Builder().setUri(uri);
+        String mimeType = MediaFormatPolicy.inferMimeType(uri);
+        if (mimeType != null) builder.setMimeType(mimeType);
+        if (mediaId != null && !mediaId.trim().isEmpty()) builder.setMediaId(mediaId);
+        return builder.build();
+    }
 
     private static DefaultRenderersFactory renderers(Context context, boolean decoderFallback) {
         return new DefaultRenderersFactory(context)
