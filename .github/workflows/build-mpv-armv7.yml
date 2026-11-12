@@ -86,6 +86,16 @@ jobs:
           PY
           grep -n -- '--disable-gpl --disable-version3' scripts/ffmpeg.sh
           grep -n -- '-Dgpl=false' scripts/mpv.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          script = Path("scripts/mpv-android.sh")
+          text = script.read_text()
+          needle = "ndk-build -C app/src/main -j$cores"
+          if needle not in text:
+              raise SystemExit("ndk-build insertion point missing; refusing an unverified packaging path")
+          copy = needle + "\\nmkdir -p app/src/main/jniLibs/armeabi-v7a\\ncp -a app/src/main/libs/armeabi-v7a/. app/src/main/jniLibs/armeabi-v7a/"
+          script.write_text(text.replace(needle, copy))
+          PY
 
       - name: Build ARMv7 libmpv and reference app
         working-directory: mpv-android/buildscripts
