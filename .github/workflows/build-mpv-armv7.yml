@@ -153,15 +153,15 @@ jobs:
           echo "Native libraries packaged in reference APK:"
           unzip -Z1 "$APK" | grep '^lib/' || true
           ZIP_LIST="$(unzip -Z1 "$APK")"
-          echo "$ZIP_LIST" | grep -Fqx 'lib/armeabi-v7a/libmpv.so' || {
+          grep -Fqx 'lib/armeabi-v7a/libmpv.so' <<< "$ZIP_LIST" || {
             echo "libmpv.so missing from ARMv7 APK"
             exit 1
           }
-          echo "$ZIP_LIST" | grep -Fqx 'lib/armeabi-v7a/libplayer.so' || {
+          grep -Fqx 'lib/armeabi-v7a/libplayer.so' <<< "$ZIP_LIST" || {
             echo "libplayer.so missing from ARMv7 APK"
             exit 1
           }
-          if echo "$ZIP_LIST" | grep -q '^lib/arm64-v8a/'; then
+          if grep -q '^lib/arm64-v8a/' <<< "$ZIP_LIST"; then
             echo "Unexpected non-ARMv7 ABI in ARMv7 audit APK"
             exit 1
           fi
