@@ -592,18 +592,30 @@ public class MainActivity extends Activity {
     // Refresh the visible catalogue after first-time discovery succeeds. The
     // reload preserves the current channel identity and leaves the active
     // player running; a work-ID marker prevents duplicate refreshes on resume.
-    wm.getWorkInfosForUniqueWorkLiveData("mytv_initial_source_discovery").observe(this, workInfos -> {
-      if(workInfos==null)return;
-      for(WorkInfo workInfo:workInfos){
-        if(workInfo.getState()!=WorkInfo.State.SUCCEEDED)continue;
-        String workId=workInfo.getId().toString();
-        android.content.SharedPreferences current=getSharedPreferences("mytv",0);
-        if(workId.equals(current.getString("source_initial_refresh_work_id","")))return;
-        reloadChannelsAfterSourceUpdate();
-        current.edit().putString("source_initial_refresh_work_id",workId).apply();
-        return;
+    androidx.lifecycle.LiveData<List<WorkInfo>> initialWork =
+        wm.getWorkInfosForUniqueWorkLiveData("mytv_initial_source_discovery");
+    androidx.lifecycle.Observer<List<WorkInfo>> initialObserver =
+        new androidx.lifecycle.Observer<List<WorkInfo>>() {
+      @Override public void onChanged(List<WorkInfo> workInfos){
+        if(workInfos==null)return;
+        for(WorkInfo workInfo:workInfos){
+          WorkInfo.State state=workInfo.getState();
+          if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED
+              &&state!=WorkInfo.State.CANCELLED)continue;
+          initialWork.removeObserver(this);
+          if(state!=WorkInfo.State.SUCCEEDED)return;
+          String workId=workInfo.getId().toString();
+          android.content.SharedPreferences current=getSharedPreferences("mytv",0);
+          if(workId.equals(current.getString("source_initial_refresh_work_id","")))return;
+          reloadChannelsAfterSourceUpdate();
+          current.edit().putString("source_initial_refresh_work_id",workId).apply();
+          return;
+        }
       }
-    });
+    };
+    // MainActivity extends platform Activity rather than LifecycleOwner, so
+    // observeForever is paired with explicit removal on every terminal state.
+    initialWork.observeForever(initialObserver);
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
