@@ -1,0 +1,131 @@
+name: Build libmpv ARMv7 LGPL audit
+
+on:
+  push:
+    branches:
+      - 'prototype/mpv-armv7-lgpl-audit'
+  workflow_dispatch:
+
+concurrency:
+  group: mpv-armv7-lgpl-audit
+  cancel-in-progress: true
+
+jobs:
+  build-armv7:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout My TV research branch
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned mpv-android integration source
+        uses: actions/checkout@v5
+        with:
+          repository: mpv-android/mpv-android
+          ref: fdf74f6830c47dbaa8a22ac79726e8303f1db5af
+          path: mpv-android
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Linux native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf pkg-config libtool ninja-build python3-pip gperf nasm git wget unzip
+
+      - name: Install Meson
+        run: python3 -m pip install --user --break-system-packages meson
+
+      - name: Restore native build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            mpv-android/buildscripts/sdk
+            mpv-android/buildscripts/deps
+            mpv-android/buildscripts/prefix
+          key: mpv-armv7-lgpl-v1-\${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
+          restore-keys: |
+            mpv-armv7-lgpl-v1-
+
+      - name: Download Android SDK, NDK and source dependencies
+        working-directory: mpv-android/buildscripts
+        env:
+          IN_CI: '1'
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          ./include/download-sdk.sh
+          ./include/download-deps.sh
+
+      - name: Pin native source revisions and select LGPL-only build
+        working-directory: mpv-android/buildscripts
+        run: |
+          set -euo pipefail
+          git -C deps/ffmpeg checkout 094a2f8
+          git -C deps/dav1d checkout 362bc11
+          git -C deps/libass checkout b2fe9d8
+          git -C deps/libplacebo checkout 3330a51
+          git -C deps/libplacebo submodule update --init --recursive
+          git -C deps/mpv checkout 0b7ed67
+          python3 - <<'PY'
+          from pathlib import Path
+          ffmpeg = Path("scripts/ffmpeg.sh")
+          text = ffmpeg.read_text()
+          old = "--enable-{gpl,version3}"
+          if old not in text:
+              raise SystemExit("FFmpeg GPL flag not found; refusing an unaudited build")
+          ffmpeg.write_text(text.replace(old, "--disable-gpl --disable-version3"))
+          mpv = Path("scripts/mpv.sh")
+          text = mpv.read_text()
+          old = "-Dlibmpv=true -Dcplayer=false"
+          if old not in text:
+              raise SystemExit("mpv Meson options not found; refusing an unaudited build")
+          mpv.write_text(text.replace(old, "-Dlibmpv=true -Dgpl=false -Dcplayer=false"))
+          PY
+          grep -n -- '--disable-gpl --disable-version3' scripts/ffmpeg.sh
+          grep -n -- '-Dgpl=false' scripts/mpv.sh
+
+      - name: Build ARMv7 libmpv and reference app
+        working-directory: mpv-android/buildscripts
+        env:
+          PATH: /home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          set -euo pipefail
+          ./buildall.sh --arch armv7l
+
+      - name: Validate ARMv7 APK and LGPL build configuration
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -Z1 "$APK" | grep -q '^lib/armeabi-v7a/libmpv.so$'
+          unzip -Z1 "$APK" | grep -q '^lib/armeabi-v7a/libplayer.so$'
+          if unzip -Z1 "$APK" | grep -q '^lib/arm64-v8a/'; then
+            echo "Unexpected non-ARMv7 ABI in ARMv7 audit APK"
+            exit 1
+          fi
+          CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/config.mak"
+          test -s "$CONFIG"
+          grep -E '^CONFIG_GPL=no$' "$CONFIG"
+          grep -E '^CONFIG_VERSION3=no$' "$CONFIG"
+          echo "ARMv7 APK and LGPL-only FFmpeg configure flags verified."
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.mak audit-output/ffmpeg-config.mak
+          meson configure buildscripts/deps/mpv/_build_armv7l > audit-output/mpv-meson-config.txt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPL-audit
+          path: mpv-android/audit-output/*
