@@ -3456,7 +3456,7 @@ public class MainActivity extends Activity {
       if(missingAudio){
         saveLiveDiagnostic("AUDIO_TRACK_CHECK","audio unavailable or not advancing; videoPresent="+videoTrackPresent+" videoSupported="+videoTrackSupported+" videoSelected="+videoTrackSelected);
       }
-      if(missingVideo){
+      if(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
         recordCurrentSourceFailure();
         advanceToNextSourceAutomatically("检测到当前源没有可用视频轨道");
       }
