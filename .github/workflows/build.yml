@@ -8,8 +8,10 @@ on:
       - 'fix/**'
       - 'upgrade/**'
 
+# Keep the newest run for each branch, but never let a feature-branch push
+# cancel the stable main build (or another independent branch's build).
 concurrency:
-  group: my-tv-apk-build
+  group: my-tv-apk-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
