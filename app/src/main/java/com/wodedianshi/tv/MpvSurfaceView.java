@@ -80,7 +80,7 @@ public final class MpvSurfaceView extends SurfaceView implements
         started = true;
         registerObservers();
         createNativePlayer();
-        holder.addCallback(this);
+        getHolder().addCallback(this);
         callbackRegistered = true;
     }
 
@@ -189,7 +189,7 @@ public final class MpvSurfaceView extends SurfaceView implements
         if (released) return;
         released = true;
         if (callbackRegistered) {
-            holder.removeCallback(this);
+            getHolder().removeCallback(this);
             callbackRegistered = false;
         }
         destroyNativePlayer();
