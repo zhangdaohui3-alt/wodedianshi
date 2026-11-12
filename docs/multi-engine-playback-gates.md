@@ -1,6 +1,6 @@
 # Multi-engine playback implementation gates
 
-Status: engine fallback policy and Media3 error classifier are implemented and unit-tested on the research branch. No secondary engine is integrated or enabled in the app yet.
+Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. No secondary engine is integrated or enabled in the app yet.
 
 ## Device-first constraints
 
@@ -15,7 +15,7 @@ The reported failure (video artifacts, then all remote keys unresponsive, then b
 - Source means a distinct authorized URL for the same channel/program.
 - Recovery chooses URL retry, decoder path, another engine, or terminal failure.
 
-Target order after validation: Media3/ExoPlayer primary; IJK + FFmpeg secondary candidate (test MediaCodec and software modes separately); LibVLC tertiary candidate only if it covers a demonstrated compatibility gap.
+Do not hard-code one universal fallback order. Media3 remains primary. A verified runtime registry supplies the remaining candidates in a device/format-specific order from MPV, IJK and LibVLC, including separate HARDWARE and SOFTWARE decoder modes. For a suspected MediaCodec runtime failure, the registry should prioritize a software-decoder candidate rather than sending the same stream straight back through the same vendor hardware decoder.
 
 A larger APK is acceptable when the additional engine demonstrably improves playback. Do not optimize size at the expense of a working ARMv7 engine; avoid unused ABIs/codecs.
 
@@ -43,10 +43,10 @@ A larger APK is acceptable when the additional engine demonstrably improves play
 
 ## Controlled fallback rules
 
-PlaybackEnginePolicy is a pure, unit-tested decision layer. It does not instantiate players and does not claim IJK/LibVLC is installed.
+PlaybackFailureClassifier maps Media3 1.11.x error codes into transport, configuration, demux, decoder-init/runtime, audio-output and video-render domains. Live and VOD diagnostics record that classification. PlaybackEnginePolicy accepts ordered engine+decoder candidates (MEDIA3, MPV, IJK, LIBVLC; PLATFORM_AUTO, HARDWARE or SOFTWARE) and is unit-tested for switching engines versus changing decoder mode. Neither class instantiates players or claims a native engine is installed; only a runtime registry may advertise a candidate after ABI/library verification.
 
 - Transport error -> try a distinct backup URL; do not switch decoder for a network failure.
-- Unsupported container/codec, demux, decoder initialization/runtime, video-render or audio-output error -> try the next verified available engine.
+- Unsupported container/codec, demux, decoder initialization/runtime, video-render or audio-output error -> try the next verified engine+decoder candidate; this may be a software mode within the same engine.
 - Local network-policy/configuration error (for example, cleartext not permitted) -> fix configuration; do not rotate URLs or engines.
 - Unknown error -> do not blindly switch.
 - Never select an unavailable engine.
