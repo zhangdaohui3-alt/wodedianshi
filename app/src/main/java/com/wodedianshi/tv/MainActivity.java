@@ -3902,19 +3902,40 @@ public class MainActivity extends Activity {
   private void releaseOwnedLivePlayer(ExoPlayer owned){
     if(owned==null)return;
     if(player==owned)player=null;
-    if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
-    try{owned.setPlayWhenReady(false);owned.pause();}catch(RuntimeException ignored){}
-    try{owned.stop();}catch(RuntimeException ignored){}
-    try{owned.clearMediaItems();}catch(RuntimeException ignored){}
-    try{owned.release();}catch(RuntimeException ignored){}
+    RuntimeException failure=null;
+    // Detach first, then attempt every teardown stage even if an earlier stage fails.
+    if(video!=null){
+      try{video.setPlayer(null);}catch(RuntimeException error){failure=error;}
+    }
+    try{owned.setPlayWhenReady(false);owned.pause();}
+    catch(RuntimeException error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+    try{owned.stop();}
+    catch(RuntimeException error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+    try{owned.clearMediaItems();}
+    catch(RuntimeException error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+    try{owned.release();}
+    catch(RuntimeException error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+    // Propagate uncertain teardown to the coordinator: it must never activate
+    // another engine if this player's native resources may still be alive.
+    if(failure!=null)throw failure;
   }
   private void releaseLivePlayerSafely(){
     // The coordinator clears ownership before invoking teardown. This makes
     // repeated onStop/onDestroy and channel-zap cleanup idempotent.
-    liveEngineCoordinator.release();
+    try{
+      liveEngineCoordinator.release();
+    }catch(RuntimeException releaseFailure){
+      android.util.Log.e("MyTV","Live player teardown failed; blocking future engine activation",releaseFailure);
+      return;
+    }
     // Defensive cleanup for a player created by a pre-coordinator code path.
     ExoPlayer orphan=player;
-    if(orphan!=null)releaseOwnedLivePlayer(orphan);
+    if(orphan!=null){
+      try{releaseOwnedLivePlayer(orphan);}
+      catch(RuntimeException releaseFailure){
+        android.util.Log.e("MyTV","Orphan live player teardown failed",releaseFailure);
+      }
+    }
   }
   private void cancelBufferingFallback(){
     if(bufferingFallback!=null){uiHandler.removeCallbacks(bufferingFallback);bufferingFallback=null;}
