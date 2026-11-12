@@ -6,6 +6,7 @@ on:
       - 'prototype/mpv-armv7-*'
   workflow_dispatch:
 
+# Keep audit runs isolated by ref; this branch rechecks the corrected Meson parser.
 concurrency:
   group: mpv-armv7-lgpl-audit-${{ github.ref }}
   cancel-in-progress: true
