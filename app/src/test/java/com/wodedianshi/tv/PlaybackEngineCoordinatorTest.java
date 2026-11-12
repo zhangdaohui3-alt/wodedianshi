@@ -45,6 +45,14 @@ public class PlaybackEngineCoordinatorTest {
         }
         assertEquals("second engine must not be created while first may still own resources", 1, creates[0]);
         assertNull(coordinator.activeCandidate());
+
+        try {
+            coordinator.activate(candidate(PlaybackEnginePolicy.Engine.MEDIA3));
+            fail("A later attempt must remain blocked after an uncertain release");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("blocked"));
+        }
+        assertEquals("no engine may be created after terminal release failure", 1, creates[0]);
     }
 
     @Test public void failedCreationLeavesNoActiveEngine() throws Exception {
