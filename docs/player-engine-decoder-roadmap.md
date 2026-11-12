@@ -112,3 +112,32 @@ CI success proves compilation and automated tests only. A release candidate must
 ## Licensing and provenance
 
 Check the exact license and notices of every selected native dependency and every FFmpeg configuration before shipping. FFmpeg licensing depends on build configuration; IJK forks and bundled codecs must be reviewed individually. Keep proprietary reference APK code/assets out of this project.
+
+## External cross-check (2026-11-12)
+
+The wider Android TV player ecosystem supports a **two-engine, role-based design**, not indiscriminate engine switching:
+
+- The official Media3 API describes `setEnableDecoderFallback` narrowly: when decoder **initialization** fails, try lower-priority platform decoders. It does not claim to recover from a decoder that has already started and hangs the vendor driver, nor does it add a separate demux/render engine. Keep this setting as a useful first-line compatibility aid, but do not treat it as the device-freeze solution.
+- The open-source OwnTV project documents a practical split: Media3/ExoPlayer for fast Live-TV/HLS startup and libmpv for broader codec/software-decoder fallback. This is a useful architecture reference for separate per-content engine choice, but it is not evidence that software decode will sustain 720p/1080p on the MediaTek m7642.
+- VideoLAN's official Android documentation confirms Android TV and ARMv7 support; its Android README distinguishes the LGPL LibVLC engine from the GPL VLC application. Our existing ARMv7 packaging audit remains useful, but runtime surface/decoder tests and exact notices are still mandatory.
+- The upstream mpv-android README confirms Android TV support, hardware/software decode, and explicitly says the project is not an importable AAR. A proper adapter must own MPVLib, BaseMPVView/SurfaceView, JNI callbacks, surface recreation and native release.
+- Upstream Bilibili IJK documentation still advertises the 0.8.8 artifacts and historical build environment. The reference APKs make IJK worth auditing, but popularity in older TV apps is not a substitute for maintained source, current FFmpeg provenance, complete notices and reproducible ARMv7 builds.
+
+Primary public references:
+- Media3 decoder fallback API: https://developer.android.com/reference/androidx/media3/exoplayer/DefaultRenderersFactory#setEnableDecoderFallback(boolean)
+- Media3 decoder initialization diagnostics: https://developer.android.com/reference/androidx/media3/exoplayer/mediacodec/MediaCodecRenderer.DecoderInitializationException
+- OwnTV dual-engine architecture (community implementation): https://github.com/Thedurancode/owntv
+- Official VideoLAN Android SDK and license notes: https://github.com/videolan/vlc-android
+- Official VLC Android device support: https://images.videolan.org/vlc/download-android.html
+- Official mpv-android integration notes: https://github.com/mpv-android/mpv-android
+- Upstream IJKPlayer build/artifact notes: https://github.com/bilibili/ijkplayer
+
+### Updated engineering consequence
+
+1. Keep Media3 as the fast-start live engine for ordinary HLS/TS streams.
+2. Do not mistake Media3's platform-decoder fallback for a different engine or for protection against a system-level codec hang.
+3. Build MPV as the first isolated secondary engine because it offers a modern, separately controlled software decode path and aligns with Android TV/ARMv7; benchmark software decode before enabling it on the Dangbei box.
+4. Keep LibVLC as the independent comparison engine, especially to test a second demux/render stack and its hardware-acceleration controls.
+5. Keep IJK in the audit queue because all three user-supplied reference APKs contain IJK/FFmpeg components, but require source-pinned reproducible builds rather than importing old or opaque binaries.
+6. At runtime, choose by media profile and device capability. For a transport failure, rotate only to another distinct authorized URL. For codec initialization failure, first allow Media3's decoder fallback; for runtime decoder/render failure, move only to a verified alternate engine/decoder pair after a clean teardown. A suspected system-wide driver hang must not trigger an automatic retry storm.
+
