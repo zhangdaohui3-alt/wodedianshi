@@ -46,9 +46,9 @@ jobs:
             mpv-android/buildscripts/sdk
             mpv-android/buildscripts/deps
             mpv-android/buildscripts/prefix
-          key: mpv-armv7-lgpl-v1-${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
+          key: mpv-armv7-lgpl-v2-mbedtls22810-${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
           restore-keys: |
-            mpv-armv7-lgpl-v1-
+            mpv-armv7-lgpl-v2-mbedtls22810-
 
       - name: Download Android SDK, NDK and source dependencies
         working-directory: mpv-android/buildscripts
@@ -75,6 +75,33 @@ jobs:
           if count != 1:
               raise SystemExit("Lua download block changed; refusing an unverified source substitution")
           p.write_text(updated)
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          depinfo = Path("include/depinfo.sh")
+          versions = depinfo.read_text()
+          if "v_mbedtls=3.6.7" not in versions:
+              raise SystemExit("Expected mbedTLS pin not found")
+          depinfo.write_text(versions.replace("v_mbedtls=3.6.7", "v_mbedtls=2.28.10", 1))
+
+          deps = Path("include/download-deps.sh")
+          text = deps.read_text()
+          old = '''if [ ! -d mbedtls ]; then
+          \tmkdir mbedtls
+          \t$WGET https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$v_mbedtls/mbedtls-$v_mbedtls.tar.bz2 -O - | \\
+          \t\ttar -xj -C mbedtls --strip-components=1
+          fi'''
+          new = '''if [ ! -d mbedtls ]; then
+          \tmkdir mbedtls
+          \tarchive="mbedtls-$v_mbedtls.tar.bz2"
+          \t$WGET "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$v_mbedtls/$archive" -O "$archive"
+          \techo "19e5b81fdac0fe22009b9e2bdcd52d7dcafbf62bc67fc59cf0a76b5b5540d149  $archive" | sha256sum -c -
+          \ttar -xj -C mbedtls --strip-components=1 -f "$archive"
+          \trm "$archive"
+          fi'''
+          if old not in text:
+              raise SystemExit("mbedTLS download block changed; refusing an unverified source substitution")
+          deps.write_text(text.replace(old, new, 1))
           PY
           ./include/download-deps.sh
 
