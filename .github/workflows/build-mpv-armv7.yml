@@ -61,11 +61,8 @@ jobs:
           from pathlib import Path
           p = Path("include/download-deps.sh")
           text = p.read_text()
-          old = """if [ ! -d lua ]; then
-          	mkdir lua
-          	$WGET https://www.lua.org/ftp/lua-$v_lua.tar.gz -O - | \\
-          		tar -xz -C lua --strip-components=1
-          fi"""
+          import re
+          pattern = r"if \\[ ! -d lua \\]; then\\n.*?\\nfi"
           new = """if [ ! -d lua ]; then
           	mkdir lua
           	archive="lua-$v_lua.tar.gz"
@@ -74,9 +71,10 @@ jobs:
           	tar -xz -C lua --strip-components=1 -f "$archive"
           	rm "$archive"
           fi"""
-          if old not in text:
+          updated, count = re.subn(pattern, new, text, count=1, flags=re.S)
+          if count != 1:
               raise SystemExit("Lua download block changed; refusing an unverified source substitution")
-          p.write_text(text.replace(old, new))
+          p.write_text(updated)
           PY
           ./include/download-deps.sh
 
