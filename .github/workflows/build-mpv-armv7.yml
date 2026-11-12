@@ -82,12 +82,21 @@ jobs:
         working-directory: mpv-android/buildscripts
         run: |
           set -euo pipefail
-          git -C deps/ffmpeg checkout 094a2f8
-          git -C deps/dav1d checkout 362bc11
-          git -C deps/libass checkout b2fe9d8
-          git -C deps/libplacebo checkout 3330a51
+          checkout_pinned() {
+            repo="$1"
+            revision="$2"
+            echo "Fetching pinned revision $revision for $repo"
+            git -C "$repo" fetch --no-tags --depth=1 origin "$revision"
+            git -C "$repo" checkout --detach FETCH_HEAD
+            actual="$(git -C "$repo" rev-parse HEAD)"
+            echo "$repo -> $actual"
+          }
+          checkout_pinned deps/ffmpeg 094a2f8
+          checkout_pinned deps/dav1d 362bc11
+          checkout_pinned deps/libass b2fe9d8
+          checkout_pinned deps/libplacebo 3330a51
           git -C deps/libplacebo submodule update --init --recursive
-          git -C deps/mpv checkout 0b7ed67
+          checkout_pinned deps/mpv 0b7ed67
           python3 - <<'PY'
           from pathlib import Path
           ffmpeg = Path("scripts/ffmpeg.sh")
