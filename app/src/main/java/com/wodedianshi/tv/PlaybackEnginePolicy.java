@@ -8,7 +8,10 @@ import java.util.List;
 public final class PlaybackEnginePolicy {
     private PlaybackEnginePolicy() {}
     public enum Engine { MEDIA3, IJK, LIBVLC }
-    public enum FailureKind { TRANSPORT, UNSUPPORTED_CONTAINER_OR_CODEC, DEMUX, DECODER_INITIALIZATION, DECODER_RUNTIME, VIDEO_RENDER, AUDIO_OUTPUT, UNKNOWN }
+    public enum FailureKind {
+        TRANSPORT, CONFIGURATION, UNSUPPORTED_CONTAINER_OR_CODEC, DEMUX,
+        DECODER_INITIALIZATION, DECODER_RUNTIME, VIDEO_RENDER, AUDIO_OUTPUT, UNKNOWN
+    }
     public static final class Decision {
         public final boolean changeSource;
         public final boolean tryNextEngine;
@@ -32,7 +35,7 @@ public final class PlaybackEnginePolicy {
         if(failure==FailureKind.TRANSPORT)
             return new Decision(true,false,null,"transport failure: try a distinct source");
         if(!requiresEngineFallback(failure))
-            return new Decision(false,false,null,"failure is not classified for engine fallback");
+            return new Decision(false,false,null,"configuration or unclassified failure: do not switch blindly");
         int index=available.indexOf(current);
         if(index<0) return new Decision(false,false,null,"current engine is not available");
         if(index+1>=available.size()) return new Decision(false,false,null,"no compatible engine remains");
