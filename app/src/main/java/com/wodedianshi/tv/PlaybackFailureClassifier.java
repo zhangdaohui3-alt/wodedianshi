@@ -14,11 +14,12 @@ public final class PlaybackFailureClassifier {
         switch (code) {
             // Sliding live-window recovery is handled specially by MainActivity.
             case 1002:
-            case 2000: case 2001: case 2002: case 2004: case 2005: case 2006: case 2008:
+            // A wrong/missing media response is usually endpoint-specific.
+            case 2000: case 2001: case 2002: case 2003: case 2004: case 2005: case 2008:
                 return PlaybackEnginePolicy.FailureKind.TRANSPORT;
 
-            // Local network/security configuration: another URL or engine will not fix it.
-            case 2007:
+            // Device/app permission and cleartext policy cannot be fixed by another URL.
+            case 2006: case 2007:
                 return PlaybackEnginePolicy.FailureKind.CONFIGURATION;
 
             // Container/manifest parse and demux failures.
@@ -43,7 +44,7 @@ public final class PlaybackFailureClassifier {
             case 7000: case 7001:
                 return PlaybackEnginePolicy.FailureKind.VIDEO_RENDER;
 
-            // Includes DRM, app-state and unknown/custom failures. Never guess.
+            // Generic timeout, DRM, app-state and unknown/custom failures. Never guess.
             default:
                 return PlaybackEnginePolicy.FailureKind.UNKNOWN;
         }
