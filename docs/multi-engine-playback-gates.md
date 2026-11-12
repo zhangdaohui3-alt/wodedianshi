@@ -1,6 +1,6 @@
 # Multi-engine playback implementation gates
 
-Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. MPV ARMv7 LGPL build workflow is being repaired: the first failure was caused by fetching abbreviated Git object IDs from shallow clones, not by compiler or ABI incompatibility. The workflow now pins full immutable commit SHAs. No secondary engine is integrated or enabled in the app yet. A tested platform-neutral PlaybackEngineCoordinator now provides the safe single-owner lifecycle gate, but it is not yet wired into MainActivity.
+Status: engine/decoder candidate policy and Media3 error classifier are implemented and unit-tested on the research branch. LibVLC 3.7.7 ARMv7 packaging is build-verified in an isolated prototype. MPV ARMv7 LGPL build workflow is being repaired: the first failure was caused by fetching abbreviated Git object IDs from shallow clones, not by compiler or ABI incompatibility. The workflow now pins full immutable commit SHAs. No secondary engine is integrated or enabled in the app yet. The tested PlaybackEngineCoordinator is now wired into MainActivity for the live Media3 session: the coordinator creates the only currently verified candidate, owns its teardown, detaches the PlayerView before stopping/releasing, and keeps VOD on its existing separate path. This is a lifecycle integration step, not multi-engine fallback.
 
 ## Device-first constraints
 
@@ -59,11 +59,11 @@ PlaybackFailureClassifier maps Media3 1.11.x error codes into transport, configu
 2. Build a minimal MPVLib/BaseMPVView surface-lifecycle sample. Explicitly test `hwdec=no` software decode separately from MediaCodec hardware decode; verify HLS/TS/MP4 and repeated clean release.
 3. Build an isolated LibVLC 3.7.7 ARMv7 sample and compare its MediaCodec-disabled software path, Surface lifecycle, startup, CPU/memory and release behavior against MPV.
 4. Complete IJK source/FFmpeg configure/license review; build a source-pinned ARMv7 sample because IJK is common to all three supplied reference APKs. Do not use opaque prebuilt FFmpeg binaries.
-5. Adapt the current Media3 live player behind the session contract in a separate step, preserving its current listeners, buffering and PlayerView behavior. Do not migrate VOD simultaneously. Add a single explicit surface owner and attempt-generation checks before introducing any native engine.
+5. **Completed on research branch (2026-11-12):** route the existing live Media3 player through PlaybackEngineCoordinator, preserving existing analytics/player listeners, buffering policy and PlayerView attachment; centralize detach/stop/clear/release in the owned session. VOD remains unchanged. CI must pass before treating this integration as build-verified.
 6. Integrate only one secondary engine at a time behind a non-default developer switch; never run two engines against one surface. Use known-good authorized samples first.
 7. Add runtime tests: cold start, channel zap, 30-minute playback, source failover, A/V sync, audio-only/black-screen, stop/release/recreate, background/foreground and remote input.
 8. Promote only after CI and real Dangbei tests; keep main unchanged until all release gates pass.
 
 ## Current limitation
 
-The current APK still uses Media3/ExoPlayer for live and VOD. setEnableDecoderFallback(true) only lets Media3 try alternate platform decoders; it is not an independent engine and does not protect against a system-level MediaTek driver hang. This research branch is not a user-ready multi-engine build.
+The current app still uses Media3/ExoPlayer for live and VOD. The live Media3 session now has explicit coordinator ownership, but no MPV/IJK/LibVLC adapter or runtime candidate registry exists yet. setEnableDecoderFallback(true) only lets Media3 try alternate platform decoders; it is not an independent engine and does not protect against a system-level MediaTek driver hang. This research branch is not a user-ready multi-engine build.
