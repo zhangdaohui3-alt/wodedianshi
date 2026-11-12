@@ -41,6 +41,23 @@ Use these as architecture and behavior references, not as code to copy. Do not b
 
 No engine should be added to the production APK solely on the basis of library names in a reference binary. A candidate is promoted only after repeatable tests on emulator and target Android TV hardware.
 
+## Candidate engine research (2026-11-12)
+
+### IJKPlayer
+
+- The upstream Bilibili README still documents the 0.8.8 Android artifacts and an old build environment (NDK r10e / Android Studio 2.1.3 / FFmpeg n3.4-era). Do not drop those prebuilt binaries into this modern Media3/AGP project without rebuilding and ABI/runtime validation.
+- A community self-contained fork, `brainShake/ijkplayer-android`, claims a JDK 17 / CMake build, ARM64 and ARMv7 variants, and bundled FFmpeg. Its README also warns that mismatched `libijkplayer.so` and `libijkffmpeg.so` can crash on teardown. The public repository currently shows only four commits, no releases, and no root-level LICENSE in its displayed file list. Treat it as a code-audit candidate only, not an approved dependency. Audit every source license, FFmpeg configure flags, binary provenance, ABI coverage and native teardown before any prototype.
+- Expected APK-size impact is material: its README reports an all64 example APK around 30 MB. Measure an app-specific minimal build rather than importing the example package wholesale.
+
+### LibVLC
+
+- VideoLAN publishes LibVLC as an Android SDK/library and documents it as a separate engine with broad format/protocol and hardware-decode support. The official project distinguishes the LGPL-licensed LibVLC engine from the GPL-licensed VLC Android application. This project must review the exact AAR, notices, linking/distribution obligations and chosen version before shipping.
+- VLC 3.7.x build metadata references a dedicated NDK toolchain; test ABI, min-API, SurfaceView/TextureView behavior, seek/stop/release lifecycle, startup latency and memory on the actual Dangbei box before promotion.
+
+### Media3
+
+- The application already uses Media3 1.11.1. Keep it as the default engine; don't upgrade or add decoder extensions just to increase dependency count. First collect actual failing stream formats and codec capabilities. Evaluate each software extension against a known failing sample; an audio FFmpeg extension is not a universal software video decoder.
+
 ## Compatibility matrix to build
 
 For every test stream record:
