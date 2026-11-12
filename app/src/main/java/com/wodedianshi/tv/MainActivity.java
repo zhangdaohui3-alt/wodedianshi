@@ -1292,7 +1292,13 @@ public class MainActivity extends Activity {
     int oldTop=firstChild==null?0:firstChild.getTop();
     View oldFocus=grid.findFocus();
     int oldFocusedPosition=oldFocus==null?-1:grid.getPositionForView(oldFocus);
-    int oldFocusedTop=oldFocus==null?oldTop:oldFocus.getTop();
+    View oldFocusedCard=null;
+    if(oldFocusedPosition>=0){
+      int focusedChildIndex=oldFocusedPosition-grid.getFirstVisiblePosition();
+      if(focusedChildIndex>=0&&focusedChildIndex<grid.getChildCount())
+        oldFocusedCard=grid.getChildAt(focusedChildIndex);
+    }
+    int oldFocusedTop=oldFocusedCard==null?oldTop:oldFocusedCard.getTop();
     boolean preservePosition=category.equals(currentVodRenderedCategory)&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0;
     grid.setAdapter(new VodGridAdapter(items));
     if(preservePosition&&items!=null&&!items.isEmpty()){
@@ -1306,7 +1312,16 @@ public class MainActivity extends Activity {
           if(childIndex>=0&&childIndex<grid.getChildCount()){
             View child=grid.getChildAt(childIndex);
             if(child!=null)child.requestFocus();
-          }else grid.smoothScrollToPosition(restorePosition);
+          }else{
+            grid.smoothScrollToPosition(restorePosition);
+            grid.postDelayed(()->{
+              int retryIndex=restorePosition-grid.getFirstVisiblePosition();
+              if(retryIndex>=0&&retryIndex<grid.getChildCount()){
+                View retry=grid.getChildAt(retryIndex);
+                if(retry!=null)retry.requestFocus();
+              }
+            },120L);
+          }
         });
       });
     }else grid.post(()->grid.setSelection(0));
