@@ -62,7 +62,7 @@ jobs:
           p = Path("include/download-deps.sh")
           text = p.read_text()
           import re
-          pattern = r"if \\[ ! -d lua \\]; then\\n.*?\\nfi"
+          pattern = r"if \[ ! -d lua \]; then\n.*?\nfi"
           new = """if [ ! -d lua ]; then
           	mkdir lua
           	archive="lua-$v_lua.tar.gz"
