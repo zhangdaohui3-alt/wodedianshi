@@ -4,6 +4,11 @@ package com.wodedianshi.tv;
 public final class PlaybackRecoveryPolicy {
     private PlaybackRecoveryPolicy() {}
 
+    /** Missing audio alone must not discard a source whose video track is healthy. */
+    public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
+        return missingVideo;
+    }
+
     public static boolean isTimelineStalled(long nowMs, long lastAdvanceAtMs, long timeoutMs) {
         return timeoutMs > 0L && lastAdvanceAtMs > 0L
                 && nowMs >= lastAdvanceAtMs
