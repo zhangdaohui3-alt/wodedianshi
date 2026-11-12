@@ -97,3 +97,10 @@ MediaTek's MT9669 product specification lists a 64-bit Cortex-A73 CPU and hardwa
 - https://detail.zol.com.cn/2134/2133021/param.shtml
 
 The previously observed H.264 720p stream is not inherently outside the published decoder capabilities. That does not prove the stream is valid or the vendor codec is bug-free; it means we should separately test source integrity, MediaCodec output, MPV's alternative output/decoder modes, and Surface teardown rather than labelling H.264 unsupported.
+
+
+### Integration groundwork committed
+
+The research branch now contains a Java port of the pinned MPVLib JNI wrapper (the existing app remains Java; no Kotlin Gradle plugin was added), an explicit decoder/output option mapper, and a Surface-owning session view implementing the coordinator's single-session release contract. Reflection tests verify the JNI native-method and static-callback signatures without loading absent native libraries in the host JVM. The runtime registry also treats `UnsatisfiedLinkError` / `LinkageError` as an unavailable optional engine, so a missing ARMv7 library cannot take down Media3.
+
+These are integration components only: MPV is not enabled in MainActivity and no MPV libraries are bundled into the app yet. Enable it only after the ARMv7 native artifact passes package, ABI, dependency, and licensing checks.
