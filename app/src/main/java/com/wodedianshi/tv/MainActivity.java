@@ -3450,10 +3450,15 @@ public class MainActivity extends Activity {
           ||player.getPlaybackState()!=Player.STATE_READY)return;
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
-      if(missingAudio||missingVideo){
+      // A silent broadcast or an audio track that does not advance is not, by itself,
+      // proof that the video source is dead. Avoid skipping a channel whose picture
+      // is healthy; only missing/unsupported video should trigger source failover here.
+      if(missingAudio){
+        saveLiveDiagnostic("AUDIO_TRACK_CHECK","audio unavailable or not advancing; videoPresent="+videoTrackPresent+" videoSupported="+videoTrackSupported+" videoSelected="+videoTrackSelected);
+      }
+      if(PlaybackRecoveryPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
         recordCurrentSourceFailure();
-        String reason=missingAudio&&missingVideo?"音视频轨道均不可用":missingAudio?"没有有效声音输出":"没有可用视频轨道";
-        advanceToNextSourceAutomatically("检测到当前源"+reason);
+        advanceToNextSourceAutomatically("检测到当前源没有可用视频轨道");
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
