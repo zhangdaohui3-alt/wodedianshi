@@ -3510,10 +3510,15 @@ public class MainActivity extends Activity {
           ||player.getPlaybackState()!=Player.STATE_READY)return;
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
-      if(missingAudio||missingVideo){
+      if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
         recordCurrentSourceFailure();
-        String reason=missingAudio&&missingVideo?"音视频轨道均不可用":missingAudio?"没有有效声音输出":"没有可用视频轨道";
+        String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
         advanceToNextSourceAutomatically("检测到当前源"+reason);
+      }else if(missingAudio){
+        // Audio-only failure must not discard a source whose video is rendering.
+        // Keep the warning for diagnosis, but let the viewer continue watching.
+        saveLiveDiagnostic("AUDIO_TRACK_WARNING",
+            "video output is available; audio track/output is missing or not advancing");
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
