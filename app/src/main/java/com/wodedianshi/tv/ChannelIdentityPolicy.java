@@ -37,14 +37,16 @@ public final class ChannelIdentityPolicy {
 
         value = value.replace("超高清", "").replace("高清", "")
                 .replace("超清", "").replace("1080P", "").replace("720P", "")
-                .replace("4K高清", "").replace("HD", "").replace("FHD", "")
-                .replace("直播", "").replace("频道直播", "");
+                .replace("4K", "").replace("8K", "").replace("HD", "").replace("FHD", "")
+                .replace("频道直播", "").replace("直播", "");
+        // Playlist labels often append “频道” after the station alias (e.g. 江苏台频道).
+        while (value.endsWith("频道")) value = value.substring(0, value.length() - 2);
         if (value.endsWith("湖南台")) return "湖南卫视";
-        if (value.endsWith("浙江台")) return "浙江卫视";
-        if (value.endsWith("江苏台")) return "江苏卫视";
-        if (value.endsWith("东方台")) return "东方卫视";
-        if (value.endsWith("北京台")) return "北京卫视";
-        if (value.endsWith("广东台")) return "广东卫视";
+        if (value.endsWith("浙江台") || value.endsWith("浙江卫视")) return "浙江卫视";
+        if (value.endsWith("江苏台") || value.endsWith("江苏卫视")) return "江苏卫视";
+        if (value.endsWith("东方台") || value.endsWith("东方卫视")) return "东方卫视";
+        if (value.endsWith("北京台") || value.endsWith("北京卫视")) return "北京卫视";
+        if (value.endsWith("广东台") || value.endsWith("广东卫视")) return "广东卫视";
         return value;
     }
 }
