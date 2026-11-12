@@ -81,7 +81,7 @@ jobs:
           PY
           ./include/download-deps.sh
 
-      - name: Pin native source revisions and select no-GPL LGPLv3 build
+      - name: Pin native source revisions and select no-GPL LGPL-compatible build
         working-directory: mpv-android/buildscripts
         run: |
           set -euo pipefail
@@ -171,7 +171,15 @@ jobs:
           grep -Eq '^#define CONFIG_NONFREE 0$' "$CONFIG_H"
           MPV_CONFIG="buildscripts/deps/mpv/_build_armv7l"
           meson configure "$MPV_CONFIG" > audit-mpv-meson-config.txt
-          grep -Eq '^[[:space:]]*gpl[[:space:]]*:[[:space:]]*false$' audit-mpv-meson-config.txt
+          echo "MPV Meson license settings:"
+          grep -i 'gpl' audit-mpv-meson-config.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          rows = [line.strip().split() for line in Path("audit-mpv-meson-config.txt").read_text().splitlines()]
+          gpl = [row for row in rows if row and row[0].lower() == "gpl"]
+          if not gpl or gpl[-1][-1].lower() != "false":
+              raise SystemExit("MPV Meson gpl option is not explicitly false")
+          PY
           echo "FFmpeg: no-GPL, no-nonfree, version-3 configuration verified"
           echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
           echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
