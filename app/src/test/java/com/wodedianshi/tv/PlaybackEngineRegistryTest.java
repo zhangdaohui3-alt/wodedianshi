@@ -45,6 +45,26 @@ public class PlaybackEngineRegistryTest {
         assertEquals(Collections.singletonList(mpv), result);
     }
 
+    @Test public void outputModeSpecificProbeCanRejectOnlyOneRenderingPath() {
+        PlaybackEnginePolicy.Candidate gpu = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.HARDWARE,
+                PlaybackEnginePolicy.OutputMode.GPU);
+        PlaybackEnginePolicy.Candidate embed = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.HARDWARE,
+                PlaybackEnginePolicy.OutputMode.MEDIACODEC_EMBED);
+        PlaybackEngineRegistry.AvailabilityProbe probe = new PlaybackEngineRegistry.AvailabilityProbe() {
+            @Override public boolean isReady(PlaybackEnginePolicy.Engine engine,
+                                             PlaybackEnginePolicy.DecoderMode mode) {
+                return true;
+            }
+            @Override public boolean isReady(PlaybackEnginePolicy.Candidate candidate) {
+                return candidate.outputMode == PlaybackEnginePolicy.OutputMode.GPU;
+            }
+        };
+        assertEquals(Collections.singletonList(gpu),
+                PlaybackEngineRegistry.verifiedFallbacks(Arrays.asList(gpu, embed), probe));
+    }
+
     @Test public void brokenOptionalProbeDoesNotBlockOtherEngines() {
         PlaybackEnginePolicy.Candidate mpv = c(PlaybackEnginePolicy.Engine.MPV,
                 PlaybackEnginePolicy.DecoderMode.SOFTWARE);

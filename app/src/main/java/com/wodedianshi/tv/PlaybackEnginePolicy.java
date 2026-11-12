@@ -5,43 +5,54 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-/** Pure decision policy for controlled multi-engine and decoder-mode fallback. */
+/** Pure decision policy for controlled multi-engine, decoder, and output fallback. */
 public final class PlaybackEnginePolicy {
     private PlaybackEnginePolicy() {}
 
     public enum Engine { MEDIA3, MPV, IJK, LIBVLC }
 
-    /** Decoder mode is independent of the playback engine. */
+    /** Decoder strategy is independent of the engine and output surface path. */
     public enum DecoderMode { PLATFORM_AUTO, HARDWARE, SOFTWARE }
+
+    /** Video output path is explicit because Android hardware decode paths differ materially. */
+    public enum OutputMode { DEFAULT, GPU, MEDIACODEC_EMBED }
 
     public enum FailureKind {
         TRANSPORT, CONFIGURATION, UNSUPPORTED_CONTAINER_OR_CODEC, DEMUX,
         DECODER_INITIALIZATION, DECODER_RUNTIME, VIDEO_RENDER, AUDIO_OUTPUT, UNKNOWN
     }
 
-    /** A candidate is one engine paired with one decoder strategy. */
+    /** One candidate is a concrete engine + decoder + output combination. */
     public static final class Candidate {
         public final Engine engine;
         public final DecoderMode decoderMode;
+        public final OutputMode outputMode;
 
         public Candidate(Engine engine, DecoderMode decoderMode) {
+            this(engine, decoderMode, OutputMode.DEFAULT);
+        }
+
+        public Candidate(Engine engine, DecoderMode decoderMode, OutputMode outputMode) {
             this.engine = engine;
             this.decoderMode = decoderMode;
+            this.outputMode = outputMode;
         }
 
         @Override public boolean equals(Object other) {
             if (this == other) return true;
             if (!(other instanceof Candidate)) return false;
             Candidate that = (Candidate) other;
-            return engine == that.engine && decoderMode == that.decoderMode;
+            return engine == that.engine
+                    && decoderMode == that.decoderMode
+                    && outputMode == that.outputMode;
         }
 
         @Override public int hashCode() {
-            return Objects.hash(engine, decoderMode);
+            return Objects.hash(engine, decoderMode, outputMode);
         }
 
         @Override public String toString() {
-            return engine + "/" + decoderMode;
+            return engine + "/" + decoderMode + "/" + outputMode;
         }
     }
 
@@ -49,14 +60,16 @@ public final class PlaybackEnginePolicy {
         public final boolean changeSource;
         public final boolean switchEngine;
         public final boolean changeDecoderMode;
+        public final boolean changeOutputMode;
         public final Candidate nextCandidate;
         public final String reason;
 
-        private Decision(boolean source, boolean engine, boolean decoder,
+        private Decision(boolean source, boolean engine, boolean decoder, boolean output,
                          Candidate next, String why) {
             changeSource = source;
             switchEngine = engine;
             changeDecoderMode = decoder;
+            changeOutputMode = output;
             nextCandidate = next;
             reason = why;
         }
@@ -64,15 +77,15 @@ public final class PlaybackEnginePolicy {
 
     /**
      * Media3 is the primary candidate. Fallback candidates must come from a
-     * runtime registry that has verified the native library/ABI is available.
-     * The registry controls ordering for the current failure/device profile.
+     * runtime registry that has verified the ABI-specific libraries and adapter.
      */
     public static List<Candidate> orderedCandidates(List<Candidate> verifiedFallbacks) {
         List<Candidate> result = new ArrayList<>();
         result.add(new Candidate(Engine.MEDIA3, DecoderMode.PLATFORM_AUTO));
         if (verifiedFallbacks != null) {
             for (Candidate candidate : verifiedFallbacks) {
-                if (candidate == null || candidate.engine == null || candidate.decoderMode == null) continue;
+                if (candidate == null || candidate.engine == null || candidate.decoderMode == null
+                        || candidate.outputMode == null) continue;
                 if (candidate.engine == Engine.MEDIA3) continue;
                 if (!result.contains(candidate)) result.add(candidate);
             }
@@ -82,35 +95,37 @@ public final class PlaybackEnginePolicy {
 
     /**
      * Transport failures rotate a distinct URL. Decode/demux/render failures
-     * advance to the next registered engine+decoder candidate. Configuration
-     * and unknown failures never trigger blind switching.
+     * advance to the next verified engine+decoder+output candidate.
+     * Configuration and unknown failures never trigger blind switching.
      */
     public static Decision decide(FailureKind failure, List<Candidate> available,
                                   Candidate current) {
         if (failure == null || available == null || available.isEmpty()
-                || current == null || current.engine == null || current.decoderMode == null) {
-            return new Decision(false, false, false, null, "invalid playback state");
+                || current == null || current.engine == null || current.decoderMode == null
+                || current.outputMode == null) {
+            return new Decision(false, false, false, false, null, "invalid playback state");
         }
         if (failure == FailureKind.TRANSPORT) {
-            return new Decision(true, false, false, null,
+            return new Decision(true, false, false, false, null,
                     "transport failure: try a distinct source");
         }
         if (!requiresPlaybackFallback(failure)) {
-            return new Decision(false, false, false, null,
+            return new Decision(false, false, false, false, null,
                     "configuration or unclassified failure: do not switch blindly");
         }
         int index = available.indexOf(current);
         if (index < 0) {
-            return new Decision(false, false, false, null,
-                    "current engine/decoder candidate is not available");
+            return new Decision(false, false, false, false, null,
+                    "current engine/decoder/output candidate is not available");
         }
         if (index + 1 >= available.size()) {
-            return new Decision(false, false, false, null,
-                    "no compatible engine/decoder candidate remains");
+            return new Decision(false, false, false, false, null,
+                    "no compatible engine/decoder/output candidate remains");
         }
         Candidate next = available.get(index + 1);
         return new Decision(false, current.engine != next.engine,
-                current.decoderMode != next.decoderMode, next,
+                current.decoderMode != next.decoderMode,
+                current.outputMode != next.outputMode, next,
                 "decoder/demux/render failure: try next verified candidate");
     }
 

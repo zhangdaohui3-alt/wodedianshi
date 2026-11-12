@@ -43,6 +43,7 @@ public class PlaybackEnginePolicyTest {
         assertTrue(d.changeSource);
         assertFalse(d.switchEngine);
         assertFalse(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
         assertNull(d.nextCandidate);
     }
 
@@ -54,6 +55,7 @@ public class PlaybackEnginePolicyTest {
         assertFalse(d.changeSource);
         assertTrue(d.switchEngine);
         assertTrue(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
         assertEquals(mpvSoftware, d.nextCandidate);
     }
 
@@ -65,7 +67,25 @@ public class PlaybackEnginePolicyTest {
         assertFalse(d.changeSource);
         assertFalse(d.switchEngine);
         assertTrue(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
         assertEquals(mpvSoftware, d.nextCandidate);
+    }
+
+    @Test public void outputModeCanChangeWithoutPretendingTheDecoderChanged() {
+        PlaybackEnginePolicy.Candidate gpu = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.HARDWARE,
+                PlaybackEnginePolicy.OutputMode.GPU);
+        PlaybackEnginePolicy.Candidate embed = new PlaybackEnginePolicy.Candidate(
+                PlaybackEnginePolicy.Engine.MPV, PlaybackEnginePolicy.DecoderMode.HARDWARE,
+                PlaybackEnginePolicy.OutputMode.MEDIACODEC_EMBED);
+        assertNotEquals(gpu, embed);
+        PlaybackEnginePolicy.Decision d = PlaybackEnginePolicy.decide(
+                PlaybackEnginePolicy.FailureKind.VIDEO_RENDER,
+                PlaybackEnginePolicy.orderedCandidates(Arrays.asList(embed)), gpu);
+        assertFalse(d.switchEngine);
+        assertFalse(d.changeDecoderMode);
+        assertTrue(d.changeOutputMode);
+        assertEquals(embed, d.nextCandidate);
     }
 
     @Test public void demuxFailureMovesFromIijkToLibVlcCandidate() {
@@ -75,6 +95,7 @@ public class PlaybackEnginePolicyTest {
                 PlaybackEnginePolicy.FailureKind.DEMUX, all, ijkSoftware);
         assertTrue(d.switchEngine);
         assertFalse(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
         assertEquals(vlcSoftware, d.nextCandidate);
     }
 
@@ -85,6 +106,7 @@ public class PlaybackEnginePolicyTest {
                 PlaybackEnginePolicy.FailureKind.DEMUX, all, mpvSoftware);
         assertFalse(d.switchEngine);
         assertFalse(d.changeDecoderMode);
+        assertFalse(d.changeOutputMode);
         assertNull(d.nextCandidate);
     }
 
