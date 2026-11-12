@@ -3395,10 +3395,20 @@ public class MainActivity extends Activity {
   private void recordDecoderInventoryOnce(){
     if(decoderInventoryRecorded)return;
     decoderInventoryRecorded=true;
-    for(String capability:DeviceCodecCapabilityInspector.describeDecoderInventory()){
-      saveLiveDiagnostic("DECODER_INVENTORY",capability);
-    }
-    saveLiveDiagnostic("DECODER_NOTE","设备声明的解码器不代表所有配置均可播放，仍需实测编码、Profile、Level、分辨率和帧率");
+    // Codec enumeration may query vendor media services; never block the TV
+    // player's first frame or the main/UI thread on this diagnostic task.
+    Thread inventoryThread=new Thread(()->{
+      try{
+        for(String capability:DeviceCodecCapabilityInspector.describeDecoderInventory()){
+          saveLiveDiagnostic("DECODER_INVENTORY",capability);
+        }
+        saveLiveDiagnostic("DECODER_NOTE","设备声明的解码器不代表所有配置均可播放，仍需实测编码、Profile、Level、分辨率和帧率");
+      }catch(RuntimeException error){
+        saveLiveDiagnostic("DECODER_INVENTORY_ERROR",error.getClass().getSimpleName());
+      }
+    },"MyTV-CodecInventory");
+    inventoryThread.setDaemon(true);
+    inventoryThread.start();
   }
   private void showLiveDiagnostics(){
     String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
