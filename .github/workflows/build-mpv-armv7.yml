@@ -78,7 +78,7 @@ jobs:
           PY
           ./include/download-deps.sh
 
-      - name: Pin native source revisions and select LGPL-only build
+      - name: Pin native source revisions and select no-GPL LGPLv3 build
         working-directory: mpv-android/buildscripts
         run: |
           set -euo pipefail
@@ -119,7 +119,7 @@ jobs:
               raise SystemExit("mpv Meson options not found; refusing an unaudited build")
           mpv.write_text(text.replace(old, "-Dlibmpv=true -Dgpl=false -Dcplayer=false"))
           PY
-          grep -n -- '--disable-gpl --disable-version3' scripts/ffmpeg.sh
+          grep -n -- '--disable-gpl --enable-version3' scripts/ffmpeg.sh
           grep -n -- '-Dgpl=false' scripts/mpv.sh
           python3 - <<'PY'
           from pathlib import Path
@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           ./buildall.sh --arch armv7l
 
-      - name: Validate ARMv7 APK and LGPL build configuration
+      - name: Validate ARMv7 APK and LGPLv3 build configuration
         working-directory: mpv-android
         run: |
           set -euo pipefail
@@ -174,5 +174,5 @@ jobs:
       - name: Upload libmpv ARMv7 audit artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libmpv-ARMv7-LGPL-audit
+          name: libmpv-ARMv7-LGPLv3-audit
           path: mpv-android/audit-output/*
