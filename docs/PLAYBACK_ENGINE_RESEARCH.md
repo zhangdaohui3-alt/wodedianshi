@@ -51,7 +51,7 @@ The target Android 9 box is in that OS range, but its previous hard freeze makes
 Do not label the whole native stack simply “LGPLv3” based only on FFmpeg flags.
 
 - FFmpeg is being configured with `--disable-gpl --enable-version3`, so its generated configuration must prove GPL components are disabled and version-3 licensing is selected.
-- mpv uses `-Dgpl=false`; upstream describes the resulting mpv program as LGPLv2.1-or-later, and explicitly warns that the switch alone does not grant a license. Source-file and linked-library licenses still need review.
+- The pinned `mpv-android` wrapper repository itself is MIT-licensed. Preserve its copyright/license notice when adapting `MPVLib`, the Surface view, or JNI glue; this wrapper license does not change the licenses of libmpv or its linked dependencies.\n- mpv uses `-Dgpl=false`; upstream describes the resulting mpv program as LGPLv2.1-or-later, and explicitly warns that the switch alone does not grant a license. Source-file and linked-library licenses still need review.
 - Keep the exact pinned revisions and generated configuration files in the audit artifact. Do not ship the native engine until the complete dependency/license review is recorded.
 
 Primary source: https://github.com/mpv-player/mpv/blob/master/Copyright
