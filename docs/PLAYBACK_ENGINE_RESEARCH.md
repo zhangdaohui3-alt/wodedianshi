@@ -85,3 +85,13 @@ The project's separate LibVLC 3.7.7 ARMv7 prototype already demonstrated success
 | LibVLC | Official Android AAR and embeddable API; Android TV support; broad protocols/codecs | Larger native package; exact plugin/license set and ARMv7 runtime behavior need validation |
 
 Do not choose an engine based on feature lists alone. Compare them with the same authorized H.264/AAC HLS test streams, identical network conditions, and the same device. Record time-to-first-frame, sustained playback, decoder name, dropped frames, audio continuity, source switch recovery, and whether teardown/reopen survives repeated cycles.
+
+
+### 6. SoC capability is not the same as app ABI or decoder reliability
+
+MediaTek's MT9669 product specification lists a 64-bit Cortex-A73 CPU and hardware decoding for H.264, HEVC, VP9, and AV1. The Dangbei D6X Plus public specification also identifies MT9669 and Android 9. However, Android applications must package native libraries for the ABIs actually exposed by the installed system: this project's device inventory reports only `armeabi-v7a` and `armeabi`, so the native test package remains ARMv7 even if the silicon CPU is 64-bit.
+
+- https://www.mediatek.com/products/commercial-displays/mt9669
+- https://detail.zol.com.cn/2134/2133021/param.shtml
+
+The previously observed H.264 720p stream is not inherently outside the published decoder capabilities. That does not prove the stream is valid or the vendor codec is bug-free; it means we should separately test source integrity, MediaCodec output, MPV's alternative output/decoder modes, and Surface teardown rather than labelling H.264 unsupported.
