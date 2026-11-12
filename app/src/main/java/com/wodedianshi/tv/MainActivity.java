@@ -588,6 +588,22 @@ public class MainActivity extends Activity {
           .setConstraints(constraints).build();
       wm.enqueueUniqueWork("mytv_initial_source_discovery",ExistingWorkPolicy.KEEP,initial);
     }
+
+    // Refresh the visible catalogue after first-time discovery succeeds. The
+    // reload preserves the current channel identity and leaves the active
+    // player running; a work-ID marker prevents duplicate refreshes on resume.
+    wm.getWorkInfosForUniqueWorkLiveData("mytv_initial_source_discovery").observe(this, workInfos -> {
+      if(workInfos==null)return;
+      for(WorkInfo workInfo:workInfos){
+        if(workInfo.getState()!=WorkInfo.State.SUCCEEDED)continue;
+        String workId=workInfo.getId().toString();
+        android.content.SharedPreferences current=getSharedPreferences("mytv",0);
+        if(workId.equals(current.getString("source_initial_refresh_work_id","")))return;
+        reloadChannelsAfterSourceUpdate();
+        current.edit().putString("source_initial_refresh_work_id",workId).apply();
+        return;
+      }
+    });
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
