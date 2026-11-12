@@ -7,6 +7,8 @@ android {
     compileSdk 36
 
     defaultConfig {
+        // Audit build only: target the actual 32-bit ARMv7 Dangbei device.
+        ndk { abiFilters 'armeabi-v7a' }
         applicationId 'com.wodedianshi.tv'
         minSdk 23
         targetSdk 28
