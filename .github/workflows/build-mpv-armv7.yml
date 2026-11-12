@@ -46,7 +46,7 @@ jobs:
             mpv-android/buildscripts/sdk
             mpv-android/buildscripts/deps
             mpv-android/buildscripts/prefix
-          key: mpv-armv7-lgpl-v1-\${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
+          key: mpv-armv7-lgpl-v1-${{ hashFiles('.github/workflows/build-mpv-armv7.yml') }}
           restore-keys: |
             mpv-armv7-lgpl-v1-
 
@@ -93,7 +93,7 @@ jobs:
           needle = "ndk-build -C app/src/main -j$cores"
           if needle not in text:
               raise SystemExit("ndk-build insertion point missing; refusing an unverified packaging path")
-          copy = needle + "\\nmkdir -p app/src/main/jniLibs/armeabi-v7a\\ncp -a app/src/main/libs/armeabi-v7a/. app/src/main/jniLibs/armeabi-v7a/"
+          copy = needle + "\nmkdir -p app/src/main/jniLibs/armeabi-v7a\ncp -a app/src/main/libs/armeabi-v7a/. app/src/main/jniLibs/armeabi-v7a/"
           script.write_text(text.replace(needle, copy))
           PY
 
