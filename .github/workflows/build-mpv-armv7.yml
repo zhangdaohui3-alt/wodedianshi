@@ -81,7 +81,7 @@ jobs:
           PY
           ./include/download-deps.sh
 
-      - name: Pin native source revisions and select no-GPL LGPLv3 build
+      - name: Pin native source revisions and select no-GPL LGPL-compatible build
         working-directory: mpv-android/buildscripts
         run: |
           set -euo pipefail
@@ -167,11 +167,105 @@ jobs:
           echo "FFmpeg license flags in generated config:"
           grep -inE 'gpl|version3|nonfree' "$CONFIG" "$CONFIG_H" 2>/dev/null || true
           grep -Eq '^CONFIG_GPL=no$' "$CONFIG" || grep -Eq '^#define CONFIG_GPL 0$' "$CONFIG_H"
-          grep -Eq '^CONFIG_VERSION3=yes$' "$CONFIG" || grep -Eq '^#define CONFIG_VERSION3 1$' "$CONFIG_H"
+          grep -Eq '^CONFIG_VERSION3=yes
+          echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
+          echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/ffbuild/config.mak audit-output/ffmpeg-config.mak
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.h audit-output/ffmpeg-config.h
+          cp audit-mpv-meson-config.txt audit-output/mpv-meson-config.txt
+          cp app/src/main/jni/render.cpp audit-output/mpv-render.cpp
+          cp app/src/main/jni/main.cpp audit-output/mpv-main.cpp
+          cp app/src/main/java/is/xyz/mpv/BaseMPVView.kt audit-output/BaseMPVView.kt
+          cp LICENSE audit-output/mpv-android-wrapper-LICENSE
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPL-compatible-audit
+          path: mpv-android/audit-output/*
+ "$CONFIG" || grep -Eq '^#define CONFIG_VERSION3 1
+          echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
+          echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/ffbuild/config.mak audit-output/ffmpeg-config.mak
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.h audit-output/ffmpeg-config.h
+          cp audit-mpv-meson-config.txt audit-output/mpv-meson-config.txt
+          cp app/src/main/jni/render.cpp audit-output/mpv-render.cpp
+          cp app/src/main/jni/main.cpp audit-output/mpv-main.cpp
+          cp app/src/main/java/is/xyz/mpv/BaseMPVView.kt audit-output/BaseMPVView.kt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPL-compatible-audit
+          path: mpv-android/audit-output/*
+ "$CONFIG_H"
+          grep -Eq '^#define CONFIG_NONFREE 0
+          echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
+          echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/ffbuild/config.mak audit-output/ffmpeg-config.mak
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.h audit-output/ffmpeg-config.h
+          cp audit-mpv-meson-config.txt audit-output/mpv-meson-config.txt
+          cp app/src/main/jni/render.cpp audit-output/mpv-render.cpp
+          cp app/src/main/jni/main.cpp audit-output/mpv-main.cpp
+          cp app/src/main/java/is/xyz/mpv/BaseMPVView.kt audit-output/BaseMPVView.kt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPL-compatible-audit
+          path: mpv-android/audit-output/*
+ "$CONFIG_H"
           MPV_CONFIG="buildscripts/deps/mpv/_build_armv7l"
           meson configure "$MPV_CONFIG" > audit-mpv-meson-config.txt
-          grep -Eq '^[[:space:]]*gpl[[:space:]]+false$' audit-mpv-meson-config.txt
-          echo "FFmpeg: no-GPL, version-3 configuration verified"
+          grep -Eq '^[[:space:]]*gpl[[:space:]]*:[[:space:]]*false
+          echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
+          echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
+
+      - name: Package native engine audit outputs
+        working-directory: mpv-android
+        run: |
+          set -euo pipefail
+          mkdir -p audit-output
+          cp app/build/outputs/apk/default/debug/app-default-armeabi-v7a-debug.apk audit-output/
+          tar -czf audit-output/mpv-armv7-native-libs.tar.gz -C app/src/main/libs/armeabi-v7a .
+          cp buildscripts/deps/ffmpeg/_build_armv7l/ffbuild/config.mak audit-output/ffmpeg-config.mak
+          cp buildscripts/deps/ffmpeg/_build_armv7l/config.h audit-output/ffmpeg-config.h
+          cp audit-mpv-meson-config.txt audit-output/mpv-meson-config.txt
+          cp app/src/main/jni/render.cpp audit-output/mpv-render.cpp
+          cp app/src/main/jni/main.cpp audit-output/mpv-main.cpp
+          cp app/src/main/java/is/xyz/mpv/BaseMPVView.kt audit-output/BaseMPVView.kt
+
+      - name: Upload libmpv ARMv7 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-ARMv7-LGPL-compatible-audit
+          path: mpv-android/audit-output/*
+ audit-mpv-meson-config.txt
+          echo "FFmpeg: no-GPL, no-nonfree, version-3 configuration verified"
           echo "mpv: -Dgpl=false configuration verified (LGPLv2.1-or-later code path)"
           echo "ARMv7 APK and LGPL-compatible build configuration checks passed."
 
