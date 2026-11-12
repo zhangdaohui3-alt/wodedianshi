@@ -157,7 +157,7 @@ jobs:
           fi
           echo "Packaged ARMv7 native libraries:"
           printf '%s\n' "$ZIP_LIST" | grep '^lib/armeabi-v7a/'
-          CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/config.mak"
+          CONFIG="buildscripts/deps/ffmpeg/_build_armv7l/ffbuild/config.mak"
           CONFIG_H="buildscripts/deps/ffmpeg/_build_armv7l/config.h"
           test -s "$CONFIG"
           echo "FFmpeg license flags in generated config:"
