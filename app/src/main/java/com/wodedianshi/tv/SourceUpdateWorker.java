@@ -264,21 +264,23 @@ public class SourceUpdateWorker extends Worker {
     }
     return score;
   }
-  // GET rather than HEAD: many public IPTV hosts reject HEAD. HLS is accepted only
-  // after its media playlist and a real media segment can both be reached.
+  // Sniff the response body as well as the URL: some IPTV gateways expose
+  // HLS manifests through extensionless or tokenized endpoint URLs.
   private ProbeResult probe(String address){
     ProbeResult result=new ProbeResult();
     long started=android.os.SystemClock.elapsedRealtime();
     try{
+      SampleResponse initialResponse=fetchSampleResponse(address,32768);
+      byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
+      if(initialBytes==null||initialBytes.length<7)return result;
+      String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
       String lower=address.toLowerCase(Locale.ROOT);
-      if(lower.contains(".m3u8")||lower.contains("m3u8?")){
-        // Resolve relative HLS paths against the final URL after HTTP redirects.
-        // CDN front doors commonly redirect playlists to a different host/path.
-        SampleResponse manifestResponse=fetchSampleResponse(address,65536);
-        byte[] manifestBytes=manifestResponse==null?null:manifestResponse.bytes;
-        if(manifestBytes==null||manifestBytes.length==0)return result;
-        String manifest=new String(manifestBytes,"UTF-8").replace("\uFEFF","");
-        if(!manifest.contains("#EXTM3U"))return result;
+      boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
+      boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
+      if(playlistUrl||hlsPlaylist){
+        if(!hlsPlaylist)return result;
+        SampleResponse manifestResponse=initialResponse;
+        String manifest=initialText;
         String manifestUrl=manifestResponse.finalUrl;
         ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
@@ -288,10 +290,6 @@ public class SourceUpdateWorker extends Worker {
         ArrayList<String> segments=null;
         byte[] sample=null;
         long segmentStart=0L;
-        // Try the highest declared quality first, but fall back through lower
-        // renditions when a CDN variant or its first media segment is unavailable.
-        // A bounded candidate count keeps one broken master playlist from stalling
-        // the background source scan.
         for(HlsVariantPolicy.Variant candidate:variants){
           String candidateManifestUrl=candidate.url;
           String candidateManifest=manifest;
@@ -299,12 +297,12 @@ public class SourceUpdateWorker extends Worker {
             SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536);
             byte[] variant=variantResponse==null?null:variantResponse.bytes;
             if(variant==null||variant.length==0)continue;
-            candidateManifest=new String(variant,"UTF-8").replace("\uFEFF","");
-            if(!candidateManifest.contains("#EXTM3U"))continue;
+            candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
+            if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
             candidateManifestUrl=variantResponse.finalUrl;
           }
           ArrayList<String> candidateSegments=new ArrayList<>();
-          String[] mediaLines=candidateManifest.replace("\r","").split("\n");
+          String[] mediaLines=candidateManifest.replace("\\r","").split("\\n");
           for(int i=0;i<mediaLines.length&&candidateSegments.size()<2;i++){
             if(mediaLines[i].trim().startsWith("#EXTINF:")){
               for(int j=i+1;j<mediaLines.length;j++){
@@ -344,19 +342,12 @@ public class SourceUpdateWorker extends Worker {
         result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
         return result;
       }
-      long before=android.os.SystemClock.elapsedRealtime();
-      byte[] sample=fetchSample(address,32768);
-      // ADTS may be served as a minimal seven-byte no-CRC frame header.
-      // Container-specific validators enforce their own minimum sample sizes.
-      if(sample==null||sample.length<7)return result;
-      result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
+      result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
-      // A known suffix is not evidence: CDNs and captive portals can return HTML
-      // or text with a .ts/.mp4 path. Require a real container/codec signature.
-      if(!MediaPayloadValidator.looksLikeMediaPayload(sample,ext))return result;
+      if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes,ext))return result;
       result.valid=true;
-      result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
+      result.score=350+(int)Math.min(300L,(initialBytes.length*1000L/result.latencyMs)/2048L);
       return result;
     }catch(Exception e){return result;}
   }
