@@ -251,8 +251,8 @@ public class MainActivity extends Activity {
         int index=(Integer)child.getTag();
         if(index<0||index>=channels.size())continue;
         Channel channel=channels.get(index);
-        String title=isCctvChannel(channel)?displayChannelName(channel.name):channel.name;
-        String group=isCctvChannel(channel)?"":(channel.group.isEmpty()?"":" · "+channel.group);
+        String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channel.name):channel.name;
+        String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channel.group.isEmpty()?"":" · "+channel.group);
         ((Button)child).setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
         ((Button)child).setContentDescription(index==selected?"当前正在播放："+title:title);
         applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
@@ -405,6 +405,8 @@ public class MainActivity extends Activity {
     }
   }
   private String canonicalChannelName(String name){
+    String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
+    if(!satellite.isEmpty())return satellite;
     String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
@@ -445,6 +447,7 @@ public class MainActivity extends Activity {
   }
   private String displayChannelName(String name){
     String key=canonicalChannelName(name);
+    if(key.endsWith("卫视"))return key;
     if(!key.startsWith("CCTV-"))return name==null?"":name;
     String suffix=key.substring(5);
     String[] titles={"","综合","财经","综艺","中文国际","体育","电影","国防军事","电视剧","纪录","科教","戏曲","社会与法","新闻","少儿","音乐","奥林匹克","农业农村"};
@@ -2545,7 +2548,8 @@ public class MainActivity extends Activity {
   private boolean isSatelliteChannel(Channel c){
     String metadata=regionalMetadata(c);
     String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
+    return ChannelNamePolicy.isSatellite(c==null?"":c.name, c==null?"":c.group)
+        ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null||isSatelliteChannel(c))return false;
@@ -2669,8 +2673,8 @@ public class MainActivity extends Activity {
         int ix=visibleIndexes.get(row);
         Channel c=channels.get(ix);shown++;
         Button b=new Button(this);b.setTag(ix);
-        String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
-        String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
+        String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c.name):c.name;
+        String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
         b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
