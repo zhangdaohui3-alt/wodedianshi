@@ -3389,6 +3389,7 @@ public class MainActivity extends Activity {
       .setView(content).setPositiveButton("保存",null).setNeutralButton("恢复默认",null)
       .setNegativeButton("取消",null).create();
     editor.setOnShowListener(v->{
+      fullscreenRemoteDialogOpen=true;
       editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
         ArrayList<String> chosen=new ArrayList<>();
         for(String id:order)if(selectedIds.contains(id))chosen.add(id);
@@ -3404,6 +3405,7 @@ public class MainActivity extends Activity {
         order.clear();order.addAll(defaults);rebuild[0].run();
       });
     });
+    editor.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     editor.show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
