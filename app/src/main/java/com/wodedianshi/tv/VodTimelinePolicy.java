@@ -31,11 +31,6 @@ public final class VodTimelinePolicy {
     public static int toProgress(long positionMs, long durationMs) {
         if (durationMs <= 0L) return 0;
         long position = clampPosition(positionMs, durationMs);
-        // Split quotient/remainder to avoid positionMs * 1000 overflow.
-        long scaled = (position / PROGRESS_MAX) * PROGRESS_MAX
-                + ((position % PROGRESS_MAX) * PROGRESS_MAX) / durationMs;
-        // The expression above is intentionally corrected below using safe
-        // double scaling for the final ratio, whose operands are bounded.
         return (int) Math.max(0L, Math.min(PROGRESS_MAX,
                 Math.round(((double) position / (double) durationMs) * PROGRESS_MAX)));
     }
