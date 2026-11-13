@@ -1359,15 +1359,12 @@ public class MainActivity extends Activity {
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private String vodHistoryIdentity(String id,String url){
-    String stableId=id==null?"":id.trim();
-    if(!stableId.isEmpty())return "id:"+stableId;
-    String mediaUrl=url==null?"":url.trim();
-    return mediaUrl.isEmpty()?"":"url:"+mediaUrl;
+    return VodHistoryIdentity.forItem(id,url);
   }
   private String vodHistoryIdentity(org.json.JSONObject entry){
     if(entry==null)return "";
-    String stored=entry.optString("historyKey","");
-    return stored.isEmpty()?vodHistoryIdentity(entry.optString("id",""),entry.optString("url","")):stored;
+    return VodHistoryIdentity.forEntry(entry.optString("historyKey",""),
+        entry.optString("id",""),entry.optString("url",""));
   }
   private ArrayList<org.json.JSONObject> readVodHistory(){
     ArrayList<org.json.JSONObject> list=new ArrayList<>();
