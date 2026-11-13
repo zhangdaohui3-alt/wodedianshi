@@ -1,0 +1,148 @@
+package com.wodedianshi.tv;
+
+import android.content.Context;
+import android.net.Uri;
+import android.view.View;
+import android.widget.FrameLayout;
+
+import org.videolan.libvlc.LibVLC;
+import org.videolan.libvlc.Media;
+import org.videolan.libvlc.MediaPlayer;
+import org.videolan.libvlc.util.VLCVideoLayout;
+
+import java.util.ArrayList;
+
+/**
+ * Independent LibVLC engine adapter.
+ *
+ * This owns its native LibVLC instance, MediaPlayer and video surface. It does
+ * not wrap Media3 and must be released before another engine takes ownership
+ * of the shared playback stage.
+ */
+public final class LibVlcPlaybackEngine {
+    public interface Listener {
+        void onPlaying();
+        void onBuffering(float percent);
+        void onFailure(String reason);
+        void onStopped();
+    }
+
+    private final Context appContext;
+    private final VLCVideoLayout videoLayout;
+    private LibVLC libVlc;
+    private MediaPlayer mediaPlayer;
+    private Listener listener;
+    private boolean released = true;
+
+    public LibVlcPlaybackEngine(Context context, VLCVideoLayout layout) {
+        appContext = context.getApplicationContext();
+        videoLayout = layout;
+    }
+
+    public boolean isInitialized() {
+        return !released && libVlc != null && mediaPlayer != null;
+    }
+
+    public void setListener(Listener value) {
+        listener = value;
+    }
+
+    public void initialize() {
+        release();
+        ArrayList<String> options = new ArrayList<>();
+        options.add("--no-video-title-show");
+        options.add("--network-caching=1500");
+        options.add("--live-caching=1500");
+        options.add("--avcodec-hw=any");
+        libVlc = new LibVLC(appContext, options);
+        mediaPlayer = new MediaPlayer(libVlc);
+        mediaPlayer.setEventListener(event -> {
+            if (released || listener == null) return;
+            switch (event.type) {
+                case MediaPlayer.Event.Playing:
+                    listener.onPlaying();
+                    break;
+                case MediaPlayer.Event.Buffering:
+                    listener.onBuffering(event.getBuffering());
+                    break;
+                case MediaPlayer.Event.EncounteredError:
+                    listener.onFailure("LibVLC 遇到播放或解码错误");
+                    break;
+                case MediaPlayer.Event.Stopped:
+                    listener.onStopped();
+                    break;
+                default:
+                    break;
+            }
+        });
+        mediaPlayer.attachViews(videoLayout, null, false, false);
+        released = false;
+    }
+
+    public void play(String url) {
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://")
+                || url.startsWith("rtsp://"))) {
+            if (listener != null) listener.onFailure("不支持的播放地址");
+            return;
+        }
+        if (!isInitialized()) initialize();
+        Media media = new Media(libVlc, Uri.parse(url));
+        media.setHWDecoderEnabled(true, false);
+        media.addOption(":network-caching=1500");
+        media.addOption(":live-caching=1500");
+        mediaPlayer.setMedia(media);
+        media.release();
+        mediaPlayer.play();
+    }
+
+    public void pause() {
+        if (isInitialized()) mediaPlayer.pause();
+    }
+
+    public void resume() {
+        if (isInitialized()) mediaPlayer.play();
+    }
+
+    public boolean isPlaying() {
+        return isInitialized() && mediaPlayer.isPlaying();
+    }
+
+    public void stop() {
+        if (isInitialized()) mediaPlayer.stop();
+    }
+
+    /** Detach native video surfaces before hiding/removing the VLC view. */
+    public void detachViews() {
+        if (isInitialized() && mediaPlayer.getVLCVout().areViewsAttached()) {
+            mediaPlayer.detachViews();
+        }
+        videoLayout.setVisibility(View.GONE);
+    }
+
+    /** Reattach only after the VLC layout is attached to the visible window. */
+    public void attachViews() {
+        if (!isInitialized()) return;
+        videoLayout.setVisibility(View.VISIBLE);
+        if (!mediaPlayer.getVLCVout().areViewsAttached()) {
+            mediaPlayer.attachViews(videoLayout, null, false, false);
+        }
+    }
+
+    public void release() {
+        released = true;
+        if (mediaPlayer != null) {
+            try {
+                mediaPlayer.stop();
+                if (mediaPlayer.getVLCVout().areViewsAttached()) mediaPlayer.detachViews();
+                mediaPlayer.setEventListener(null);
+                mediaPlayer.release();
+            } catch (Exception ignored) { }
+            mediaPlayer = null;
+        }
+        if (libVlc != null) {
+            try { libVlc.release(); } catch (Exception ignored) { }
+            libVlc = null;
+        }
+        if (videoLayout != null) videoLayout.setVisibility(View.GONE);
+    }
+}
