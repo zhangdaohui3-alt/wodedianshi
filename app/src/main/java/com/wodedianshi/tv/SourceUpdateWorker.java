@@ -301,18 +301,17 @@ public class SourceUpdateWorker extends Worker {
             if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
             candidateManifestUrl=variantResponse.finalUrl;
           }
-          ArrayList<String> candidateSegments=new ArrayList<>();
-          String[] mediaLines=candidateManifest.replace("\\r","").split("\\n");
-          for(int i=0;i<mediaLines.length&&candidateSegments.size()<2;i++){
-            if(mediaLines[i].trim().startsWith("#EXTINF:")){
-              for(int j=i+1;j<mediaLines.length;j++){
-                String value=mediaLines[j].trim();
-                if(!value.isEmpty()&&!value.startsWith("#")){candidateSegments.add(value);break;}
-              }
-            }
-          }
+          HlsMediaPlaylistPolicy.Resources resources=
+              HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
+          ArrayList<String> candidateSegments=resources.mediaUrls;
           if(candidateSegments.isEmpty())continue;
-          String candidateSegmentUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(0)).toString();
+          // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
+          // Validate its container header before treating the media fragments as usable.
+          if(resources.initializationUrl!=null){
+            byte[] initialization=fetchSample(resources.initializationUrl,32768);
+            if(initialization==null||!MediaPayloadValidator.hasIsoBmffBox(initialization))continue;
+          }
+          String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
           byte[] candidateSample=fetchSample(candidateSegmentUrl,32768);
           if(!looksLikeHlsSegment(candidateSample))continue;
