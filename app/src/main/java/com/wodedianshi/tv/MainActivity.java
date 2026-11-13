@@ -3992,7 +3992,7 @@ public class MainActivity extends Activity {
       else if("ready".equals(event)){
         int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastSuccess",System.currentTimeMillis());
+        m.put("lastReady",System.currentTimeMillis());
       }else if("firstFrame".equals(event)){
         int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
         m.put("firstFrames",count+1);
@@ -4021,10 +4021,11 @@ public class MainActivity extends Activity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      long lastSuccess=m.optLong("lastSuccess",0L);
+      long lastVerifiedSuccessAt=SourceSuccessTimestampPolicy.latestVerifiedSuccess(
+           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L));
       double recentSuccessBonus=0.0;
-      if(lastSuccess>0L){
-        double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
+      if(lastVerifiedSuccessAt>0L){
+        double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastVerifiedSuccessAt)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
       // Keep foreground and background rankings on the same attempt-normalized policy.
