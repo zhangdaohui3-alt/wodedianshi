@@ -25,6 +25,7 @@ public final class LibVlcPlaybackEngine {
         void onBuffering(float percent);
         void onFailure(String reason);
         void onStopped();
+        default void onEndReached() { }
     }
 
     private final Context appContext;
@@ -76,6 +77,9 @@ public final class LibVlcPlaybackEngine {
                     break;
                 case MediaPlayer.Event.Stopped:
                     listener.onStopped();
+                    break;
+                case MediaPlayer.Event.EndReached:
+                    listener.onEndReached();
                     break;
                 default:
                     break;
