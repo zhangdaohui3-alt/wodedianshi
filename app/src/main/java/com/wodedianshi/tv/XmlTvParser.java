@@ -89,17 +89,29 @@ public final class XmlTvParser {
         public final Map<String, XmlTvChannel> channels;
         public final Map<String, List<XmlTvProgram>> programmesByChannel;
         public final int skippedProgrammes;
+        // Prefix maximum stop times let windowFor stop scanning once every earlier
+        // interval is known to have ended, even when schedules contain overlaps.
+        private final Map<String, long[]> prefixMaxStopByChannel;
 
         private Catalog(Map<String, XmlTvChannel> channels,
                         Map<String, List<XmlTvProgram>> programmesByChannel,
                         int skippedProgrammes) {
             this.channels = Collections.unmodifiableMap(new LinkedHashMap<>(channels));
             Map<String, List<XmlTvProgram>> copy = new LinkedHashMap<>();
+            Map<String, long[]> prefix = new LinkedHashMap<>();
             for (Map.Entry<String, List<XmlTvProgram>> entry : programmesByChannel.entrySet()) {
-                copy.put(entry.getKey(), Collections.unmodifiableList(
-                        new ArrayList<>(entry.getValue())));
+                List<XmlTvProgram> sorted = new ArrayList<>(entry.getValue());
+                copy.put(entry.getKey(), Collections.unmodifiableList(sorted));
+                long[] maxStops = new long[sorted.size()];
+                long maxStop = Long.MIN_VALUE;
+                for (int i = 0; i < sorted.size(); i++) {
+                    maxStop = Math.max(maxStop, sorted.get(i).stopMillis);
+                    maxStops[i] = maxStop;
+                }
+                prefix.put(entry.getKey(), maxStops);
             }
             this.programmesByChannel = Collections.unmodifiableMap(copy);
+            this.prefixMaxStopByChannel = Collections.unmodifiableMap(prefix);
             this.skippedProgrammes = skippedProgrammes;
         }
 
@@ -108,18 +120,31 @@ public final class XmlTvParser {
             return result == null ? Collections.emptyList() : result;
         }
 
-        /** Current and next programme for a channel at an absolute instant. */
+        /**
+         * Current and next programme at an absolute instant.
+         * Binary search finds the next programme; a prefix-stop index bounds
+         * the backwards scan needed to resolve overlapping current programmes.
+         */
         public ProgrammeWindow windowFor(String channelId, long timeMillis) {
+            List<XmlTvProgram> programmes = programmesFor(channelId);
+            if (programmes.isEmpty()) return new ProgrammeWindow(null, null);
+
+            int low = 0;
+            int high = programmes.size();
+            while (low < high) {
+                int middle = (low + high) >>> 1;
+                if (programmes.get(middle).startMillis <= timeMillis) low = middle + 1;
+                else high = middle;
+            }
+
+            XmlTvProgram next = low < programmes.size() ? programmes.get(low) : null;
             XmlTvProgram current = null;
-            XmlTvProgram next = null;
-            for (XmlTvProgram programme : programmesFor(channelId)) {
-                if (programme.contains(timeMillis)) {
-                    if (current == null || programme.startMillis > current.startMillis) {
-                        current = programme;
-                    }
-                } else if (programme.startMillis > timeMillis
-                        && (next == null || programme.startMillis < next.startMillis)) {
-                    next = programme;
+            long[] prefixStops = prefixMaxStopByChannel.get(channelId);
+            for (int i = low - 1; i >= 0 && prefixStops[i] > timeMillis; i--) {
+                XmlTvProgram candidate = programmes.get(i);
+                if (candidate.contains(timeMillis)
+                        && (current == null || candidate.startMillis > current.startMillis)) {
+                    current = candidate;
                 }
             }
             return new ProgrammeWindow(current, next);
