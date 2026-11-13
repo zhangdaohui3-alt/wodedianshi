@@ -140,7 +140,9 @@ public final class XmlTvParser {
                         && channels.size() >= maxChannels) {
                     throw new SAXException("XMLTV channel limit exceeded");
                 }
-                if (!channelId.isEmpty()) channels.putIfAbsent(channelId, new LinkedHashSet<>());
+                if (!channelId.isEmpty() && !channels.containsKey(channelId)) {
+                    channels.put(channelId, new LinkedHashSet<>());
+                }
             } else if ("programme".equals(name)) {
                 inProgramme = true;
                 programmeChannel = clean(attributes.getValue("channel"));
@@ -197,8 +199,12 @@ public final class XmlTvParser {
             }
             XmlTvProgram program = new XmlTvProgram(programmeChannel, start, stop,
                     programmeTitle, programmeDescription, programmeCategories);
-            programmes.computeIfAbsent(programmeChannel, ignored -> new ArrayList<>())
-                    .add(program);
+            List<XmlTvProgram> channelProgrammes = programmes.get(programmeChannel);
+            if (channelProgrammes == null) {
+                channelProgrammes = new ArrayList<>();
+                programmes.put(programmeChannel, channelProgrammes);
+            }
+            channelProgrammes.add(program);
         }
 
         Catalog toCatalog() {
