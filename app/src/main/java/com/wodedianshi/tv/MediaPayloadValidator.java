@@ -51,7 +51,9 @@ public final class MediaPayloadValidator {
     }
 
     public static boolean looksLikeMediaPayload(byte[] data) {
-        if (data == null || data.length < 8) return false;
+        // ADTS without CRC has a 7-byte fixed header; other validators enforce
+        // their own larger minimum lengths before reading container fields.
+        if (data == null || data.length < 7) return false;
         if (looksLikeHlsSegment(data)) return true;
         if (isValidFlvHeader(data)) return true;
         return isValidAdtsHeader(data);
