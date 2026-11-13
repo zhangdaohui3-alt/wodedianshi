@@ -164,7 +164,8 @@ public class XmlTvParserTest {
                     .append(i).append("</title></programme>");
         }
         xml.append("</tv>");
-        XmlTvParser.Catalog catalog = parser().parse(stream(xml.toString()));
+        XmlTvParser.Catalog catalog = new XmlTvParser(
+                TimeZone.getTimeZone("Asia/Shanghai"), 10, 100).parse(stream(xml.toString()));
         List<XmlTvProgram> programmes = catalog.programmesFor("c1");
 
         for (int minute = 0; minute < 360; minute++) {
