@@ -7,7 +7,9 @@ public class MediaPayloadValidatorTest {
     @Test public void acceptsMpegTsWithTwoPacketSyncBytes() {
         byte[] sample = new byte[376];
         sample[0] = 0x47;
+        sample[3] = 0x10;
         sample[188] = 0x47;
+        sample[191] = 0x10;
         assertTrue(MediaPayloadValidator.looksLikeHlsSegment(sample));
     }
 
@@ -16,6 +18,26 @@ public class MediaPayloadValidatorTest {
         sample[0] = 0x47;
         assertFalse(MediaPayloadValidator.looksLikeHlsSegment(sample));
         assertFalse(MediaPayloadValidator.looksLikeMediaPayload("not a media stream".getBytes()));
+    }
+
+    @Test public void rejectsTransportStreamSyncBytesWithReservedHeaderFields() {
+        byte[] sample = new byte[376];
+        sample[0] = 0x47;
+        sample[188] = 0x47;
+        assertFalse(MediaPayloadValidator.looksLikeHlsSegment(sample));
+        sample[3] = 0x10;
+        sample[191] = 0x10;
+        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(sample));
+    }
+
+    @Test public void rejectsTransportStreamPacketWithOversizedAdaptationField() {
+        byte[] sample = new byte[376];
+        sample[0] = 0x47;
+        sample[3] = 0x30;
+        sample[4] = (byte)183;
+        sample[188] = 0x47;
+        sample[191] = 0x10;
+        assertFalse(MediaPayloadValidator.looksLikeHlsSegment(sample));
     }
 
     @Test public void acceptsStructurallyValidFragmentedMp4Boxes() {
@@ -42,7 +64,9 @@ public class MediaPayloadValidatorTest {
     @Test public void validMediaSignaturesRemainAcceptedWithKnownSuffixes() {
         byte[] ts = new byte[376];
         ts[0] = 0x47;
+        ts[3] = 0x10;
         ts[188] = 0x47;
+        ts[191] = 0x10;
         byte[] mp4 = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(ts, "https://cdn.example/live.ts"));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(mp4, "https://cdn.example/movie.mp4"));
