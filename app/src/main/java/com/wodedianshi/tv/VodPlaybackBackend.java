@@ -9,6 +9,7 @@ public interface VodPlaybackBackend {
         void onReady();
         void onVideoOutput(boolean available);
         void onFailure(String reason);
+        void onEnded();
     }
 
     void setListener(Listener listener);
