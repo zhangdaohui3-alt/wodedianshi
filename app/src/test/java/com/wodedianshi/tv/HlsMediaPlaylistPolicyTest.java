@@ -94,6 +94,32 @@ public class HlsMediaPlaylistPolicyTest {
         assertTrue(resources.unsupportedEncryption);
     }
 
+    @Test public void detectsEncryptionChangesAfterMediaCandidateLimit() throws Exception {
+        StringBuilder playlist = new StringBuilder("#EXTM3U\n")
+                .append("#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n");
+        for (int i = 0; i < 5; i++) {
+            playlist.append("#EXTINF:6,\nseg").append(i).append(".ts\n");
+        }
+        playlist.append("#EXT-X-KEY:METHOD=NONE\n");
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist.toString(), "https://cdn.example/live/index.m3u8");
+        assertEquals(4, resources.mediaUrls.size());
+        assertTrue("late METHOD=NONE must not be ignored", resources.unsupportedEncryption);
+    }
+
+    @Test public void detectsKeyRotationAfterMediaCandidateLimit() throws Exception {
+        StringBuilder playlist = new StringBuilder("#EXTM3U\n")
+                .append("#EXT-X-KEY:METHOD=AES-128,URI=\"key-a.bin\"\n");
+        for (int i = 0; i < 5; i++) {
+            playlist.append("#EXTINF:6,\nseg").append(i).append(".ts\n");
+        }
+        playlist.append("#EXT-X-KEY:METHOD=AES-128,URI=\"key-b.bin\"\n");
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist.toString(), "https://cdn.example/live/index.m3u8");
+        assertEquals(4, resources.mediaUrls.size());
+        assertTrue("late key rotation must not be ignored", resources.unsupportedEncryption);
+    }
+
     @Test public void parsesWindowsStyleCrLfPlaylistLines() throws Exception {
         String playlist = "#EXTM3U\r\n"
                 + "#EXTINF:6.0,\r\n"
