@@ -252,8 +252,9 @@ public final class XmlTvParser {
         @Override public int read(byte[] buffer, int offset, int length) throws IOException {
             if (length == 0) return 0;
             if (bytesRead >= maximumBytes) {
-                int extra = read();
-                return extra < 0 ? -1 : 0;
+                int extra = in.read();
+                if (extra < 0) return -1;
+                throw new IOException("XMLTV document byte limit exceeded");
             }
             int allowed = (int) Math.min((long) length, maximumBytes - bytesRead);
             int count = in.read(buffer, offset, allowed);
