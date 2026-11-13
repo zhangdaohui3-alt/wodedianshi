@@ -32,6 +32,26 @@ public class HlsVariantPolicyTest {
         assertEquals(5000L, variants.get(7).bandwidth);
     }
 
+    @Test public void malformedVariantCannotStealFollowingVariantUri() throws Exception {
+        String master = "#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=900000\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=300000\n"
+                + "low/index.m3u8\n";
+        ArrayList<HlsVariantPolicy.Variant> variants =
+                HlsVariantPolicy.parse(master, "https://cdn.example/root/master.m3u8");
+        assertEquals(1, variants.size());
+        assertEquals(300000L, variants.get(0).bandwidth);
+        assertEquals("https://cdn.example/root/low/index.m3u8", variants.get(0).url);
+    }
+
+    @Test public void skipsBlankLinesButDoesNotSkipPlaylistTagsWhenFindingVariantUri() throws Exception {
+        String master = "#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=600000\n\n"
+                + "#EXT-X-VERSION:6\n"
+                + "next/index.m3u8\n";
+        assertTrue(HlsVariantPolicy.parse(master, "https://cdn.example/master.m3u8").isEmpty());
+    }
+
     @Test public void returnsEmptyForDirectMediaPlaylist() throws Exception {
         assertTrue(HlsVariantPolicy.parse(
                 "#EXTM3U\n#EXTINF:6.0,\nseg.ts\n",
