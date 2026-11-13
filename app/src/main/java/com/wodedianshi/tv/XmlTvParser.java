@@ -107,6 +107,33 @@ public final class XmlTvParser {
             List<XmlTvProgram> result = programmesByChannel.get(channelId);
             return result == null ? Collections.emptyList() : result;
         }
+
+        /** Current and next programme for a channel at an absolute instant. */
+        public ProgrammeWindow windowFor(String channelId, long timeMillis) {
+            XmlTvProgram current = null;
+            XmlTvProgram next = null;
+            for (XmlTvProgram programme : programmesFor(channelId)) {
+                if (programme.contains(timeMillis)) {
+                    if (current == null || programme.startMillis > current.startMillis) {
+                        current = programme;
+                    }
+                } else if (programme.startMillis > timeMillis
+                        && (next == null || programme.startMillis < next.startMillis)) {
+                    next = programme;
+                }
+            }
+            return new ProgrammeWindow(current, next);
+        }
+    }
+
+    public static final class ProgrammeWindow {
+        public final XmlTvProgram current;
+        public final XmlTvProgram next;
+
+        private ProgrammeWindow(XmlTvProgram current, XmlTvProgram next) {
+            this.current = current;
+            this.next = next;
+        }
     }
 
     private static final class Handler extends DefaultHandler {
