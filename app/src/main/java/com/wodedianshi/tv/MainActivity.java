@@ -47,6 +47,7 @@ public class MainActivity extends Activity {
   private VLCVideoLayout vlcVideoLayout;
   private LibVlcPlaybackEngine libVlcEngine;
   private boolean usingLibVlc=false;
+  private boolean libVlcVideoOutputReady=false;
   private boolean libVlcAttemptedForSource=false;
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
@@ -3998,6 +3999,7 @@ public class MainActivity extends Activity {
   private boolean tryStartLibVlcFallback(String reason){
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
     libVlcAttemptedForSource=true;
+    libVlcVideoOutputReady=false;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     final String url=currentSourceUrl();
@@ -4018,7 +4020,7 @@ public class MainActivity extends Activity {
           sourceReadyAt=android.os.SystemClock.elapsedRealtime();
           info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 引擎）");
           showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
-          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Playing event; awaiting physical first-frame verification");
+          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Vout is active; physical rendered-frame verification remains outstanding");
           scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
         });}
         public void onBuffering(float percent){uiHandler.post(()->{if(isCurrent()&&!usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");});}
@@ -4037,8 +4039,8 @@ public class MainActivity extends Activity {
       cancelLibVlcStartTimeout();
       libVlcStartTimeout=()->{
         libVlcStartTimeout=null;
-        if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!usingLibVlc&&libVlcAttemptedForSource){
-          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not enter Playing within 18 seconds");
+        if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!libVlcVideoOutputReady&&libVlcAttemptedForSource){
+          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not create a video output within 18 seconds");
           releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
           recordCurrentSourceFailure();
           advanceToNextSourceAutomatically("VLC 连接超时");
@@ -4056,7 +4058,7 @@ public class MainActivity extends Activity {
     cancelLibVlcWatchdog();
     libVlcWatchdog=()->{
       libVlcWatchdog=null;
-      if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
+      if(!usingLibVlc||!libVlcVideoOutputReady||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
       if(!libVlcEngine.isPlaying()){
         saveLiveDiagnostic("ENGINE_STALLED","LibVLC no longer reports playing");
         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
