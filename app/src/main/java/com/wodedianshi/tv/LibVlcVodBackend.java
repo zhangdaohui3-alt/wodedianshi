@@ -76,6 +76,10 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         return !released && engine.seekToMs(positionMs);
     }
 
+    public void setVideoScaleMode(int mode) {
+        if (!released) engine.setVideoScaleMode(mode);
+    }
+
     @Override public void release() {
         released = true;
         listener = null;
