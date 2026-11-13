@@ -1,6 +1,8 @@
 package com.wodedianshi.tv;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 
 import org.videolan.libvlc.util.VLCVideoLayout;
 
@@ -11,6 +13,7 @@ import org.videolan.libvlc.util.VLCVideoLayout;
 public final class LibVlcVodBackend implements VodPlaybackBackend {
     private final LibVlcPlaybackEngine engine;
     private Listener listener;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean released = true;
 
     public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout) {
@@ -22,18 +25,22 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         engine.setListener(new LibVlcPlaybackEngine.Listener() {
             @Override public void onPlaying() {
                 Listener current = listener;
-                if (!released && current != null) current.onReady();
+                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onReady(); });
             }
             @Override public void onVideoOutput(int count) {
                 Listener current = listener;
-                if (!released && current != null) current.onVideoOutput(count > 0);
+                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onVideoOutput(count > 0); });
             }
             @Override public void onBuffering(float percent) { }
             @Override public void onFailure(String reason) {
                 Listener current = listener;
-                if (!released && current != null) current.onFailure(reason);
+                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onFailure(reason); });
             }
             @Override public void onStopped() { }
+            @Override public void onEndReached() {
+                Listener current = listener;
+                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onEnded(); });
+            }
         });
     }
 
@@ -72,6 +79,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     @Override public void release() {
         released = true;
         listener = null;
+        mainHandler.removeCallbacksAndMessages(null);
         engine.setListener(null);
         engine.release();
     }
