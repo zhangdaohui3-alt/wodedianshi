@@ -280,49 +280,54 @@ public class SourceUpdateWorker extends Worker {
         String manifest=new String(manifestBytes,"UTF-8").replace("\uFEFF","");
         if(!manifest.contains("#EXTM3U"))return result;
         String manifestUrl=manifestResponse.finalUrl;
+        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
+        if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
         String mediaUrl=manifestUrl;
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
-        String[] lines=manifest.replace("\r","").split("\n");
-        for(int i=0;i<lines.length;i++){
-          String line=lines[i].trim();
-          if(!line.startsWith("#EXT-X-STREAM-INF:"))continue;
-          long bw=0L;int w=0,h=0;
-          java.util.regex.Matcher bm=java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(line);
-          if(bm.find())try{bw=Long.parseLong(bm.group(1));}catch(Exception ignored){}
-          java.util.regex.Matcher rm=java.util.regex.Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(line);
-          if(rm.find())try{w=Integer.parseInt(rm.group(1));h=Integer.parseInt(rm.group(2));}catch(Exception ignored){}
-          String child="";
-          for(int j=i+1;j<lines.length;j++){String candidate=lines[j].trim();if(!candidate.isEmpty()&&!candidate.startsWith("#")){child=candidate;break;}}
-          if(!child.isEmpty()&&bw>=bestBandwidth){
-            bestBandwidth=bw;bestWidth=w;bestHeight=h;
-            mediaUrl=new URL(new URL(manifestUrl),child).toString();
+        ArrayList<String> segments=null;
+        byte[] sample=null;
+        long segmentStart=0L;
+        // Try the highest declared quality first, but fall back through lower
+        // renditions when a CDN variant or its first media segment is unavailable.
+        // A bounded candidate count keeps one broken master playlist from stalling
+        // the background source scan.
+        for(HlsVariantPolicy.Variant candidate:variants){
+          String candidateManifestUrl=candidate.url;
+          String candidateManifest=manifest;
+          if(!candidate.url.equals(manifestUrl)){
+            SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536);
+            byte[] variant=variantResponse==null?null:variantResponse.bytes;
+            if(variant==null||variant.length==0)continue;
+            candidateManifest=new String(variant,"UTF-8").replace("\uFEFF","");
+            if(!candidateManifest.contains("#EXTM3U"))continue;
+            candidateManifestUrl=variantResponse.finalUrl;
           }
-        }
-        if(!mediaUrl.equals(manifestUrl)){
-          SampleResponse variantResponse=fetchSampleResponse(mediaUrl,65536);
-          byte[] variant=variantResponse==null?null:variantResponse.bytes;
-          if(variant==null||variant.length==0)return result;
-          String variantText=new String(variant,"UTF-8").replace("\uFEFF","");
-          if(!variantText.contains("#EXTM3U"))return result;
-          manifest=variantText;
-          mediaUrl=variantResponse.finalUrl;
-        }
-        ArrayList<String> segments=new ArrayList<>();
-        String[] mediaLines=manifest.replace("\r","").split("\n");
-        for(int i=0;i<mediaLines.length&&segments.size()<2;i++){
-          if(mediaLines[i].trim().startsWith("#EXTINF:")){
-            for(int j=i+1;j<mediaLines.length;j++){
-              String candidate=mediaLines[j].trim();
-              if(!candidate.isEmpty()&&!candidate.startsWith("#")){segments.add(candidate);break;}
+          ArrayList<String> candidateSegments=new ArrayList<>();
+          String[] mediaLines=candidateManifest.replace("\r","").split("\n");
+          for(int i=0;i<mediaLines.length&&candidateSegments.size()<2;i++){
+            if(mediaLines[i].trim().startsWith("#EXTINF:")){
+              for(int j=i+1;j<mediaLines.length;j++){
+                String value=mediaLines[j].trim();
+                if(!value.isEmpty()&&!value.startsWith("#")){candidateSegments.add(value);break;}
+              }
             }
           }
+          if(candidateSegments.isEmpty())continue;
+          String candidateSegmentUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(0)).toString();
+          long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
+          byte[] candidateSample=fetchSample(candidateSegmentUrl,32768);
+          if(!looksLikeHlsSegment(candidateSample))continue;
+          mediaUrl=candidateManifestUrl;
+          bestBandwidth=candidate.bandwidth;
+          bestWidth=candidate.width;
+          bestHeight=candidate.height;
+          segments=candidateSegments;
+          sample=candidateSample;
+          segmentStart=candidateSegmentStart;
+          break;
         }
-        if(segments.isEmpty())return result;
-        String segmentUrl=new URL(new URL(mediaUrl),segments.get(0)).toString();
-        long segmentStart=android.os.SystemClock.elapsedRealtime();
-        byte[] sample=fetchSample(segmentUrl,32768);
-        if(!looksLikeHlsSegment(sample))return result;
+        if(segments==null||sample==null)return result;
         long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
         boolean secondSegmentOk=true;
         if(segments.size()>1){
@@ -341,12 +346,15 @@ public class SourceUpdateWorker extends Worker {
       }
       long before=android.os.SystemClock.elapsedRealtime();
       byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<188)return result;
+      // ADTS may be served as a minimal seven-byte no-CRC frame header.
+      // Container-specific validators enforce their own minimum sample sizes.
+      if(sample==null||sample.length<7)return result;
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
-      boolean knownExtension=ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac");
-      if(!knownExtension&&!looksLikeMediaPayload(sample))return result;
+      // A known suffix is not evidence: CDNs and captive portals can return HTML
+      // or text with a .ts/.mp4 path. Require a real container/codec signature.
+      if(!MediaPayloadValidator.looksLikeMediaPayload(sample,ext))return result;
       result.valid=true;
       result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
       return result;
