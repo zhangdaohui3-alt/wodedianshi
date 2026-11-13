@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 @UnstableApi
 public class MainActivity extends Activity {
   private ExoPlayer player;
+  private boolean decoderInventoryRecorded=false;
   private PlayerView video;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
@@ -2248,6 +2249,7 @@ public class MainActivity extends Activity {
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
+      recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
       pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
        MediaItem media=PlaybackPlayerFactory.buildMediaItem(item.url,item.identifier);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
@@ -3390,6 +3392,24 @@ public class MainActivity extends Activity {
       p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
     }catch(Exception ignored){}
   }
+  private void recordDecoderInventoryOnce(){
+    if(decoderInventoryRecorded)return;
+    decoderInventoryRecorded=true;
+    // Codec enumeration may query vendor media services; never block the TV
+    // player's first frame or the main/UI thread on this diagnostic task.
+    Thread inventoryThread=new Thread(()->{
+      try{
+        for(String capability:DeviceCodecCapabilityInspector.describeDecoderInventory()){
+          saveLiveDiagnostic("DECODER_INVENTORY",capability);
+        }
+        saveLiveDiagnostic("DECODER_NOTE","设备声明的解码器不代表所有配置均可播放，仍需实测编码、Profile、Level、分辨率和帧率");
+      }catch(RuntimeException error){
+        saveLiveDiagnostic("DECODER_INVENTORY_ERROR",error.getClass().getSimpleName());
+      }
+    },"MyTV-CodecInventory");
+    inventoryThread.setDaemon(true);
+    inventoryThread.start();
+  }
   private void showLiveDiagnostics(){
     String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
@@ -3660,6 +3680,7 @@ public class MainActivity extends Activity {
     saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size());
     try{
     if(player==null){
+      recordDecoderInventoryOnce();
       player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
       video.setPlayer(player);
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
