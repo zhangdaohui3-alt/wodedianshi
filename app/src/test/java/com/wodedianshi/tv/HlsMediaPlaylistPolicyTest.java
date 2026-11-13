@@ -1,0 +1,68 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class HlsMediaPlaylistPolicyTest {
+    @Test public void extractsFmp4InitializationMapAndSegments() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-TARGETDURATION:6\n"
+                + "#EXT-X-MAP:URI=\"init.mp4\"\n"
+                + "#EXTINF:6.0,\nseg-1.m4s\n"
+                + "#EXTINF:6.0,\nseg-2.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertEquals("https://cdn.example/live/init.mp4", resources.initializationUrl);
+        assertEquals(2, resources.mediaUrls.size());
+        assertEquals("https://cdn.example/live/seg-1.m4s", resources.mediaUrls.get(0));
+        assertEquals("https://cdn.example/live/seg-2.m4s", resources.mediaUrls.get(1));
+    }
+
+    @Test public void extractsLowLatencyPartsWithoutExtinf() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-PART-INF:PART-TARGET=0.333\n"
+                + "#EXT-X-PART:DURATION=0.333,URI=\"part-1.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.333,URI=\"part-2.m4s\"\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/ll/live.m3u8");
+        assertNull(resources.initializationUrl);
+        assertEquals(2, resources.mediaUrls.size());
+        assertEquals("https://cdn.example/ll/part-1.m4s", resources.mediaUrls.get(0));
+        assertEquals("https://cdn.example/ll/part-2.m4s", resources.mediaUrls.get(1));
+    }
+
+    @Test public void skipsByteRangePartsUntilRangeAwareProbeExists() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-PART:DURATION=0.333,URI=\"shared.m4s\",BYTERANGE=\"100@0\"\n"
+                + "#EXT-X-PART:DURATION=0.333,URI=\"part-ok.m4s\"\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/ll/live.m3u8");
+        assertEquals(1, resources.mediaUrls.size());
+        assertEquals("https://cdn.example/ll/part-ok.m4s", resources.mediaUrls.get(0));
+    }
+
+    @Test public void resolvesAbsoluteUrisAndIgnoresMalformedMap() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-MAP:BYTERANGE=\"100@0\"\n"
+                + "#EXTINF:6,\nhttps://media.example/seg.ts\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertNull(resources.initializationUrl);
+        assertEquals(1, resources.mediaUrls.size());
+        assertEquals("https://media.example/seg.ts", resources.mediaUrls.get(0));
+    }
+
+    @Test public void capsAndDeduplicatesExtractedMediaResources() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"a.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"a.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"b.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"c.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"d.m4s\"\n"
+                + "#EXT-X-PART:DURATION=0.3,URI=\"e.m4s\"\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live.m3u8");
+        assertEquals(4, resources.mediaUrls.size());
+        assertFalse(resources.mediaUrls.contains("https://cdn.example/e.m4s"));
+    }
+}
