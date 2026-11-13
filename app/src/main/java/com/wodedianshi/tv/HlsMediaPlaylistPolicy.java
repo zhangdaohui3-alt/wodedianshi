@@ -34,7 +34,7 @@ public final class HlsMediaPlaylistPolicy {
         boolean unsupportedMapRange = false, aes128 = false, unsupportedEncryption = false;
         if (playlist == null || finalPlaylistUrl == null)
             return new Resources(null,false,false,null,false,media);
-        String[] lines = playlist.replace("\\r", "").split("\\n");
+        String[] lines = playlist.replace("\r", "").split("\n");
         for (int i=0;i<lines.length && media.size()<MAX_MEDIA_SEGMENTS;i++) {
             String line=lines[i].trim();
             if(line.startsWith("#EXT-X-KEY:")) {
