@@ -2539,6 +2539,8 @@ public class MainActivity extends Activity {
     return token!=null&&!token.isEmpty()&&metadata.contains(token.toLowerCase(Locale.ROOT));
   }
   private String explicitProvinceIn(String metadata){
+    String cityAlias=ChannelNamePolicy.provinceForLocalChannel(metadata);
+    if(!cityAlias.isEmpty())return cityAlias;
     String[] names={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     for(String p:names)if(metadata.contains(p))return p;
     String[][] aliases={{"beijing","北京"},{"tianjin","天津"},{"hebei","河北"},{"shanxi","山西"},{"inner mongolia","内蒙古"},{"liaoning","辽宁"},{"jilin","吉林"},{"heilongjiang","黑龙江"},{"shanghai","上海"},{"jiangsu","江苏"},{"zhejiang","浙江"},{"anhui","安徽"},{"fujian","福建"},{"jiangxi","江西"},{"shandong","山东"},{"henan","河南"},{"hubei","湖北"},{"hunan","湖南"},{"guangdong","广东"},{"guangxi","广西"},{"hainan","海南"},{"chongqing","重庆"},{"sichuan","四川"},{"guizhou","贵州"},{"yunnan","云南"},{"tibet","西藏"},{"shaanxi","陕西"},{"gansu","甘肃"},{"qinghai","青海"},{"ningxia","宁夏"},{"xinjiang","新疆"}};
