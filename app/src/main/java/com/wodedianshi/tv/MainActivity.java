@@ -154,6 +154,9 @@ public class MainActivity extends Activity {
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
         refresh();
         if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+        // Bootstrap the China-first catalogue in the background after local restore.
+        // The 12-hour cache keeps ordinary launches network-light.
+        loadChinaChannels();
         // Keep auto-resume, but only after the restored catalogue is ready.
         uiHandler.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},350L);
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
