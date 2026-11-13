@@ -305,7 +305,7 @@ public class SourceUpdateWorker extends Worker {
           HlsMediaPlaylistPolicy.Resources resources=
               HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
           ArrayList<String> candidateSegments=resources.mediaUrls;
-          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedEncryption)continue;
+          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedInitializationMap||resources.unsupportedEncryption)continue;
           // Media3 performs AES-128 decryption during playback. Preflight only verifies
           // that the identity key endpoint returns the required 16-byte key; never log or persist it.
           if(resources.aes128Encrypted){

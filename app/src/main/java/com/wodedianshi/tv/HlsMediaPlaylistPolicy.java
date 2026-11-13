@@ -17,13 +17,15 @@ public final class HlsMediaPlaylistPolicy {
     public static final class Resources {
         public final String initializationUrl;
         public final boolean unsupportedInitializationByteRange;
+        public final boolean unsupportedInitializationMap;
         public final boolean aes128Encrypted;
         public final String encryptionKeyUrl;
         public final boolean unsupportedEncryption;
         public final ArrayList<String> mediaUrls;
-        Resources(String init, boolean rangeUnsupported, boolean aes128, String keyUrl,
+        Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
                   boolean encryptionUnsupported, ArrayList<String> media) {
             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
+            unsupportedInitializationMap=mapUnsupported;
             aes128Encrypted=aes128; encryptionKeyUrl=keyUrl;
             unsupportedEncryption=encryptionUnsupported; mediaUrls=media;
         }
@@ -32,10 +34,10 @@ public final class HlsMediaPlaylistPolicy {
     public static Resources parse(String playlist, String finalPlaylistUrl) throws Exception {
         ArrayList<String> media = new ArrayList<>();
         String initialization = null, activeKeyUrl = null, aesKeyUrl = null;
-        boolean unsupportedMapRange = false, aes128 = false, unsupportedEncryption = false;
+        boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
         boolean activeKeyHasExplicitIv = false;
         if (playlist == null || finalPlaylistUrl == null)
-            return new Resources(null,false,false,null,false,media);
+            return new Resources(null,false,false,false,null,false,media);
         String[] lines = playlist.replace("\r", "").split("\n");
         // Continue scanning the bounded playlist after the media URL cap is reached: key
         // rotation or METHOD=NONE may appear later and must not be missed.
@@ -69,14 +71,22 @@ public final class HlsMediaPlaylistPolicy {
                 }
             } else if(line.startsWith("#EXT-X-MAP:")) {
                 String attrs=line.substring("#EXT-X-MAP:".length());
-                if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
+                String mapUrl=resolve(uriAttribute(attrs),finalPlaylistUrl);
+                if(mapUrl==null) {
+                    unsupportedMap=true; initialization=null;
+                    if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*"))unsupportedMapRange=true;
+                } else if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
                     unsupportedMapRange=true; initialization=null;
                 } else {
+                    // This preflight model stores one init map and probes the first
+                    // media candidate. Reject a changed map rather than validating
+                    // the wrong initialization section for the first segment.
+                    if(initialization!=null&&!initialization.equals(mapUrl))unsupportedMap=true;
                     // RFC 8216 requires an explicit IV when an AES-128 key encrypts
                     // an EXT-X-MAP initialization section. Segment sequence-number IV
                     // defaults do not apply to the initialization section.
                     if(activeKeyUrl!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
-                    initialization=resolve(uriAttribute(attrs),finalPlaylistUrl);
+                    initialization=mapUrl;
                 }
             } else if(line.startsWith("#EXT-X-PART:")) {
                 String attrs=line.substring("#EXT-X-PART:".length());
@@ -93,7 +103,7 @@ public final class HlsMediaPlaylistPolicy {
                 }
             }
         }
-        return new Resources(initialization,unsupportedMapRange,aes128,aesKeyUrl,unsupportedEncryption,media);
+        return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,unsupportedEncryption,media);
     }
 
     private static String attribute(Pattern pattern,String attributes) {
