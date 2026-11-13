@@ -20,5 +20,6 @@ public interface VodPlaybackBackend {
     long getPositionMs();
     long getDurationMs();
     boolean seekToMs(long positionMs);
+    default void setVideoScaleMode(int mode) { }
     void release();
 }
