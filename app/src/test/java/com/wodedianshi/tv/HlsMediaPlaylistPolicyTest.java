@@ -74,14 +74,14 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals("https://cdn.example/keys/live.key", resources.encryptionKeyUrl);
     }
 
-    @Test public void keepsAes128MetadataWhenPlaylistAlsoContainsMethodNone() throws Exception {
+    @Test public void rejectsMixedAes128AndClearMediaUntilPerSegmentEncryptionIsTracked() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
                 + "#EXT-X-KEY:METHOD=NONE\n"
                 + "#EXTINF:6,\nseg.ts\n";
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist, "https://cdn.example/live/index.m3u8");
-        assertFalse(resources.unsupportedEncryption);
+        assertTrue(resources.unsupportedEncryption);
         assertTrue(resources.aes128Encrypted);
     }
 
@@ -92,6 +92,16 @@ public class HlsMediaPlaylistPolicyTest {
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist, "https://cdn.example/live/index.m3u8");
         assertTrue(resources.unsupportedEncryption);
+    }
+
+    @Test public void parsesWindowsStyleCrLfPlaylistLines() throws Exception {
+        String playlist = "#EXTM3U\r\n"
+                + "#EXTINF:6.0,\r\n"
+                + "segment.ts\r\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertEquals(1, resources.mediaUrls.size());
+        assertEquals("https://cdn.example/live/segment.ts", resources.mediaUrls.get(0));
     }
 
     @Test public void capsAndDeduplicatesExtractedMediaResources() throws Exception {
