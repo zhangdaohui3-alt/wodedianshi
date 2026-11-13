@@ -1366,9 +1366,15 @@ public class MainActivity extends Activity {
   private void saveVodHistory(VodItem item,long position,long duration){
     if(item==null)return;
     try{
+      String identity=VodHistoryIdentity.forItem(item.identifier,item.url);
+      if(identity.isEmpty())return;
       ArrayList<org.json.JSONObject> old=readVodHistory();org.json.JSONArray out=new org.json.JSONArray();
-      org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
-      for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
+      org.json.JSONObject entry=new org.json.JSONObject();entry.put("identityKey",identity);entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
+      for(org.json.JSONObject o:old){
+        String oldIdentity=VodHistoryIdentity.forEntry(o.optString("identityKey",""),o.optString("id",""),o.optString("url",""));
+        if(!identity.equals(oldIdentity))out.put(o);
+        if(out.length()>=100)break;
+      }
       getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,out.toString()).apply();
     }catch(Exception ignored){}
   }
@@ -1385,6 +1391,7 @@ public class MainActivity extends Activity {
     public View getView(int position,View convertView,android.view.ViewGroup parent){
       org.json.JSONObject o=history.get(position);
       String title=o.optString("title","未命名影片"),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
+      String identityKey=VodHistoryIdentity.forEntry(o.optString("identityKey",""),id,url);
       long pos=o.optLong("position",0),duration=o.optLong("duration",0);
       LinearLayout row;TextView name,detail;
       if(convertView instanceof LinearLayout&&((LinearLayout)convertView).getChildCount()>=2){row=(LinearLayout)convertView;name=(TextView)row.getChildAt(0);detail=(TextView)row.getChildAt(1);}
@@ -1396,7 +1403,7 @@ public class MainActivity extends Activity {
       }
       name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
       row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
-      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
+      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep){String xIdentity=VodHistoryIdentity.forEntry(x.optString("identityKey",""),x.optString("id",""),x.optString("url",""));if(!identityKey.equals(xIdentity))a.put(x);}getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
       return row;
     }
   }
