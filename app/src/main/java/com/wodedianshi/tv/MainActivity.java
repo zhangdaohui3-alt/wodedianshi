@@ -3209,23 +3209,223 @@ public class MainActivity extends Activity {
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
     });
   }
+  private static final String LIVE_QUICK_ACTIONS_PREF="live_quick_actions";
+  private String liveQuickActionLabel(String id){
+    if(FullscreenQuickActionConfig.FAVORITE.equals(id))return isCurrentLiveFavorite()?"取消收藏当前频道":"收藏当前频道";
+    if(FullscreenQuickActionConfig.SOURCE_PICKER.equals(id))return "选择播放源";
+    if(FullscreenQuickActionConfig.CHANNEL_LIST.equals(id))return "打开频道列表";
+    if(FullscreenQuickActionConfig.ASPECT_RATIO.equals(id))return "画面比例";
+    if(FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id))return "卡顿自动换源";
+    if(FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id))return "解码器设置";
+    if(FullscreenQuickActionConfig.NETWORK_SPEED.equals(id))return "网速显示开关";
+    if(FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id))return "查看播放诊断";
+    return "";
+  }
+  private void runLiveQuickAction(String id){
+    if(FullscreenQuickActionConfig.FAVORITE.equals(id))toggleCurrentLiveFavorite();
+    else if(FullscreenQuickActionConfig.SOURCE_PICKER.equals(id))showSourcePicker();
+    else if(FullscreenQuickActionConfig.CHANNEL_LIST.equals(id))showFullscreenChannelMenu();
+    else if(FullscreenQuickActionConfig.ASPECT_RATIO.equals(id))showAspectRatioDialog(video,"live_aspect_mode");
+    else if(FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id))bufferingSwitchSettingsDialog();
+    else if(FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id))decoderSettingsDialog();
+    else if(FullscreenQuickActionConfig.NETWORK_SPEED.equals(id))toggleNetworkSpeed();
+    else if(FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id))showLiveDiagnostics();
+  }
+  private ArrayList<String> savedLiveQuickActions(){
+    String encoded=getSharedPreferences("mytv",0).getString(LIVE_QUICK_ACTIONS_PREF,null);
+    return new ArrayList<>(FullscreenQuickActionConfig.decodeLiveActions(encoded));
+  }
+  private Button makeQuickMenuButton(String label,int background){
+    Button button=new Button(this);
+    button.setId(View.generateViewId());
+    button.setText(label);button.setAllCaps(false);button.setTextSize(16);
+    button.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
+    button.setPadding(dp(14),dp(6),dp(10),dp(6));
+    button.setMinHeight(dp(54));button.setFocusable(true);button.setFocusableInTouchMode(true);
+    button.setTextColor(Color.WHITE);button.setBackground(makeButtonBg(background,false));
+    button.setOnFocusChangeListener((v,focused)->{
+      button.setBackground(makeButtonBg(focused?Color.rgb(24,105,170):background,focused));
+      button.setElevation(focused?dp(7):0);
+    });
+    return button;
+  }
   private void showLivePlaybackActions(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
-    Channel c=channels.get(selected);
-    boolean saved=favorites.contains(c.key());
-    String[] actions={saved?"取消收藏当前频道":"收藏当前频道","选择播放源","打开频道列表"};
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 播放操作")
-      .setItems(actions,(d,which)->{
-        d.dismiss();
-        uiHandler.post(()->{
-          if(which==0)toggleCurrentLiveFavorite();
-          else if(which==1)showSourcePicker();
-          else if(which==2)showFullscreenChannelMenu();
-        });
-      }).setNegativeButton("关闭",null).create();
-    fullscreenRemoteDialogOpen=true;
-    dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
+    final View previousFocus=getCurrentFocus();
+    final ArrayList<String> enabled=savedLiveQuickActions();
+    final AlertDialog dialog=new AlertDialog.Builder(this).create();
+    LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);
+    panel.setPadding(dp(18),dp(12),dp(18),dp(12));
+    panel.setBackgroundColor(Color.rgb(13,22,34));
+    TextView heading=new TextView(this);
+    heading.setText(channels.get(selected).name+"  ·  快捷设置");
+    heading.setTextColor(Color.WHITE);heading.setTextSize(20);
+    heading.setTypeface(null,android.graphics.Typeface.BOLD);
+    heading.setPadding(dp(8),dp(4),dp(8),dp(12));panel.addView(heading);
+    LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
+    LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
+    left.setPadding(0,0,dp(10),0);
+    LinearLayout right=new LinearLayout(this);right.setOrientation(LinearLayout.VERTICAL);
+    right.setPadding(dp(10),0,0,0);
+    ScrollView leftScroll=new ScrollView(this);leftScroll.setFillViewport(true);
+    ScrollView rightScroll=new ScrollView(this);rightScroll.setFillViewport(true);
+    leftScroll.addView(left);rightScroll.addView(right);
+    columns.addView(leftScroll,new LinearLayout.LayoutParams(0,dp(300),1.05f));
+    View divider=new View(this);divider.setBackgroundColor(Color.rgb(67,86,108));
+    columns.addView(divider,new LinearLayout.LayoutParams(dp(1),dp(300)));
+    columns.addView(rightScroll,new LinearLayout.LayoutParams(0,dp(300),1.75f));
+    panel.addView(columns);
+    TextView hint=new TextView(this);
+    hint.setText("菜单键 / 设置键打开此面板　·　左右切换栏目　·　返回关闭");
+    hint.setTextColor(Color.rgb(165,184,204));hint.setTextSize(12);
+    hint.setPadding(dp(8),dp(10),dp(8),0);panel.addView(hint);
+    final String[] categories={"频道操作","播放优化","画面设置","诊断信息","编辑快捷菜单"};
+    final ArrayList<Button> categoryButtons=new ArrayList<>();
+    final int[] selectedCategory={0};
+    Runnable[] renderRight=new Runnable[1];
+    renderRight[0]=()->{
+      right.removeAllViews();
+      if(selectedCategory[0]==4){
+        Button edit=makeQuickMenuButton("编辑项目、增减和排序",Color.rgb(35,65,91));
+        edit.setOnClickListener(v->{dialog.dismiss();showLiveQuickActionEditor();});
+        right.addView(edit,new LinearLayout.LayoutParams(-1,dp(58)));
+        TextView note=new TextView(this);note.setText("可启用或停用项目，并调整显示顺序。设置会保存在本机。");
+        note.setTextColor(Color.LTGRAY);note.setTextSize(14);note.setPadding(dp(8),dp(12),dp(8),0);
+        right.addView(note);
+        edit.requestFocus();
+        return;
+      }
+      ArrayList<String> categoryActions=new ArrayList<>();
+      for(String id:enabled){
+        boolean belongs;
+        if(selectedCategory[0]==0){
+          belongs=FullscreenQuickActionConfig.FAVORITE.equals(id)
+              ||FullscreenQuickActionConfig.SOURCE_PICKER.equals(id)
+              ||FullscreenQuickActionConfig.CHANNEL_LIST.equals(id);
+        }else if(selectedCategory[0]==1){
+          belongs=FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id)
+              ||FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id)
+              ||FullscreenQuickActionConfig.NETWORK_SPEED.equals(id);
+        }else if(selectedCategory[0]==2){
+          belongs=FullscreenQuickActionConfig.ASPECT_RATIO.equals(id);
+        }else{
+          belongs=FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id);
+        }
+        if(belongs)categoryActions.add(id);
+      }
+      if(categoryActions.isEmpty()){
+        TextView empty=new TextView(this);
+        empty.setText("此栏目暂无启用项目\n可到“编辑快捷菜单”添加");
+        empty.setTextColor(Color.LTGRAY);empty.setTextSize(15);empty.setPadding(dp(10),dp(18),dp(10),dp(10));
+        right.addView(empty);
+        return;
+      }
+      Button first=null;
+      for(String id:categoryActions){
+        Button action=makeQuickMenuButton(liveQuickActionLabel(id),Color.rgb(29,48,68));
+        if(first==null)first=action;
+        action.setOnClickListener(v->{dialog.dismiss();uiHandler.post(()->runLiveQuickAction(id));});
+        right.addView(action,new LinearLayout.LayoutParams(-1,dp(58)));
+      }
+      if(first!=null){
+        for(Button category:categoryButtons)if(category.getTag()!=null&&(Integer)category.getTag()==selectedCategory[0]){
+          category.setNextFocusRightId(first.getId());
+          for(int i=0;i<right.getChildCount();i++){
+            View child=right.getChildAt(i);if(child instanceof Button)child.setNextFocusLeftId(category.getId());
+          }
+          break;
+        }
+      }
+    };
+    for(int i=0;i<categories.length;i++){
+      final int index=i;
+      Button category=makeQuickMenuButton(categories[i],Color.rgb(27,43,61));
+      category.setTag(index);category.setId(View.generateViewId());
+      category.setOnClickListener(v->{
+        selectedCategory[0]=index;
+        for(Button b:categoryButtons)b.setBackground(makeButtonBg(Color.rgb(27,43,61),b==category));
+        renderRight[0].run();
+      });
+      categoryButtons.add(category);
+      left.addView(category,new LinearLayout.LayoutParams(-1,dp(58)));
+    }
+    dialog.setView(panel);
+    dialog.setOnShowListener(v->{
+      android.view.Window window=dialog.getWindow();
+      if(window!=null){
+        android.util.DisplayMetrics metrics=getResources().getDisplayMetrics();
+        window.setLayout(Math.min((int)(metrics.widthPixels*.90f),dp(900)),WindowManager.LayoutParams.WRAP_CONTENT);
+        window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+      }
+      fullscreenRemoteDialogOpen=true;
+      categoryButtons.get(0).performClick();
+      categoryButtons.get(0).requestFocus();
+    });
+    dialog.setOnDismissListener(d->{
+      fullscreenRemoteDialogOpen=false;
+      if(previousFocus!=null)uiHandler.post(()->{if(previousFocus.isShown())previousFocus.requestFocus();});
+    });
     dialog.show();
+  }
+  private void showLiveQuickActionEditor(){
+    final ArrayList<String> order=new ArrayList<>();
+    ArrayList<String> saved=savedLiveQuickActions();
+    order.addAll(saved);
+    for(String id:FullscreenQuickActionConfig.availableLiveActions())if(!order.contains(id))order.add(id);
+    final HashSet<String> selectedIds=new HashSet<>(saved);
+    LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);
+    content.setPadding(dp(14),dp(8),dp(14),dp(8));
+    TextView intro=new TextView(this);
+    intro.setText("勾选要显示的快捷项目；使用 ↑ ↓ 调整顺序。至少保留一个项目。");
+    intro.setTextColor(Color.WHITE);intro.setTextSize(14);content.addView(intro);
+    ScrollView scroll=new ScrollView(this);
+    LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);
+    scroll.addView(rows);content.addView(scroll,new LinearLayout.LayoutParams(-1,dp(300)));
+    Runnable[] rebuild=new Runnable[1];
+    rebuild[0]=()->{
+      rows.removeAllViews();
+      for(int i=0;i<order.size();i++){
+        final String id=order.get(i);final int position=i;
+        LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+        CheckBox check=new CheckBox(this);check.setText(liveQuickActionLabel(id));
+        check.setTextColor(Color.WHITE);check.setTextSize(15);check.setChecked(selectedIds.contains(id));
+        check.setFocusable(true);check.setOnCheckedChangeListener((button,checked)->{
+          if(checked)selectedIds.add(id);else selectedIds.remove(id);
+        });
+        row.addView(check,new LinearLayout.LayoutParams(0,dp(50),1f));
+        Button up=makeQuickMenuButton("↑",Color.rgb(37,57,78));up.setTextSize(18);
+        Button down=makeQuickMenuButton("↓",Color.rgb(37,57,78));down.setTextSize(18);
+        up.setEnabled(position>0);down.setEnabled(position<order.size()-1);
+        up.setOnClickListener(v->{if(position>0){Collections.swap(order,position,position-1);rebuild[0].run();}});
+        down.setOnClickListener(v->{if(position<order.size()-1){Collections.swap(order,position,position+1);rebuild[0].run();}});
+        row.addView(up,new LinearLayout.LayoutParams(dp(52),dp(48)));
+        row.addView(down,new LinearLayout.LayoutParams(dp(52),dp(48)));
+        rows.addView(row);
+      }
+    };
+    rebuild[0].run();
+    AlertDialog editor=new AlertDialog.Builder(this).setTitle("编辑快捷菜单")
+      .setView(content).setPositiveButton("保存",null).setNeutralButton("恢复默认",null)
+      .setNegativeButton("取消",null).create();
+    editor.setOnShowListener(v->{
+      fullscreenRemoteDialogOpen=true;
+      editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(w->{
+        ArrayList<String> chosen=new ArrayList<>();
+        for(String id:order)if(selectedIds.contains(id))chosen.add(id);
+        if(chosen.isEmpty()){toast("至少启用一个快捷项目");return;}
+        getSharedPreferences("mytv",0).edit()
+          .putString(LIVE_QUICK_ACTIONS_PREF,FullscreenQuickActionConfig.encodeLiveActions(chosen)).apply();
+        editor.dismiss();toast("快捷菜单已保存");
+        uiHandler.post(this::showLivePlaybackActions);
+      });
+      editor.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(w->{
+        ArrayList<String> defaults=new ArrayList<>(FullscreenQuickActionConfig.defaultLiveActions());
+        selectedIds.clear();selectedIds.addAll(defaults);
+        order.clear();order.addAll(defaults);rebuild[0].run();
+      });
+    });
+    editor.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
+    editor.show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
