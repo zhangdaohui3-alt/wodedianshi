@@ -85,6 +85,28 @@ public class HlsMediaPlaylistPolicyTest {
         assertTrue(resources.aes128Encrypted);
     }
 
+    @Test public void rejectsAes128EncryptedInitializationMapWithoutExplicitIv() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
+                + "#EXT-X-MAP:URI=\"init.mp4\"\n"
+                + "#EXTINF:6,\nseg.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.aes128Encrypted);
+        assertTrue("AES-128 EXT-X-MAP requires an explicit IV", resources.unsupportedEncryption);
+    }
+
+    @Test public void acceptsAes128EncryptedInitializationMapWithExplicitIv() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x00000000000000000000000000000001\n"
+                + "#EXT-X-MAP:URI=\"init.mp4\"\n"
+                + "#EXTINF:6,\nseg.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.aes128Encrypted);
+        assertFalse(resources.unsupportedEncryption);
+    }
+
     @Test public void rejectsSampleAesAndUnsupportedKeyFormats() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://license\"\n"

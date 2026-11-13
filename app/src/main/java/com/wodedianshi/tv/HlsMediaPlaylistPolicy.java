@@ -10,6 +10,7 @@ public final class HlsMediaPlaylistPolicy {
     private static final int MAX_MEDIA_SEGMENTS = 4;
     private static final Pattern URI_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*URI=\\\"([^\\\"]+)\\\"");
     private static final Pattern METHOD_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*METHOD=([^,\\s]+)");
+    private static final Pattern IV_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*IV=([^,\\s]+)");
     private static final Pattern KEYFORMAT_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*KEYFORMAT=\\\"([^\\\"]+)\\\"");
     private HlsMediaPlaylistPolicy() {}
 
@@ -32,6 +33,7 @@ public final class HlsMediaPlaylistPolicy {
         ArrayList<String> media = new ArrayList<>();
         String initialization = null, activeKeyUrl = null, aesKeyUrl = null;
         boolean unsupportedMapRange = false, aes128 = false, unsupportedEncryption = false;
+        boolean activeKeyHasExplicitIv = false;
         if (playlist == null || finalPlaylistUrl == null)
             return new Resources(null,false,false,null,false,media);
         String[] lines = playlist.replace("\r", "").split("\n");
@@ -48,13 +50,16 @@ public final class HlsMediaPlaylistPolicy {
                     // than a per-segment key timeline. If encryption was already active,
                     // fail closed instead of probing a later clear segment with the old key.
                     if(aes128) unsupportedEncryption=true;
-                    activeKeyUrl=null;
+                    activeKeyUrl=null; activeKeyHasExplicitIv=false;
                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
                     String uri=uriAttribute(attrs);
                     String resolved=resolve(uri,finalPlaylistUrl);
                     if(resolved==null) unsupportedEncryption=true;
                     else {
                         if(aesKeyUrl!=null && !aesKeyUrl.equals(resolved)) unsupportedEncryption=true;
+                        String iv=attribute(IV_ATTRIBUTE,attrs);
+                        activeKeyHasExplicitIv=isValidIv(iv);
+                        if(iv!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
                         aesKeyUrl=resolved; activeKeyUrl=resolved; aes128=true;
                     }
                 } else {
@@ -66,7 +71,13 @@ public final class HlsMediaPlaylistPolicy {
                 String attrs=line.substring("#EXT-X-MAP:".length());
                 if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
                     unsupportedMapRange=true; initialization=null;
-                } else initialization=resolve(uriAttribute(attrs),finalPlaylistUrl);
+                } else {
+                    // RFC 8216 requires an explicit IV when an AES-128 key encrypts
+                    // an EXT-X-MAP initialization section. Segment sequence-number IV
+                    // defaults do not apply to the initialization section.
+                    if(activeKeyUrl!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
+                    initialization=resolve(uriAttribute(attrs),finalPlaylistUrl);
+                }
             } else if(line.startsWith("#EXT-X-PART:")) {
                 String attrs=line.substring("#EXT-X-PART:".length());
                 if(!attrs.contains("BYTERANGE=")) {
@@ -87,6 +98,9 @@ public final class HlsMediaPlaylistPolicy {
 
     private static String attribute(Pattern pattern,String attributes) {
         Matcher m=pattern.matcher(attributes); return m.find()?m.group(1):null;
+    }
+    private static boolean isValidIv(String iv) {
+        return iv!=null&&iv.matches("0[xX][0-9a-fA-F]{32}");
     }
     private static String uriAttribute(String attributes) {
         return attribute(URI_ATTRIBUTE,attributes);
