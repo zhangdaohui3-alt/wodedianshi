@@ -72,10 +72,11 @@ public final class HlsMediaPlaylistPolicy {
             } else if(line.startsWith("#EXT-X-MAP:")) {
                 String attrs=line.substring("#EXT-X-MAP:".length());
                 String mapUrl=resolve(uriAttribute(attrs),finalPlaylistUrl);
-                if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
-                    unsupportedMapRange=true; initialization=null;
-                } else if(mapUrl==null) {
+                if(mapUrl==null) {
                     unsupportedMap=true; initialization=null;
+                    if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*"))unsupportedMapRange=true;
+                } else if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
+                    unsupportedMapRange=true; initialization=null;
                 } else {
                     // This preflight model stores one init map and probes the first
                     // media candidate. Reject a changed map rather than validating
