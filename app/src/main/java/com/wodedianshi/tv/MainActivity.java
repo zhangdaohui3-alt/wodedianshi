@@ -1358,6 +1358,17 @@ public class MainActivity extends Activity {
     status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");
   }
   private static final String VOD_HISTORY_KEY="vod_history_v1";
+  private String vodHistoryIdentity(String id,String url){
+    String stableId=id==null?"":id.trim();
+    if(!stableId.isEmpty())return "id:"+stableId;
+    String mediaUrl=url==null?"":url.trim();
+    return mediaUrl.isEmpty()?"":"url:"+mediaUrl;
+  }
+  private String vodHistoryIdentity(org.json.JSONObject entry){
+    if(entry==null)return "";
+    String stored=entry.optString("historyKey","");
+    return stored.isEmpty()?vodHistoryIdentity(entry.optString("id",""),entry.optString("url","")):stored;
+  }
   private ArrayList<org.json.JSONObject> readVodHistory(){
     ArrayList<org.json.JSONObject> list=new ArrayList<>();
     try{org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
@@ -1367,8 +1378,10 @@ public class MainActivity extends Activity {
     if(item==null)return;
     try{
       ArrayList<org.json.JSONObject> old=readVodHistory();org.json.JSONArray out=new org.json.JSONArray();
-      org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
-      for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
+      String historyKey=vodHistoryIdentity(item.identifier,item.url);
+      if(historyKey.isEmpty())return;
+      org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("historyKey",historyKey);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
+      for(org.json.JSONObject o:old){if(!historyKey.equals(vodHistoryIdentity(o)))out.put(o);if(out.length()>=100)break;}
       getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,out.toString()).apply();
     }catch(Exception ignored){}
   }
@@ -1396,7 +1409,7 @@ public class MainActivity extends Activity {
       }
       name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
       row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
-      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
+      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!vodHistoryIdentity(x).equals(vodHistoryIdentity(id,url)))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
       return row;
     }
   }
@@ -2086,7 +2099,7 @@ public class MainActivity extends Activity {
   }
   private void playVodInside(VodItem item){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
-    long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
+    long resumeAt=0;String historyKey=vodHistoryIdentity(item.identifier,item.url);for(org.json.JSONObject o:readVodHistory())if(!historyKey.isEmpty()&&historyKey.equals(vodHistoryIdentity(o))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
     if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
     startVodPlayback(item,0);
