@@ -20,6 +20,22 @@ public class MediaFormatPolicyTest {
         assertEquals(MediaFormatPolicy.MPEG_TS, MediaFormatPolicy.inferMimeType("https://cdn.example/channel?ext=m2ts"));
     }
 
+    @Test public void detectsSmoothStreamingManifest() {
+        assertEquals(MediaFormatPolicy.SMOOTH_STREAMING,
+                MediaFormatPolicy.inferMimeType("https://cdn.example/live.ism/Manifest"));
+        assertEquals(MediaFormatPolicy.SMOOTH_STREAMING,
+                MediaFormatPolicy.inferMimeType("https://cdn.example/live?format=smoothstreaming"));
+        assertNull(MediaFormatPolicy.inferMimeType("https://cdn.example/live.ism"));
+    }
+
+    @Test public void detectsRtspSchemeWithoutInventingMimeType() {
+        assertTrue(MediaFormatPolicy.isRtspUri("rtsp://camera.example/live"));
+        assertTrue(MediaFormatPolicy.isRtspUri("RTSP://camera.example/live?token=x"));
+        assertFalse(MediaFormatPolicy.isRtspUri("https://camera.example/live"));
+        assertFalse(MediaFormatPolicy.isRtspUri("not a uri"));
+        assertNull(MediaFormatPolicy.inferMimeType("rtsp://camera.example/live"));
+    }
+
     @Test public void leavesProgressiveFormatsToExtractorSniffing() {
         assertNull(MediaFormatPolicy.inferMimeType("https://cdn.example/movie.mp4"));
         assertNull(MediaFormatPolicy.inferMimeType("https://cdn.example/movie.mkv"));
@@ -31,5 +47,6 @@ public class MediaFormatPolicyTest {
         assertNull(MediaFormatPolicy.inferMimeType(null));
         assertNull(MediaFormatPolicy.inferMimeType(""));
         assertNull(MediaFormatPolicy.inferMimeType("   "));
+        assertFalse(MediaFormatPolicy.isRtspUri(null));
     }
 }
