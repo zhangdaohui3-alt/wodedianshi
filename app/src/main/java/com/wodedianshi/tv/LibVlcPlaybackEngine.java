@@ -113,6 +113,48 @@ public final class LibVlcPlaybackEngine {
         return isInitialized() && mediaPlayer.isPlaying();
     }
 
+    /**
+     * Current playback position in milliseconds. Returns zero when the engine
+     * is not ready or the native player has no valid timeline.
+     */
+    public long getTimeMs() {
+        if (!isInitialized()) return 0L;
+        try {
+            long value = mediaPlayer.getTime();
+            return Math.max(0L, value);
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    /**
+     * Media duration in milliseconds. Live streams and unprepared media may
+     * report zero or a negative value; callers must not treat that as seekable.
+     */
+    public long getLengthMs() {
+        if (!isInitialized()) return 0L;
+        try {
+            long value = mediaPlayer.getLength();
+            return Math.max(0L, value);
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    /** Seek only when the native engine exposes a positive duration. */
+    public boolean seekToMs(long positionMs) {
+        if (!isInitialized()) return false;
+        long duration = getLengthMs();
+        if (duration <= 0L) return false;
+        long target = Math.max(0L, Math.min(duration, positionMs));
+        try {
+            mediaPlayer.setTime(target);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     public void stop() {
         if (isInitialized()) mediaPlayer.stop();
     }
