@@ -3958,26 +3958,18 @@ public class MainActivity extends Activity {
       if(m==null||m.optInt("attempts",0)<2)return probeScore+label*0.01;
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-      double successRate=(double)ready/attempts;
-      double firstFrameRate=(double)m.optInt("firstFrames",0)/attempts;
-      double stableRate=(double)m.optInt("stablePlays",0)/attempts;
-      double readyPenalty=Math.min(120.0,m.optLong("avgReadyMs",0L)/200.0);
-      double firstFramePenalty=Math.min(180.0,m.optLong("avgFirstFrameMs",0L)/180.0);
-      // Decoder/sink warnings are weaker evidence than failed playback. Apply only
-      // a small capped ranking penalty; never convert them into an automatic failure.
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      double codecWarningPenalty=Math.min(60.0,codecWarnings*8.0);
       long lastSuccess=m.optLong("lastSuccess",0L);
       double recentSuccessBonus=0.0;
       if(lastSuccess>0L){
         double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastSuccess)/3600000.0);
         recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
       }
-      // Historical QoE should describe current source behavior, not punish a
-      // source forever for failures from months ago. Keep a small evidence floor
-      // while letting recent device playback dominate the ranking.
-      double qoeAdjustment=successRate*450.0+firstFrameRate*450.0+stableRate*700.0
-          -fail*90.0-buffers*55.0-readyPenalty-firstFramePenalty-codecWarningPenalty;
+      // Keep foreground and background rankings on the same attempt-normalized policy.
+      double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
+          attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
+          fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
+          codecWarnings);
       double historyWeight=sourceHistoryWeight(m.optLong("updated",0L));
       return probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
