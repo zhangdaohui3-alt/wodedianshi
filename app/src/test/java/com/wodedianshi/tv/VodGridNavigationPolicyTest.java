@@ -28,7 +28,7 @@ public class VodGridNavigationPolicyTest {
                 VodGridNavigationPolicy.targetPosition(7, 10, 4, VodGridNavigationPolicy.RIGHT));
         assertEquals(VodGridNavigationPolicy.NATIVE_FOCUS,
                 VodGridNavigationPolicy.targetPosition(4, 10, 4, VodGridNavigationPolicy.LEFT));
-        assertEquals(5, VodGridNavigationPolicy.targetPosition(5, 10, 4, VodGridNavigationPolicy.RIGHT));
+        assertEquals(6, VodGridNavigationPolicy.targetPosition(5, 10, 4, VodGridNavigationPolicy.RIGHT));
     }
 
     @Test public void invalidPositionsAndDirectionsDelegateToNativeGrid() {
