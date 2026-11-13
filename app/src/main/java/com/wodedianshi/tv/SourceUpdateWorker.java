@@ -287,6 +287,7 @@ public class SourceUpdateWorker extends Worker {
         String mediaUrl=manifestUrl;
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
+        boolean selectedAes128=false;
         ArrayList<String> segments=null;
         byte[] sample=null;
         long segmentStart=0L;
@@ -326,6 +327,7 @@ public class SourceUpdateWorker extends Worker {
           bestWidth=candidate.width;
           bestHeight=candidate.height;
           segments=candidateSegments;
+          selectedAes128=resources.aes128Encrypted;
           sample=candidateSample;
           segmentStart=candidateSegmentStart;
           break;
@@ -336,7 +338,7 @@ public class SourceUpdateWorker extends Worker {
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192);
-          secondSegmentOk=second!=null&&(resources.aes128Encrypted?second.length>=16:looksLikeHlsSegment(second));
+          secondSegmentOk=second!=null&&(selectedAes128?second.length>=16:looksLikeHlsSegment(second));
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
