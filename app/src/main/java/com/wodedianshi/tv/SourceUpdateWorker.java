@@ -341,7 +341,9 @@ public class SourceUpdateWorker extends Worker {
       }
       long before=android.os.SystemClock.elapsedRealtime();
       byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<8)return result;
+      // ADTS may be served as a minimal seven-byte no-CRC frame header.
+      // Container-specific validators enforce their own minimum sample sizes.
+      if(sample==null||sample.length<7)return result;
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
