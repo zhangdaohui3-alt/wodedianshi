@@ -54,7 +54,7 @@ public class HlsMediaPlaylistPolicyTest {
 
     @Test public void rejectsInitializationMapWithByteRangeUntilRangeAwareProbeExists() throws Exception {
         String playlist = "#EXTM3U\n"
-                + "#EXT-X-MAP:URI=\\"shared.mp4\\",BYTERANGE=\\"720@128\\"\n"
+                + "#EXT-X-MAP:URI=\"shared.mp4\",BYTERANGE=\"720@128\"\n"
                 + "#EXTINF:6,\nseg.m4s\n";
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist, "https://cdn.example/live/index.m3u8");
