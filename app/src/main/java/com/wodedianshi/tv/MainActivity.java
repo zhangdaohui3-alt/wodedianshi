@@ -3229,6 +3229,7 @@ public class MainActivity extends Activity {
   }
   private Button makeQuickMenuButton(String label,int background){
     Button button=new Button(this);
+    button.setId(View.generateViewId());
     button.setText(label);button.setAllCaps(false);button.setTextSize(16);
     button.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
     button.setPadding(dp(14),dp(6),dp(10),dp(6));
