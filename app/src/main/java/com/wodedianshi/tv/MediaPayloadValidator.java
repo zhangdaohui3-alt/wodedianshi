@@ -54,7 +54,7 @@ public final class MediaPayloadValidator {
         if (data == null || data.length < 8) return false;
         if (looksLikeHlsSegment(data)) return true;
         if (isValidFlvHeader(data)) return true;
-        return (data[0] & 0xFF) == 0xFF && ((data[1] & 0xF6) == 0xF0);
+        return isValidAdtsHeader(data);
     }
 
     /**
@@ -70,6 +70,23 @@ public final class MediaPayloadValidator {
         return "ftyp".equals(type) || "styp".equals(type)
                 || "moof".equals(type) || "mdat".equals(type)
                 || "sidx".equals(type);
+    }
+
+    private static boolean isValidAdtsHeader(byte[] data) {
+        if (data == null || data.length < 7
+                || (data[0] & 0xFF) != 0xFF
+                || ((data[1] & 0xF0) != 0xF0)
+                || ((data[1] & 0x06) != 0)) return false;
+        int samplingFrequencyIndex = (data[2] & 0x3C) >>> 2;
+        // ADTS indices 13–15 are reserved or forbidden.
+        if (samplingFrequencyIndex > 12) return false;
+        boolean protectionAbsent = (data[1] & 0x01) != 0;
+        int headerLength = protectionAbsent ? 7 : 9;
+        if (data.length < headerLength) return false;
+        int frameLength = ((data[3] & 0x03) << 11)
+                | ((data[4] & 0xFF) << 3)
+                | ((data[5] & 0xE0) >>> 5);
+        return frameLength >= headerLength;
     }
 
     private static boolean isValidFlvHeader(byte[] data) {
