@@ -12,9 +12,8 @@ public final class MediaPayloadValidator {
         if (data == null || data.length < 8) return false;
         int maxOffset = Math.min(187, data.length - 1);
         for (int offset = 0; offset <= maxOffset; offset++) {
-            if ((data[offset] & 0xFF) == 0x47
-                    && offset + 188 < data.length
-                    && (data[offset + 188] & 0xFF) == 0x47) {
+            if (isValidTransportStreamPacket(data, offset)
+                    && isValidTransportStreamPacket(data, offset + 188)) {
                 return true;
             }
         }
@@ -27,6 +26,20 @@ public final class MediaPayloadValidator {
      * page). Sample data may be range-truncated, so a valid declared box may
      * extend beyond the sample; its header must still be structurally valid.
      */
+    private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
+        if (data == null || offset < 0 || offset + 188 > data.length
+                || (data[offset] & 0xFF) != 0x47) return false;
+        int adaptationControl = (data[offset + 3] >>> 4) & 0x03;
+        if (adaptationControl == 0) return false;
+        if (adaptationControl == 2 || adaptationControl == 3) {
+            int adaptationLength = data[offset + 4] & 0xFF;
+            int maximum = adaptationControl == 2 ? 183 : 182;
+            if (adaptationLength > maximum) return false;
+            if (adaptationControl == 3 && 5 + adaptationLength >= 188) return false;
+        }
+        return true;
+    }
+
     public static boolean hasIsoBmffBox(byte[] data) {
         if (data == null || data.length < 8) return false;
         int offset = 0;
