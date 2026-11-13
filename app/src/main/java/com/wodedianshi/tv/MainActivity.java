@@ -4016,7 +4016,7 @@ public class MainActivity extends Activity {
         private boolean isCurrent(){return selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
         public void onPlaying(){uiHandler.post(()->{
           if(!isCurrent())return;
-          info.setText("VLC 已进入播放状态，正在确认视频输出…");
+          if(!libVlcVideoOutputReady)info.setText("VLC 已进入播放状态，正在确认视频输出…");
           saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Playing event; waiting for Vout event");
         });}
         public void onVideoOutput(int count){uiHandler.post(()->{
@@ -4032,7 +4032,6 @@ public class MainActivity extends Activity {
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
-            usingLibVlc=false;
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
           }
         });}
@@ -4071,9 +4070,9 @@ public class MainActivity extends Activity {
     cancelLibVlcWatchdog();
     libVlcWatchdog=()->{
       libVlcWatchdog=null;
-      if(!usingLibVlc||!libVlcVideoOutputReady||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
-      if(!libVlcEngine.isPlaying()){
-        saveLiveDiagnostic("ENGINE_STALLED","LibVLC no longer reports playing");
+      if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
+      if(!libVlcVideoOutputReady||!libVlcEngine.isPlaying()){
+        saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
         recordCurrentSourceFailure();
         advanceToNextSourceAutomatically("VLC 播放中断");
