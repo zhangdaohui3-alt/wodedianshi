@@ -42,7 +42,7 @@ public class XmlTvParserTest {
                 + "stop='20261112200000'><title>节目</title></programme></tv>";
         XmlTvProgram programme = parser().parse(stream(xml))
                 .programmesFor("c1").get(0);
-        assertEquals(8L * 60L * 60L * 1000L,
+        assertEquals(-8L * 60L * 60L * 1000L,
                 programme.startMillis - parseUtc("20261112190000"));
     }
 
