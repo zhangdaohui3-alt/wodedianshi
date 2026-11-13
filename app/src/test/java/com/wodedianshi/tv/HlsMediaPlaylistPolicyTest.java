@@ -95,12 +95,12 @@ public class HlsMediaPlaylistPolicyTest {
     }
 
     @Test public void detectsEncryptionChangesAfterMediaCandidateLimit() throws Exception {
-        StringBuilder playlist = new StringBuilder("#EXTM3U\\n")
-                .append("#EXT-X-KEY:METHOD=AES-128,URI=\\\"key.bin\\\"\\n");
+        StringBuilder playlist = new StringBuilder("#EXTM3U\n")
+                .append("#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n");
         for (int i = 0; i < 5; i++) {
-            playlist.append("#EXTINF:6,\\nseg").append(i).append(".ts\\n");
+            playlist.append("#EXTINF:6,\nseg").append(i).append(".ts\n");
         }
-        playlist.append("#EXT-X-KEY:METHOD=NONE\\n");
+        playlist.append("#EXT-X-KEY:METHOD=NONE\n");
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist.toString(), "https://cdn.example/live/index.m3u8");
         assertEquals(4, resources.mediaUrls.size());
@@ -108,12 +108,12 @@ public class HlsMediaPlaylistPolicyTest {
     }
 
     @Test public void detectsKeyRotationAfterMediaCandidateLimit() throws Exception {
-        StringBuilder playlist = new StringBuilder("#EXTM3U\\n")
-                .append("#EXT-X-KEY:METHOD=AES-128,URI=\\\"key-a.bin\\\"\\n");
+        StringBuilder playlist = new StringBuilder("#EXTM3U\n")
+                .append("#EXT-X-KEY:METHOD=AES-128,URI=\"key-a.bin\"\n");
         for (int i = 0; i < 5; i++) {
-            playlist.append("#EXTINF:6,\\nseg").append(i).append(".ts\\n");
+            playlist.append("#EXTINF:6,\nseg").append(i).append(".ts\n");
         }
-        playlist.append("#EXT-X-KEY:METHOD=AES-128,URI=\\\"key-b.bin\\\"\\n");
+        playlist.append("#EXT-X-KEY:METHOD=AES-128,URI=\"key-b.bin\"\n");
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist.toString(), "https://cdn.example/live/index.m3u8");
         assertEquals(4, resources.mediaUrls.size());
