@@ -64,9 +64,21 @@ public class MediaPayloadValidatorTest {
                 new byte[] {0,0,0,4,'m','o','o','f'}, "https://cdn.example/live.mp4"));
     }
 
+    @Test public void rejectsMalformedAdtsHeaders() {
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {(byte)0xFF,(byte)0xF1,0x3C,(byte)0x80,0x01,0x1F,(byte)0xFC}));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {(byte)0xFF,(byte)0xF7,0x50,(byte)0x80,0x01,0x1F,(byte)0xFC}));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {(byte)0xFF,(byte)0xF1,0x50,(byte)0x80,0x00,0x1F,(byte)0xFC}));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {(byte)0xFF,(byte)0xF0,0x50,(byte)0x80,0x01,0x1F,(byte)0xFC}));
+    }
+
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
         byte[] flv = new byte[] {'F','L','V',1,5,0,0,0,9};
-        byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
+        // Valid ADTS header: 44.1 kHz, stereo, one 8-byte frame.
+        byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0x50,(byte)0x80,0x01,0x1F,(byte)0xFC};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(flv));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(adts));
     }
