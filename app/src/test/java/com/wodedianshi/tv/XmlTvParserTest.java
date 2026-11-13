@@ -92,6 +92,21 @@ public class XmlTvParserTest {
         }
     }
 
+    @Test public void rejectsDocumentsOverConfiguredByteLimit() throws Exception {
+        XmlTvParser limited = new XmlTvParser(TimeZone.getTimeZone("Asia/Shanghai"),
+                10, 20, 96L);
+        String xml = "<tv><programme channel='c1' start='20261112190000 +0800' "
+                + "stop='20261112200000 +0800'><title>"
+                + new String(new char[160]).replace('\0', 'x')
+                + "</title></programme></tv>";
+        try {
+            limited.parse(stream(xml));
+            fail("document byte limit must be enforced");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("parse safe XMLTV"));
+        }
+    }
+
     private static ByteArrayInputStream stream(String value) {
         return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
     }
