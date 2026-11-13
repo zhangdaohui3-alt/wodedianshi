@@ -316,7 +316,7 @@ public class SourceUpdateWorker extends Worker {
           // Validate its container header before treating the media fragments as usable.
           if(resources.initializationUrl!=null){
             byte[] initialization=fetchSample(resources.initializationUrl,32768);
-            if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffBox(initialization)))continue;
+            if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization)))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
