@@ -124,6 +124,24 @@ public class XmlTvParserTest {
         }
     }
 
+    @Test public void indexedWindowKeepsLatestStartingOverlapAndNextStart() throws Exception {
+        String xml = "<tv>"
+                + "<programme channel='c1' start='20261112180000 +0800' stop='20261112210000 +0800'><title>长节目</title></programme>"
+                + "<programme channel='c1' start='20261112190000 +0800' stop='20261112193000 +0800'><title>短节目</title></programme>"
+                + "<programme channel='c1' start='20261112220000 +0800' stop='20261112230000 +0800'><title>下一档</title></programme>"
+                + "</tv>";
+        XmlTvParser.Catalog catalog = parser().parse(stream(xml));
+        long duringOverlap = parseUtc("20261112191500") - 8L * 60L * 60L * 1000L;
+        XmlTvParser.ProgrammeWindow overlap = catalog.windowFor("c1", duringOverlap);
+        assertEquals("短节目", overlap.current.title);
+        assertEquals("下一档", overlap.next.title);
+
+        long afterOverlap = parseUtc("20261112200000") - 8L * 60L * 60L * 1000L;
+        XmlTvParser.ProgrammeWindow gap = catalog.windowFor("c1", afterOverlap);
+        assertNull(gap.current);
+        assertEquals("下一档", gap.next.title);
+    }
+
     private static ByteArrayInputStream stream(String value) {
         return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
     }
