@@ -4011,9 +4011,14 @@ public class MainActivity extends Activity {
     info.setText(reason+"，正在切换独立 VLC 播放器…");
     saveLiveDiagnostic("ENGINE_FALLBACK","Media3 -> LibVLC; "+reason);
     try{
-      libVlcEngine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
-      libVlcEngine.setListener(new LibVlcPlaybackEngine.Listener(){
-        private boolean isCurrent(){return selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
+      final LibVlcPlaybackEngine engine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
+      libVlcEngine=engine;
+      engine.setListener(new LibVlcPlaybackEngine.Listener(){
+        // Native VLC events may already be queued on the UI thread when an engine is
+        // released. Match both the channel generation and the exact engine instance so
+        // a late callback from an old native player cannot revive or fail over a new tune.
+        private boolean isCurrent(){return libVlcEngine==engine&&selected==expectedChannel
+            &&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
         public void onPlaying(){uiHandler.post(()->{
           if(!isCurrent())return;
           if(!libVlcVideoOutputReady)info.setText("VLC 已进入播放状态，正在确认视频输出…");
@@ -4046,8 +4051,8 @@ public class MainActivity extends Activity {
         });}
         public void onStopped(){}
       });
-      libVlcEngine.initialize();
-      libVlcEngine.play(url);
+      engine.initialize();
+      engine.play(url);
       cancelLibVlcStartTimeout();
       libVlcStartTimeout=()->{
         libVlcStartTimeout=null;
