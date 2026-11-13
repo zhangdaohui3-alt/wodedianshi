@@ -3992,7 +3992,7 @@ public class MainActivity extends Activity {
       else if("ready".equals(event)){
         int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
         m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastSuccess",System.currentTimeMillis());
+        m.put("lastReady",System.currentTimeMillis());
       }else if("firstFrame".equals(event)){
         int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
         m.put("firstFrames",count+1);
