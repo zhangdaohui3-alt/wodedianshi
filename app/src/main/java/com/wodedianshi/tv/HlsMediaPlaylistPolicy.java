@@ -14,9 +14,11 @@ public final class HlsMediaPlaylistPolicy {
 
     public static final class Resources {
         public final String initializationUrl;
+        public final boolean unsupportedInitializationByteRange;
         public final ArrayList<String> mediaUrls;
-        Resources(String initializationUrl, ArrayList<String> mediaUrls) {
+        Resources(String initializationUrl, boolean unsupportedInitializationByteRange, ArrayList<String> mediaUrls) {
             this.initializationUrl = initializationUrl;
+            this.unsupportedInitializationByteRange = unsupportedInitializationByteRange;
             this.mediaUrls = mediaUrls;
         }
     }
@@ -24,12 +26,22 @@ public final class HlsMediaPlaylistPolicy {
     public static Resources parse(String playlist, String finalPlaylistUrl) throws Exception {
         ArrayList<String> media = new ArrayList<>();
         String initialization = null;
-        if (playlist == null || finalPlaylistUrl == null) return new Resources(null, media);
+        boolean unsupportedInitializationByteRange = false;
+        if (playlist == null || finalPlaylistUrl == null) return new Resources(null, false, media);
         String[] lines = playlist.replace("\r", "").split("\n");
         for (int i = 0; i < lines.length && media.size() < MAX_MEDIA_SEGMENTS; i++) {
             String line = lines[i].trim();
             if (line.startsWith("#EXT-X-MAP:")) {
-                initialization = resolve(uriAttribute(line.substring("#EXT-X-MAP:".length())), finalPlaylistUrl);
+                String attributes = line.substring("#EXT-X-MAP:".length());
+                // A MAP byte range may begin at a non-zero offset in a shared file.
+                // Until Range-aware fetching exists, reject this variant rather than
+                // validating unrelated bytes at offset zero.
+                if (attributes.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
+                    unsupportedInitializationByteRange = true;
+                    initialization = null;
+                } else {
+                    initialization = resolve(uriAttribute(attributes), finalPlaylistUrl);
+                }
             } else if (line.startsWith("#EXT-X-PART:")) {
                 String attrs = line.substring("#EXT-X-PART:".length());
                 // Byte-range parts need Range-aware fetching; do not falsely probe
@@ -49,7 +61,7 @@ public final class HlsMediaPlaylistPolicy {
                 }
             }
         }
-        return new Resources(initialization, media);
+        return new Resources(initialization, unsupportedInitializationByteRange, media);
     }
 
     private static String uriAttribute(String attributes) {
