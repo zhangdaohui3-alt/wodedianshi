@@ -159,6 +159,19 @@ public final class LibVlcPlaybackEngine {
         }
     }
 
+    /** 0=best fit, 1=fit screen/crop, 2=fill. */
+    public void setVideoScaleMode(int mode) {
+        if (!isInitialized()) return;
+        try {
+            MediaPlayer.ScaleType type = mode == 1
+                    ? MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+                    : mode == 2
+                    ? MediaPlayer.ScaleType.SURFACE_FILL
+                    : MediaPlayer.ScaleType.SURFACE_BEST_FIT;
+            mediaPlayer.setVideoScale(type);
+        } catch (Exception ignored) { }
+    }
+
     public void stop() {
         if (isInitialized()) mediaPlayer.stop();
     }
