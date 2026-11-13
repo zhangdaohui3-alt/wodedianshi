@@ -46,6 +46,18 @@ public class MediaPayloadValidatorTest {
         assertTrue(MediaPayloadValidator.looksLikeHlsSegment(moof));
     }
 
+    @Test public void initializationMapRequiresFileTypeAndMovieBoxes() {
+        byte[] init = new byte[] {
+                0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0,
+                0,0,0,16,'m','o','o','v',0,0,0,0,0,0,0,0
+        };
+        byte[] mediaFragment = new byte[] {0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0};
+        byte[] mediaData = new byte[] {0,0,0,16,'m','d','a','t',0,0,0,0,0,0,0,0};
+        assertTrue(MediaPayloadValidator.hasIsoBmffInitializationSegment(init));
+        assertFalse(MediaPayloadValidator.hasIsoBmffInitializationSegment(mediaFragment));
+        assertFalse(MediaPayloadValidator.hasIsoBmffInitializationSegment(mediaData));
+    }
+
     @Test public void rejectsBmffWordsInsideHtmlAndMalformedBoxSizes() {
         byte[] html = "<html><body>moof mdat</body></html>".getBytes();
         byte[] malformed = new byte[] {0,0,0,4,'m','o','o','f',0,0,0,0};
