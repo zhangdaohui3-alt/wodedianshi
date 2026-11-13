@@ -33,7 +33,7 @@ public class MediaPayloadValidatorTest {
     }
 
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
-        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
+        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9,0};
         byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(flv));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(adts));
