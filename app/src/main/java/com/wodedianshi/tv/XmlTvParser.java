@@ -32,22 +32,30 @@ import javax.xml.parsers.SAXParserFactory;
 public final class XmlTvParser {
     public static final int DEFAULT_MAX_CHANNELS = 10000;
     public static final int DEFAULT_MAX_PROGRAMMES = 100000;
+    public static final long DEFAULT_MAX_DOCUMENT_BYTES = 64L * 1024L * 1024L;
     private static final int MAX_TEXT_LENGTH = 4096;
 
     private final TimeZone defaultTimeZone;
     private final int maxChannels;
     private final int maxProgrammes;
+    private final long maxDocumentBytes;
 
     public XmlTvParser() {
-        this(TimeZone.getTimeZone("Asia/Shanghai"),
-                DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PROGRAMMES);
+        this(TimeZone.getTimeZone("Asia/Shanghai"), DEFAULT_MAX_CHANNELS,
+                DEFAULT_MAX_PROGRAMMES, DEFAULT_MAX_DOCUMENT_BYTES);
     }
 
     public XmlTvParser(TimeZone defaultTimeZone, int maxChannels, int maxProgrammes) {
+        this(defaultTimeZone, maxChannels, maxProgrammes, DEFAULT_MAX_DOCUMENT_BYTES);
+    }
+
+    public XmlTvParser(TimeZone defaultTimeZone, int maxChannels, int maxProgrammes,
+                       long maxDocumentBytes) {
         this.defaultTimeZone = (TimeZone) (defaultTimeZone == null
                 ? TimeZone.getTimeZone("Asia/Shanghai") : defaultTimeZone.clone());
         this.maxChannels = Math.max(1, maxChannels);
         this.maxProgrammes = Math.max(1, maxProgrammes);
+        this.maxDocumentBytes = Math.max(1L, maxDocumentBytes);
     }
 
     public Catalog parse(InputStream input) throws IOException {
@@ -68,7 +76,7 @@ public final class XmlTvParser {
             reader.setEntityResolver((publicId, systemId) -> {
                 throw new SAXException("External XML entities are not allowed");
             });
-            InputSource source = new InputSource(input);
+            InputSource source = new InputSource(new BoundedInputStream(input, maxDocumentBytes));
             reader.parse(source);
             return handler.toCatalog();
         } catch (Exception error) {
@@ -217,6 +225,40 @@ public final class XmlTvParser {
                         Long.compare(left.startMillis, right.startMillis));
             }
             return new Catalog(channelRecords, programmes, skippedProgrammes);
+        }
+    }
+
+    /** Stops oversized feeds even when they contain few enormous text nodes. */
+    private static final class BoundedInputStream extends java.io.FilterInputStream {
+        private final long maximumBytes;
+        private long bytesRead;
+
+        BoundedInputStream(InputStream input, long maximumBytes) {
+            super(input);
+            this.maximumBytes = maximumBytes;
+        }
+
+        @Override public int read() throws IOException {
+            if (bytesRead >= maximumBytes) {
+                int extra = in.read();
+                if (extra < 0) return -1;
+                throw new IOException("XMLTV document byte limit exceeded");
+            }
+            int value = in.read();
+            if (value >= 0) bytesRead++;
+            return value;
+        }
+
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (length == 0) return 0;
+            if (bytesRead >= maximumBytes) {
+                int extra = read();
+                return extra < 0 ? -1 : 0;
+            }
+            int allowed = (int) Math.min((long) length, maximumBytes - bytesRead);
+            int count = in.read(buffer, offset, allowed);
+            if (count > 0) bytesRead += count;
+            return count;
         }
     }
 
