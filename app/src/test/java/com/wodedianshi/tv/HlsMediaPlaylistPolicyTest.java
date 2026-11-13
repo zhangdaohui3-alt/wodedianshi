@@ -52,6 +52,17 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals("https://media.example/seg.ts", resources.mediaUrls.get(0));
     }
 
+    @Test public void rejectsInitializationMapWithByteRangeUntilRangeAwareProbeExists() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-MAP:URI=\\"shared.mp4\\",BYTERANGE=\\"720@128\\"\n"
+                + "#EXTINF:6,\nseg.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.unsupportedInitializationByteRange);
+        assertNull(resources.initializationUrl);
+        assertEquals(1, resources.mediaUrls.size());
+    }
+
     @Test public void capsAndDeduplicatesExtractedMediaResources() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-PART:DURATION=0.3,URI=\"a.m4s\"\n"

@@ -304,7 +304,7 @@ public class SourceUpdateWorker extends Worker {
           HlsMediaPlaylistPolicy.Resources resources=
               HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
           ArrayList<String> candidateSegments=resources.mediaUrls;
-          if(candidateSegments.isEmpty())continue;
+          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange)continue;
           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
           // Validate its container header before treating the media fragments as usable.
           if(resources.initializationUrl!=null){
