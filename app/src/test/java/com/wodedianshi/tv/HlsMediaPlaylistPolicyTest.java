@@ -74,7 +74,7 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals("https://cdn.example/keys/live.key", resources.encryptionKeyUrl);
     }
 
-    @Test public void methodNoneClearsAes128EncryptionForFollowingSegments() throws Exception {
+    @Test public void keepsAes128MetadataWhenPlaylistAlsoContainsMethodNone() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
                 + "#EXT-X-KEY:METHOD=NONE\n"
