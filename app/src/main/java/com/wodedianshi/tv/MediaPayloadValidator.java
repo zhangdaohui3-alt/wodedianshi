@@ -53,7 +53,7 @@ public final class MediaPayloadValidator {
     public static boolean looksLikeMediaPayload(byte[] data) {
         if (data == null || data.length < 8) return false;
         if (looksLikeHlsSegment(data)) return true;
-        if (data[0] == 'F' && data[1] == 'L' && data[2] == 'V') return true;
+        if (isValidFlvHeader(data)) return true;
         return (data[0] & 0xFF) == 0xFF && ((data[1] & 0xF6) == 0xF0);
     }
 
@@ -70,6 +70,16 @@ public final class MediaPayloadValidator {
         return "ftyp".equals(type) || "styp".equals(type)
                 || "moof".equals(type) || "mdat".equals(type)
                 || "sidx".equals(type);
+    }
+
+    private static boolean isValidFlvHeader(byte[] data) {
+        if (data == null || data.length < 9
+                || data[0] != 'F' || data[1] != 'L' || data[2] != 'V'
+                || (data[3] & 0xFF) != 1) return false;
+        // Only audio (bit 2) and video (bit 0) flags are defined.
+        if (((data[4] & 0xFF) & 0xFA) != 0) return false;
+        long dataOffset = uint32(data, 5);
+        return dataOffset >= 9L && dataOffset <= data.length;
     }
 
     private static long uint32(byte[] data, int offset) {
