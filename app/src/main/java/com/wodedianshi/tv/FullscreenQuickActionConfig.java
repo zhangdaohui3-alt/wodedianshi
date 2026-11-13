@@ -17,6 +17,10 @@ public final class FullscreenQuickActionConfig {
   public static final String SOURCE_PICKER = "source_picker";
   public static final String CHANNEL_LIST = "channel_list";
   public static final String ASPECT_RATIO = "aspect_ratio";
+  public static final String BUFFERING_SETTINGS = "buffering_settings";
+  public static final String DECODER_SETTINGS = "decoder_settings";
+  public static final String NETWORK_SPEED = "network_speed";
+  public static final String LIVE_DIAGNOSTICS = "live_diagnostics";
 
   private static final String SEPARATOR = ",";
 
@@ -29,6 +33,10 @@ public final class FullscreenQuickActionConfig {
     ids.add(SOURCE_PICKER);
     ids.add(CHANNEL_LIST);
     ids.add(ASPECT_RATIO);
+    ids.add(BUFFERING_SETTINGS);
+    ids.add(DECODER_SETTINGS);
+    ids.add(NETWORK_SPEED);
+    ids.add(LIVE_DIAGNOSTICS);
     return Collections.unmodifiableList(ids);
   }
 
