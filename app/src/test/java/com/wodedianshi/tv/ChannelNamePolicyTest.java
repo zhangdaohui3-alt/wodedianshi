@@ -20,6 +20,13 @@ public class ChannelNamePolicyTest {
         assertFalse(ChannelNamePolicy.isSatellite("Local News", "Local"));
     }
 
+    @Test public void mapsEnglishCityStationsToTheirChineseProvince() {
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("Fuzhou TV"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("Chengdu News"));
+        assertEquals("广东", ChannelNamePolicy.provinceForLocalChannel("Shenzhen City Channel"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("International News"));
+    }
+
     @Test public void leavesUnknownEnglishChannelNamesUnchanged() {
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("Fuzhou TV"));
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("CCTV-1"));
