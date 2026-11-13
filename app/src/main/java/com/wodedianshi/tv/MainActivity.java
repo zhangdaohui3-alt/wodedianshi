@@ -358,7 +358,8 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
+    return DecoderPolicy.isDecoderFallbackEnabled(
+        getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -633,8 +634,8 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",0);
-    String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
+    int current=prefs.getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE);
+    String[] modes={"系统默认解码（关闭备用解码器回退）","兼容解码（优先系统硬件解码，初始化失败时自动尝试其他解码器）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
       dialog.dismiss();
@@ -2796,6 +2797,21 @@ public class MainActivity extends Activity {
     final String address,data,error;
     PlaylistFetchResult(String a,String d,String e){address=a;data=d;error=e;}
   }
+  // Count actual mainland channel identities, not successful HTTP responses.
+  // A directory returning an empty playlist or only non-China entries must not
+  // poison the 12-hour cache and hide the next refresh attempt.
+  private int countRecognizedChinaChannels(){
+    HashSet<String> identities=new HashSet<>();
+    synchronized(channels){
+      for(Channel channel:channels){
+        if(channel==null)continue;
+        if(categoryMatch(channel,"央视")||categoryMatch(channel,"卫视")||categoryMatch(channel,"地方")){
+          identities.add(identity(channel.name,channel.group,channel.url));
+        }
+      }
+    }
+    return identities.size();
+  }
   private void loadChinaChannels(){
     if(chinaLoading){info.setText("国内频道列表正在整理，请稍候…");return;}
     android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
@@ -2827,17 +2843,23 @@ public class MainActivity extends Activity {
       StringBuilder errors=new StringBuilder();
       int added=fetchAndMergePlaylists(feeds,12000,errors);
       final int total=added;final String err=errors.toString();
-      // Keep the previous cache if no new entries were merged; persist only
-      // actual additions and avoid a full list rebuild when nothing changed.
+      final int recognizedChinaCount=countRecognizedChinaChannels();
+      // Keep the previous cache if no new entries were merged. Only advance the
+      // refresh timestamp after the resulting catalogue contains a minimally
+      // useful set of recognized mainland channels; HTTP 200 alone is not success.
       if(total>0)persist();
-      if(err.split(";").length<feeds.length){
+      final boolean usefulChinaDirectory=recognizedChinaCount>=3;
+      if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
       }
       runOnUiThread(()->{
         if(isFinishing())return;
         if(total>0)refresh();
         chinaLoading=false;
-        info.setText("国内频道轻量补充完成：新增 "+total+" 个条目；本地缓存已保留。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
+        String status=usefulChinaDirectory
+            ?"已识别 "+recognizedChinaCount+" 个国内频道条目，频道缓存已保留。"
+            :"国内有效频道不足（当前识别 "+recognizedChinaCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
+        info.setText("国内频道目录检查完成：新增 "+total+" 个条目；"+status+(err.isEmpty()?"":"部分来源暂不可用："+err));
       });
     });
   }
