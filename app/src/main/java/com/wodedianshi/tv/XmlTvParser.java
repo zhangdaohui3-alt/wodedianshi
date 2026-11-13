@@ -69,7 +69,6 @@ public final class XmlTvParser {
                 throw new SAXException("External XML entities are not allowed");
             });
             InputSource source = new InputSource(input);
-            source.setEncoding("UTF-8");
             reader.parse(source);
             return handler.toCatalog();
         } catch (Exception error) {

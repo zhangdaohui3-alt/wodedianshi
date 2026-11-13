@@ -46,6 +46,16 @@ public class XmlTvParserTest {
                 programme.startMillis - parseUtc("20261112190000"));
     }
 
+    @Test public void respectsDeclaredLegacyXmlEncoding() throws Exception {
+        String xml = "<?xml version='1.0' encoding='ISO-8859-1'?>"
+                + "<tv><programme channel='c1' start='20261112190000 +0800' "
+                + "stop='20261112200000 +0800'><title>Résumé</title></programme></tv>";
+        ByteArrayInputStream input = new ByteArrayInputStream(
+                xml.getBytes(java.nio.charset.Charset.forName("ISO-8859-1")));
+        XmlTvProgram programme = parser().parse(input).programmesFor("c1").get(0);
+        assertEquals("Résumé", programme.title);
+    }
+
     @Test public void skipsMalformedOrEmptyProgrammeRecords() throws Exception {
         String xml = "<tv>"
                 + "<programme channel='c1' start='bad' stop='20261112200000 +0800'>"
