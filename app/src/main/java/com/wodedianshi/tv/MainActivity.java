@@ -2085,6 +2085,11 @@ public class MainActivity extends Activity {
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.19 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
   }
   private void playVodInside(VodItem item){
+    if(item==null)return;
+    if(!VodPlaybackEligibilityPolicy.canPlay(item.identifier,item.url)){
+      toast("这是影片资料条目，暂时没有可验证的直接播放源");
+      return;
+    }
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
@@ -2100,14 +2105,27 @@ public class MainActivity extends Activity {
         if(adapter==null)return null;
         for(int p=0;p<adapter.getCount();p++){
           Object value=adapter.getItem(p);
-          if(value instanceof VodItem&&current.identifier.equals(((VodItem)value).identifier))
-            return p+1<adapter.getCount()&&adapter.getItem(p+1) instanceof VodItem?(VodItem)adapter.getItem(p+1):null;
+          if(value instanceof VodItem&&current.identifier.equals(((VodItem)value).identifier)){
+            for(int next=p+1;next<adapter.getCount();next++){
+              Object candidate=adapter.getItem(next);
+              if(candidate instanceof VodItem){
+                VodItem nextItem=(VodItem)candidate;
+                if(VodPlaybackEligibilityPolicy.canPlay(nextItem.identifier,nextItem.url))return nextItem;
+              }
+            }
+            return null;
+          }
         }
       }
     }
     return null;
   }
   private void startVodPlayback(VodItem item,long startPosition){
+    if(item==null)return;
+    if(!VodPlaybackEligibilityPolicy.canPlay(item.identifier,item.url)){
+      toast("该条目只有影片资料，没有可验证的直播放源");
+      return;
+    }
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
