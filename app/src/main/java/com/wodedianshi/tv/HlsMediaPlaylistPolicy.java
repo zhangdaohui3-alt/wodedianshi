@@ -8,9 +8,9 @@ import java.util.regex.Pattern;
 /** Extracts bounded media/init resources and conservative encryption metadata from HLS playlists. */
 public final class HlsMediaPlaylistPolicy {
     private static final int MAX_MEDIA_SEGMENTS = 4;
-    private static final Pattern URI_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*URI="([^"]+)"");
+    private static final Pattern URI_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*URI=\\\"([^\\\"]+)\\\"");
     private static final Pattern METHOD_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*METHOD=([^,\\s]+)");
-    private static final Pattern KEYFORMAT_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*KEYFORMAT="([^"]+)"");
+    private static final Pattern KEYFORMAT_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*KEYFORMAT=\\\"([^\\\"]+)\\\"");
     private HlsMediaPlaylistPolicy() {}
 
     public static final class Resources {
