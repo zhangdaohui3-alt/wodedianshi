@@ -335,13 +335,6 @@ public class SourceUpdateWorker extends Worker {
           byte[] second=fetchSample(secondUrl,8192);
           secondSegmentOk=looksLikeHlsSegment(second);
         }
-        long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
-        boolean secondSegmentOk=true;
-        if(segments.size()>1){
-          String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
-          byte[] second=fetchSample(secondUrl,8192);
-          secondSegmentOk=looksLikeHlsSegment(second);
-        }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
         int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
