@@ -94,6 +94,16 @@ public class HlsMediaPlaylistPolicyTest {
         assertTrue(resources.unsupportedEncryption);
     }
 
+    @Test public void parsesWindowsStyleCrLfPlaylistLines() throws Exception {
+        String playlist = "#EXTM3U\\r\\n"
+                + "#EXTINF:6.0,\\r\\n"
+                + "segment.ts\\r\\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertEquals(1, resources.mediaUrls.size());
+        assertEquals("https://cdn.example/live/segment.ts", resources.mediaUrls.get(0));
+    }
+
     @Test public void capsAndDeduplicatesExtractedMediaResources() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-PART:DURATION=0.3,URI=\"a.m4s\"\n"
