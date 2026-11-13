@@ -63,6 +63,38 @@ public final class MediaPayloadValidator {
         return false;
     }
 
+    /**
+     * An HLS fMP4 initialization section must contain the file-type and movie
+     * metadata boxes. A media fragment containing only moof/mdat is not an init map.
+     * The moov payload may exceed the bounded sample, so validate its header only.
+     */
+    public static boolean hasIsoBmffInitializationSegment(byte[] data) {
+        if (data == null || data.length < 16) return false;
+        int offset = 0;
+        boolean hasFileType = false;
+        boolean hasMovie = false;
+        int examined = 0;
+        while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+            long size = uint32(data, offset);
+            String type = fourCc(data, offset + 4);
+            int headerSize = 8;
+            if (size == 1L) {
+                if (offset + 16 > data.length) return false;
+                size = uint64(data, offset + 8);
+                headerSize = 16;
+            } else if (size == 0L) {
+                return false;
+            }
+            if (size < headerSize) return false;
+            if ("ftyp".equals(type)) hasFileType = true;
+            if ("moov".equals(type)) hasMovie = true;
+            if (hasFileType && hasMovie) return true;
+            if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+            offset += (int) size;
+        }
+        return false;
+    }
+
     public static boolean looksLikeMediaPayload(byte[] data) {
         // ADTS without CRC has a 7-byte fixed header; other validators enforce
         // their own larger minimum lengths before reading container fields.
