@@ -32,6 +32,22 @@ public class MediaPayloadValidatorTest {
         assertFalse(MediaPayloadValidator.hasIsoBmffBox(malformed));
     }
 
+    @Test public void familiarUrlSuffixNeverOverridesAnInvalidPayload() {
+        byte[] html = "<html><body>upstream error</body></html>".getBytes();
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(html, "https://cdn.example/live.ts"));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(html, "https://cdn.example/movie.mp4"));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(html, "https://cdn.example/movie.flv"));
+    }
+
+    @Test public void validMediaSignaturesRemainAcceptedWithKnownSuffixes() {
+        byte[] ts = new byte[376];
+        ts[0] = 0x47;
+        ts[188] = 0x47;
+        byte[] mp4 = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
+        assertTrue(MediaPayloadValidator.looksLikeMediaPayload(ts, "https://cdn.example/live.ts"));
+        assertTrue(MediaPayloadValidator.looksLikeMediaPayload(mp4, "https://cdn.example/movie.mp4"));
+    }
+
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
         byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
         byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
