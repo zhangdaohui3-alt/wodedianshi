@@ -567,12 +567,55 @@ public class MainActivity extends Activity {
   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
   private void scheduleAutomaticSourceUpdates(){
     WorkManager wm=WorkManager.getInstance(this);
-    boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
-    if(!enabled){wm.cancelUniqueWork("mytv_periodic_source_update");return;}
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    boolean enabled=prefs.getBoolean("auto_source_update",true);
+    if(!enabled){
+      wm.cancelUniqueWork("mytv_periodic_source_update");
+      wm.cancelUniqueWork("mytv_initial_source_discovery");
+      return;
+    }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+
+    // Do not make a first-time user wait for the first 24-hour periodic window.
+    // The worker already defers/retries while playback is active, so startup
+    // discovery can be queued safely without interrupting auto-resume playback.
+    String lastUpdate=prefs.getString("source_update_time","");
+    if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(enabled,lastUpdate)){
+      OneTimeWorkRequest initial=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+          .setConstraints(constraints).build();
+      wm.enqueueUniqueWork("mytv_initial_source_discovery",ExistingWorkPolicy.KEEP,initial);
+    }
+
+    // Refresh the visible catalogue after first-time discovery succeeds. The
+    // reload preserves the current channel identity and leaves the active
+    // player running; a work-ID marker prevents duplicate refreshes on resume.
+    androidx.lifecycle.LiveData<List<WorkInfo>> initialWork =
+        wm.getWorkInfosForUniqueWorkLiveData("mytv_initial_source_discovery");
+    androidx.lifecycle.Observer<List<WorkInfo>> initialObserver =
+        new androidx.lifecycle.Observer<List<WorkInfo>>() {
+      @Override public void onChanged(List<WorkInfo> workInfos){
+        if(workInfos==null)return;
+        for(WorkInfo workInfo:workInfos){
+          WorkInfo.State state=workInfo.getState();
+          if(state!=WorkInfo.State.SUCCEEDED&&state!=WorkInfo.State.FAILED
+              &&state!=WorkInfo.State.CANCELLED)continue;
+          initialWork.removeObserver(this);
+          if(state!=WorkInfo.State.SUCCEEDED)return;
+          String workId=workInfo.getId().toString();
+          android.content.SharedPreferences current=getSharedPreferences("mytv",0);
+          if(workId.equals(current.getString("source_initial_refresh_work_id","")))return;
+          reloadChannelsAfterSourceUpdate();
+          current.edit().putString("source_initial_refresh_work_id",workId).apply();
+          return;
+        }
+      }
+    };
+    // MainActivity extends platform Activity rather than LifecycleOwner, so
+    // observeForever is paired with explicit removal on every terminal state.
+    initialWork.observeForever(initialObserver);
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
