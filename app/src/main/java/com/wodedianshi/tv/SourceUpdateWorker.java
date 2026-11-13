@@ -304,17 +304,23 @@ public class SourceUpdateWorker extends Worker {
           HlsMediaPlaylistPolicy.Resources resources=
               HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
           ArrayList<String> candidateSegments=resources.mediaUrls;
-          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange)continue;
+          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedEncryption)continue;
+          // Media3 performs AES-128 decryption during playback. Preflight only verifies
+          // that the identity key endpoint returns the required 16-byte key; never log or persist it.
+          if(resources.aes128Encrypted){
+            byte[] key=fetchSample(resources.encryptionKeyUrl,32);
+            if(key==null||key.length!=16)continue;
+          }
           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
           // Validate its container header before treating the media fragments as usable.
           if(resources.initializationUrl!=null){
             byte[] initialization=fetchSample(resources.initializationUrl,32768);
-            if(initialization==null||!MediaPayloadValidator.hasIsoBmffBox(initialization))continue;
+            if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffBox(initialization)))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
           byte[] candidateSample=fetchSample(candidateSegmentUrl,32768);
-          if(!looksLikeHlsSegment(candidateSample))continue;
+          if(candidateSample==null||(resources.aes128Encrypted?candidateSample.length<16:!looksLikeHlsSegment(candidateSample)))continue;
           mediaUrl=candidateManifestUrl;
           bestBandwidth=candidate.bandwidth;
           bestWidth=candidate.width;
@@ -330,7 +336,7 @@ public class SourceUpdateWorker extends Worker {
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192);
-          secondSegmentOk=looksLikeHlsSegment(second);
+          secondSegmentOk=second!=null&&(resources.aes128Encrypted?second.length>=16:looksLikeHlsSegment(second));
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
