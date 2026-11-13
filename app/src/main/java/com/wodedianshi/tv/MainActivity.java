@@ -1252,22 +1252,31 @@ public class MainActivity extends Activity {
       // Deterministic D-pad navigation: up/down preserve the current column.
       card.setOnKeyListener((v,keyCode,event)->{
         if(event.getAction()!=android.view.KeyEvent.ACTION_DOWN||!(parent instanceof GridView))return false;
-        GridView owner=(GridView)parent;int current=owner.getPositionForView(card);
-        if(current<0)return false;int target=current;int count=owner.getAdapter()==null?0:owner.getAdapter().getCount();int columns=Math.max(1,owner.getNumColumns());
-        if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP){
-          if(current<columns){
-            View categoryTarget=vodCategoryFocusTarget;
-            if(categoryTarget!=null&&categoryTarget.isShown()){categoryTarget.requestFocus();return true;}
-            return false;
-          }
-          target=current-columns;
+        GridView owner=(GridView)parent;
+        int current=owner.getPositionForView(card);
+        int count=owner.getAdapter()==null?0:owner.getAdapter().getCount();
+        int direction=keyCode==android.view.KeyEvent.KEYCODE_DPAD_UP?VodGridNavigationPolicy.UP:
+            keyCode==android.view.KeyEvent.KEYCODE_DPAD_DOWN?VodGridNavigationPolicy.DOWN:
+            keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT?VodGridNavigationPolicy.LEFT:
+            keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT?VodGridNavigationPolicy.RIGHT:-1;
+        int target=VodGridNavigationPolicy.targetPosition(current,count,owner.getNumColumns(),direction);
+        if(target==VodGridNavigationPolicy.RETURN_TO_CATEGORIES){
+          View categoryTarget=vodCategoryFocusTarget;
+          if(categoryTarget!=null&&categoryTarget.isShown()){categoryTarget.requestFocus();return true;}
+          return false;
         }
-        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_DOWN)target=current+columns;
-        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT){if(current%columns==0)return false;target=current-1;}
-        else if(keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT){if(current%columns==columns-1||current+1>=count)return false;target=current+1;}
-        else return false;
-        if(target<0||target>=count)return true;final int destination=target;owner.setSelection(destination);
-        owner.post(()->{int childIndex=destination-owner.getFirstVisiblePosition();if(childIndex>=0&&childIndex<owner.getChildCount()){View next=owner.getChildAt(childIndex);if(next!=null)next.requestFocus();}else owner.smoothScrollToPosition(destination);});
+        // At a grid edge, hand the key back to Android's native focus/scroll
+        // engine. Consuming an out-of-range DOWN key traps focus on the last row.
+        if(target==VodGridNavigationPolicy.NATIVE_FOCUS)return false;
+        final int destination=target;
+        owner.setSelection(destination);
+        owner.post(()->{
+          int childIndex=destination-owner.getFirstVisiblePosition();
+          if(childIndex>=0&&childIndex<owner.getChildCount()){
+            View next=owner.getChildAt(childIndex);
+            if(next!=null)next.requestFocus();
+          }else owner.smoothScrollToPosition(destination);
+        });
         return true;
       });
       card.setOnLongClickListener(v->{if(item.identifier.startsWith("meta:")){toast("这是影片资料结果，暂不能作为播放收藏");return true;}toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
@@ -1281,12 +1290,40 @@ public class MainActivity extends Activity {
     int oldFirst=grid.getFirstVisiblePosition();
     View firstChild=grid.getChildAt(0);
     int oldTop=firstChild==null?0:firstChild.getTop();
+    View oldFocus=grid.findFocus();
+    int oldFocusedPosition=oldFocus==null?-1:grid.getPositionForView(oldFocus);
+    View oldFocusedCard=null;
+    if(oldFocusedPosition>=0){
+      int focusedChildIndex=oldFocusedPosition-grid.getFirstVisiblePosition();
+      if(focusedChildIndex>=0&&focusedChildIndex<grid.getChildCount())
+        oldFocusedCard=grid.getChildAt(focusedChildIndex);
+    }
+    int oldFocusedTop=oldFocusedCard==null?oldTop:oldFocusedCard.getTop();
     boolean preservePosition=category.equals(currentVodRenderedCategory)&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0;
     grid.setAdapter(new VodGridAdapter(items));
     if(preservePosition&&items!=null&&!items.isEmpty()){
-      final int restorePosition=Math.min(oldFirst,items.size()-1);
-      final int restoreTop=oldTop;
-      grid.post(()->grid.setSelectionFromTop(restorePosition,restoreTop));
+      final int restorePosition=Math.min(oldFocusedPosition>=0?oldFocusedPosition:oldFirst,items.size()-1);
+      final int restoreTop=oldFocusedPosition>=0?oldFocusedTop:oldTop;
+      final boolean restoreFocus=oldFocusedPosition>=0;
+      grid.post(()->{
+        grid.setSelectionFromTop(restorePosition,restoreTop);
+        if(restoreFocus)grid.post(()->{
+          int childIndex=restorePosition-grid.getFirstVisiblePosition();
+          if(childIndex>=0&&childIndex<grid.getChildCount()){
+            View child=grid.getChildAt(childIndex);
+            if(child!=null)child.requestFocus();
+          }else{
+            grid.smoothScrollToPosition(restorePosition);
+            grid.postDelayed(()->{
+              int retryIndex=restorePosition-grid.getFirstVisiblePosition();
+              if(retryIndex>=0&&retryIndex<grid.getChildCount()){
+                View retry=grid.getChildAt(retryIndex);
+                if(retry!=null)retry.requestFocus();
+              }
+            },120L);
+          }
+        });
+      });
     }else grid.post(()->grid.setSelection(0));
     currentVodRenderedCategory=category;
   }
