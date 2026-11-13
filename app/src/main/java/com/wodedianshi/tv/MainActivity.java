@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
   private boolean usingLibVlc=false;
   private boolean libVlcAttemptedForSource=false;
   private Runnable libVlcStartTimeout;
+  private Runnable libVlcWatchdog;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -3583,9 +3584,11 @@ public class MainActivity extends Activity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        recordCurrentSourceFailure();
         String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
-        advanceToNextSourceAutomatically("检测到当前源"+reason);
+        if(!tryStartLibVlcFallback("检测到当前源"+reason)){
+          recordCurrentSourceFailure();
+          advanceToNextSourceAutomatically("检测到当前源"+reason);
+        }
       }else if(missingAudio){
         // Audio-only failure must not discard a source whose video is rendering.
         // Keep the warning for diagnosis, but let the viewer continue watching.
@@ -3656,7 +3659,8 @@ public class MainActivity extends Activity {
       startCurrentSource();
     }else{
       sameSourceRecoveryCount=0;
-      advanceToNextSourceAutomatically(reason+"，当前源重连无效");
+      if(!tryStartLibVlcFallback(reason+"，Media3 重连无效"))
+        advanceToNextSourceAutomatically(reason+"，当前源重连无效");
     }
   }
   // A given live stream may report error, buffering timeout and ENDED almost together.
@@ -3692,7 +3696,8 @@ public class MainActivity extends Activity {
       if(player!=null&&selected==expectedChannel&&currentMediaId.equals(expectedMediaId)
           &&player.getPlaybackState()==Player.STATE_BUFFERING){
         saveLiveDiagnostic("BUFFER_TIMEOUT","still buffering after "+seconds+"s");
-        advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
+        if(!tryStartLibVlcFallback("连续缓冲超过 "+seconds+" 秒"))
+          advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
       }
     };
     uiHandler.postDelayed(bufferingFallback,seconds*1000L);
@@ -3767,6 +3772,10 @@ public class MainActivity extends Activity {
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    releaseLibVlcEngine();
+    usingLibVlc=false;
+    libVlcAttemptedForSource=false;
+    if(video!=null)video.setVisibility(View.VISIBLE);
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
@@ -3919,8 +3928,10 @@ public class MainActivity extends Activity {
             player.play();
             return;
           }
-          recordCurrentSourceFailure();
-          advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
+          if(!tryStartLibVlcFallback("Media3 播放错误（代码 "+e.errorCode+"）")){
+            recordCurrentSourceFailure();
+            advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
+          }
         }
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
@@ -3983,6 +3994,87 @@ public class MainActivity extends Activity {
       info.setText("直播播放器启动异常，正在尝试备用源…");
       if(!failedMediaId.isEmpty())advanceToNextSourceAutomatically("直播播放器启动异常");
     }
+  }
+  private boolean tryStartLibVlcFallback(String reason){
+    if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
+    libVlcAttemptedForSource=true;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    final String url=currentSourceUrl();
+    cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
+    releaseLivePlayerSafely();
+    if(video!=null)video.setVisibility(View.GONE);
+    if(vlcVideoLayout==null){if(video!=null)video.setVisibility(View.VISIBLE);return false;}
+    vlcVideoLayout.setVisibility(View.VISIBLE);
+    info.setText(reason+"，正在切换独立 VLC 播放器…");
+    saveLiveDiagnostic("ENGINE_FALLBACK","Media3 -> LibVLC; "+reason);
+    try{
+      libVlcEngine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
+      libVlcEngine.setListener(new LibVlcPlaybackEngine.Listener(){
+        private boolean isCurrent(){return selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
+        public void onPlaying(){uiHandler.post(()->{
+          if(!isCurrent())return;
+          cancelLibVlcStartTimeout();usingLibVlc=true;
+          sourceReadyAt=android.os.SystemClock.elapsedRealtime();
+          info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 引擎）");
+          showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
+          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Playing event; awaiting physical first-frame verification");
+          scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+        });}
+        public void onBuffering(float percent){uiHandler.post(()->{if(isCurrent()&&!usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");});}
+        public void onFailure(String detail){uiHandler.post(()->{
+          if(!isCurrent())return;
+          cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+          saveLiveDiagnostic("ENGINE_FAILURE","LibVLC "+detail);
+          releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+          recordCurrentSourceFailure();
+          advanceToNextSourceAutomatically("Media3 与 VLC 均无法播放当前源");
+        });}
+        public void onStopped(){}
+      });
+      libVlcEngine.initialize();
+      libVlcEngine.play(url);
+      cancelLibVlcStartTimeout();
+      libVlcStartTimeout=()->{
+        libVlcStartTimeout=null;
+        if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!usingLibVlc&&libVlcAttemptedForSource){
+          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not enter Playing within 18 seconds");
+          releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+          recordCurrentSourceFailure();
+          advanceToNextSourceAutomatically("VLC 连接超时");
+        }
+      };
+      uiHandler.postDelayed(libVlcStartTimeout,18000L);
+      return true;
+    }catch(RuntimeException ex){
+      cancelLibVlcStartTimeout();releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+      saveLiveDiagnostic("ENGINE_INIT_ERROR",ex.getClass().getSimpleName()+": "+ex.getMessage());
+      return false;
+    }
+  }
+  private void scheduleLibVlcWatchdog(String expectedMediaId,int expectedChannel){
+    cancelLibVlcWatchdog();
+    libVlcWatchdog=()->{
+      libVlcWatchdog=null;
+      if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
+      if(!libVlcEngine.isPlaying()){
+        saveLiveDiagnostic("ENGINE_STALLED","LibVLC no longer reports playing");
+        releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+        recordCurrentSourceFailure();
+        advanceToNextSourceAutomatically("VLC 播放中断");
+        return;
+      }
+      scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+    };
+    uiHandler.postDelayed(libVlcWatchdog,12000L);
+  }
+  private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
+  private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
+  private void releaseLibVlcEngine(){
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;
+    if(old!=null)try{old.release();}catch(RuntimeException ignored){}
+    if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
   }
   private String currentSourceUrl(){
     if(selected<0||selected>=channels.size())return "";
@@ -4494,6 +4586,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
+  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();releaseLibVlcEngine();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
