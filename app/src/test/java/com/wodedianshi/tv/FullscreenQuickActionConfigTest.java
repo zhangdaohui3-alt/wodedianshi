@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 public class FullscreenQuickActionConfigTest {
   @Test public void firstLaunchUsesStableDefaults() {
@@ -49,6 +50,18 @@ public class FullscreenQuickActionConfigTest {
         FullscreenQuickActionConfig.CHANNEL_LIST,
         FullscreenQuickActionConfig.FAVORITE),
         FullscreenQuickActionConfig.decodeLiveActions(encoded));
+  }
+
+  @Test public void optionalActionsAreAvailableWithoutChangingFirstLaunchDefaults() {
+    assertTrue(FullscreenQuickActionConfig.availableLiveActions().contains(
+        FullscreenQuickActionConfig.BUFFERING_SETTINGS));
+    assertTrue(FullscreenQuickActionConfig.availableLiveActions().contains(
+        FullscreenQuickActionConfig.DECODER_SETTINGS));
+    assertTrue(FullscreenQuickActionConfig.availableLiveActions().contains(
+        FullscreenQuickActionConfig.NETWORK_SPEED));
+    assertTrue(FullscreenQuickActionConfig.availableLiveActions().contains(
+        FullscreenQuickActionConfig.LIVE_DIAGNOSTICS));
+    assertEquals(4, FullscreenQuickActionConfig.defaultLiveActions().size());
   }
 
   @Test public void emptySelectionCannotAccidentallyDisableEveryAction() {
