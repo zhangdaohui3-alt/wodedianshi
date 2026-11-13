@@ -3215,6 +3215,10 @@ public class MainActivity extends Activity {
     if(FullscreenQuickActionConfig.SOURCE_PICKER.equals(id))return "选择播放源";
     if(FullscreenQuickActionConfig.CHANNEL_LIST.equals(id))return "打开频道列表";
     if(FullscreenQuickActionConfig.ASPECT_RATIO.equals(id))return "画面比例";
+    if(FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id))return "卡顿自动换源";
+    if(FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id))return "解码器设置";
+    if(FullscreenQuickActionConfig.NETWORK_SPEED.equals(id))return "网速显示开关";
+    if(FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id))return "查看播放诊断";
     return "";
   }
   private void runLiveQuickAction(String id){
@@ -3222,6 +3226,10 @@ public class MainActivity extends Activity {
     else if(FullscreenQuickActionConfig.SOURCE_PICKER.equals(id))showSourcePicker();
     else if(FullscreenQuickActionConfig.CHANNEL_LIST.equals(id))showFullscreenChannelMenu();
     else if(FullscreenQuickActionConfig.ASPECT_RATIO.equals(id))showAspectRatioDialog(video,"live_aspect_mode");
+    else if(FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id))bufferingSwitchSettingsDialog();
+    else if(FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id))decoderSettingsDialog();
+    else if(FullscreenQuickActionConfig.NETWORK_SPEED.equals(id))toggleNetworkSpeed();
+    else if(FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id))showLiveDiagnostics();
   }
   private ArrayList<String> savedLiveQuickActions(){
     String encoded=getSharedPreferences("mytv",0).getString(LIVE_QUICK_ACTIONS_PREF,null);
@@ -3271,13 +3279,13 @@ public class MainActivity extends Activity {
     hint.setText("菜单键 / 设置键打开此面板　·　左右切换栏目　·　返回关闭");
     hint.setTextColor(Color.rgb(165,184,204));hint.setTextSize(12);
     hint.setPadding(dp(8),dp(10),dp(8),0);panel.addView(hint);
-    final String[] categories={"频道操作","画面设置","编辑快捷菜单"};
+    final String[] categories={"频道操作","播放优化","画面设置","诊断信息","编辑快捷菜单"};
     final ArrayList<Button> categoryButtons=new ArrayList<>();
     final int[] selectedCategory={0};
     Runnable[] renderRight=new Runnable[1];
     renderRight[0]=()->{
       right.removeAllViews();
-      if(selectedCategory[0]==2){
+      if(selectedCategory[0]==4){
         Button edit=makeQuickMenuButton("编辑项目、增减和排序",Color.rgb(35,65,91));
         edit.setOnClickListener(v->{dialog.dismiss();showLiveQuickActionEditor();});
         right.addView(edit,new LinearLayout.LayoutParams(-1,dp(58)));
@@ -3289,9 +3297,20 @@ public class MainActivity extends Activity {
       }
       ArrayList<String> categoryActions=new ArrayList<>();
       for(String id:enabled){
-        boolean belongs=selectedCategory[0]==0
-            ?!FullscreenQuickActionConfig.ASPECT_RATIO.equals(id)
-            :FullscreenQuickActionConfig.ASPECT_RATIO.equals(id);
+        boolean belongs;
+        if(selectedCategory[0]==0){
+          belongs=FullscreenQuickActionConfig.FAVORITE.equals(id)
+              ||FullscreenQuickActionConfig.SOURCE_PICKER.equals(id)
+              ||FullscreenQuickActionConfig.CHANNEL_LIST.equals(id);
+        }else if(selectedCategory[0]==1){
+          belongs=FullscreenQuickActionConfig.BUFFERING_SETTINGS.equals(id)
+              ||FullscreenQuickActionConfig.DECODER_SETTINGS.equals(id)
+              ||FullscreenQuickActionConfig.NETWORK_SPEED.equals(id);
+        }else if(selectedCategory[0]==2){
+          belongs=FullscreenQuickActionConfig.ASPECT_RATIO.equals(id);
+        }else{
+          belongs=FullscreenQuickActionConfig.LIVE_DIAGNOSTICS.equals(id);
+        }
         if(belongs)categoryActions.add(id);
       }
       if(categoryActions.isEmpty()){
