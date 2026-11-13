@@ -676,6 +676,7 @@ public class MainActivity extends Activity {
   private boolean vodUsingLibVlc=false, vodFallbackAttempted=false;
   private long vodSessionGeneration=0L;
   private Runnable vodPendingSeekTask;
+  private Runnable vodPlaybackWatchdog;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
   private TextView vodPositionLabel,vodDurationLabel;
@@ -2350,11 +2351,13 @@ public class MainActivity extends Activity {
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
      Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
-     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();if(vodPlayer!=null){pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();if(vodPlayer!=null){pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
       final ExoPlayer vodListenerOwner=vodPlayer;
+      final boolean[] vodHasVideoTrack={false},vodRenderedFirstFrame={false};
+      final long[] vodReadySince={0L},vodLastAdvanceAt={0L},vodLastPosition={0L};
       vodPlayer.addAnalyticsListener(new AnalyticsListener(){
         private boolean isCurrentVod(){return vodListenerOwner==MainActivity.this.vodPlayer;}
         @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
@@ -2364,13 +2367,13 @@ public class MainActivity extends Activity {
           if(isCurrentVod())saveLiveDiagnostic("VOD_AUDIO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
         }
         @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
-          if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+          if(isCurrentVod()&&format!=null){vodHasVideoTrack[0]=true;saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);}
         }
         @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
           if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_AUDIO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" sampleRate="+format.sampleRate+" channels="+format.channelCount);
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
-          if(isCurrentVod())saveLiveDiagnostic("VOD_FIRST_FRAME","renderTimeMs="+renderTimeMs);
+          if(isCurrentVod()){vodRenderedFirstFrame[0]=true;vodLastAdvanceAt[0]=android.os.SystemClock.elapsedRealtime();vodLastPosition[0]=Math.max(0L,vodListenerOwner.getCurrentPosition());saveLiveDiagnostic("VOD_FIRST_FRAME","renderTimeMs="+renderTimeMs);}
         }
         @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
           if(isCurrentVod()&&droppedFrames>0)saveLiveDiagnostic("VOD_DROPPED_FRAMES","count="+droppedFrames+" windowMs="+elapsedMs);
@@ -2386,6 +2389,34 @@ public class MainActivity extends Activity {
          @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
          @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();});}
        });vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(activeVodItem!=null&&(vodPlayer!=null||vodFallbackBackend!=null)){saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+      vodPlaybackWatchdog=new Runnable(){
+        @Override public void run(){
+          if(vodListenerOwner!=vodPlayer||vodPlayerDialog!=d||activeVodItem!=item||!d.isShowing()||vodFallbackAttempted||vodUsingLibVlc)return;
+          long now=android.os.SystemClock.elapsedRealtime();
+          int state=vodListenerOwner.getPlaybackState();
+          long position=Math.max(0L,vodListenerOwner.getCurrentPosition());
+          if(state!=Player.STATE_READY||!vodListenerOwner.getPlayWhenReady()){
+            vodReadySince[0]=0L;vodLastAdvanceAt[0]=now;vodLastPosition[0]=position;
+          }else{
+            if(vodReadySince[0]==0L){vodReadySince[0]=now;vodLastAdvanceAt[0]=now;vodLastPosition[0]=position;}
+            if(vodHasVideoTrack[0]&&!vodRenderedFirstFrame[0]&&now-vodReadySince[0]>=25000L){
+              saveLiveDiagnostic("VOD_WATCHDOG_NO_FIRST_FRAME","readyMs="+(now-vodReadySince[0]));
+              fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();});
+              return;
+            }
+            if(vodRenderedFirstFrame[0]){
+              if(position>vodLastPosition[0]+500L){vodLastPosition[0]=position;vodLastAdvanceAt[0]=now;}
+              else if(now-vodLastAdvanceAt[0]>=20000L){
+                saveLiveDiagnostic("VOD_WATCHDOG_STALLED","positionMs="+position+" stalledMs="+(now-vodLastAdvanceAt[0]));
+                fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();});
+                return;
+              }
+            }
+          }
+          uiHandler.postDelayed(this,2000L);
+        }
+      };
+      uiHandler.postDelayed(vodPlaybackWatchdog,2000L);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
