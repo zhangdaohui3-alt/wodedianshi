@@ -4046,7 +4046,7 @@ public class MainActivity extends Activity {
           cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
           saveLiveDiagnostic("ENGINE_FAILURE","LibVLC "+detail);
           releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-          recordCurrentSourceFailure();
+          // advanceToNextSourceAutomatically records this failed source exactly once.
           advanceToNextSourceAutomatically("Media3 与 VLC 均无法播放当前源");
         });}
         public void onStopped(){}
@@ -4059,7 +4059,7 @@ public class MainActivity extends Activity {
         if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!libVlcVideoOutputReady&&libVlcAttemptedForSource){
           saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not create a video output within 18 seconds");
           releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-          recordCurrentSourceFailure();
+          // Keep failure scoring centralized to avoid counting one URL twice.
           advanceToNextSourceAutomatically("VLC 连接超时");
         }
       };
@@ -4079,7 +4079,7 @@ public class MainActivity extends Activity {
       if(!libVlcVideoOutputReady||!libVlcEngine.isPlaying()){
         saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-        recordCurrentSourceFailure();
+        // advanceToNextSourceAutomatically owns the single failure-score update.
         advanceToNextSourceAutomatically("VLC 播放中断");
         return;
       }
