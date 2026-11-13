@@ -8,6 +8,7 @@ on:
       - 'fix/**'
       - 'upgrade/**'
       - 'feat/**'
+      - 'test/**'
 
 concurrency:
   # Keep builds on separate branches from cancelling each other.
