@@ -4016,12 +4016,25 @@ public class MainActivity extends Activity {
         private boolean isCurrent(){return selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
         public void onPlaying(){uiHandler.post(()->{
           if(!isCurrent())return;
-          cancelLibVlcStartTimeout();usingLibVlc=true;
-          sourceReadyAt=android.os.SystemClock.elapsedRealtime();
-          info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 引擎）");
-          showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
-          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Vout is active; physical rendered-frame verification remains outstanding");
-          scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+          info.setText("VLC 已进入播放状态，正在确认视频输出…");
+          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Playing event; waiting for Vout event");
+        });}
+        public void onVideoOutput(int count){uiHandler.post(()->{
+          if(!isCurrent())return;
+          if(count>0){
+            libVlcVideoOutputReady=true;
+            cancelLibVlcStartTimeout();
+            usingLibVlc=true;
+            sourceReadyAt=android.os.SystemClock.elapsedRealtime();
+            info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 视频输出）");
+            showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
+            saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
+            scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+          }else if(libVlcVideoOutputReady){
+            libVlcVideoOutputReady=false;
+            usingLibVlc=false;
+            saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
+          }
         });}
         public void onBuffering(float percent){uiHandler.post(()->{if(isCurrent()&&!usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");});}
         public void onFailure(String detail){uiHandler.post(()->{
@@ -4074,7 +4087,7 @@ public class MainActivity extends Activity {
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
   private void releaseLibVlcEngine(){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
-    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;
     if(old!=null)try{old.release();}catch(RuntimeException ignored){}
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
   }
