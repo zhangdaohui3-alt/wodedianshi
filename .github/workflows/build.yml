@@ -7,9 +7,11 @@ on:
       - main
       - 'fix/**'
       - 'upgrade/**'
+      - 'feat/**'
 
 concurrency:
-  group: my-tv-apk-build
+  # Keep builds on separate branches from cancelling each other.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
