@@ -57,6 +57,15 @@ public final class MediaPayloadValidator {
         return (data[0] & 0xFF) == 0xFF && ((data[1] & 0xF6) == 0xF0);
     }
 
+    /**
+     * Validates the sampled bytes even when the URL has a familiar media suffix.
+     * The address is accepted for call-site clarity/diagnostics only: a .ts or
+     * .mp4 extension must never turn an HTML/error payload into a valid source.
+     */
+    public static boolean looksLikeMediaPayload(byte[] data, String address) {
+        return looksLikeMediaPayload(data);
+    }
+
     private static boolean isMediaBox(String type) {
         return "ftyp".equals(type) || "styp".equals(type)
                 || "moof".equals(type) || "mdat".equals(type)
