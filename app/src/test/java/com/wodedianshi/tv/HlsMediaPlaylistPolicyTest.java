@@ -63,6 +63,26 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals(1, resources.mediaUrls.size());
     }
 
+    @Test public void rejectsInitializationMapWithoutUri() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-MAP:BYTERANGE=\"100@0\"\n"
+                + "#EXTINF:6,\nseg.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.unsupportedInitializationMap);
+    }
+
+    @Test public void rejectsChangingInitializationMapUntilTimelineIsTracked() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-MAP:URI=\"init-a.mp4\"\n"
+                + "#EXTINF:6,\nseg-a.m4s\n"
+                + "#EXT-X-MAP:URI=\"init-b.mp4\"\n"
+                + "#EXTINF:6,\nseg-b.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.unsupportedInitializationMap);
+    }
+
     @Test public void recognizesIdentityAes128KeyAndResolvesKeyUri() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-KEY:METHOD=AES-128,URI=\"../keys/live.key\"\n"
