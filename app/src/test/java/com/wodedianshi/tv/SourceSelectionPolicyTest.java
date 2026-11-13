@@ -98,4 +98,27 @@ public class SourceSelectionPolicyTest {
                 Arrays.asList("a", "b", "a", "c"), 0,
                 Collections.singleton("b"), Collections.emptySet()));
     }
+
+    @Test public void scanCursorFollowsLastUrlWhenPlaylistEntriesAreInserted() {
+        java.util.List<String> oldList = Arrays.asList("a", "b", "c");
+        String last = SourceSelectionPolicy.lastScannedKey(oldList, 0, 2);
+        java.util.List<String> changed = Arrays.asList("new", "a", "b", "c");
+        assertEquals(3, SourceSelectionPolicy.nextScanStart(changed, last, 2));
+    }
+
+    @Test public void scanCursorUsesLegacyIndexWhenLastUrlDisappears() {
+        assertEquals(2, SourceSelectionPolicy.nextScanStart(
+                Arrays.asList("a", "b", "c"), "missing-key", 5));
+    }
+
+    @Test public void scanCursorWrapsAtEndOfPlaylist() {
+        java.util.List<String> urls = Arrays.asList("a", "b", "c");
+        String last = SourceSelectionPolicy.lastScannedKey(urls, 1, 2);
+        assertEquals(0, SourceSelectionPolicy.nextScanStart(urls, last, 0));
+    }
+
+    @Test public void emptyScanDoesNotCreateCursorKey() {
+        assertEquals("", SourceSelectionPolicy.lastScannedKey(
+                Arrays.asList("a", "b"), 0, 0));
+    }
 }

@@ -113,9 +113,13 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
       }
-      int savedScanStart=savedPool.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_saved_scan_cursor",0),savedPool.size());
+      ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
+      for(Entry entry:savedPool)savedScanUrls.add(entry.url);
+      ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
+      for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
+      int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, prefs.getString("source_saved_scan_after_key",""), prefs.getInt("source_saved_scan_cursor",0));
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=candidates.isEmpty()?0:SourceSelectionPolicy.wrapIndex(prefs.getInt("source_scan_cursor",0),candidates.size());
+      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
@@ -179,7 +183,11 @@ public class SourceUpdateWorker extends Worker {
         }
         knownUrls.add(e.url);
       }
-      if(feedsOk==0){saveStatus(prefs,"检查失败：所有频道目录均无法连接（保留原频道源）",0);return Result.retry();}
+      // Even if every discovery directory is temporarily unavailable, continue
+      // rotating through already-saved source URLs. Existing channels still need
+      // health checks while public catalogue services are down; retry discovery
+      // separately after persisting these local probe results.
+      boolean discoveryUnavailable=feedsOk==0;
       // Keep each channel's best few distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -199,11 +207,13 @@ public class SourceUpdateWorker extends Worker {
       // a preflight score, not a guarantee of audio/video playback.
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+          .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
           .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result","成功读取 "+feedsOk+" 个目录；初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
-      return Result.success();
+      return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
   private static class Entry{
