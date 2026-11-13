@@ -1443,6 +1443,8 @@ public class MainActivity extends Activity {
   private void fallbackVodToLibVlc(Dialog dialog,VodItem item,PlayerView media3View,VLCVideoLayout vlcLayout,long resumePosition,Runnable onEnded){
     if(vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
     final long session=vodSessionGeneration;vodFallbackAttempted=true;
+    // Stop the Media3 watchdog before releasing its player; no stale tick may race the LibVLC session.
+    if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
     saveLiveDiagnostic("VOD_ENGINE_FALLBACK","Media3 -> LibVLC; resumeMs="+Math.max(0L,resumePosition));
     if(vodPlayer!=null){try{media3View.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();}catch(Exception ignored){}vodPlayer=null;}
     media3View.setVisibility(View.GONE);vlcLayout.setVisibility(View.VISIBLE);
@@ -2406,7 +2408,7 @@ public class MainActivity extends Activity {
               return;
             }
             if(vodRenderedFirstFrame[0]){
-              if(position>vodLastPosition[0]+500L){vodLastPosition[0]=position;vodLastAdvanceAt[0]=now;}
+              if(position!=vodLastPosition[0]){vodLastPosition[0]=position;vodLastAdvanceAt[0]=now;}
               else if(now-vodLastAdvanceAt[0]>=20000L){
                 saveLiveDiagnostic("VOD_WATCHDOG_STALLED","positionMs="+position+" stalledMs="+(now-vodLastAdvanceAt[0]));
                 fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();});
