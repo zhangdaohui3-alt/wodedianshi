@@ -48,6 +48,15 @@ public class MediaPayloadValidatorTest {
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(mp4, "https://cdn.example/movie.mp4"));
     }
 
+    @Test public void rejectsMalformedFlvHeaderFields() {
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {'F','L','V',2,5,0,0,0,9}));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {'F','L','V',1,(byte)0xFF,0,0,0,9}));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {'F','L','V',1,5,0,0,0,8}));
+    }
+
     @Test public void acceptsShortValidFmp4InitializationSamples() {
         byte[] sample = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(sample, "https://cdn.example/live.mp4"));
@@ -56,7 +65,7 @@ public class MediaPayloadValidatorTest {
     }
 
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
-        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
+        byte[] flv = new byte[] {'F','L','V',1,5,0,0,0,9};
         byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(flv));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(adts));
