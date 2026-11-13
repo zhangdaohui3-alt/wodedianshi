@@ -40,6 +40,32 @@ final class ChannelNamePolicy {
         {"西藏卫视", "TIBETSATELLITETV"}
     };
 
+    private static final String[][] LOCAL_CITY_ALIASES = {
+        {"北京", "BEIJING"}, {"天津", "TIANJIN"}, {"河北", "SHIJIAZHUANG", "TANGSHAN"},
+        {"山西", "TAIYUAN", "DATONG"}, {"内蒙古", "HOHHOT", "BAOTOU"},
+        {"辽宁", "SHENYANG", "DALIAN"}, {"吉林", "CHANGCHUN"}, {"黑龙江", "HARBIN"},
+        {"上海", "SHANGHAI"}, {"江苏", "NANJING", "SUZHOU", "WUXI"},
+        {"浙江", "HANGZHOU", "NINGBO", "WENZHOU"}, {"安徽", "HEFEI", "WUHU"},
+        {"福建", "FUZHOU", "XIAMEN", "QUANZHOU", "ZHANGZHOU"},
+        {"江西", "NANCHANG"}, {"山东", "JINAN", "QINGDAO"}, {"河南", "ZHENGZHOU", "LUOYANG"},
+        {"湖北", "WUHAN"}, {"湖南", "CHANGSHA"}, {"广东", "GUANGZHOU", "SHENZHEN", "DONGGUAN"},
+        {"广西", "NANNING", "GUILIN"}, {"海南", "HAIKOU", "SANYA"}, {"重庆", "CHONGQING"},
+        {"四川", "CHENGDU"}, {"贵州", "GUIYANG"}, {"云南", "KUNMING"},
+        {"西藏", "LHASA"}, {"陕西", "XIAN"}, {"甘肃", "LANZHOU"},
+        {"青海", "XINING"}, {"宁夏", "YINCHUAN"}, {"新疆", "URUMQI"}
+    };
+
+    static String provinceForLocalChannel(String metadata) {
+        String normalized = normalize(metadata);
+        if (normalized.isEmpty()) return "";
+        for (String[] aliases : LOCAL_CITY_ALIASES) {
+            for (int i = 1; i < aliases.length; i++) {
+                if (normalized.contains(normalize(aliases[i]))) return aliases[0];
+            }
+        }
+        return "";
+    }
+
     static String canonicalSatelliteName(String name) {
         String normalized = normalize(name);
         if (normalized.isEmpty()) return "";
