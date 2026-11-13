@@ -42,6 +42,10 @@ public final class HlsMediaPlaylistPolicy {
                 String method=attribute(METHOD_ATTRIBUTE,attrs);
                 String format=attribute(KEYFORMAT_ATTRIBUTE,attrs);
                 if("NONE".equals(method)) {
+                    // Resources currently expose playlist-level encryption metadata rather
+                    // than a per-segment key timeline. If encryption was already active,
+                    // fail closed instead of probing a later clear segment with the old key.
+                    if(aes128) unsupportedEncryption=true;
                     activeKeyUrl=null;
                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
                     String uri=uriAttribute(attrs);
