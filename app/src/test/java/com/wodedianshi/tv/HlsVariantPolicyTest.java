@@ -32,6 +32,13 @@ public class HlsVariantPolicyTest {
         assertEquals(5000L, variants.get(7).bandwidth);
     }
 
+    @Test public void detectsExtensionlessPlaylistPayloadsButNotEmbeddedHtmlText() {
+        assertTrue(HlsVariantPolicy.isPlaylist("\\uFEFF  #EXTM3U\\n#EXTINF:6,\\nseg.ts"));
+        assertFalse(HlsVariantPolicy.isPlaylist("<html><body>#EXTM3U</body></html>"));
+        assertFalse(HlsVariantPolicy.isPlaylist("#EXTINF:6,\\nseg.ts"));
+        assertFalse(HlsVariantPolicy.isPlaylist(null));
+    }
+
     @Test public void returnsEmptyForDirectMediaPlaylist() throws Exception {
         assertTrue(HlsVariantPolicy.parse(
                 "#EXTM3U\n#EXTINF:6.0,\nseg.ts\n",
