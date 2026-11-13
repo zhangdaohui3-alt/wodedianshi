@@ -95,9 +95,9 @@ public class HlsMediaPlaylistPolicyTest {
     }
 
     @Test public void parsesWindowsStyleCrLfPlaylistLines() throws Exception {
-        String playlist = "#EXTM3U\\r\\n"
-                + "#EXTINF:6.0,\\r\\n"
-                + "segment.ts\\r\\n";
+        String playlist = "#EXTM3U\r\n"
+                + "#EXTINF:6.0,\r\n"
+                + "segment.ts\r\n";
         HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
                 playlist, "https://cdn.example/live/index.m3u8");
         assertEquals(1, resources.mediaUrls.size());
