@@ -25,7 +25,7 @@ public final class HlsMediaPlaylistPolicy {
         ArrayList<String> media = new ArrayList<>();
         String initialization = null;
         if (playlist == null || finalPlaylistUrl == null) return new Resources(null, media);
-        String[] lines = playlist.replace("\\r", "").split("\\n");
+        String[] lines = playlist.replace("\r", "").split("\n");
         for (int i = 0; i < lines.length && media.size() < MAX_MEDIA_SEGMENTS; i++) {
             String line = lines[i].trim();
             if (line.startsWith("#EXT-X-MAP:")) {
