@@ -35,7 +35,9 @@ public final class HlsMediaPlaylistPolicy {
         if (playlist == null || finalPlaylistUrl == null)
             return new Resources(null,false,false,null,false,media);
         String[] lines = playlist.replace("\r", "").split("\n");
-        // Continue scanning the bounded playlist after the media URL cap is reached: key\n        // rotation or METHOD=NONE may appear later and must not be missed.\n        for (int i=0;i<lines.length;i++) {
+        // Continue scanning the bounded playlist after the media URL cap is reached: key
+        // rotation or METHOD=NONE may appear later and must not be missed.
+        for (int i=0;i<lines.length;i++) {
             String line=lines[i].trim();
             if(line.startsWith("#EXT-X-KEY:")) {
                 String attrs=line.substring("#EXT-X-KEY:".length());
