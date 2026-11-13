@@ -48,6 +48,13 @@ public class MediaPayloadValidatorTest {
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(mp4, "https://cdn.example/movie.mp4"));
     }
 
+    @Test public void acceptsShortValidFmp4InitializationSamples() {
+        byte[] sample = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
+        assertTrue(MediaPayloadValidator.looksLikeMediaPayload(sample, "https://cdn.example/live.mp4"));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(
+                new byte[] {0,0,0,4,'m','o','o','f'}, "https://cdn.example/live.mp4"));
+    }
+
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
         byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
         byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
