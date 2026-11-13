@@ -341,12 +341,15 @@ public class SourceUpdateWorker extends Worker {
       }
       long before=android.os.SystemClock.elapsedRealtime();
       byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<188)return result;
+      // ADTS may be served as a minimal seven-byte no-CRC frame header.
+      // Container-specific validators enforce their own minimum sample sizes.
+      if(sample==null||sample.length<7)return result;
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
-      boolean knownExtension=ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac");
-      if(!knownExtension&&!looksLikeMediaPayload(sample))return result;
+      // A known suffix is not evidence: CDNs and captive portals can return HTML
+      // or text with a .ts/.mp4 path. Require a real container/codec signature.
+      if(!MediaPayloadValidator.looksLikeMediaPayload(sample,ext))return result;
       result.valid=true;
       result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
       return result;
