@@ -1457,6 +1457,7 @@ public class MainActivity extends Activity {
         @Override public void onEnded(){if(current()&&onEnded!=null)onEnded.run();}
       });
       backend.play(item.url);
+      backend.setVideoScaleMode(getSharedPreferences("mytv",0).getInt("vod_aspect_mode",0));
       if(resumePosition>0L){final int[] attempts={0};vodPendingSeekTask=new Runnable(){@Override public void run(){if(session!=vodSessionGeneration||vodFallbackBackend!=backend||!vodUsingLibVlc)return;if(backend.getDurationMs()>0L){backend.seekToMs(resumePosition);vodPendingSeekTask=null;}else if(++attempts[0]<20)uiHandler.postDelayed(this,500L);else vodPendingSeekTask=null;}};uiHandler.postDelayed(vodPendingSeekTask,500L);}
     }catch(Exception error){releaseVodFallback();toast("LibVLC 备用播放器启动失败："+error.getMessage());saveLiveDiagnostic("VOD_LIBVLC_START_FAILURE","type="+error.getClass().getSimpleName());}
   }
@@ -2349,7 +2350,7 @@ public class MainActivity extends Activity {
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);vodTopControls[0]=heading;
     Button favorite=new Button(this);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");favorite.setAllCaps(false);favorite.setTextSize(14);favorite.setFocusable(true);favorite.setFocusableInTouchMode(true);styleVodTopControl(favorite);favorite.setOnClickListener(v->{toggleVodFavorite(item);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");});FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(4);favoriteParams.rightMargin=dp(116);stage.addView(favorite,favoriteParams);vodTopControls[1]=favorite;
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
-     Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
+     Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showVodAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();if(vodPlayer!=null){pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
@@ -3301,6 +3302,19 @@ public class MainActivity extends Activity {
     persist();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
+  }
+  private void showVodAspectRatioDialog(PlayerView target,String preferenceKey){
+    String[] choices={"完整显示（保留比例）","铺满屏幕（边缘可能裁切）","拉伸全屏（可能变形）"};
+    int saved=getSharedPreferences("mytv",0).getInt(preferenceKey,0);
+    saved=Math.max(0,Math.min(2,saved));
+    showHoverChoiceDialog("画面比例",choices,"取消",saved,which->{
+      int mode=which==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:
+        which==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:
+        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;
+      if(target!=null)target.setResizeMode(mode);
+      if(vodFallbackBackend!=null)vodFallbackBackend.setVideoScaleMode(which);
+      getSharedPreferences("mytv",0).edit().putInt(preferenceKey,which).apply();
+    });
   }
   private void showAspectRatioDialog(PlayerView target,String preferenceKey){
     if(target==null)return;
