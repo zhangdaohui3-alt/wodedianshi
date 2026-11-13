@@ -2257,9 +2257,9 @@ public class MainActivity extends Activity {
         if(vodPlayer==null)return;
         long duration=vodPlayer.getDuration();
         if(duration<=0)return;
-        long target=Math.max(0L,Math.min(duration,vodPlayer.getCurrentPosition()+delta));
+        long target=VodTimelinePolicy.addAndClamp(vodPlayer.getCurrentPosition(),delta,duration);
         vodPlayer.seekTo(target);
-        setProgress((int)Math.max(0,Math.min(1000,target*1000L/duration)));
+        setProgress(VodTimelinePolicy.toProgress(target,duration));
         if(vodPositionLabel!=null)vodPositionLabel.setText(formatVodTime(target));
       }
       @Override public boolean onKeyDown(int keyCode,KeyEvent event){
@@ -2299,13 +2299,13 @@ public class MainActivity extends Activity {
     hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);stage.requestFocus();};stage.postDelayed(hideVodSeekTask[0],2500);
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
-      public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(vodPlayer.getDuration()*bar.getProgress()/1000L);}
-      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser&&vodPlayer!=null&&vodPlayer.getDuration()>0)vodPositionLabel.setText(formatVodTime(vodPlayer.getDuration()*progress/1000L));}
+      public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(VodTimelinePolicy.fromProgress(bar.getProgress(),vodPlayer.getDuration()));}
+      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser&&vodPlayer!=null&&vodPlayer.getDuration()>0)vodPositionLabel.setText(formatVodTime(VodTimelinePolicy.fromProgress(progress,vodPlayer.getDuration())));}
     });
     vodUiUpdater=new Runnable(){public void run(){
       if(vodPlayer==null||vodPlayerDialog!=d||!d.isShowing())return;
       long duration=vodPlayer.getDuration(),position=vodPlayer.getCurrentPosition();
-      if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress((int)Math.max(0,Math.min(1000,position*1000L/duration)));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
+      if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress(VodTimelinePolicy.toProgress(position,duration));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
       if(!vodSeekBar.isPressed())vodPositionLabel.setText(formatVodTime(position));
       playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");
       uiHandler.postDelayed(this,500);
