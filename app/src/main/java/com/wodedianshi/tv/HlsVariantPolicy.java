@@ -32,7 +32,7 @@ public final class HlsVariantPolicy {
 
     /** True only when the payload begins with the HLS playlist marker (BOM/space tolerant). */
     public static boolean isPlaylist(String manifest) {
-        return manifest != null && manifest.replace("\\uFEFF", "").trim().startsWith("#EXTM3U");
+        return manifest != null && manifest.replace(String.valueOf((char)0xFEFF), "").trim().startsWith("#EXTM3U");
     }
 
     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
