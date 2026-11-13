@@ -341,7 +341,7 @@ public class SourceUpdateWorker extends Worker {
       }
       long before=android.os.SystemClock.elapsedRealtime();
       byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<188)return result;
+      if(sample==null||sample.length<8)return result;
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
