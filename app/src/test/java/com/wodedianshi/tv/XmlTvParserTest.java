@@ -137,7 +137,14 @@ public class XmlTvParserTest {
         assertEquals("下一档", overlap.next.title);
 
         long afterOverlap = parseUtc("20261112200000") - 8L * 60L * 60L * 1000L;
-        XmlTvParser.ProgrammeWindow gap = catalog.windowFor("c1", afterOverlap);
+        XmlTvParser.ProgrammeWindow stillCoveredByLongProgramme =
+                catalog.windowFor("c1", afterOverlap);
+        assertEquals("长节目", stillCoveredByLongProgramme.current.title);
+        assertEquals("下一档", stillCoveredByLongProgramme.next.title);
+
+        long afterLongProgramme = parseUtc("20261112213000")
+                - 8L * 60L * 60L * 1000L;
+        XmlTvParser.ProgrammeWindow gap = catalog.windowFor("c1", afterLongProgramme);
         assertNull(gap.current);
         assertEquals("下一档", gap.next.title);
     }
