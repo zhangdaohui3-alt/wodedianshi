@@ -63,6 +63,37 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals(1, resources.mediaUrls.size());
     }
 
+    @Test public void recognizesIdentityAes128KeyAndResolvesKeyUri() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\"../keys/live.key\"\n"
+                + "#EXTINF:6,\nseg.ts\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.aes128Encrypted);
+        assertFalse(resources.unsupportedEncryption);
+        assertEquals("https://cdn.example/keys/live.key", resources.encryptionKeyUrl);
+    }
+
+    @Test public void methodNoneClearsAes128EncryptionForFollowingSegments() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
+                + "#EXT-X-KEY:METHOD=NONE\n"
+                + "#EXTINF:6,\nseg.ts\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertFalse(resources.unsupportedEncryption);
+        assertTrue(resources.aes128Encrypted);
+    }
+
+    @Test public void rejectsSampleAesAndUnsupportedKeyFormats() throws Exception {
+        String playlist = "#EXTM3U\n"
+                + "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://license\"\n"
+                + "#EXTINF:6,\nseg.ts\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.unsupportedEncryption);
+    }
+
     @Test public void capsAndDeduplicatesExtractedMediaResources() throws Exception {
         String playlist = "#EXTM3U\n"
                 + "#EXT-X-PART:DURATION=0.3,URI=\"a.m4s\"\n"
