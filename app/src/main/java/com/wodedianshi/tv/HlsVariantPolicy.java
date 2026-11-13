@@ -4,7 +4,6 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,13 +47,22 @@ public final class HlsVariantPolicy {
                 try { width = Integer.parseInt(rm.group(1)); height = Integer.parseInt(rm.group(2)); }
                 catch (NumberFormatException ignored) {}
             }
+
+            // RFC 8216 places the URI on the next non-empty line. Do not scan
+            // past another tag: doing so can bind a malformed rendition to the
+            // following rendition's URI and create duplicate/wrong fallbacks.
             String child = "";
             for (int j = i + 1; j < lines.length; j++) {
                 String candidate = lines[j].trim();
-                if (!candidate.isEmpty() && !candidate.startsWith("#")) { child = candidate; break; }
+                if (candidate.isEmpty()) continue;
+                if (candidate.startsWith("#")) break;
+                child = candidate;
+                break;
             }
-            if (!child.isEmpty()) variants.add(new Variant(new URL(new URL(finalManifestUrl), child).toString(),
-                    bandwidth, width, height));
+            if (!child.isEmpty()) {
+                variants.add(new Variant(new URL(new URL(finalManifestUrl), child).toString(),
+                        bandwidth, width, height));
+            }
         }
         Collections.sort(variants, new Comparator<Variant>() {
             @Override public int compare(Variant a, Variant b) {
