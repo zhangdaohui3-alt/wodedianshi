@@ -55,7 +55,7 @@ final class ChannelNamePolicy {
         String n = canonicalSatelliteName(name);
         if (!n.isEmpty()) return true;
         String g = normalize(group);
-        return g.equals("SATELLITE") || g.equals("SATELLITE TV") || g.equals("卫视");
+        return g.equals("SATELLITE") || g.equals("SATELLITETV") || g.equals("卫视");
     }
 
     private static String normalize(String value) {
