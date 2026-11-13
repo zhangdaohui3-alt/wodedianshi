@@ -341,12 +341,13 @@ public class SourceUpdateWorker extends Worker {
       }
       long before=android.os.SystemClock.elapsedRealtime();
       byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<188)return result;
+      // Progressive containers can have valid headers in a short range sample;
+      // requiring 188 bytes here incorrectly rejects small fMP4/AAC responses.
+      // Conversely, a known extension must not bypass signature validation:
+      // captive portals and CDN errors often return HTTP 200 with HTML content.
+      if(sample==null||sample.length<8)return result;
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
-      URL url=new URL(address);
-      String ext=url.getPath().toLowerCase(Locale.ROOT);
-      boolean knownExtension=ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac");
-      if(!knownExtension&&!looksLikeMediaPayload(sample))return result;
+      if(!MediaPayloadValidator.looksLikePayloadForAddress(sample,address))return result;
       result.valid=true;
       result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
       return result;
