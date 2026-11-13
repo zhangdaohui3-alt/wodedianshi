@@ -70,6 +70,23 @@ public class XmlTvParserTest {
         assertEquals(3, catalog.skippedProgrammes);
     }
 
+    @Test public void resolvesCurrentAndNextProgrammeAndHandlesScheduleGaps() throws Exception {
+        String xml = "<tv>"
+                + "<programme channel='c1' start='20261112180000 +0800' stop='20261112190000 +0800'><title>早间</title></programme>"
+                + "<programme channel='c1' start='20261112193000 +0800' stop='20261112200000 +0800'><title>新闻</title></programme>"
+                + "<programme channel='c1' start='20261112200000 +0800' stop='20261112210000 +0800'><title>晚间</title></programme>"
+                + "</tv>";
+        XmlTvParser.Catalog catalog = parser().parse(stream(xml));
+        long duringNews = parseUtc("20261112194000") - 8L * 60L * 60L * 1000L;
+        XmlTvParser.ProgrammeWindow active = catalog.windowFor("c1", duringNews);
+        assertEquals("新闻", active.current.title);
+        assertEquals("晚间", active.next.title);
+        long duringGap = parseUtc("20261112191000") - 8L * 60L * 60L * 1000L;
+        XmlTvParser.ProgrammeWindow gap = catalog.windowFor("c1", duringGap);
+        assertNull(gap.current);
+        assertEquals("新闻", gap.next.title);
+    }
+
     @Test public void rejectsDoctypeAndExternalEntityPayloads() throws Exception {
         String xml = "<!DOCTYPE tv [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]>"
                 + "<tv><channel id='x'><display-name>&xxe;</display-name></channel></tv>";
