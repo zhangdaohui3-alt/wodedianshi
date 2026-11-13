@@ -3,7 +3,6 @@ package com.wodedianshi.tv;
 import android.content.Context;
 import android.net.Uri;
 import android.view.View;
-import android.widget.FrameLayout;
 
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
@@ -22,6 +21,7 @@ import java.util.ArrayList;
 public final class LibVlcPlaybackEngine {
     public interface Listener {
         void onPlaying();
+        void onVideoOutput(int count);
         void onBuffering(float percent);
         void onFailure(String reason);
         void onStopped();
@@ -49,6 +49,9 @@ public final class LibVlcPlaybackEngine {
 
     public void initialize() {
         release();
+        // release() hides the layout while tearing down any previous native session.
+        // Make it visible before attaching VLC's native video surfaces.
+        videoLayout.setVisibility(View.VISIBLE);
         ArrayList<String> options = new ArrayList<>();
         options.add("--no-video-title-show");
         options.add("--network-caching=1500");
@@ -61,6 +64,9 @@ public final class LibVlcPlaybackEngine {
             switch (event.type) {
                 case MediaPlayer.Event.Playing:
                     listener.onPlaying();
+                    break;
+                case MediaPlayer.Event.Vout:
+                    listener.onVideoOutput(event.getVoutCount());
                     break;
                 case MediaPlayer.Event.Buffering:
                     listener.onBuffering(event.getBuffering());
