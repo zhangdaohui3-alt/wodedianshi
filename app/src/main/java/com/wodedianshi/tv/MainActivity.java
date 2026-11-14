@@ -400,6 +400,7 @@ public class MainActivity extends Activity {
       HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
       ArrayList<Channel> compact=new ArrayList<>(channels.size());
       for(Channel c:channels){
+        normalizeBroadcasterLabel(c);
         if(c.backups==null)c.backups=new ArrayList<>();
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
         String key=identity(c);
@@ -455,12 +456,16 @@ public class MainActivity extends Activity {
     return value;
   }
   private boolean isCctvChannel(Channel c){
-    return canonicalChannelName(c==null?"":c.name).startsWith("CCTV-")
+    return (c!=null&&ChannelNamePolicy.canonicalBroadcasterName(
+        c.name,c.tvgName,c.tvgId,c.group).startsWith("CCTV-"))
+        ||canonicalChannelName(c==null?"":c.name).startsWith("CCTV-")
         ||(c!=null&&((c.name+" "+c.group).toUpperCase(Locale.ROOT).contains("CCTV")
         ||(c.name+" "+c.group).contains("央视")||(c.name+" "+c.group).contains("中央电视台")));
   }
   private int cctvSortOrder(Channel c){
-    String key=canonicalChannelName(c==null?"":c.name);
+    String key=c==null?"":ChannelNamePolicy.canonicalBroadcasterName(
+        c.name,c.tvgName,c.tvgId,c.group);
+    if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.name);
     if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.group);
     try{
       String n=key.substring(5);
@@ -3142,10 +3147,12 @@ public class MainActivity extends Activity {
           Channel metadataProbe=new Channel(name,line,entry.group);metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);String key=identity(metadataProbe);Channel same=channelsByIdentity.get(key);
           if(same!=null){
             same.mergeMetadata(entry.tvgId,entry.tvgName);
+            normalizeBroadcasterLabel(same);
             if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
+            normalizeBroadcasterLabel(fresh);
             channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;
           }
         }else{
