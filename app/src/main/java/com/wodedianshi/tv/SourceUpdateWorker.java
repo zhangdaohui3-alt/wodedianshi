@@ -91,7 +91,7 @@ public class SourceUpdateWorker extends Worker {
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
+        JSONObject c=saved.getJSONObject(i);byIdentity.put(ChannelIdentityPolicy.key(c.optString("name"),c.optString("tvgName",""),c.optString("tvgId",""),c.optString("group",""),c.optString("url","")),c);
         JSONArray src=c.optJSONArray("sources");
         if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
         knownUrls.add(c.optString("url"));
@@ -117,7 +117,7 @@ public class SourceUpdateWorker extends Worker {
           if(savedPool.size()>=20000)break;
           // A shared URL only needs one network probe, even if several channel
           // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
+          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,channel.optString("tvgId",""),channel.optString("tvgName",""),true));
         }
       }
       for(String feed:feeds){
@@ -195,12 +195,17 @@ public class SourceUpdateWorker extends Worker {
         if(!measured.valid)continue;
         // Known sources are re-tested and re-scored, but never inserted twice.
         if(knownUrls.contains(e.url))continue;
-        String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
+        String key=ChannelIdentityPolicy.key(e.name,e.tvgName,e.tvgId,e.group,e.url);JSONObject target=byIdentity.get(key);
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
-          target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
+          target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);
+          if(!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
+          if(!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
+          target.put("sources",sources);
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
+          if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
+          if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
           JSONArray sources=target.optJSONArray("sources");
           if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
           boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
@@ -289,13 +294,16 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
   }
   private static class Entry{
-    String name,url,group;boolean savedSource;
-    Entry(String n,String u,String g){this(n,u,g,false);}
-    Entry(String n,String u,String g,boolean saved){name=n;url=u;group=g;savedSource=saved;}
+    String name,url,group,tvgId,tvgName;boolean savedSource;
+    Entry(String n,String u,String g){this(n,u,g,"","",false);}
+    Entry(String n,String u,String g,boolean saved){this(n,u,g,"","",saved);}
+    Entry(String n,String u,String g,String id,String tvg,boolean saved){
+      name=n;url=u;group=g;tvgId=id==null?"":id;tvgName=tvg==null?"":tvg;savedSource=saved;
+    }
   }
   private void parsePlaylist(String data,List<Entry> out){
     for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
-      out.add(new Entry(source.name,source.url,source.group));
+      out.add(new Entry(source.name,source.url,source.group,source.tvgId,source.tvgName,false));
     }
   }
   private int sourceQualityScore(String address){
@@ -504,35 +512,6 @@ public class SourceUpdateWorker extends Worker {
   private String read(InputStream in,int max)throws Exception{
     ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
     while((n=in.read(b))!=-1){total+=n;if(total>max)throw new IOException("频道目录过大");out.write(b,0,n);}return out.toString("UTF-8");
-  }
-  private String canonicalName(String name){
-    String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
-    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)-?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(v);
-    if(m.find())return "CCTV-"+m.group(1);
-    String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
-    for(int i=1;i<cn.length;i++)if(v.matches(".*中央(?:电视台)?"+cn[i]+"套.*"))return "CCTV-"+i;
-    if(v.contains("中央电视台综合频道"))return "CCTV-1";
-    if(v.contains("中央电视台财经频道"))return "CCTV-2";
-    if(v.contains("中央电视台综艺频道"))return "CCTV-3";
-    if(v.contains("中央电视台中文国际频道"))return "CCTV-4";
-    if(v.contains("中央电视台体育频道"))return "CCTV-5";
-    if(v.contains("中央电视台电影频道"))return "CCTV-6";
-    v=v.replace("超高清","").replace("高清","").replace("超清","").replace("1080P","").replace("720P","").replace("HD","").replace("FHD","").replace("直播","");
-    if(v.endsWith("湖南台"))return "湖南卫视";
-    if(v.endsWith("浙江台"))return "浙江卫视";
-    if(v.endsWith("江苏台"))return "江苏卫视";
-    if(v.endsWith("东方台"))return "东方卫视";
-    if(v.endsWith("北京台"))return "北京卫视";
-    if(v.endsWith("广东台"))return "广东卫视";
-    return v;
-  }
-  private String identity(String name,String group,String url){
-    String v=canonicalName(name);
-    if(v.startsWith("CCTV-"))return v.toLowerCase(Locale.ROOT)+"|cctv";
-    if(v.contains("卫视"))return v.toLowerCase(Locale.ROOT)+"|satellite";
-    String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
-    try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}catch(Exception ignored){}
-    return base+"|url:"+(url==null?"":url.trim());
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
   private void saveStatus(SharedPreferences p,String result,int added){p.edit().putString("source_update_time",now()).putString("source_update_result",result).apply();}
