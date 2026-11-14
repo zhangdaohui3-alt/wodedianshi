@@ -3864,6 +3864,7 @@ public class MainActivity extends Activity {
     selected=next;
     updateLiveChannelPresentation();
     Channel target=channels.get(selected);
+    applyLastKnownGoodSource(target);
     if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
@@ -3878,10 +3879,10 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
+    // Reuse only a source that previously rendered a real first video frame.
+    // The sorter preserves this active URL while still ranking the remaining backups.
+    applyLastKnownGoodSource(channels.get(ix));
     sortSourcesByObservedQuality(channels.get(ix));
-    // A newly selected channel always starts at its highest-ranked current source.
-    // Manual source changes continue to use startCurrentSource() directly.
-    channels.get(ix).activeSource=0;
     startCurrentSource();
   }
   private void startCurrentSource(){
