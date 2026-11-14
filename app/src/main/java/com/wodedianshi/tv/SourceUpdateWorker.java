@@ -205,6 +205,7 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
+      trimProbeScores(measuredScores);
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
@@ -235,6 +236,18 @@ public class SourceUpdateWorker extends Worker {
     int width,height;
     long latencyMs;
     long bitrate;
+  }
+  // Keep the persisted preflight-score index bounded. Discovery feeds can rotate
+  // thousands of URLs over time; an unbounded JSON object would slow every update
+  // and gradually consume device storage. The current scan rewrites recent entries.
+  private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
+  private void trimProbeScores(JSONObject scores){
+    if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
+    int removeCount=scores.length()-MAX_PERSISTED_PROBE_SCORES;
+    ArrayList<String> keysToRemove=new ArrayList<>(removeCount);
+    Iterator<String> keys=scores.keys();
+    while(keys.hasNext()&&keysToRemove.size()<removeCount)keysToRemove.add(keys.next());
+    for(String key:keysToRemove)scores.remove(key);
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
