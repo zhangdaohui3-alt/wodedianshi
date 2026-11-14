@@ -777,6 +777,7 @@ public class MainActivity extends Activity {
   private long vodSessionGeneration=0L;
   private Runnable vodPendingSeekTask;
   private Runnable vodPlaybackWatchdog;
+  private Runnable vodFallbackStartupWatchdog;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
   private TextView vodPositionLabel,vodDurationLabel;
@@ -1542,10 +1543,10 @@ public class MainActivity extends Activity {
   private void vodPause(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.pause();else if(vodPlayer!=null)vodPlayer.pause();}
   private void vodResume(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
   private boolean vodSeekTo(long position){long duration=vodDurationMs();if(duration<=0L)return false;long target=VodTimelinePolicy.clampPosition(position,duration);if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.seekToMs(target);if(vodPlayer!=null){vodPlayer.seekTo(target);return true;}return false;}
-  private void releaseVodFallback(){if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}if(vodFallbackBackend!=null){try{vodFallbackBackend.release();}catch(Exception ignored){}vodFallbackBackend=null;}vodUsingLibVlc=false;if(vodVlcVideoLayout!=null)vodVlcVideoLayout.setVisibility(View.GONE);}
+  private void releaseVodFallback(){if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}if(vodFallbackStartupWatchdog!=null){uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;}if(vodFallbackBackend!=null){try{vodFallbackBackend.release();}catch(RuntimeException|LinkageError ignored){}vodFallbackBackend=null;}vodUsingLibVlc=false;if(vodVlcVideoLayout!=null)vodVlcVideoLayout.setVisibility(View.GONE);}
   private void fallbackVodToLibVlc(Dialog dialog,VodItem item,PlayerView media3View,VLCVideoLayout vlcLayout,long resumePosition,Runnable onEnded,Runnable onFailure){
     if(vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
-    final long session=vodSessionGeneration;vodFallbackAttempted=true;
+    final long session=vodSessionGeneration;final long fallbackStartedAt=android.os.SystemClock.elapsedRealtime();vodFallbackAttempted=true;
     // Stop the Media3 watchdog before releasing its player; no stale tick may race the LibVLC session.
     if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
     saveLiveDiagnostic("VOD_ENGINE_FALLBACK","Media3 -> LibVLC; resumeMs="+Math.max(0L,resumePosition));
@@ -1556,15 +1557,29 @@ public class MainActivity extends Activity {
       backend.setListener(new VodPlaybackBackend.Listener(){
         private boolean current(){return session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
         private void restorePosition(){if(current()&&resumePosition>0L&&backend.getDurationMs()>0L){backend.seekToMs(resumePosition);saveLiveDiagnostic("VOD_FALLBACK_RESUME","positionMs="+resumePosition);if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}}}
-        @Override public void onReady(){if(current()){saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");restorePosition();}}
+        @Override public void onReady(){if(current()){if(vodFallbackStartupWatchdog!=null){uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;}saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");restorePosition();}}
         @Override public void onVideoOutput(boolean available){if(current()){saveLiveDiagnostic("VOD_LIBVLC_VIDEO_OUTPUT","available="+available);if(available)restorePosition();}}
         @Override public void onFailure(String reason){if(current()){saveLiveDiagnostic("VOD_LIBVLC_FAILURE","reason="+safeDiagnosticDetail(reason));releaseVodFallback();if(onFailure!=null)onFailure.run();toast("备用播放器也无法播放："+reason);}}
         @Override public void onEnded(){if(current()&&onEnded!=null)onEnded.run();}
       });
+      vodFallbackStartupWatchdog=new Runnable(){
+        @Override public void run(){
+          if(session!=vodSessionGeneration||vodPlayerDialog!=dialog||activeVodItem!=item||vodFallbackBackend!=backend||!dialog.isShowing()){vodFallbackStartupWatchdog=null;return;}
+          if(android.os.SystemClock.elapsedRealtime()-fallbackStartedAt>=30000L){
+            saveLiveDiagnostic("VOD_LIBVLC_START_TIMEOUT","timeoutMs=30000; playing_event=false");
+            releaseVodFallback();
+            if(onFailure!=null)onFailure.run();
+            toast("备用播放器等待 30 秒仍未启动，已停止本次播放");
+            return;
+          }
+          uiHandler.postDelayed(this,1000L);
+        }
+      };
       backend.play(item.url);
+      uiHandler.postDelayed(vodFallbackStartupWatchdog,1000L);
       backend.setVideoScaleMode(getSharedPreferences("mytv",0).getInt("vod_aspect_mode",0));
       if(resumePosition>0L){final int[] attempts={0};vodPendingSeekTask=new Runnable(){@Override public void run(){if(session!=vodSessionGeneration||vodFallbackBackend!=backend||!vodUsingLibVlc)return;if(backend.getDurationMs()>0L){backend.seekToMs(resumePosition);vodPendingSeekTask=null;}else if(++attempts[0]<20)uiHandler.postDelayed(this,500L);else vodPendingSeekTask=null;}};uiHandler.postDelayed(vodPendingSeekTask,500L);}
-    }catch(Exception error){releaseVodFallback();if(onFailure!=null)onFailure.run();toast("LibVLC 备用播放器启动失败："+error.getMessage());saveLiveDiagnostic("VOD_LIBVLC_START_FAILURE","type="+error.getClass().getSimpleName());}
+    }catch(RuntimeException|LinkageError error){releaseVodFallback();if(onFailure!=null)onFailure.run();toast("LibVLC 备用播放器启动失败："+error.getClass().getSimpleName());saveLiveDiagnostic("VOD_LIBVLC_START_FAILURE","type="+error.getClass().getSimpleName());}
   }
 
   // China-first provider: CCTV/CNTV public programme catalogue.
