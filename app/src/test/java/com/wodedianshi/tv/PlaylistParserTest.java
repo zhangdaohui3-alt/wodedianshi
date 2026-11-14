@@ -16,6 +16,18 @@ public class PlaylistParserTest {
         assertEquals("https://example.com/live.m3u8", items.get(0).url);
     }
 
+    @Test public void streamingParserSupportsCrOnlyAndCountsWithoutIntermediateList() {
+        String m3u = "#EXTM3U\\r#EXTINF:-1,福建综合\\rhttps://a.example/live\\r"
+                + "#EXTINF:-1,湖南卫视\\rhttps://b.example/live";
+        final int[] count = {0};
+        int parsed = PlaylistParser.parseEach(m3u, 10, entry -> {
+            count[0]++;
+            assertTrue(entry.url.startsWith("https://"));
+        });
+        assertEquals(2, parsed);
+        assertEquals(2, count[0]);
+    }
+
     @Test public void usesTvgNameWhenDisplayNameIsMissing() {
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(
                 "#EXTINF:-1 tvg-name=\"湖南卫视\",\nhttps://example.com/hunan", 10);
