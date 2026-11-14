@@ -32,8 +32,9 @@ public final class LibVlcPlaybackEngine {
     private final VLCVideoLayout videoLayout;
     private LibVLC libVlc;
     private MediaPlayer mediaPlayer;
-    private Listener listener;
-    private boolean released = true;
+    // Native VLC events arrive off the UI thread; lifecycle writes must be visible to callbacks.
+    private volatile Listener listener;
+    private volatile boolean released = true;
 
     public LibVlcPlaybackEngine(Context context, VLCVideoLayout layout) {
         appContext = context.getApplicationContext();
