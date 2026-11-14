@@ -142,4 +142,22 @@ public class SourceSelectionPolicyTest {
         assertEquals("", SourceSelectionPolicy.lastScannedKey(
                 Arrays.asList("a", "b"), 0, 0));
     }
+
+    @Test public void channelFailoverStopsWhenThereIsOnlyOneChannel() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(1, 0, 0));
+    }
+
+    @Test public void channelFailoverStopsAfterEveryOtherChannelWasTried() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(4, 2, 3));
+    }
+
+    @Test public void channelFailoverAdvancesAndWrapsAround() {
+        assertEquals(0, ChannelFailoverPolicy.nextChannelIndex(4, 3, 1));
+        assertEquals(2, ChannelFailoverPolicy.nextChannelIndex(4, 1, 0));
+    }
+
+    @Test public void channelFailoverRejectsEmptyListAndInvalidIndex() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(0, 0, 0));
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(3, -1, 0));
+    }
 }
