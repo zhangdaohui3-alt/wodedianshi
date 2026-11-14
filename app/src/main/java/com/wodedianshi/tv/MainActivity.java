@@ -3754,11 +3754,12 @@ public class MainActivity extends Activity {
     String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     String crash=diagnostics.getString("last_uncaught_crash_v1","");
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
+    final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
-        .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
+        .setMessage(copyDetails+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",details));toast("诊断记录已复制");}
+          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",copyDetails));toast("诊断记录已复制");}
         }).setNegativeButton("关闭",null).show();
   }
 
