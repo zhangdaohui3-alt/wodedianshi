@@ -3321,39 +3321,74 @@ public class MainActivity extends Activity {
     worker.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(25000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.2 Android");c.setRequestProperty("Accept","*/*");int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);try(InputStream in=c.getInputStream()){String data=read(in);runOnUiThread(()->finishImport(data));}finally{c.disconnect();}}catch(Exception e){runOnUiThread(()->info.setText("导入失败："+e.getMessage()));}});
   }
   private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>50*1024*1024)throw new IOException("播放列表超过 50 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
-  private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
+  private void finishImport(String data){
+    if(info!=null)info.setText("正在整理频道数据…");
+    // Parsing, de-duplication and JSON persistence can involve tens of thousands
+    // of rows. Never run this work on the UI thread: doing so caused long freezes
+    // and process kills on phones/low-memory TV boxes.
+    worker.execute(()->{
+      try{
+        int added=parse(data);
+        persist();
+        runOnUiThread(()->{
+          if(isFinishing())return;
+          refresh();
+          if(info!=null)info.setText("导入完成，新增 "+added+" 个频道 · 共 "+channels.size()+" 个频道");
+        });
+      }catch(Throwable failure){
+        android.util.Log.e("MyTVImport","large playlist import failed",failure);
+        runOnUiThread(()->{
+          if(isFinishing())return;
+          if(info!=null)info.setText("频道导入失败，原有频道数据已保留："+failure.getClass().getSimpleName());
+          toast("导入失败，原有频道数据已保留");
+        });
+      }
+    });
+  }
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
     if(data==null)return 0;
-    int added=0;
-    List<PlaylistParser.ChannelSource> entries=PlaylistParser.parse(data,Integer.MAX_VALUE);
-    for(PlaylistParser.ChannelSource entry:entries){
+    final int[] added={0};
+    PlaylistParser.parseEach(data,Integer.MAX_VALUE,entry->{
       String name=entry.name==null||entry.name.trim().isEmpty()?"频道 "+(channels.size()+1):entry.name.trim();
       String line=entry.url;
       synchronized(channels){
         if(!channelsByUrl.containsKey(line)){
-          Channel metadataProbe=new Channel(name,line,entry.group);metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);String key=identity(metadataProbe);Channel same=channelsByIdentity.get(key);
+          Channel metadataProbe=new Channel(name,line,entry.group);
+          metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);
+          String key=identity(metadataProbe);
+          Channel same=channelsByIdentity.get(key);
           if(same!=null){
             same.mergeMetadata(entry.tvgId,entry.tvgName);
             normalizeBroadcasterLabel(same);
-            if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}
+            if(!same.backups.contains(line)){
+              same.backups.add(line);
+              channelsByUrl.put(line,same);
+              added[0]++;
+            }
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
             normalizeBroadcasterLabel(fresh);
-            channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;
+            channels.add(fresh);
+            channelsByIdentity.put(key,fresh);
+            channelsByUrl.put(line,fresh);
+            added[0]++;
           }
         }else{
           Channel existing=channelsByUrl.get(line);
-          if(existing!=null){existing.mergeMetadata(entry.tvgId,entry.tvgName);normalizeBroadcasterLabel(existing);}
+          if(existing!=null){
+            existing.mergeMetadata(entry.tvgId,entry.tvgName);
+            normalizeBroadcasterLabel(existing);
+          }
         }
       }
       if(parsingGeoChannelKeys!=null){
         Channel scoped=channelsByUrl.get(line);
         if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
       }
-    }
-    return added;
+    });
+    return added[0];
   }
   protected void onActivityResult(int req,int result,Intent data){
     super.onActivityResult(req,result,data);
