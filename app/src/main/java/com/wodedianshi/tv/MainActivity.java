@@ -3689,7 +3689,7 @@ public class MainActivity extends Activity {
       Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
         try{
           String message=error==null?"":String.valueOf(error.getMessage());
-          message=message.replaceAll("(?i)https?://\\\\S+","[URL]").replaceAll("[\\\\r\\\\n\\\\t]+"," ");
+          message=message.replaceAll("(?i)https?://\\S+","[URL]").replaceAll("[\\r\\n\\t]+"," ");
           if(message.length()>260)message=message.substring(0,260);
           StringBuilder detail=new StringBuilder();
           detail.append("thread=").append(thread==null?"?":thread.getName())
@@ -3698,7 +3698,7 @@ public class MainActivity extends Activity {
           if(error!=null){
             StackTraceElement[] frames=error.getStackTrace();
             int limit=Math.min(frames==null?0:frames.length,24);
-            for(int i=0;i<limit;i++)detail.append("\\n at ").append(frames[i].toString());
+            for(int i=0;i<limit;i++)detail.append("\n at ").append(frames[i].toString());
           }
           appContext.getSharedPreferences("mytv",0).edit()
               .putString("last_uncaught_crash_v1",detail.length()>7000?detail.substring(0,7000):detail.toString())
