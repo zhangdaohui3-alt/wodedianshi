@@ -12,9 +12,10 @@ import org.videolan.libvlc.util.VLCVideoLayout;
  */
 public final class LibVlcVodBackend implements VodPlaybackBackend {
     private final LibVlcPlaybackEngine engine;
-    private Listener listener;
+    // VLC callbacks can race dialog dismissal; publish listener changes across threads.
+    private volatile Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private boolean released = true;
+    private volatile boolean released = true;
 
     public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout) {
         engine = new LibVlcPlaybackEngine(context, videoLayout);
