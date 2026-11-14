@@ -215,6 +215,14 @@ public class SourceUpdateWorker extends Worker {
         saveStatus(prefs,"频道列表在后台检测期间发生变化，已保留最新用户数据并安排重试",0);
         return Result.retry();
       }
+      // Playback can begin after the last probe-loop check but before persistence.
+      // Re-check immediately before the catalogue commit so a just-started session
+      // is not overlapped by the worker's final state write.
+      if(prefs.getBoolean("source_update_playback_active",false)){
+        saveStatus(prefs,"检测到节目刚开始播放，已放弃本轮写入并安排稍后重试",0);
+        return Result.retry();
+      }
+      if(isStopped())return Result.retry();
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
