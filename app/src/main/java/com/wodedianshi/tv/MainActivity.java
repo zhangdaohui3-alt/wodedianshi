@@ -700,7 +700,7 @@ public class MainActivity extends Activity {
     channels.get(found).activeSource=0;
     play(found);
   }
-  private void persist(){
+  private boolean persist(){
     try {
       // Write each channel directly to the JSON stream. Building a JSONArray /
       // JSONObject tree first duplicates every field and backup URL in memory;
@@ -733,9 +733,11 @@ public class MainActivity extends Activity {
           .putStringSet("fav",new HashSet<>(favorites)).apply();
       lastPersistedChannelsJson=savedJson;
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+channels.size()+" channels, json_chars="+savedJson.length());
+      return true;
     } catch(Exception failure) {
       android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
       saveLiveDiagnostic("CATALOGUE_PERSIST_ERROR",failure.getClass().getSimpleName()+": "+failure.getMessage());
+      return false;
     }
   }
   private String activeCategory="全部";
@@ -3360,18 +3362,28 @@ public class MainActivity extends Activity {
     worker.execute(()->{
       try{
         int added=parse(data);
-        persist();
+        if(!persist())throw new IllegalStateException("频道配置保存失败");
         runOnUiThread(()->{
           if(isFinishing())return;
           refresh();
           if(info!=null)info.setText("导入完成，新增 "+added+" 个频道 · 共 "+channels.size()+" 个频道");
         });
       }catch(Throwable failure){
-        android.util.Log.e("MyTVImport","large playlist import failed",failure);
+        android.util.Log.e("MyTVImport","large playlist import failed; restoring last saved catalogue",failure);
+        // parse() merges rows into live channel objects. If an unexpected parser,
+        // allocation or persistence failure occurs mid-import, reload the last
+        // committed SharedPreferences snapshot so the in-memory catalogue cannot
+        // remain half-imported while the next save overwrites the good copy.
+        try{restore();}
+        catch(Throwable rollbackFailure){
+          android.util.Log.e("MyTVImport","catalogue rollback failed",rollbackFailure);
+          saveLiveDiagnostic("IMPORT_ROLLBACK_ERROR",rollbackFailure.getClass().getSimpleName()+": "+rollbackFailure.getMessage());
+        }
         runOnUiThread(()->{
           if(isFinishing())return;
-          if(info!=null)info.setText("频道导入失败，原有频道数据已保留："+failure.getClass().getSimpleName());
-          toast("导入失败，原有频道数据已保留");
+          refresh();
+          if(info!=null)info.setText("频道导入失败，已尝试恢复上次保存的数据："+failure.getClass().getSimpleName());
+          toast("导入失败，已恢复上次保存的数据");
         });
       }
     });
