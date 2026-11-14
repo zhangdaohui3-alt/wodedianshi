@@ -791,6 +791,7 @@ public class MainActivity extends Activity {
     // A VOD catalogue session owns the screen; explicitly revoke live audio before
     // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
     if(player!=null){try{player.setPlayWhenReady(false);player.pause();}catch(RuntimeException ignored){}}
+    if(libVlcEngine!=null){try{libVlcEngine.pause();}catch(RuntimeException ignored){}}
     activeVodRegion=getSharedPreferences("mytv",0).getString("vod_search_region","中国");
     if(!"国外".equals(activeVodRegion))activeVodRegion="中国";
     setSourceUpdatePlaybackActive(true);
@@ -2262,11 +2263,9 @@ public class MainActivity extends Activity {
   private void startVodPlayback(VodItem item,long startPosition){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
-    // A TV box often has only one reliable hardware video-decoder slot. Do not
-    // let the live stream keep producing audio/video underneath a VOD session.
-    final boolean resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())
-        ||(libVlcEngine!=null&&libVlcEngine.isPlaying());
-    if(resumeLiveAfterVod)saveLiveDiagnostic("ENGINE_HANDOFF","live playback paused while VOD owns the playback stage");
+    // The VOD catalogue owns live-playback suspension. Keep both live engines
+    // paused while this nested full-screen VOD player is open; the catalogue's
+    // dismiss handler restores the live channel after every VOD surface is gone.
     try{if(player!=null)player.pause();}catch(RuntimeException error){saveLiveDiagnostic("LIVE_PAUSE_FOR_VOD_ERROR",error.getClass().getSimpleName());}
     try{if(libVlcEngine!=null)libVlcEngine.pause();}catch(RuntimeException error){saveLiveDiagnostic("VLC_PAUSE_FOR_VOD_ERROR",error.getClass().getSimpleName());}
     releaseVodFallback();vodSessionGeneration++;vodFallbackAttempted=false;
@@ -2466,21 +2465,9 @@ public class MainActivity extends Activity {
      Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showVodAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();if(vodPlayer!=null){pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}
-      // Return playback ownership to the previously active live engine only after
-      // both VOD engines have been detached and released.
-      if(resumeLiveAfterVod&&!isFinishing()&&!isDestroyed()){
-        try{
-          if(player!=null&&player.getCurrentMediaItem()!=null){
-            player.play();
-            saveLiveDiagnostic("ENGINE_HANDOFF","VOD closed; resumed previous Media3 live session");
-          }else if(libVlcEngine!=null&&libVlcEngine.isInitialized()){
-            libVlcEngine.resume();
-            saveLiveDiagnostic("ENGINE_HANDOFF","VOD closed; resumed previous LibVLC live session");
-          }
-        }catch(RuntimeException error){
-          saveLiveDiagnostic("LIVE_RESUME_AFTER_VOD_ERROR",error.getClass().getSimpleName());
-        }
-      }
+      // Do not resume live playback here: the VOD catalogue dialog is still
+      // visible. Its own dismiss handler restores the channel after the whole
+      // nested VOD session has closed.
       vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       recordDecoderInventoryOnce();
