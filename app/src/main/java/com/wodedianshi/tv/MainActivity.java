@@ -3854,12 +3854,22 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size()||channels.isEmpty())return;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(channels.size()<=1||automaticChannelSwitchCount>=channels.size()-1){
+    cancelAudioTrackCheck();
+    int next=ChannelFailoverPolicy.nextChannelIndex(
+        channels.size(),selected,automaticChannelSwitchCount);
+    if(next<0){
+      // Do not leave the final failed Media3/LibVLC instance buffering or emitting
+      // stale audio after the automatic scan has exhausted every other channel.
       setSourceUpdatePlaybackActive(false);
+      releaseLivePlayerSafely();
+      releaseLibVlcEngine();
+      if(video!=null)video.setVisibility(View.VISIBLE);
+      sourceWasBuffering=false;
       info.setText(reason+"；已检查完本轮频道，没有可确认可播放的频道，请手动选择");
+      saveLiveDiagnostic("AUTO_SCAN_EXHAUSTED",
+          "all channels were attempted; live player engines released for a clean idle state");
       return;
     }
-    int next=(selected+1)%channels.size();
     automaticChannelSwitchCount++;
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
