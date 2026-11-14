@@ -87,6 +87,9 @@ public class MainActivity extends Activity {
   // It lets onStart detect safe background-worker updates while this Activity was stopped.
   private volatile String lastPersistedChannelsJson=null;
   private Runnable sourceUpdateActivityHeartbeat;
+  private boolean activityStarted=false;
+  private boolean startupAutoResumePending=false;
+  private Runnable startupAutoResumeTask;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -195,15 +198,8 @@ public class MainActivity extends Activity {
         }
         // Auto-resume is non-critical: do not attempt playback if saved catalogue
         // recovery itself failed. A stale/corrupt state must not block manual use.
-        if(restoreSucceeded)uiHandler.postDelayed(()->{
-          if(isFinishing()||selected>=0)return;
-          try{restoreLastChannel();}
-          catch(Throwable resumeFailure){
-            android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
-            saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
-            if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
-          }
-        },350L);
+        startupAutoResumePending=restoreSucceeded;
+        scheduleStartupAutoResume();
         // Register periodic source maintenance only after the saved catalogue
         // has been restored and the home screen is usable. WorkManager performs
         // refreshes independently; no network discovery is part of app entry.
@@ -4858,6 +4854,7 @@ public class MainActivity extends Activity {
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){
     super.onStart();
+    activityStarted=true;
     setSourceUpdateActivityActive(true);
     if(startupDataReady){
       try{
@@ -4878,8 +4875,31 @@ public class MainActivity extends Activity {
     uiHandler.postDelayed(childLockTicker,30000L);
     refreshChildLockState();
     updateNetworkSpeedMonitor();
-    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){resumePlaybackOnStart=false;startCurrentSource();}
+    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+      resumePlaybackOnStart=false;
+      startupAutoResumePending=false;
+      startCurrentSource();
+    }
+    scheduleStartupAutoResume();
   }
+  private void scheduleStartupAutoResume(){
+    if(!startupAutoResumePending||!activityStarted||isFinishing())return;
+    if(startupAutoResumeTask!=null)uiHandler.removeCallbacks(startupAutoResumeTask);
+    startupAutoResumeTask=()->{
+      startupAutoResumeTask=null;
+      if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed())return;
+      startupAutoResumePending=false;
+      if(selected>=0)return;
+      try{restoreLastChannel();}
+      catch(Throwable resumeFailure){
+        android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
+        saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
+        if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
+      }
+    };
+    uiHandler.postDelayed(startupAutoResumeTask,350L);
+  }
+
   private void setSourceUpdateActivityActive(boolean active){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
     if(sourceUpdateActivityHeartbeat!=null){
@@ -4984,6 +5004,6 @@ public class MainActivity extends Activity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}setSourceUpdateActivityActive(false);}
+  protected void onStop(){activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}setSourceUpdateActivityActive(false);}
   protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();releaseLibVlcEngine();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
