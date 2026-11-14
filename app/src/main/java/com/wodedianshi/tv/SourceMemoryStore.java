@@ -48,11 +48,19 @@ public final class SourceMemoryStore {
     }
 
     public static String getLastGood(Context context, String channelKey, String legacyChannelKey) {
+        return getLastGood(context, channelKey, null, legacyChannelKey);
+    }
+
+    public static String getLastGood(Context context, String channelKey,
+                                     String previousChannelKey, String legacyChannelKey) {
         if (context == null || channelKey == null || channelKey.isEmpty()) return null;
         try {
             JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(LAST_GOOD, "{}"));
             JSONObject entry = all.optJSONObject(channelKey);
+            // Preserve both the previous v2 key (which included the primary URL)
+            // and the older hash key so upgrades do not discard remembered sources.
+            if (entry == null && previousChannelKey != null) entry = all.optJSONObject(previousChannelKey);
             if (entry == null && legacyChannelKey != null) entry = all.optJSONObject(legacyChannelKey);
             if (entry == null) return null;
             long age = System.currentTimeMillis() - entry.optLong("at", 0L);
