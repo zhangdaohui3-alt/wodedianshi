@@ -16,6 +16,17 @@ android {
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
     }
 
+    // Keep a universal APK for unknown/older TV boxes, and produce smaller
+    // per-ABI packages so users can install only the native libraries they need.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a'
+            universalApk true
+        }
+    }
+
     signingConfigs {
         debug {
             storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")
