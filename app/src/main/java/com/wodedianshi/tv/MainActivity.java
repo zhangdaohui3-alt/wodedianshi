@@ -629,8 +629,18 @@ public class MainActivity extends Activity {
   private void scheduleAutomaticSourceUpdates(){
     WorkManager wm=WorkManager.getInstance(this);
     boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
-    if(!enabled){wm.cancelUniqueWork("mytv_periodic_source_update");return;}
+    if(!enabled){
+      wm.cancelUniqueWork("mytv_periodic_source_update");
+      wm.cancelUniqueWork("mytv_startup_source_refresh");
+      return;
+    }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+    // Cache-first startup: the first screen is already rendered before this is
+    // enqueued. Probe saved/discovered sources in the background; never gate UI
+    // or mutate the in-memory channel list during startup.
+    OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints).build();
+    wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
