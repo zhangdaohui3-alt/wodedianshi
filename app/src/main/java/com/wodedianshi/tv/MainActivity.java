@@ -702,12 +702,41 @@ public class MainActivity extends Activity {
   }
   private void persist(){
     try {
-      org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("tvgId",c.tvgId==null?"":c.tvgId);o.put("tvgName",c.tvgName==null?"":c.tvgName);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      String savedJson=a.toString();
-      getSharedPreferences("mytv",0).edit().putString("channels",savedJson).putStringSet("fav",new HashSet<>(favorites)).apply();
+      // Write each channel directly to the JSON stream. Building a JSONArray /
+      // JSONObject tree first duplicates every field and backup URL in memory;
+      // on a 15k+ catalogue that peak heap competes with the player and posters.
+      // SharedPreferences still needs one final String, but this avoids the
+      // additional complete org.json object graph.
+      StringWriter buffer=new StringWriter(Math.max(1024,channels.size()*160));
+      try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
+        writer.beginArray();
+        synchronized(channels){
+          for(Channel c:channels){
+            writer.beginObject();
+            writer.name("name").value(c.name==null?"":c.name);
+            writer.name("url").value(c.url==null?"":c.url);
+            writer.name("group").value(c.group==null?"":c.group);
+            writer.name("tvgId").value(c.tvgId==null?"":c.tvgId);
+            writer.name("tvgName").value(c.tvgName==null?"":c.tvgName);
+            writer.name("activeSource").value(c.activeSource);
+            writer.name("sources").beginArray();
+            if(c.backups!=null)for(String source:c.backups)if(source!=null)writer.value(source);
+            writer.endArray();
+            writer.endObject();
+          }
+        }
+        writer.endArray();
+      }
+      String savedJson=buffer.toString();
+      getSharedPreferences("mytv",0).edit()
+          .putString("channels",savedJson)
+          .putStringSet("fav",new HashSet<>(favorites)).apply();
       lastPersistedChannelsJson=savedJson;
-    } catch(Exception ignored) {}
+      saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+channels.size()+" channels, json_chars="+savedJson.length());
+    } catch(Exception failure) {
+      android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
+      saveLiveDiagnostic("CATALOGUE_PERSIST_ERROR",failure.getClass().getSimpleName()+": "+failure.getMessage());
+    }
   }
   private String activeCategory="全部";
   private void makeUi(){
