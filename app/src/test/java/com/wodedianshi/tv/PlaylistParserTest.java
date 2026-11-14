@@ -59,7 +59,7 @@ public class PlaylistParserTest {
     }
 
     @Test public void preservesTvgIdAndTvgNameForRegionalClassification() {
-        String m3u = "#EXTINF:-1 tvg-id=\"FJTV.FUZHOU\" tvg-name=\"Fuzhou City News\" group-title=\"地方频道\",福建综合频道\\n"
+        String m3u = "#EXTINF:-1 tvg-id=\"FJTV.FUZHOU\" tvg-name=\"Fuzhou City News\" group-title=\"地方频道\",福建综合频道\n"
                 + "https://cdn.example/live.m3u8";
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
         assertEquals(1, items.size());
@@ -70,9 +70,9 @@ public class PlaylistParserTest {
     }
 
     @Test public void resetsTvgMetadataBetweenEntries() {
-        String m3u = "#EXTINF:-1 tvg-id=\"CCTV1\" tvg-name=\"CCTV One\",央视一套\\n"
-                + "https://a.example/live\\n"
-                + "#EXTINF:-1,普通频道\\nhttps://b.example/live";
+        String m3u = "#EXTINF:-1 tvg-id=\"CCTV1\" tvg-name=\"CCTV One\",央视一套\n"
+                + "https://a.example/live\n"
+                + "#EXTINF:-1,普通频道\nhttps://b.example/live";
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
         assertEquals(2, items.size());
         assertEquals("CCTV1", items.get(0).tvgId);
