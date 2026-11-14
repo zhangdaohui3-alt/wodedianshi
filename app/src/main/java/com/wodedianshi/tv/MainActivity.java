@@ -418,6 +418,18 @@ public class MainActivity extends Activity {
       }
     }
   }
+  private void normalizeBroadcasterLabel(Channel channel){
+    if(channel==null)return;
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    if(!broadcaster.isEmpty())channel.name=broadcaster;
+  }
+  private String displayChannelName(Channel channel){
+    if(channel==null)return "";
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    return displayChannelName(broadcaster.isEmpty()?channel.name:broadcaster);
+  }
   private String canonicalChannelName(String name){
     String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
     if(!satellite.isEmpty())return satellite;
@@ -2751,7 +2763,7 @@ public class MainActivity extends Activity {
           if(!matchesLocalRegion(c))continue;
         }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+            &&!displayChannelName(c).toLowerCase(Locale.ROOT).contains(q))continue;
         visibleIndexes.add(i);
       }
       if(activeCategory.equals("央视")){
@@ -2759,7 +2771,7 @@ public class MainActivity extends Activity {
           Channel ca=channels.get(a),cb=channels.get(b);
           int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
           if(oa!=ob)return Integer.compare(oa,ob);
-          return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
+          return displayChannelName(ca).compareTo(displayChannelName(cb));
         });
       }
       totalMatches=visibleIndexes.size();
@@ -2773,7 +2785,7 @@ public class MainActivity extends Activity {
         int ix=visibleIndexes.get(row);
         Channel c=channels.get(ix);shown++;
         Button b=new Button(this);b.setTag(ix);
-        String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c.name):c.name;
+        String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
         String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
@@ -3138,7 +3150,7 @@ public class MainActivity extends Activity {
           }
         }else{
           Channel existing=channelsByUrl.get(line);
-          if(existing!=null)existing.mergeMetadata(entry.tvgId,entry.tvgName);
+          if(existing!=null){existing.mergeMetadata(entry.tvgId,entry.tvgName);normalizeBroadcasterLabel(existing);}
         }
       }
       if(parsingGeoChannelKeys!=null){
