@@ -27,6 +27,21 @@ public class ChannelNamePolicyTest {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("International News"));
     }
 
+    @Test public void recognizesMoreEnglishLocalCityAliasesAcrossChina() {
+        assertEquals("河北", ChannelNamePolicy.provinceForLocalChannel("Qinhuangdao TV"));
+        assertEquals("黑龙江", ChannelNamePolicy.provinceForLocalChannel("Qiqihar News"));
+        assertEquals("山东", ChannelNamePolicy.provinceForLocalChannel("Weihai TV"));
+        assertEquals("河南", ChannelNamePolicy.provinceForLocalChannel("Zhumadian TV"));
+        assertEquals("湖北", ChannelNamePolicy.provinceForLocalChannel("Xiangyang News"));
+        assertEquals("广西", ChannelNamePolicy.provinceForLocalChannel("Nanning TV"));
+        assertEquals("新疆", ChannelNamePolicy.provinceForLocalChannel("Kashgar TV"));
+    }
+
+    @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
+    }
+
     @Test public void leavesUnknownEnglishChannelNamesUnchanged() {
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("Fuzhou TV"));
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("CCTV-1"));
