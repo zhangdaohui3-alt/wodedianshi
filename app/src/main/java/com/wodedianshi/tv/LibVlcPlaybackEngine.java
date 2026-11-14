@@ -51,7 +51,14 @@ public final class LibVlcPlaybackEngine {
 
     public void initialize() {
         recordNativeStage("VLC_INIT_BEGIN");
-        release();
+        // A freshly constructed adapter owns no native objects. Avoid running a
+        // full stop/detach/release sequence (and synchronous diagnostic writes)
+        // before its first initialization.
+        if (mediaPlayer != null || libVlc != null) {
+            release();
+        } else {
+            released = true;
+        }
         try {
             // release() hides the layout while tearing down any previous native session.
             // Make it visible before attaching VLC's native video surfaces.
@@ -296,11 +303,16 @@ public final class LibVlcPlaybackEngine {
     // the last attempted VLC operation available after the app is relaunched.
     private void recordNativeStage(String stage) {
         try {
-            appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
+            android.content.SharedPreferences.Editor editor =
+                    appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
                     .putString("last_native_engine_stage_v1",
                             System.currentTimeMillis() + " | " + stage)
-                    .putLong("last_native_engine_stage_time_v1", System.currentTimeMillis())
-                    .commit();
+                    .putLong("last_native_engine_stage_time_v1", System.currentTimeMillis());
+            // Persist immediately before crash-prone JNI boundaries. Completion
+            // markers can be applied asynchronously to avoid repeated fsyncs on
+            // the UI thread during normal playback and teardown.
+            if (stage.endsWith("_BEGIN")) editor.commit();
+            else editor.apply();
         } catch (Throwable ignored) { }
     }
 }
