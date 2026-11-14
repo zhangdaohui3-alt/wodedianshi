@@ -428,7 +428,6 @@ public class MainActivity extends Activity {
     edit.remove("source_update_pending_base")
         .remove("source_update_pending_channels")
         .apply();
-    if(applied)lastPersistedChannelsJson=candidate;
     return applied;
   }
 
