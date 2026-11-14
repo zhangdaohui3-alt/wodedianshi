@@ -719,7 +719,7 @@ public class MainActivity extends Activity {
   private void vodDialog(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
-    resumeLiveAfterVod=player!=null&&player.isPlaying();
+    resumeLiveAfterVod=(player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying());
     // A VOD catalogue session owns the screen; explicitly revoke live audio before
     // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
     if(player!=null){try{player.setPlayWhenReady(false);player.pause();}catch(RuntimeException ignored){}}
