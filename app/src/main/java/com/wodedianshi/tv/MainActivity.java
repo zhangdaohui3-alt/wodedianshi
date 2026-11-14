@@ -4018,8 +4018,10 @@ public class MainActivity extends Activity {
           videoTrackSupported=videoSupported;
           boolean videoWasSelected=videoTrackSelected;
           videoTrackSelected=videoSelected;
-          if(videoSelected&&!videoWasSelected)videoTrackSelectedAt=android.os.SystemClock.elapsedRealtime();
-          else if(!videoSelected)videoTrackSelectedAt=0L;
+          if(videoSelected&&(!videoWasSelected||videoTrackSelectedAt<=0L)){
+            videoTrackSelectedAt=listenerOwner.getPlaybackState()==Player.STATE_READY
+                ?android.os.SystemClock.elapsedRealtime():0L;
+          }else if(!videoSelected)videoTrackSelectedAt=0L;
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
           videoFrameMonitoringActive=videoSelected;
@@ -4061,6 +4063,8 @@ public class MainActivity extends Activity {
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
             if(firstBuffering)showChannelZapMessage(sourceReadyRecorded?"网络波动，正在缓冲…":"正在连接播放源…");
+            // Do not charge network buffering time against the decoder's first-frame deadline.
+            if(!hasReceivedVideoFrame)videoTrackSelectedAt=0L;
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             sourceWasBuffering=false;
@@ -4075,6 +4079,8 @@ public class MainActivity extends Activity {
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
+            // Begin the first-frame deadline only after READY; earlier BUFFERING time is excluded.
+            if(videoTrackSelected&&!hasReceivedVideoFrame)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
             lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
