@@ -432,15 +432,80 @@ public class MainActivity extends Activity {
     return applied;
   }
 
+  private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
+    if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();return fallback;}
+    return reader.nextString();
+  }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     applyPendingSourceUpdateIfSafe(p);
-    lastPersistedChannelsJson=p.getString("channels","[]");
+    String savedChannelsJson=p.getString("channels","[]");
+    lastPersistedChannelsJson=savedChannelsJson;
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
-    try {
-      org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); c.tvgId=o.optString("tvgId",""); c.tvgName=o.optString("tvgName",""); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}c.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),c.backups.size()-1));channels.add(c);}
-    } catch(Exception ignored) {}
+    // Parse the large saved catalogue as a stream. JSONArray/JSONObject builds a
+    // second complete object tree beside the original SharedPreferences String;
+    // on phones/TV boxes this peak heap can kill the process around 10k-20k rows.
+    // Build into a temporary list and publish only after the entire JSON is valid,
+    // so a malformed/interrupted restore can never leave a half-loaded catalogue.
+    ArrayList<Channel> restoredChannels=new ArrayList<>();
+    try(android.util.JsonReader reader=new android.util.JsonReader(
+        new java.io.StringReader(savedChannelsJson))){
+      reader.beginArray();
+      while(reader.hasNext()){
+        String name="";
+        String url="";
+        String group="";
+        String tvgId="";
+        String tvgName="";
+        int activeSource=0;
+        ArrayList<String> sources=null;
+        reader.beginObject();
+        while(reader.hasNext()){
+          String field=reader.nextName();
+          switch(field){
+            case "name": name=readCatalogueJsonString(reader,"");break;
+            case "url": url=readCatalogueJsonString(reader,"");break;
+            case "group": group=readCatalogueJsonString(reader,"");break;
+            case "tvgId": tvgId=readCatalogueJsonString(reader,"");break;
+            case "tvgName": tvgName=readCatalogueJsonString(reader,"");break;
+            case "activeSource":
+              try{activeSource=(int)reader.nextLong();}catch(Exception invalidIndex){reader.skipValue();}
+              break;
+            case "sources":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              sources=new ArrayList<>();
+              reader.beginArray();
+              while(reader.hasNext()){
+                String source=readCatalogueJsonString(reader,"");
+                if(source.startsWith("http://")||source.startsWith("https://"))sources.add(source);
+              }
+              reader.endArray();
+              break;
+            default: reader.skipValue();break;
+          }
+        }
+        reader.endObject();
+        if(name.isEmpty()||url.isEmpty())continue;
+        Channel channel=new Channel(name,url,group);
+        channel.tvgId=tvgId;
+        channel.tvgName=tvgName;
+        if(sources!=null){
+          channel.backups.clear();
+          channel.backups.addAll(sources);
+          if(channel.backups.isEmpty())channel.backups.add(channel.url);
+        }
+        channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
+        restoredChannels.add(channel);
+      }
+      reader.endArray();
+    }catch(Exception invalidCatalogue){
+      android.util.Log.e("MyTVStartup","saved catalogue JSON parse failed; keeping restore atomic",invalidCatalogue);
+      throw new IllegalStateException("本地频道数据格式异常，未载入不完整列表",invalidCatalogue);
+    }
+    synchronized(channels){
+      channels.clear();
+      channels.addAll(restoredChannels);
+    }
     rebuildChannelIndexes();
     if(!p.getBoolean("defaults_loaded",false)){
       if(channels.isEmpty()){
