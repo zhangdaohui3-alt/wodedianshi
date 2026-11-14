@@ -3666,6 +3666,8 @@ public class MainActivity extends Activity {
   private boolean liveWindowRecoveryAttempted=false;
   private long sourceAttemptStartedAt=0L;
   private long sourceReadyAt=0L;
+  // Start the no-first-frame deadline only once a supported video track is selected.
+  private long videoTrackSelectedAt=0L;
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
   private boolean sourceStableRecorded=false;
@@ -3741,7 +3743,7 @@ public class MainActivity extends Activity {
       // videoFrameMonitoringActive here would make the first-frame timeout
       // unreachable, because that flag is set only by the first frame callback.
       if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,hasReceivedVideoFrame,
-          sourceReadyAt,lastVideoFrameAt,now,20000L)){
+          videoTrackSelectedAt,lastVideoFrameAt,now,20000L)){
         recoverFromSilentFreeze(hasReceivedVideoFrame
             ?"检测到视频帧连续 20 秒没有输出"
             :"播放器已连接，但 20 秒内没有输出视频画面");
@@ -3898,6 +3900,7 @@ public class MainActivity extends Activity {
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
     audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    videoTrackSelectedAt=0L;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -4013,7 +4016,10 @@ public class MainActivity extends Activity {
           audioTrackSelected=audioSelected;
           videoTrackPresent=videoPresent;
           videoTrackSupported=videoSupported;
+          boolean videoWasSelected=videoTrackSelected;
           videoTrackSelected=videoSelected;
+          if(videoSelected&&!videoWasSelected)videoTrackSelectedAt=android.os.SystemClock.elapsedRealtime();
+          else if(!videoSelected)videoTrackSelectedAt=0L;
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
           videoFrameMonitoringActive=videoSelected;
