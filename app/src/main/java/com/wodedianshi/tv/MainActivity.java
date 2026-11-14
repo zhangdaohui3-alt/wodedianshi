@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
   private volatile String lastPersistedChannelsJson=null;
   private Runnable sourceUpdateActivityHeartbeat;
   private boolean activityStarted=false;
+  private static volatile boolean crashHandlerInstalled=false;
   private boolean startupAutoResumePending=false;
   private Runnable startupAutoResumeTask;
   // Keep country/state/city playlists scoped to the destination currently selected.
@@ -153,6 +154,7 @@ public class MainActivity extends Activity {
   }
   public void onCreate(Bundle b) {
     super.onCreate(b);
+    installCrashDiagnosticsHandler();
     setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
     setSourceUpdateActivityActive(true);
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
@@ -3678,6 +3680,33 @@ public class MainActivity extends Activity {
 
   // Keep a small, user-shareable live diagnostic trail. Query strings and full
   // stream URLs are deliberately excluded so signed URLs/tokens are not exposed.
+  private void installCrashDiagnosticsHandler(){
+    if(crashHandlerInstalled)return;
+    synchronized(MainActivity.class){
+      if(crashHandlerInstalled)return;
+      final Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
+      Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
+        try{
+          StringBuilder detail=new StringBuilder();
+          detail.append("thread=").append(thread==null?"?":thread.getName())
+              .append(" exception=").append(error==null?"?":error.getClass().getName())
+              .append(" message=").append(error==null?"":safeDiagnosticDetail(String.valueOf(error.getMessage())));
+          if(error!=null){
+            StackTraceElement[] frames=error.getStackTrace();
+            int limit=Math.min(frames==null?0:frames.length,24);
+            for(int i=0;i<limit;i++)detail.append("\\n at ").append(frames[i].toString());
+          }
+          getSharedPreferences("mytv",0).edit()
+              .putString("last_uncaught_crash_v1",detail.length()>7000?detail.substring(0,7000):detail.toString())
+              .putString("last_uncaught_crash_time",new Date().toString())
+              .commit();
+        }catch(Throwable ignored){}
+        if(previous!=null)previous.uncaughtException(thread,error);
+      });
+      crashHandlerInstalled=true;
+    }
+  }
+
   private String safeDiagnosticDetail(String value){
     if(value==null)return "";
     String clean=value.replaceAll("(?i)https?://\\S+","[URL]");
@@ -3995,6 +4024,24 @@ public class MainActivity extends Activity {
     startCurrentSource();
   }
   private void startCurrentSource(){
+    if(selected<0||selected>=channels.size())return;
+    Channel requested=channels.get(selected);
+    saveLiveDiagnostic("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
+    try{
+      startCurrentSourceInternal();
+    }catch(RuntimeException tuneFailure){
+      android.util.Log.e("MyTVPlayback","uncaught tune setup failure",tuneFailure);
+      saveLiveDiagnostic("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
+      try{releaseLivePlayerSafely();}catch(RuntimeException ignored){}
+      try{releaseLibVlcEngine();}catch(RuntimeException ignored){}
+      setSourceUpdatePlaybackActive(false);
+      try{exitFullScreenPlayback();}catch(RuntimeException uiFailure){
+        saveLiveDiagnostic("TUNE_UI_RECOVERY_ERROR",uiFailure.getClass().getSimpleName()+": "+uiFailure.getMessage());
+      }
+      if(info!=null)info.setText("频道启动遇到异常，已停止播放器保护主界面；请打开“直播诊断记录”查看原因。");
+    }
+  }
+  private void startCurrentSourceInternal(){
     if(selected<0||selected>=channels.size())return;
     releaseLibVlcEngine();
     usingLibVlc=false;
