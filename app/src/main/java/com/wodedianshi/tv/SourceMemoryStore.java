@@ -23,6 +23,11 @@ public final class SourceMemoryStore {
         return StableKey.legacyChannel(name, group, primaryUrl);
     }
 
+    public static String channelIdentityKey(String identity) {
+        if (identity == null || identity.isEmpty()) return "";
+        return StableKey.channelIdentity(identity);
+    }
+
     public static void saveLastGood(Context context, String channelKey, String url) {
         if (context == null || channelKey == null || channelKey.isEmpty()
                 || url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
