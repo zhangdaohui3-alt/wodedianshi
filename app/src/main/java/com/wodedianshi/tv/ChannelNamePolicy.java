@@ -1,6 +1,7 @@
 package com.wodedianshi.tv;
 
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /** Canonical Chinese names for well-known provincial satellite channels. */
 final class ChannelNamePolicy {
