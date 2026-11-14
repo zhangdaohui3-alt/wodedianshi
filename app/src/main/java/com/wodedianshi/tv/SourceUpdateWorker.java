@@ -27,6 +27,10 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
       return Result.retry();
     }
+    if(isActivityActive(prefs)){
+      saveStatus(prefs,"电视应用正在前台使用，暂缓后台频道整理以避免干扰操作",0);
+      return Result.retry();
+    }
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
@@ -60,7 +64,28 @@ public class SourceUpdateWorker extends Worker {
       // may save favorites, edits, imports or playback state while this worker runs.
       // Never let a stale worker snapshot overwrite those newer user changes.
       String channelsSnapshot=prefs.getString("channels","[]");
-      JSONArray saved=new JSONArray(channelsSnapshot);
+      String savedChannelsJson=channelsSnapshot;
+      String pendingBase=prefs.getString("source_update_pending_base",null);
+      String pendingChannels=prefs.getString("source_update_pending_channels",null);
+      if(pendingBase!=null&&pendingChannels!=null&&!pendingChannels.isEmpty()){
+        if(channelsSnapshot.equals(pendingBase)){
+          // Carry forward an unapplied staged refresh; the persisted user catalogue
+          // remains the conflict baseline until the Activity explicitly applies it.
+          savedChannelsJson=pendingChannels;
+        }else{
+          // User changes supersede any staged Worker result.
+          prefs.edit().remove("source_update_pending_base")
+              .remove("source_update_pending_channels").apply();
+        }
+      }
+      JSONArray saved;
+      try{saved=new JSONArray(savedChannelsJson);}
+      catch(JSONException invalidPending){
+        saved=new JSONArray(channelsSnapshot);
+        savedChannelsJson=channelsSnapshot;
+        prefs.edit().remove("source_update_pending_base")
+            .remove("source_update_pending_channels").apply();
+      }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
@@ -99,6 +124,10 @@ public class SourceUpdateWorker extends Worker {
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+          return Result.retry();
+        }
+        if(isActivityActive(prefs)){
+          saveStatus(prefs,"电视应用已回到前台，本轮频道整理已暂停",0);
           return Result.retry();
         }
         HttpURLConnection c=null;
@@ -146,6 +175,10 @@ public class SourceUpdateWorker extends Worker {
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
+          return Result.retry();
+        }
+        if(isActivityActive(prefs)){
+          saveStatus(prefs,"电视应用已回到前台，本轮线路检测已暂停",0);
           return Result.retry();
         }
         if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
@@ -228,17 +261,36 @@ public class SourceUpdateWorker extends Worker {
         saveStatus(prefs,"检测到节目刚开始播放，已放弃本轮写入并安排稍后重试",0);
         return Result.retry();
       }
+      if(isActivityActive(prefs)){
+        saveStatus(prefs,"检测到电视应用已回到前台，本轮结果暂存取消并安排重试",0);
+        return Result.retry();
+      }
       if(isStopped())return Result.retry();
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
-          .putString("channels",saved.toString()).putString("source_update_time",now())
+          // Stage catalogue output instead of replacing the live cache. The Activity
+          // applies it only if the user's persisted catalogue still equals this base.
+          .putString("source_update_pending_base",channelsSnapshot)
+          .putString("source_update_pending_channels",saved.toString())
+          .putString("source_update_time",now())
           .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private boolean isActivityActive(SharedPreferences prefs){
+    boolean active=prefs.getBoolean("source_update_activity_active",false);
+    long heartbeat=prefs.getLong("source_update_activity_heartbeat",0L);
+    if(SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis()))return true;
+    if(active){
+      // Recover from a process death that occurred before onStop could clear the lease.
+      prefs.edit().putBoolean("source_update_activity_active",false)
+          .putLong("source_update_activity_heartbeat",0L).apply();
+    }
+    return false;
   }
   private static class Entry{
     String name,url,group;boolean savedSource;
