@@ -111,6 +111,23 @@ final class ChannelNamePolicy {
         return pattern.matcher(upper).find();
     }
 
+    /** Resolve broadcaster identity from all M3U metadata, not just the display label. */
+    static String canonicalBroadcasterName(String name, String tvgName, String tvgId, String group) {
+        String metadata = ((name == null ? "" : name) + " "
+                + (tvgName == null ? "" : tvgName) + " "
+                + (tvgId == null ? "" : tvgId) + " "
+                + (group == null ? "" : group)).trim();
+        String satellite = canonicalSatelliteName(metadata);
+        if (!satellite.isEmpty()) return satellite;
+        String value = metadata.toUpperCase(Locale.ROOT)
+                .replaceAll("[\\\\s_—–·•]", "");
+        java.util.regex.Matcher matcher = Pattern.compile(
+                "(?:CCTV|中央电视台|央视)[-]?(\\\\d{1,2}\\\\+?|NEWS|4K|8K)")
+                .matcher(value);
+        if (matcher.find()) return "CCTV-" + matcher.group(1);
+        return "";
+    }
+
     static String canonicalSatelliteName(String name) {
         String normalized = normalize(name);
         if (normalized.isEmpty()) return "";
