@@ -469,13 +469,16 @@ public class MainActivity extends Activity {
         Channel keep=firstByIdentity.get(key);
         if(keep==null){
           firstByIdentity.put(key,c);
-          HashSet<String> seen=new HashSet<>(Math.max(4,c.backups.size()*2));
-          for(String source:c.backups)if(source!=null&&!source.isEmpty())seen.add(source);
-          sourcesByIdentity.put(key,seen);
           compact.add(c);
         }else{
+          // Allocate a source set only for identities that actually have duplicates;
+          // a set per channel would waste substantial heap for 15k unique channels.
           HashSet<String> seen=sourcesByIdentity.get(key);
-          if(seen==null){seen=new HashSet<>();sourcesByIdentity.put(key,seen);}
+          if(seen==null){
+            seen=new HashSet<>(Math.max(4,keep.backups.size()*2));
+            for(String source:keep.backups)if(source!=null&&!source.isEmpty())seen.add(source);
+            sourcesByIdentity.put(key,seen);
+          }
           for(String source:c.backups){
             if(source!=null&&!source.isEmpty()&&seen.add(source))keep.backups.add(source);
           }
