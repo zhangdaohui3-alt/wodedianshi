@@ -168,17 +168,31 @@ public class MainActivity extends Activity {
         startupDataReady=true;
         if(search!=null)search.setEnabled(true);
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
-        refresh();
-        if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
-        // Keep auto-resume, but only after the restored catalogue is ready.
-        uiHandler.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},350L);
+        try{
+          refresh();
+          if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+        }catch(Throwable renderFailure){
+          android.util.Log.e("MyTVStartup","restored channel list render failed",renderFailure);
+          if(info!=null)info.setText("频道数据已恢复，但列表刷新遇到问题；可先切换栏目或重试。");
+        }
+        // Auto-resume is non-critical: a stale/corrupt last-channel state or
+        // decoder initialization must never take down the freshly rendered home screen.
+        uiHandler.postDelayed(()->{
+          if(isFinishing()||selected>=0)return;
+          try{restoreLastChannel();}
+          catch(Throwable resumeFailure){
+            android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
+            saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
+            if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
+          }
+        },350L);
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
       });
     });
     uiHandler.postDelayed(()->{
       if(!isFinishing())worker.execute(()->{
         loadBundledHdBackups();
-        runOnUiThread(()->{if(!isFinishing()){persist();refresh();}});
+        runOnUiThread(()->{if(!isFinishing()){try{persist();refresh();}catch(Throwable e){android.util.Log.e("MyTVStartup","bundled channel refresh failed",e);if(info!=null)info.setText("频道缓存已保留，后台整理遇到问题；仍可手动选择频道。");}}});
       });
     },900L);
     uiHandler.postDelayed(()->{if(!isFinishing())scheduleAutomaticSourceUpdates();},1600L);
