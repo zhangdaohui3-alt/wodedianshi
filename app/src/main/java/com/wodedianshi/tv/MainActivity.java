@@ -21,6 +21,7 @@ import androidx.media3.exoplayer.source.LoadEventInfo;
 import androidx.media3.exoplayer.source.MediaLoadData;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.ui.PlayerView;
+import org.videolan.libvlc.util.VLCVideoLayout;
 import java.io.*;
 import org.json.JSONArray;
 import java.net.*;
@@ -42,6 +43,17 @@ public class MainActivity extends Activity {
   private ExoPlayer player;
   private boolean decoderInventoryRecorded=false;
   private PlayerView video;
+  private FrameLayout liveStage;
+  private VLCVideoLayout vlcVideoLayout;
+  private LibVlcPlaybackEngine libVlcEngine;
+  private boolean usingLibVlc=false;
+  private boolean libVlcVideoOutputReady=false;
+  // Require two consecutive healthy VLC watchdog checks before remembering a source.
+  private int libVlcStableChecks=0;
+  private boolean libVlcStableRecorded=false;
+  private boolean libVlcAttemptedForSource=false;
+  private Runnable libVlcStartTimeout;
+  private Runnable libVlcWatchdog;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -71,6 +83,14 @@ public class MainActivity extends Activity {
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
+  // Snapshot of the last catalogue JSON this Activity restored or persisted.
+  // It lets onStart detect safe background-worker updates while this Activity was stopped.
+  private volatile String lastPersistedChannelsJson=null;
+  private Runnable sourceUpdateActivityHeartbeat;
+  private boolean activityStarted=false;
+  private static volatile boolean crashHandlerInstalled=false;
+  private boolean startupAutoResumePending=false;
+  private Runnable startupAutoResumeTask;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -122,15 +142,21 @@ public class MainActivity extends Activity {
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
   // per source so no ExoPlayer getter is ever called from that callback thread.
   private static class Channel {
-    String name, url, group;
+    String name, url, group, tvgId="", tvgName="";
     ArrayList<String> backups = new ArrayList<>();
     int activeSource = 0;
     Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
+    void mergeMetadata(String id,String displayName){
+      if((tvgId==null||tvgId.isEmpty())&&id!=null&&!id.isEmpty())tvgId=id;
+      if((tvgName==null||tvgName.isEmpty())&&displayName!=null&&!displayName.isEmpty())tvgName=displayName;
+    }
   }
   public void onCreate(Bundle b) {
     super.onCreate(b);
-    setSourceUpdatePlaybackActive(false); // Clear stale state if Android previously killed the process.
+    installCrashDiagnosticsHandler();
+    setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
+    setSourceUpdateActivityActive(true);
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
@@ -145,27 +171,47 @@ public class MainActivity extends Activity {
     });
     worker.execute(()->{
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
-      restore();
+      Throwable restoreFailure=null;
+      try{restore();}
+      catch(Throwable failure){
+        restoreFailure=failure;
+        android.util.Log.e("MyTVStartup","saved catalogue restore failed",failure);
+      }
+      final boolean restoreSucceeded=restoreFailure==null;
+      final String restoreFailureMessage=restoreFailure==null?"":restoreFailure.getClass().getSimpleName()+": "+String.valueOf(restoreFailure.getMessage());
+      // Startup is cache-first: render and resume from the user's saved catalogue.
+      // Even a corrupt preference or an unexpected restore exception must release
+      // the startup gate so the home screen never remains permanently disabled.
       long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
       runOnUiThread(()->{
         if(isFinishing())return;
         startupDataReady=true;
         if(search!=null)search.setEnabled(true);
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
-        refresh();
-        if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
-        // Keep auto-resume, but only after the restored catalogue is ready.
-        uiHandler.postDelayed(()->{if(!isFinishing()&&selected<0)restoreLastChannel();},350L);
+        try{
+          refresh();
+          if(info!=null)info.setText(!restoreSucceeded?"本地频道恢复遇到问题，主界面仍可使用；请稍后重试或重新导入频道。":channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+        }catch(Throwable renderFailure){
+          android.util.Log.e("MyTVStartup","restored channel list render failed",renderFailure);
+          if(info!=null)info.setText("频道列表刷新遇到问题；主界面仍可使用，请稍后重试。");
+        }
+        if(!restoreSucceeded){
+          saveLiveDiagnostic("STARTUP_RESTORE_ERROR",restoreFailureMessage);
+        }
+        // Auto-resume is non-critical: do not attempt playback if saved catalogue
+        // recovery itself failed. A stale/corrupt state must not block manual use.
+        startupAutoResumePending=restoreSucceeded;
+        scheduleStartupAutoResume();
+        // Register periodic source maintenance only after the saved catalogue
+        // has been restored and the home screen is usable. WorkManager performs
+        // refreshes independently; no network discovery is part of app entry.
+        try{scheduleAutomaticSourceUpdates();}
+        catch(RuntimeException schedulingFailure){
+          android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
+        }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
       });
     });
-    uiHandler.postDelayed(()->{
-      if(!isFinishing())worker.execute(()->{
-        loadBundledHdBackups();
-        runOnUiThread(()->{if(!isFinishing()){persist();refresh();}});
-      });
-    },900L);
-    uiHandler.postDelayed(()->{if(!isFinishing())scheduleAutomaticSourceUpdates();},1600L);
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
   // including for users whose channel list was already saved by an older build.
@@ -251,8 +297,8 @@ public class MainActivity extends Activity {
         int index=(Integer)child.getTag();
         if(index<0||index>=channels.size())continue;
         Channel channel=channels.get(index);
-        String title=isCctvChannel(channel)?displayChannelName(channel.name):channel.name;
-        String group=isCctvChannel(channel)?"":(channel.group.isEmpty()?"":" · "+channel.group);
+        String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channel.name):channel.name;
+        String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channel.group.isEmpty()?"":" · "+channel.group);
         ((Button)child).setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
         ((Button)child).setContentDescription(index==selected?"当前正在播放："+title:title);
         applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
@@ -358,14 +404,39 @@ public class MainActivity extends Activity {
   // Keep live TV and VOD on the same decoder policy. Hardware decoders remain preferred;
   // Media3 falls back to another available system decoder only when the selected decoder fails.
   private boolean isDecoderFallbackEnabled(){
-    return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
+    return DecoderPolicy.isDecoderFallbackEnabled(
+        getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
+  // Worker results are staged separately from the live catalogue. Apply them only
+  // when the user's current catalogue still matches the exact snapshot the Worker read.
+  // Any intervening channel edit/deletion wins; stale background results are discarded.
+  private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs){
+    String base=prefs.getString("source_update_pending_base",null);
+    String candidate=prefs.getString("source_update_pending_channels",null);
+    if(base==null||candidate==null||candidate.isEmpty())return false;
+    String current=prefs.getString("channels","[]");
+    android.content.SharedPreferences.Editor edit=prefs.edit();
+    boolean applied=base.equals(current);
+    if(applied){
+      edit.putString("channels",candidate)
+          .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
+    }else{
+      edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+    }
+    edit.remove("source_update_pending_base")
+        .remove("source_update_pending_channels")
+        .apply();
+    return applied;
+  }
+
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    applyPendingSourceUpdateIfSafe(p);
+    lastPersistedChannelsJson=p.getString("channels","[]");
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}c.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),c.backups.size()-1));channels.add(c);}
+      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); c.tvgId=o.optString("tvgId",""); c.tvgName=o.optString("tvgName",""); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}c.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),c.backups.size()-1));channels.add(c);}
     } catch(Exception ignored) {}
     rebuildChannelIndexes();
     if(!p.getBoolean("defaults_loaded",false)){
@@ -386,9 +457,10 @@ public class MainActivity extends Activity {
       HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
       ArrayList<Channel> compact=new ArrayList<>(channels.size());
       for(Channel c:channels){
+        normalizeBroadcasterLabel(c);
         if(c.backups==null)c.backups=new ArrayList<>();
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
-        String key=identity(c.name,c.group,c.url);
+        String key=identity(c);
         Channel keep=firstByIdentity.get(key);
         if(keep==null){firstByIdentity.put(key,c);compact.add(c);}
         else{
@@ -400,11 +472,25 @@ public class MainActivity extends Activity {
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
-        channelsByIdentity.put(identity(c.name,c.group,c.url),c);
+        channelsByIdentity.put(identity(c),c);
       }
     }
   }
+  private void normalizeBroadcasterLabel(Channel channel){
+    if(channel==null)return;
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    if(!broadcaster.isEmpty())channel.name=broadcaster;
+  }
+  private String displayChannelName(Channel channel){
+    if(channel==null)return "";
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    return displayChannelName(broadcaster.isEmpty()?channel.name:broadcaster);
+  }
   private String canonicalChannelName(String name){
+    String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
+    if(!satellite.isEmpty())return satellite;
     String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
@@ -427,12 +513,16 @@ public class MainActivity extends Activity {
     return value;
   }
   private boolean isCctvChannel(Channel c){
-    return canonicalChannelName(c==null?"":c.name).startsWith("CCTV-")
+    return (c!=null&&ChannelNamePolicy.canonicalBroadcasterName(
+        c.name,c.tvgName,c.tvgId,c.group).startsWith("CCTV-"))
+        ||canonicalChannelName(c==null?"":c.name).startsWith("CCTV-")
         ||(c!=null&&((c.name+" "+c.group).toUpperCase(Locale.ROOT).contains("CCTV")
         ||(c.name+" "+c.group).contains("央视")||(c.name+" "+c.group).contains("中央电视台")));
   }
   private int cctvSortOrder(Channel c){
-    String key=canonicalChannelName(c==null?"":c.name);
+    String key=c==null?"":ChannelNamePolicy.canonicalBroadcasterName(
+        c.name,c.tvgName,c.tvgId,c.group);
+    if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.name);
     if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.group);
     try{
       String n=key.substring(5);
@@ -445,6 +535,7 @@ public class MainActivity extends Activity {
   }
   private String displayChannelName(String name){
     String key=canonicalChannelName(name);
+    if(key.endsWith("卫视"))return key;
     if(!key.startsWith("CCTV-"))return name==null?"":name;
     String suffix=key.substring(5);
     String[] titles={"","综合","财经","综艺","中文国际","体育","电影","国防军事","电视剧","纪录","科教","戏曲","社会与法","新闻","少儿","音乐","奥林匹克","农业农村"};
@@ -466,6 +557,14 @@ public class MainActivity extends Activity {
   }
   // Satellite channels have a stable canonical identity across different source hosts.
   // Generic/local names retain host separation to avoid merging unrelated "News" channels.
+  private String identity(Channel channel){
+    if(channel==null)return "";
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    if(broadcaster.startsWith("CCTV-"))return broadcaster+"|cctv";
+    if(broadcaster.endsWith("卫视"))return broadcaster.toLowerCase(Locale.ROOT)+"|satellite";
+    return identity(channel.name,channel.group,channel.url);
+  }
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
     if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
@@ -482,7 +581,7 @@ public class MainActivity extends Activity {
     // this before playback succeeds, so last_source_url could permanently remember
     // a dead endpoint and make every next launch start from that failed URL.
     getSharedPreferences("mytv",0).edit()
-        .putString("last_channel_identity",identity(c.name,c.group,c.url))
+        .putString("last_channel_identity",identity(c))
         .putString("last_channel_url",c.url).apply();
   }
   private void restoreLastChannel(){
@@ -493,7 +592,7 @@ public class MainActivity extends Activity {
     int found=-1;
     for(int i=0;i<channels.size();i++){
       Channel c=channels.get(i);
-      if(identity(c.name,c.group,c.url).equals(savedIdentity)
+      if((identity(c).equals(savedIdentity)||identity(c.name,c.group,c.url).equals(savedIdentity))
           &&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}
     }
     if(found<0){
@@ -519,8 +618,10 @@ public class MainActivity extends Activity {
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
+      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("tvgId",c.tvgId==null?"":c.tvgId);o.put("tvgName",c.tvgName==null?"":c.tvgName);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+      String savedJson=a.toString();
+      getSharedPreferences("mytv",0).edit().putString("channels",savedJson).putStringSet("fav",new HashSet<>(favorites)).apply();
+      lastPersistedChannelsJson=savedJson;
     } catch(Exception ignored) {}
   }
   private String activeCategory="全部";
@@ -550,8 +651,8 @@ public class MainActivity extends Activity {
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
-    video=new PlayerView(this);int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());video.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);video.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);video.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);video.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);video.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);video.addView(networkSpeedOverlay,speedParams);main.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+    liveStage=new FrameLayout(this);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);liveStage.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
@@ -568,8 +669,18 @@ public class MainActivity extends Activity {
   private void scheduleAutomaticSourceUpdates(){
     WorkManager wm=WorkManager.getInstance(this);
     boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
-    if(!enabled){wm.cancelUniqueWork("mytv_periodic_source_update");return;}
+    if(!enabled){
+      wm.cancelUniqueWork("mytv_periodic_source_update");
+      wm.cancelUniqueWork("mytv_startup_source_refresh");
+      return;
+    }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+    // Cache-first startup: the first screen is already rendered before this is
+    // enqueued. Probe saved/discovered sources in the background; never gate UI
+    // or mutate the in-memory channel list during startup.
+    OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints).build();
+    wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
@@ -630,8 +741,8 @@ public class MainActivity extends Activity {
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    int current=prefs.getInt("decoder_mode",0);
-    String[] modes={"自动解码（系统选择）","兼容解码（启用解码器回退，推荐无声时尝试）"};
+    int current=prefs.getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE);
+    String[] modes={"系统默认解码（关闭备用解码器回退）","兼容解码（优先系统硬件解码，初始化失败时自动尝试其他解码器）"};
     new AlertDialog.Builder(this).setTitle("解码与声音设置").setSingleChoiceItems(modes,current,(dialog,which)->{
       prefs.edit().putInt("decoder_mode",which).apply();
       dialog.dismiss();
@@ -658,6 +769,12 @@ public class MainActivity extends Activity {
   // Keep the user scroll position when the same category finishes background refresh.
   private String currentVodRenderedCategory="";
   private ExoPlayer vodPlayer;
+  private LibVlcVodBackend vodFallbackBackend;
+  private VLCVideoLayout vodVlcVideoLayout;
+  private boolean vodUsingLibVlc=false, vodFallbackAttempted=false;
+  private long vodSessionGeneration=0L;
+  private Runnable vodPendingSeekTask;
+  private Runnable vodPlaybackWatchdog;
   private Runnable vodUiUpdater;
   private SeekBar vodSeekBar;
   private TextView vodPositionLabel,vodDurationLabel;
@@ -668,7 +785,7 @@ public class MainActivity extends Activity {
   private void vodDialog(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
-    resumeLiveAfterVod=player!=null&&player.isPlaying();
+    resumeLiveAfterVod=(player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying());
     // A VOD catalogue session owns the screen; explicitly revoke live audio before
     // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
     if(player!=null){try{player.setPlayWhenReady(false);player.pause();}catch(RuntimeException ignored){}}
@@ -678,6 +795,8 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     releaseLivePlayerSafely();
+    // The independent LibVLC live engine must also be stopped while the VOD catalogue owns the screen.
+    releaseLibVlcEngine();
     final java.util.ArrayList<Button> vodCategoryHoverTargets=new java.util.ArrayList<>();
     final GridView[] vodGridHoverTarget=new GridView[1];
     // Track pointer movement at the dialog content root. Some Android 9 TV
@@ -842,7 +961,7 @@ public class MainActivity extends Activity {
         startCurrentSource();
       }
       resumeLiveAfterVod=false;
-      setSourceUpdatePlaybackActive(player!=null&&player.isPlaying());
+      setSourceUpdatePlaybackActive((player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
     });
     dialog.setOnShowListener(d->{
@@ -1412,6 +1531,37 @@ public class MainActivity extends Activity {
   private String formatVodTime(long ms){
     long seconds=Math.max(0,ms/1000),hours=seconds/3600,minutes=(seconds%3600)/60,remain=seconds%60;
     return hours>0?String.format(Locale.US,"%d:%02d:%02d",hours,minutes,remain):String.format(Locale.US,"%02d:%02d",minutes,remain);
+  }
+
+  private long vodPositionMs(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.getPositionMs();return vodPlayer==null?0L:Math.max(0L,vodPlayer.getCurrentPosition());}
+  private long vodDurationMs(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.getDurationMs();return vodPlayer==null?0L:Math.max(0L,vodPlayer.getDuration());}
+  private boolean vodIsPlaying(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.isPlaying();return vodPlayer!=null&&vodPlayer.isPlaying();}
+  private void vodPause(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.pause();else if(vodPlayer!=null)vodPlayer.pause();}
+  private void vodResume(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
+  private boolean vodSeekTo(long position){long duration=vodDurationMs();if(duration<=0L)return false;long target=VodTimelinePolicy.clampPosition(position,duration);if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.seekToMs(target);if(vodPlayer!=null){vodPlayer.seekTo(target);return true;}return false;}
+  private void releaseVodFallback(){if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}if(vodFallbackBackend!=null){try{vodFallbackBackend.release();}catch(Exception ignored){}vodFallbackBackend=null;}vodUsingLibVlc=false;if(vodVlcVideoLayout!=null)vodVlcVideoLayout.setVisibility(View.GONE);}
+  private void fallbackVodToLibVlc(Dialog dialog,VodItem item,PlayerView media3View,VLCVideoLayout vlcLayout,long resumePosition,Runnable onEnded,Runnable onFailure){
+    if(vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
+    final long session=vodSessionGeneration;vodFallbackAttempted=true;
+    // Stop the Media3 watchdog before releasing its player; no stale tick may race the LibVLC session.
+    if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
+    saveLiveDiagnostic("VOD_ENGINE_FALLBACK","Media3 -> LibVLC; resumeMs="+Math.max(0L,resumePosition));
+    if(vodPlayer!=null){try{media3View.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();}catch(Exception ignored){}vodPlayer=null;}
+    media3View.setVisibility(View.GONE);vlcLayout.setVisibility(View.VISIBLE);
+    try{
+      final LibVlcVodBackend backend=new LibVlcVodBackend(this,vlcLayout);vodFallbackBackend=backend;vodUsingLibVlc=true;
+      backend.setListener(new VodPlaybackBackend.Listener(){
+        private boolean current(){return session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
+        private void restorePosition(){if(current()&&resumePosition>0L&&backend.getDurationMs()>0L){backend.seekToMs(resumePosition);saveLiveDiagnostic("VOD_FALLBACK_RESUME","positionMs="+resumePosition);if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}}}
+        @Override public void onReady(){if(current()){saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");restorePosition();}}
+        @Override public void onVideoOutput(boolean available){if(current()){saveLiveDiagnostic("VOD_LIBVLC_VIDEO_OUTPUT","available="+available);if(available)restorePosition();}}
+        @Override public void onFailure(String reason){if(current()){saveLiveDiagnostic("VOD_LIBVLC_FAILURE","reason="+safeDiagnosticDetail(reason));releaseVodFallback();if(onFailure!=null)onFailure.run();toast("备用播放器也无法播放："+reason);}}
+        @Override public void onEnded(){if(current()&&onEnded!=null)onEnded.run();}
+      });
+      backend.play(item.url);
+      backend.setVideoScaleMode(getSharedPreferences("mytv",0).getInt("vod_aspect_mode",0));
+      if(resumePosition>0L){final int[] attempts={0};vodPendingSeekTask=new Runnable(){@Override public void run(){if(session!=vodSessionGeneration||vodFallbackBackend!=backend||!vodUsingLibVlc)return;if(backend.getDurationMs()>0L){backend.seekToMs(resumePosition);vodPendingSeekTask=null;}else if(++attempts[0]<20)uiHandler.postDelayed(this,500L);else vodPendingSeekTask=null;}};uiHandler.postDelayed(vodPendingSeekTask,500L);}
+    }catch(Exception error){releaseVodFallback();if(onFailure!=null)onFailure.run();toast("LibVLC 备用播放器启动失败："+error.getMessage());saveLiveDiagnostic("VOD_LIBVLC_START_FAILURE","type="+error.getClass().getSimpleName());}
   }
 
   // China-first provider: CCTV/CNTV public programme catalogue.
@@ -2109,6 +2259,7 @@ public class MainActivity extends Activity {
   }
   private void startVodPlayback(VodItem item,long startPosition){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodFallback();vodSessionGeneration++;vodFallbackAttempted=false;
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
     final SeekBar[] vodSeekHolder=new SeekBar[1];
@@ -2218,6 +2369,7 @@ public class MainActivity extends Activity {
     };stage.setBackgroundColor(Color.BLACK);stage.setFocusable(true);stage.setFocusableInTouchMode(true);stage.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
     PlayerView pv=new PlayerView(this);pv.setUseController(false);pv.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);pv.setFocusable(false);pv.setFocusableInTouchMode(false);int vodAspect=getSharedPreferences("mytv",0).getInt("vod_aspect_mode",0);pv.setResizeMode(vodAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:vodAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
     stage.addView(pv,new FrameLayout.LayoutParams(-1,-1));
+    VLCVideoLayout vodVlcView=new VLCVideoLayout(this);vodVlcVideoLayout=vodVlcView;vodVlcView.setVisibility(View.GONE);stage.addView(vodVlcView,new FrameLayout.LayoutParams(-1,-1));
     // End-of-film overlay: keep the last video frame visible and offer clear
     // remote-friendly actions instead of leaving the viewer on a black screen.
     LinearLayout endedPanel=new LinearLayout(this);endedPanel.setOrientation(1);endedPanel.setGravity(Gravity.CENTER);
@@ -2231,26 +2383,25 @@ public class MainActivity extends Activity {
     for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
     endedPanel.addView(endedTitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedSubtitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedActions,new LinearLayout.LayoutParams(-1,-2));
     FrameLayout.LayoutParams endedParams=new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER);endedParams.leftMargin=dp(24);endedParams.rightMargin=dp(24);stage.addView(endedPanel,endedParams);
-    replayEnded.setOnClickListener(v->{endedPanel.setVisibility(View.GONE);if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
+    replayEnded.setOnClickListener(v->{endedPanel.setVisibility(View.GONE);if(vodPlayer==null&&vodFallbackBackend==null){d.dismiss();stage.postDelayed(()->startVodPlayback(item,0),250L);return;}if(vodUsingLibVlc&&vodFallbackBackend!=null){vodSeekTo(0);vodResume();saveVodHistory(item,0,vodDurationMs());}else if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
     nextEnded.setOnClickListener(v->{VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}d.dismiss();stage.postDelayed(()->startVodPlayback(next,0),250);});
     backEnded.setOnClickListener(v->d.dismiss());
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
-    TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodPlayer!=null){if(vodPlayer.isPlaying())vodPlayer.pause();else vodPlayer.play();playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");}});
+    TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");});
     vodPositionLabel=new TextView(this);vodPositionLabel.setText("00:00");vodPositionLabel.setTextColor(Color.WHITE);vodPositionLabel.setTextSize(12);vodPositionLabel.setGravity(Gravity.CENTER);vodPositionLabel.setPadding(dp(6),0,dp(6),0);
     vodSeekBar=new SeekBar(this){
       private int remoteDirection=0;
       private Runnable remoteRepeat;
       private void seekBy(long delta){
-        if(vodPlayer==null)return;
-        long duration=vodPlayer.getDuration();
+        long duration=vodDurationMs();
         if(duration<=0)return;
-        long target=Math.max(0L,Math.min(duration,vodPlayer.getCurrentPosition()+delta));
-        vodPlayer.seekTo(target);
-        setProgress((int)Math.max(0,Math.min(1000,target*1000L/duration)));
+        long target=VodTimelinePolicy.addAndClamp(vodPositionMs(),delta,duration);
+        vodSeekTo(target);
+        setProgress(VodTimelinePolicy.toProgress(target,duration));
         if(vodPositionLabel!=null)vodPositionLabel.setText(formatVodTime(target));
       }
       @Override public boolean onKeyDown(int keyCode,KeyEvent event){
-        if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER||keyCode==KeyEvent.KEYCODE_ENTER||keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0&&vodPlayer!=null){if(vodPlayer.isPlaying())vodPlayer.pause();else vodPlayer.play();playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");}return true;}
+        if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER||keyCode==KeyEvent.KEYCODE_ENTER||keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0){if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");}return true;}
         int direction=keyCode==KeyEvent.KEYCODE_DPAD_LEFT?-1:keyCode==KeyEvent.KEYCODE_DPAD_RIGHT?1:0;
         if(direction==0)return super.onKeyDown(keyCode,event);
         if(event.getRepeatCount()==0){
@@ -2284,30 +2435,33 @@ public class MainActivity extends Activity {
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
     hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);stage.requestFocus();};stage.postDelayed(hideVodSeekTask[0],2500);
+    Runnable showVodFallbackFailure=()->{if(vodPlayerDialog!=d||activeVodItem!=item)return;endedTitle.setText("暂时无法播放");endedSubtitle.setText("备用播放器也无法播放《"+item.title+"》。可以重新尝试，或返回影片列表。");replayEnded.setText("重新尝试");endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();};
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
-      public void onStopTrackingTouch(SeekBar bar){if(vodPlayer!=null&&vodPlayer.getDuration()>0)vodPlayer.seekTo(vodPlayer.getDuration()*bar.getProgress()/1000L);}
-      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(fromUser&&vodPlayer!=null&&vodPlayer.getDuration()>0)vodPositionLabel.setText(formatVodTime(vodPlayer.getDuration()*progress/1000L));}
+      public void onStopTrackingTouch(SeekBar bar){long duration=vodDurationMs();if(duration>0)vodSeekTo(VodTimelinePolicy.fromProgress(bar.getProgress(),duration));}
+      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){long duration=vodDurationMs();if(fromUser&&duration>0)vodPositionLabel.setText(formatVodTime(VodTimelinePolicy.fromProgress(progress,duration)));}
     });
     vodUiUpdater=new Runnable(){public void run(){
-      if(vodPlayer==null||vodPlayerDialog!=d||!d.isShowing())return;
-      long duration=vodPlayer.getDuration(),position=vodPlayer.getCurrentPosition();
-      if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress((int)Math.max(0,Math.min(1000,position*1000L/duration)));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
+      if((vodPlayer==null&&vodFallbackBackend==null)||vodPlayerDialog!=d||!d.isShowing())return;
+      long duration=vodDurationMs(),position=vodPositionMs();
+      if(duration>0){vodDurationLabel.setText(formatVodTime(duration));if(!vodSeekBar.isPressed())vodSeekBar.setProgress(VodTimelinePolicy.toProgress(position,duration));}else{vodDurationLabel.setText("--:--");vodSeekBar.setProgress(0);}
       if(!vodSeekBar.isPressed())vodPositionLabel.setText(formatVodTime(position));
-      playPauseIndicator.setText(vodPlayer.isPlaying()?"Ⅱ":"▶");
+      playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");
       uiHandler.postDelayed(this,500);
     }};
     TextView heading=new TextView(this);heading.setText(item.title+" · 开放授权影片");heading.setTextColor(Color.WHITE);heading.setTextSize(15);heading.setPadding(dp(14),dp(10),dp(14),dp(10));heading.setBackgroundColor(0x99000000);
     FrameLayout.LayoutParams headingParams=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);stage.addView(heading,headingParams);vodTopControls[0]=heading;
     Button favorite=new Button(this);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");favorite.setAllCaps(false);favorite.setTextSize(14);favorite.setFocusable(true);favorite.setFocusableInTouchMode(true);styleVodTopControl(favorite);favorite.setOnClickListener(v->{toggleVodFavorite(item);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");});FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(4);favoriteParams.rightMargin=dp(116);stage.addView(favorite,favoriteParams);vodTopControls[1]=favorite;
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
-     Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
+     Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showVodAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
-     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+     d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();if(vodPlayer!=null){pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
       recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
       final ExoPlayer vodListenerOwner=vodPlayer;
+      final boolean[] vodHasVideoTrack={false},vodRenderedFirstFrame={false};
+      final long[] vodReadySince={0L},vodLastAdvanceAt={0L},vodLastPosition={0L};
       vodPlayer.addAnalyticsListener(new AnalyticsListener(){
         private boolean isCurrentVod(){return vodListenerOwner==MainActivity.this.vodPlayer;}
         @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
@@ -2317,13 +2471,13 @@ public class MainActivity extends Activity {
           if(isCurrentVod())saveLiveDiagnostic("VOD_AUDIO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
         }
         @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
-          if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+          if(isCurrentVod()&&format!=null){vodHasVideoTrack[0]=true;saveLiveDiagnostic("VOD_VIDEO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);}
         }
         @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
           if(isCurrentVod()&&format!=null)saveLiveDiagnostic("VOD_AUDIO_FORMAT","mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" sampleRate="+format.sampleRate+" channels="+format.channelCount);
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
-          if(isCurrentVod())saveLiveDiagnostic("VOD_FIRST_FRAME","renderTimeMs="+renderTimeMs);
+          if(isCurrentVod()){vodRenderedFirstFrame[0]=true;vodLastAdvanceAt[0]=android.os.SystemClock.elapsedRealtime();vodLastPosition[0]=Math.max(0L,vodListenerOwner.getCurrentPosition());saveLiveDiagnostic("VOD_FIRST_FRAME","renderTimeMs="+renderTimeMs);}
         }
         @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
           if(isCurrentVod()&&droppedFrames>0)saveLiveDiagnostic("VOD_DROPPED_FRAMES","count="+droppedFrames+" windowMs="+elapsedMs);
@@ -2333,7 +2487,40 @@ public class MainActivity extends Activity {
         }
       });
       pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
-       MediaItem media=PlaybackPlayerFactory.buildMediaItem(item.url,item.identifier);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_ENDED&&activeVodItem!=null){saveVodHistory(activeVodItem,0,vodPlayer==null?0:vodPlayer.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}}});vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(vodPlayer!=null&&activeVodItem!=null){saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+       MediaItem media=PlaybackPlayerFactory.buildMediaItem(item.url,item.identifier);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){
+         private boolean isCurrent(){return vodListenerOwner==MainActivity.this.vodPlayer&&vodPlayerDialog==d&&activeVodItem==item;}
+         private void showEnded(){if(!isCurrent())return;saveVodHistory(item,0,vodListenerOwner.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}
+         @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
+         @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);}
+       });vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(activeVodItem!=null&&(vodPlayer!=null||vodFallbackBackend!=null)){saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+      vodPlaybackWatchdog=new Runnable(){
+        @Override public void run(){
+          if(vodListenerOwner!=vodPlayer||vodPlayerDialog!=d||activeVodItem!=item||!d.isShowing()||vodFallbackAttempted||vodUsingLibVlc)return;
+          long now=android.os.SystemClock.elapsedRealtime();
+          int state=vodListenerOwner.getPlaybackState();
+          long position=Math.max(0L,vodListenerOwner.getCurrentPosition());
+          if(state!=Player.STATE_READY||!vodListenerOwner.getPlayWhenReady()){
+            vodReadySince[0]=0L;vodLastAdvanceAt[0]=now;vodLastPosition[0]=position;
+          }else{
+            if(vodReadySince[0]==0L){vodReadySince[0]=now;vodLastAdvanceAt[0]=now;vodLastPosition[0]=position;}
+            if(vodHasVideoTrack[0]&&!vodRenderedFirstFrame[0]&&now-vodReadySince[0]>=25000L){
+              saveLiveDiagnostic("VOD_WATCHDOG_NO_FIRST_FRAME","readyMs="+(now-vodReadySince[0]));
+              fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);
+              return;
+            }
+            if(vodRenderedFirstFrame[0]){
+              if(position!=vodLastPosition[0]){vodLastPosition[0]=position;vodLastAdvanceAt[0]=now;}
+              else if(now-vodLastAdvanceAt[0]>=20000L){
+                saveLiveDiagnostic("VOD_WATCHDOG_STALLED","positionMs="+position+" stalledMs="+(now-vodLastAdvanceAt[0]));
+                fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);
+                return;
+              }
+            }
+          }
+          uiHandler.postDelayed(this,2000L);
+        }
+      };
+      uiHandler.postDelayed(vodPlaybackWatchdog,2000L);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
@@ -2529,13 +2716,17 @@ public class MainActivity extends Activity {
   }
   private String regionalMetadata(Channel c){
     if(c==null)return "";
-    return (c.name+" "+c.group+" "+c.url).toLowerCase(Locale.ROOT)
+    // Use broadcaster metadata, never the stream URL: CDN hostnames can contain
+    // misleading city/province tokens and must not determine a channel's region.
+    return (c.name+" "+c.tvgName+" "+c.tvgId+" "+c.group).toLowerCase(Locale.ROOT)
         .replace("臺","台").replace("廣","广");
   }
   private boolean hasRegionalToken(String metadata,String token){
     return token!=null&&!token.isEmpty()&&metadata.contains(token.toLowerCase(Locale.ROOT));
   }
   private String explicitProvinceIn(String metadata){
+    String cityAlias=ChannelNamePolicy.provinceForLocalChannel(metadata);
+    if(!cityAlias.isEmpty())return cityAlias;
     String[] names={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     for(String p:names)if(metadata.contains(p))return p;
     String[][] aliases={{"beijing","北京"},{"tianjin","天津"},{"hebei","河北"},{"shanxi","山西"},{"inner mongolia","内蒙古"},{"liaoning","辽宁"},{"jilin","吉林"},{"heilongjiang","黑龙江"},{"shanghai","上海"},{"jiangsu","江苏"},{"zhejiang","浙江"},{"anhui","安徽"},{"fujian","福建"},{"jiangxi","江西"},{"shandong","山东"},{"henan","河南"},{"hubei","湖北"},{"hunan","湖南"},{"guangdong","广东"},{"guangxi","广西"},{"hainan","海南"},{"chongqing","重庆"},{"sichuan","四川"},{"guizhou","贵州"},{"yunnan","云南"},{"tibet","西藏"},{"shaanxi","陕西"},{"gansu","甘肃"},{"qinghai","青海"},{"ningxia","宁夏"},{"xinjiang","新疆"}};
@@ -2545,7 +2736,8 @@ public class MainActivity extends Activity {
   private boolean isSatelliteChannel(Channel c){
     String metadata=regionalMetadata(c);
     String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
+    return ChannelNamePolicy.isSatellite(metadata, c==null?"":c.group)
+        ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null||isSatelliteChannel(c))return false;
@@ -2586,7 +2778,7 @@ public class MainActivity extends Activity {
     return matchesProvinceCity(c,activeLocalProvince,activeLocalCity);
   }
   private boolean categoryMatch(Channel c,String cat){
-    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
+    String x=(c.name+" "+c.group+" "+c.tvgName+" "+c.tvgId).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
     if(cat.equals("自建频道"))return "自建频道".equals(g)||"自定义".equals(g);
     if(cat.startsWith("城市:")){
@@ -2606,7 +2798,7 @@ public class MainActivity extends Activity {
     if(cat.equals("全球频道"))return true;
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
-    if(cat.equals("卫视"))return x.contains("卫视")||g.equals("卫视")||g.contains("satellite");
+    if(cat.equals("卫视"))return isSatelliteChannel(c);
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
     if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
@@ -2647,7 +2839,7 @@ public class MainActivity extends Activity {
           if(!matchesLocalRegion(c))continue;
         }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
         if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+            &&!displayChannelName(c).toLowerCase(Locale.ROOT).contains(q))continue;
         visibleIndexes.add(i);
       }
       if(activeCategory.equals("央视")){
@@ -2655,7 +2847,7 @@ public class MainActivity extends Activity {
           Channel ca=channels.get(a),cb=channels.get(b);
           int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
           if(oa!=ob)return Integer.compare(oa,ob);
-          return displayChannelName(ca.name).compareTo(displayChannelName(cb.name));
+          return displayChannelName(ca).compareTo(displayChannelName(cb));
         });
       }
       totalMatches=visibleIndexes.size();
@@ -2669,12 +2861,12 @@ public class MainActivity extends Activity {
         int ix=visibleIndexes.get(row);
         Channel c=channels.get(ix);shown++;
         Button b=new Button(this);b.setTag(ix);
-        String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
-        String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
+        String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
+        String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
         b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
+        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{play(ix,j);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
       }
     }
@@ -2790,6 +2982,21 @@ public class MainActivity extends Activity {
     final String address,data,error;
     PlaylistFetchResult(String a,String d,String e){address=a;data=d;error=e;}
   }
+  // Count actual mainland channel identities, not successful HTTP responses.
+  // A directory returning an empty playlist or only non-China entries must not
+  // poison the 12-hour cache and hide the next refresh attempt.
+  private int countRecognizedChinaChannels(){
+    HashSet<String> identities=new HashSet<>();
+    synchronized(channels){
+      for(Channel channel:channels){
+        if(channel==null)continue;
+        if(categoryMatch(channel,"央视")||categoryMatch(channel,"卫视")||categoryMatch(channel,"地方")){
+          identities.add(identity(channel));
+        }
+      }
+    }
+    return identities.size();
+  }
   private void loadChinaChannels(){
     if(chinaLoading){info.setText("国内频道列表正在整理，请稍候…");return;}
     android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
@@ -2803,7 +3010,8 @@ public class MainActivity extends Activity {
       return;
     }
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
-    worker.execute(()->{
+    try{worker.execute(()->{
+      try{
       String[] feeds={
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
@@ -2821,19 +3029,32 @@ public class MainActivity extends Activity {
       StringBuilder errors=new StringBuilder();
       int added=fetchAndMergePlaylists(feeds,12000,errors);
       final int total=added;final String err=errors.toString();
-      // Keep the previous cache if no new entries were merged; persist only
-      // actual additions and avoid a full list rebuild when nothing changed.
+      final int recognizedChinaCount=countRecognizedChinaChannels();
+      // Keep the previous cache if no new entries were merged. Only advance the
+      // refresh timestamp after the resulting catalogue contains a minimally
+      // useful set of recognized mainland channels; HTTP 200 alone is not success.
       if(total>0)persist();
-      if(err.split(";").length<feeds.length){
+      final boolean usefulChinaDirectory=recognizedChinaCount>=3;
+      if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
       }
       runOnUiThread(()->{
+        chinaLoading=false;
         if(isFinishing())return;
         if(total>0)refresh();
-        chinaLoading=false;
-        info.setText("国内频道轻量补充完成：新增 "+total+" 个条目；本地缓存已保留。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
+        String status=usefulChinaDirectory
+            ?"已识别 "+recognizedChinaCount+" 个国内频道条目，频道缓存已保留。"
+            :"国内有效频道不足（当前识别 "+recognizedChinaCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
+        info.setText("国内频道目录检查完成：新增 "+total+" 个条目；"+status+(err.isEmpty()?"":"部分来源暂不可用："+err));
       });
-    });
+      }catch(Throwable failure){
+        final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
+        runOnUiThread(()->{chinaLoading=false;if(!isFinishing())info.setText("国内频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);});
+      }
+    });}catch(RuntimeException rejected){
+      chinaLoading=false;
+      info.setText("国内频道整理任务暂时无法启动，已有频道仍可使用；请稍后重试。");
+    }
   }
   private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
     ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,items);
@@ -2994,40 +3215,33 @@ public class MainActivity extends Activity {
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
-    String name=null,group="",pendingGroup="";int added=0;
     if(data==null)return 0;
-    data=data.replace("\uFEFF","").replace("\r\n","\n").replace('\r','\n');
-    for(String raw:data.split("\n")){
-      String line=raw.trim();
-      if(line.isEmpty())continue;
-      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
-      if(line.startsWith("#EXTINF")){
-        int comma=extinfComma(line);
-        name=comma>=0?line.substring(comma+1).trim():"";
-        java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
-        String tvgName=nm.find()?nm.group(1).trim():"";
-        if(name.isEmpty())name=tvgName;
-        if(name.isEmpty())name="频道 "+(channels.size()+1);
-        group=pendingGroup;pendingGroup="";
-        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);
-        if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
-        continue;
-      }
-      if(line.startsWith("#"))continue;
-      if(line.startsWith("http://")||line.startsWith("https://")){
-        if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
-        synchronized(channels){
-          if(!channelsByUrl.containsKey(line)){
-            String key=identity(name,group,line);Channel same=channelsByIdentity.get(key);
-            if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
-            else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
+    int added=0;
+    List<PlaylistParser.ChannelSource> entries=PlaylistParser.parse(data,Integer.MAX_VALUE);
+    for(PlaylistParser.ChannelSource entry:entries){
+      String name=entry.name==null||entry.name.trim().isEmpty()?"频道 "+(channels.size()+1):entry.name.trim();
+      String line=entry.url;
+      synchronized(channels){
+        if(!channelsByUrl.containsKey(line)){
+          Channel metadataProbe=new Channel(name,line,entry.group);metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);String key=identity(metadataProbe);Channel same=channelsByIdentity.get(key);
+          if(same!=null){
+            same.mergeMetadata(entry.tvgId,entry.tvgName);
+            normalizeBroadcasterLabel(same);
+            if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}
+          }else{
+            Channel fresh=new Channel(name,line,entry.group);
+            fresh.mergeMetadata(entry.tvgId,entry.tvgName);
+            normalizeBroadcasterLabel(fresh);
+            channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;
           }
+        }else{
+          Channel existing=channelsByUrl.get(line);
+          if(existing!=null){existing.mergeMetadata(entry.tvgId,entry.tvgName);normalizeBroadcasterLabel(existing);}
         }
-        if(parsingGeoChannelKeys!=null){
-          Channel scoped=channelsByUrl.get(line);
-          if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
-        }
-        name=null;group="";
+      }
+      if(parsingGeoChannelKeys!=null){
+        Channel scoped=channelsByUrl.get(line);
+        if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
       }
     }
     return added;
@@ -3064,7 +3278,7 @@ public class MainActivity extends Activity {
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
-    if(fullscreenAspectMenuItem.getParent()==null&&categoryMenuItems!=null)categoryMenuItems.addView(fullscreenAspectMenuItem,0,new LinearLayout.LayoutParams(-1,dp(48)));
+    if(fullscreenAspectMenuItem.getParent()==null&&categoryPane!=null)categoryPane.addView(fullscreenAspectMenuItem,1,new LinearLayout.LayoutParams(-1,dp(48)));
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
     if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
     categoryPane.setVisibility(View.VISIBLE);channelPane.setVisibility(View.VISIBLE);
@@ -3194,6 +3408,19 @@ public class MainActivity extends Activity {
     persist();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
+  }
+  private void showVodAspectRatioDialog(PlayerView target,String preferenceKey){
+    String[] choices={"完整显示（保留比例）","铺满屏幕（边缘可能裁切）","拉伸全屏（可能变形）"};
+    int saved=getSharedPreferences("mytv",0).getInt(preferenceKey,0);
+    saved=Math.max(0,Math.min(2,saved));
+    showHoverChoiceDialog("画面比例",choices,"取消",saved,which->{
+      int mode=which==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:
+        which==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:
+        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;
+      if(target!=null)target.setResizeMode(mode);
+      if(vodFallbackBackend!=null)vodFallbackBackend.setVideoScaleMode(which);
+      getSharedPreferences("mytv",0).edit().putInt(preferenceKey,which).apply();
+    });
   }
   private void showAspectRatioDialog(PlayerView target,String preferenceKey){
     if(target==null)return;
@@ -3453,11 +3680,56 @@ public class MainActivity extends Activity {
 
   // Keep a small, user-shareable live diagnostic trail. Query strings and full
   // stream URLs are deliberately excluded so signed URLs/tokens are not exposed.
+  private void installCrashDiagnosticsHandler(){
+    if(crashHandlerInstalled)return;
+    synchronized(MainActivity.class){
+      if(crashHandlerInstalled)return;
+      final Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
+      final Context appContext=getApplicationContext();
+      Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
+        try{
+          String message=error==null?"":String.valueOf(error.getMessage());
+          message=message.replaceAll("(?i)https?://\\S+","[URL]").replaceAll("[\\r\\n\\t]+"," ");
+          if(message.length()>260)message=message.substring(0,260);
+          StringBuilder detail=new StringBuilder();
+          detail.append("thread=").append(thread==null?"?":thread.getName())
+              .append(" exception=").append(error==null?"?":error.getClass().getName())
+              .append(" message=").append(message);
+          if(error!=null){
+            StackTraceElement[] frames=error.getStackTrace();
+            int limit=Math.min(frames==null?0:frames.length,24);
+            for(int i=0;i<limit;i++)detail.append("\n at ").append(frames[i].toString());
+          }
+          appContext.getSharedPreferences("mytv",0).edit()
+              .putString("last_uncaught_crash_v1",detail.length()>7000?detail.substring(0,7000):detail.toString())
+              .putString("last_uncaught_crash_time",new Date().toString())
+              .commit();
+        }catch(Throwable ignored){}
+        if(previous!=null)previous.uncaughtException(thread,error);
+      });
+      crashHandlerInstalled=true;
+    }
+  }
+
   private String safeDiagnosticDetail(String value){
     if(value==null)return "";
     String clean=value.replaceAll("(?i)https?://\\S+","[URL]");
     clean=clean.replaceAll("[\\r\\n\\t]+"," ");
     return clean.length()>260?clean.substring(0,260):clean;
+  }
+  // Persist the last native transition synchronously: a native abort/SIGSEGV bypasses
+  // Java uncaught-exception handlers, so asynchronous diagnostic writes can be lost.
+  private void saveCriticalEngineStage(String stage,String detail){
+    String safe=safeDiagnosticDetail(detail);
+    String value=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
+        +" | "+stage+" | "+safe;
+    saveLiveDiagnostic(stage,detail);
+    try{
+      getSharedPreferences("mytv",0).edit()
+          .putString("last_native_engine_stage_v1",value)
+          .putLong("last_native_engine_stage_time_v1",System.currentTimeMillis())
+          .commit();
+    }catch(RuntimeException ignored){}
   }
   private void saveLiveDiagnostic(String stage,String detail){
     String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
@@ -3492,12 +3764,18 @@ public class MainActivity extends Activity {
     inventoryThread.start();
   }
   private void showLiveDiagnostics(){
-    String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    android.content.SharedPreferences diagnostics=getSharedPreferences("mytv",0);
+    String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    String crash=diagnostics.getString("last_uncaught_crash_v1","");
+    if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
+    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
+    if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
+    final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
-        .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
+        .setMessage(copyDetails+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
           android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",details));toast("诊断记录已复制");}
+          if(cm!=null){cm.setPrimaryClip(ClipData.newPlainText("我的电视直播诊断",copyDetails));toast("诊断记录已复制");}
         }).setNegativeButton("关闭",null).show();
   }
 
@@ -3518,6 +3796,8 @@ public class MainActivity extends Activity {
   private boolean liveWindowRecoveryAttempted=false;
   private long sourceAttemptStartedAt=0L;
   private long sourceReadyAt=0L;
+  // Start the no-first-frame deadline only once a supported video track is selected.
+  private long videoTrackSelectedAt=0L;
   private boolean resumePlaybackOnStart=false;
   private boolean sourceReadyRecorded=false;
   private boolean sourceStableRecorded=false;
@@ -3548,9 +3828,11 @@ public class MainActivity extends Activity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        recordCurrentSourceFailure();
         String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
-        advanceToNextSourceAutomatically("检测到当前源"+reason);
+        if(!tryStartLibVlcFallback("检测到当前源"+reason)){
+          recordCurrentSourceFailure();
+          advanceToNextSourceAutomatically("检测到当前源"+reason);
+        }
       }else if(missingAudio){
         // Audio-only failure must not discard a source whose video is rendering.
         // Keep the warning for diagnosis, but let the viewer continue watching.
@@ -3591,7 +3873,7 @@ public class MainActivity extends Activity {
       // videoFrameMonitoringActive here would make the first-frame timeout
       // unreachable, because that flag is set only by the first frame callback.
       if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,hasReceivedVideoFrame,
-          sourceReadyAt,lastVideoFrameAt,now,20000L)){
+          videoTrackSelectedAt,lastVideoFrameAt,now,20000L)){
         recoverFromSilentFreeze(hasReceivedVideoFrame
             ?"检测到视频帧连续 20 秒没有输出"
             :"播放器已连接，但 20 秒内没有输出视频画面");
@@ -3621,7 +3903,8 @@ public class MainActivity extends Activity {
       startCurrentSource();
     }else{
       sameSourceRecoveryCount=0;
-      advanceToNextSourceAutomatically(reason+"，当前源重连无效");
+      if(!tryStartLibVlcFallback(reason+"，Media3 重连无效"))
+        advanceToNextSourceAutomatically(reason+"，当前源重连无效");
     }
   }
   // A given live stream may report error, buffering timeout and ENDED almost together.
@@ -3657,7 +3940,8 @@ public class MainActivity extends Activity {
       if(player!=null&&selected==expectedChannel&&currentMediaId.equals(expectedMediaId)
           &&player.getPlaybackState()==Player.STATE_BUFFERING){
         saveLiveDiagnostic("BUFFER_TIMEOUT","still buffering after "+seconds+"s");
-        advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
+        if(!tryStartLibVlcFallback("连续缓冲超过 "+seconds+" 秒"))
+          advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
       }
     };
     uiHandler.postDelayed(bufferingFallback,seconds*1000L);
@@ -3697,12 +3981,22 @@ public class MainActivity extends Activity {
     if(selected<0||selected>=channels.size()||channels.isEmpty())return;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    if(channels.size()<=1||automaticChannelSwitchCount>=channels.size()-1){
+    cancelAudioTrackCheck();
+    int next=ChannelFailoverPolicy.nextChannelIndex(
+        channels.size(),selected,automaticChannelSwitchCount);
+    if(next<0){
+      // Do not leave the final failed Media3/LibVLC instance buffering or emitting
+      // stale audio after the automatic scan has exhausted every other channel.
       setSourceUpdatePlaybackActive(false);
+      releaseLivePlayerSafely();
+      releaseLibVlcEngine();
+      if(video!=null)video.setVisibility(View.VISIBLE);
+      sourceWasBuffering=false;
       info.setText(reason+"；已检查完本轮频道，没有可确认可播放的频道，请手动选择");
+      saveLiveDiagnostic("AUTO_SCAN_EXHAUSTED",
+          "all channels were attempted; live player engines released for a clean idle state");
       return;
     }
-    int next=(selected+1)%channels.size();
     automaticChannelSwitchCount++;
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
@@ -3710,7 +4004,10 @@ public class MainActivity extends Activity {
     selected=next;
     updateLiveChannelPresentation();
     Channel target=channels.get(selected);
-    if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
+    // Playlist refreshes may reorder backups; never trust a persisted numeric index.
+    target.activeSource=0;
+    applyLastKnownGoodSource(target);
+    sortSourcesByObservedQuality(target);
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
@@ -3724,24 +4021,77 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    sortSourcesByObservedQuality(channels.get(ix));
-    // A newly selected channel always starts at its highest-ranked current source.
-    // Manual source changes continue to use startCurrentSource() directly.
-    channels.get(ix).activeSource=0;
+    Channel target=channels.get(ix);
+    // Backup indices can change when playlists refresh; restore by URL identity instead.
+    target.activeSource=0;
+    applyLastKnownGoodSource(target);
+    sortSourcesByObservedQuality(target);
+    startCurrentSource();
+  }
+  // Explicit backup selection must not be reset to the channel's default/last-good source.
+  // Keep this path separate from normal channel selection, which intentionally applies
+  // the remembered last-good source.
+  private void play(int ix,int requestedSourceIndex){
+    if(ix<0||ix>=channels.size())return;
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    Channel target=channels.get(ix);
+    if(target.backups==null||target.backups.isEmpty())return;
+    automaticSwitchCount=0;
+    automaticChannelSwitchCount=0;
+    sameSourceRecoveryCount=0;
+    manualSourceSwitch=true;
+    selected=ix;
+    target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
+    updateLiveChannelPresentation();
+    if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
+    persist();
     startCurrentSource();
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    Channel requested=channels.get(selected);
+    saveCriticalEngineStage("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
+    try{
+      startCurrentSourceInternal();
+    }catch(Throwable tuneFailure){
+      if(tuneFailure instanceof ThreadDeath)throw (ThreadDeath)tuneFailure;
+      if(tuneFailure instanceof VirtualMachineError)throw (VirtualMachineError)tuneFailure;
+      android.util.Log.e("MyTVPlayback","uncaught tune setup failure",tuneFailure);
+      saveCriticalEngineStage("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
+      try{releaseLivePlayerSafely();}catch(Throwable ignored){}
+      try{releaseLibVlcEngine();}catch(Throwable ignored){}
+      setSourceUpdatePlaybackActive(false);
+      try{exitFullScreenPlayback();}catch(Throwable uiFailure){
+        saveLiveDiagnostic("TUNE_UI_RECOVERY_ERROR",uiFailure.getClass().getSimpleName()+": "+uiFailure.getMessage());
+      }
+      if(info!=null)info.setText("频道启动遇到异常，已停止播放器保护主界面；请打开“直播诊断记录”查看原因。");
+    }
+  }
+  private void startCurrentSourceInternal(){
+    if(selected<0||selected>=channels.size())return;
+    releaseLibVlcEngine();
+    usingLibVlc=false;
+    libVlcAttemptedForSource=false;
+    if(video!=null)video.setVisibility(View.VISIBLE);
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
+    saveCriticalEngineStage("TUNE_STAGE","fullscreen layout enter begin");
     enterFullScreenPlayback();
+    saveCriticalEngineStage("TUNE_STAGE","fullscreen layout entered");
     Channel c=channels.get(selected);
+    if(c.backups==null||c.backups.isEmpty()){
+      saveLiveDiagnostic("SOURCE_SKIP","channel="+c.name+" has no playable URL entries");
+      info.setText(c.name+" 没有可用播放地址，正在跳过…");
+      advanceToNextChannelAutomatically("当前频道没有可用播放地址");
+      return;
+    }
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
     audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    videoTrackSelectedAt=0L;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3766,8 +4116,12 @@ public class MainActivity extends Activity {
     try{
     if(player==null){
       recordDecoderInventoryOnce();
+      saveCriticalEngineStage("TUNE_STAGE","Media3 player construction begin");
       player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
+      saveCriticalEngineStage("TUNE_STAGE","Media3 player constructed");
+      saveCriticalEngineStage("TUNE_STAGE","Media3 PlayerView attach begin");
       video.setPlayer(player);
+      saveCriticalEngineStage("TUNE_STAGE","Media3 PlayerView attached");
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
       // watchdog below monitors the player timeline without touching codec callbacks.
       final ExoPlayer listenerOwner=player;
@@ -3805,7 +4159,7 @@ public class MainActivity extends Activity {
           if(selected>=0&&selected<channels.size()){
             Channel renderedChannel=channels.get(selected);
             SourceMemoryStore.saveLastGood(MainActivity.this,
-                SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                SourceMemoryStore.channelIdentityKey(identity(renderedChannel)),
                 renderedUrl);
           }
         }
@@ -3857,7 +4211,12 @@ public class MainActivity extends Activity {
           audioTrackSelected=audioSelected;
           videoTrackPresent=videoPresent;
           videoTrackSupported=videoSupported;
+          boolean videoWasSelected=videoTrackSelected;
           videoTrackSelected=videoSelected;
+          if(videoSelected&&(!videoWasSelected||videoTrackSelectedAt<=0L)){
+            videoTrackSelectedAt=listenerOwner.getPlaybackState()==Player.STATE_READY
+                ?android.os.SystemClock.elapsedRealtime():0L;
+          }else if(!videoSelected)videoTrackSelectedAt=0L;
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
           videoFrameMonitoringActive=videoSelected;
@@ -3884,8 +4243,10 @@ public class MainActivity extends Activity {
             player.play();
             return;
           }
-          recordCurrentSourceFailure();
-          advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
+          if(!tryStartLibVlcFallback("Media3 播放错误（代码 "+e.errorCode+"）")){
+            recordCurrentSourceFailure();
+            advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
+          }
         }
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
@@ -3897,6 +4258,8 @@ public class MainActivity extends Activity {
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
             if(firstBuffering)showChannelZapMessage(sourceReadyRecorded?"网络波动，正在缓冲…":"正在连接播放源…");
+            // Do not charge network buffering time against the decoder's first-frame deadline.
+            if(!hasReceivedVideoFrame)videoTrackSelectedAt=0L;
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             sourceWasBuffering=false;
@@ -3911,6 +4274,8 @@ public class MainActivity extends Activity {
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
+            // Begin the first-frame deadline only after READY; earlier BUFFERING time is excluded.
+            if(videoTrackSelected&&!hasReceivedVideoFrame)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
             lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
@@ -3935,19 +4300,152 @@ public class MainActivity extends Activity {
     }
     // Explicitly drain the previous live item before assigning another source. This
     // prevents stale audio/renderers from surviving rapid channel/source changes.
+    saveCriticalEngineStage("TUNE_STAGE","previous Media3 item stop begin");
     player.stop();
     player.clearMediaItems();
     MediaItem item=PlaybackPlayerFactory.buildMediaItem(c.backups.get(c.activeSource),currentMediaId);
+    saveCriticalEngineStage("TUNE_STAGE","media item assignment begin");
     player.setMediaItem(item);
+    saveCriticalEngineStage("TUNE_STAGE","media item assigned");
+    saveCriticalEngineStage("TUNE_STAGE","Media3 prepare begin");
     player.prepare();
+    saveCriticalEngineStage("TUNE_STAGE","Media3 prepare returned");
+    saveCriticalEngineStage("TUNE_STAGE","Media3 play begin");
     player.play();
+    saveCriticalEngineStage("TUNE_STAGE","Media3 play returned");
     }catch(RuntimeException e){
       String failedMediaId=currentMediaId;
+      saveCriticalEngineStage("TUNE_RUNTIME_ERROR",e.getClass().getSimpleName()+": "+e.getMessage());
       recordCurrentSourceFailure();
       releaseLivePlayerSafely();
       info.setText("直播播放器启动异常，正在尝试备用源…");
       if(!failedMediaId.isEmpty())advanceToNextSourceAutomatically("直播播放器启动异常");
     }
+  }
+  private boolean tryStartLibVlcFallback(String reason){
+    if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
+    libVlcAttemptedForSource=true;
+    libVlcVideoOutputReady=false;
+    final String expectedMediaId=currentMediaId;
+    final int expectedChannel=selected;
+    final String url=currentSourceUrl();
+    cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
+    releaseLivePlayerSafely();
+    if(video!=null)video.setVisibility(View.GONE);
+    if(vlcVideoLayout==null){if(video!=null)video.setVisibility(View.VISIBLE);return false;}
+    vlcVideoLayout.setVisibility(View.VISIBLE);
+    info.setText(reason+"，正在切换独立 VLC 播放器…");
+    saveLiveDiagnostic("ENGINE_FALLBACK","Media3 -> LibVLC; "+reason);
+    try{
+      final LibVlcPlaybackEngine engine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
+      libVlcEngine=engine;
+      engine.setListener(new LibVlcPlaybackEngine.Listener(){
+        // Native VLC events may already be queued on the UI thread when an engine is
+        // released. Match both the channel generation and the exact engine instance so
+        // a late callback from an old native player cannot revive or fail over a new tune.
+        private boolean isCurrent(){return libVlcEngine==engine&&selected==expectedChannel
+            &&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
+        public void onPlaying(){uiHandler.post(()->{
+          if(!isCurrent())return;
+          if(!libVlcVideoOutputReady)info.setText("VLC 已进入播放状态，正在确认视频输出…");
+          saveLiveDiagnostic("ENGINE_PLAYING","LibVLC Playing event; waiting for Vout event");
+        });}
+        public void onVideoOutput(int count){uiHandler.post(()->{
+          if(!isCurrent())return;
+          if(count>0){
+            libVlcVideoOutputReady=true;
+            libVlcStableChecks=0;
+            libVlcStableRecorded=false;
+            cancelLibVlcStartTimeout();
+            usingLibVlc=true;
+            sourceReadyAt=android.os.SystemClock.elapsedRealtime();
+            info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 视频输出）");
+            showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
+            saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
+            scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+          }else if(libVlcVideoOutputReady){
+            libVlcVideoOutputReady=false;
+            saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
+          }
+        });}
+        public void onBuffering(float percent){uiHandler.post(()->{if(isCurrent()&&!usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");});}
+        public void onFailure(String detail){uiHandler.post(()->{
+          if(!isCurrent())return;
+          cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+          saveLiveDiagnostic("ENGINE_FAILURE","LibVLC "+detail);
+          releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+          // advanceToNextSourceAutomatically records this failed source exactly once.
+          advanceToNextSourceAutomatically("Media3 与 VLC 均无法播放当前源");
+        });}
+        public void onStopped(){}
+      });
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize begin");
+      engine.initialize();
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize completed");
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play begin");
+      engine.play(url);
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play returned");
+      cancelLibVlcStartTimeout();
+      libVlcStartTimeout=()->{
+        libVlcStartTimeout=null;
+        if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!libVlcVideoOutputReady&&libVlcAttemptedForSource){
+          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not create a video output within 18 seconds");
+          releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+          // Keep failure scoring centralized to avoid counting one URL twice.
+          advanceToNextSourceAutomatically("VLC 连接超时");
+        }
+      };
+      uiHandler.postDelayed(libVlcStartTimeout,18000L);
+      return true;
+    }catch(LinkageError ex){
+      // Missing/incompatible native ABI libraries must not terminate the TV app.
+      // Treat this engine as unavailable for this source and continue Media3 failover.
+      cancelLibVlcStartTimeout();releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+      saveLiveDiagnostic("ENGINE_LINKAGE_ERROR",ex.getClass().getSimpleName()+": "+ex.getMessage());
+      return false;
+    }catch(RuntimeException ex){
+      cancelLibVlcStartTimeout();releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+      saveLiveDiagnostic("ENGINE_INIT_ERROR",ex.getClass().getSimpleName()+": "+ex.getMessage());
+      return false;
+    }
+  }
+  private void scheduleLibVlcWatchdog(String expectedMediaId,int expectedChannel){
+    cancelLibVlcWatchdog();
+    libVlcWatchdog=()->{
+      libVlcWatchdog=null;
+      if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
+      if(!libVlcVideoOutputReady||!libVlcEngine.isPlaying()){
+        libVlcStableChecks=0;
+        saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
+        releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+        // advanceToNextSourceAutomatically owns the single failure-score update.
+        advanceToNextSourceAutomatically("VLC 播放中断");
+        return;
+      }
+      // Vout plus isPlaying only proves that VLC still owns a video output and
+      // reports a live session. It does NOT prove that a decoded frame reached the
+      // TV surface. Never promote a VLC source to last-known-good or QoE "stable"
+      // from these signals alone; otherwise a black-screen source can outrank a
+      // source whose first frame was actually rendered by Media3.
+      libVlcStableChecks++;
+      if(!libVlcStableRecorded&&libVlcStableChecks>=2){
+        libVlcStableRecorded=true;
+        saveLiveDiagnostic("VLC_ENGINE_HEALTHY_UNVERIFIED",
+            "LibVLC maintained Vout and playing state across two watchdog checks; "
+            +"actual rendered-frame visibility is unverified, so this source was not "
+            +"promoted to last-known-good and no stable-play success was recorded");
+      }
+      scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+    };
+    uiHandler.postDelayed(libVlcWatchdog,12000L);
+  }
+  private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
+  private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
+  private void releaseLibVlcEngine(){
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
+    if(old!=null)try{old.release();}catch(RuntimeException ignored){}
+    if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
   }
   private String currentSourceUrl(){
     if(selected<0||selected>=channels.size())return "";
@@ -3966,12 +4464,19 @@ public class MainActivity extends Activity {
   }
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
-    String remembered=SourceMemoryStore.getLastGood(this,
-        SourceMemoryStore.channelKey(c.name,c.group,c.url),
-        SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
-    if(remembered==null)return;
-    int index=c.backups.indexOf(remembered);
-    if(index>=0)c.activeSource=index;
+    // Try each persisted generation independently. A stale new-format URL must
+    // not mask an older remembered URL that is still present in this playlist.
+    String[] keys={
+      SourceMemoryStore.channelIdentityKey(identity(c)),
+      SourceMemoryStore.channelKey(c.name,c.group,c.url),
+      SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url)
+    };
+    for(String key:keys){
+      if(key==null||key.isEmpty())continue;
+      String remembered=SourceMemoryStore.getLastGood(this,key);
+      int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
+      if(index>=0){c.activeSource=index;return;}
+    }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
@@ -4445,6 +4950,18 @@ public class MainActivity extends Activity {
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){
     super.onStart();
+    activityStarted=true;
+    setSourceUpdateActivityActive(true);
+    if(startupDataReady){
+      try{
+        applyPendingSourceUpdateIfSafe(getSharedPreferences("mytv",0));
+        reloadChannelsAfterBackgroundUpdateIfNeeded();
+      }
+      catch(RuntimeException reloadFailure){
+        android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
+        saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
+      }
+    }
     remoteLockUiActive=true;
     if(remoteParentLockManager!=null){remoteParentLockManager.start();if(remoteParentLockManager.isLocked())enforceRemoteParentLock(remoteParentLockManager.getLockReason());}
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
@@ -4454,11 +4971,135 @@ public class MainActivity extends Activity {
     uiHandler.postDelayed(childLockTicker,30000L);
     refreshChildLockState();
     updateNetworkSpeedMonitor();
-    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){resumePlaybackOnStart=false;startCurrentSource();}
+    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+      resumePlaybackOnStart=false;
+      startupAutoResumePending=false;
+      startCurrentSource();
+    }
+    scheduleStartupAutoResume();
   }
+  private void scheduleStartupAutoResume(){
+    if(!startupAutoResumePending||!activityStarted||isFinishing())return;
+    if(startupAutoResumeTask!=null)uiHandler.removeCallbacks(startupAutoResumeTask);
+    startupAutoResumeTask=()->{
+      startupAutoResumeTask=null;
+      if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed())return;
+      startupAutoResumePending=false;
+      if(selected>=0)return;
+      try{restoreLastChannel();}
+      catch(Throwable resumeFailure){
+        android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
+        saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
+        if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
+      }
+    };
+    uiHandler.postDelayed(startupAutoResumeTask,350L);
+  }
+
+  private void setSourceUpdateActivityActive(boolean active){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    if(sourceUpdateActivityHeartbeat!=null){
+      uiHandler.removeCallbacks(sourceUpdateActivityHeartbeat);
+      sourceUpdateActivityHeartbeat=null;
+    }
+    if(!active){
+      prefs.edit().putBoolean("source_update_activity_active",false)
+          .putLong("source_update_activity_heartbeat",0L).apply();
+      return;
+    }
+    prefs.edit().putBoolean("source_update_activity_active",true)
+        .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
+    sourceUpdateActivityHeartbeat=new Runnable(){
+      @Override public void run(){
+        if(isFinishing())return;
+        getSharedPreferences("mytv",0).edit()
+            .putBoolean("source_update_activity_active",true)
+            .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
+        uiHandler.postDelayed(this,30_000L);
+      }
+    };
+    uiHandler.postDelayed(sourceUpdateActivityHeartbeat,30_000L);
+  }
+
+  // A Worker may safely refresh the persisted catalogue only while this Activity is
+  // stopped. On returning, reload its newer cache before any later persist() can
+  // serialize an old in-memory list over the updated backup sources.
+  private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
+    if(!startupDataReady)return;
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    String raw=prefs.getString("channels","[]");
+    if(raw.equals(lastPersistedChannelsJson))return;
+    ArrayList<Channel> refreshed=new ArrayList<>();
+    try{
+      org.json.JSONArray data=new org.json.JSONArray(raw);
+      for(int i=0;i<data.length();i++){
+        org.json.JSONObject item=data.getJSONObject(i);
+        Channel channel=new Channel(item.getString("name"),item.getString("url"),item.optString("group",""));
+        channel.tvgId=item.optString("tvgId","");
+        channel.tvgName=item.optString("tvgName","");
+        org.json.JSONArray sources=item.optJSONArray("sources");
+        if(sources!=null){
+          channel.backups.clear();
+          for(int j=0;j<sources.length();j++){
+            String url=sources.optString(j,"");
+            if(url.startsWith("http://")||url.startsWith("https://"))channel.backups.add(url);
+          }
+          if(channel.backups.isEmpty())channel.backups.add(channel.url);
+        }
+        channel.activeSource=Math.max(0,Math.min(item.optInt("activeSource",0),channel.backups.size()-1));
+        refreshed.add(channel);
+      }
+    }catch(Exception invalidCatalogue){
+      throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
+    }
+
+    String selectedIdentity="";
+    String selectedName="";
+    String selectedGroup="";
+    String selectedUrl="";
+    if(selected>=0&&selected<channels.size()){
+      Channel current=channels.get(selected);
+      selectedIdentity=identity(current);
+      selectedName=current.name;
+      selectedGroup=current.group;
+      selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
+          ?current.backups.get(current.activeSource):current.url;
+    }
+    synchronized(channels){
+      channels.clear();
+      channels.addAll(refreshed);
+    }
+    rebuildChannelIndexes();
+    if(!selectedIdentity.isEmpty()){
+      int found=-1;
+      for(int i=0;i<channels.size();i++){
+        Channel candidate=channels.get(i);
+        if(identity(candidate).equals(selectedIdentity)){found=i;break;}
+      }
+      // Generic-channel identity includes its original host. A worker can promote a
+      // better backup to the primary URL, so fall back to stable name/group matching.
+      if(found<0){
+        for(int i=0;i<channels.size();i++){
+          Channel candidate=channels.get(i);
+          if(candidate.name.equals(selectedName)&&candidate.group.equals(selectedGroup)){found=i;break;}
+        }
+      }
+      selected=found;
+      if(found>=0&&!selectedUrl.isEmpty()){
+        Channel candidate=channels.get(found);
+        for(int i=0;i<candidate.backups.size();i++){
+          if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
+        }
+      }
+    }
+    lastPersistedChannelsJson=raw;
+    refresh();
+    android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
+  }
+
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();releaseLibVlcEngine();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }

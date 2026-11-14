@@ -17,6 +17,13 @@ public class StableKeyTest {
         assertNotEquals(first, StableKey.channel("CCTV-1", "央视", "https://b.example/live"));
     }
 
+    @Test public void channelIdentityDoesNotChangeWhenPrimarySourceChanges() {
+        String identity = "CCTV-1|cctv";
+        assertEquals(StableKey.channelIdentity(identity), StableKey.channelIdentity(identity));
+        assertNotEquals(StableKey.channelIdentity(identity),
+                StableKey.channelIdentity("CCTV-5|cctv"));
+    }
+
     @Test public void keysAreNamespacedAndVersioned() {
         assertTrue(StableKey.url("https://example.com/live").startsWith("v2:"));
         assertNotEquals(StableKey.url("https://example.com/live"),

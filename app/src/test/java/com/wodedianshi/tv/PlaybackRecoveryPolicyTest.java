@@ -21,6 +21,13 @@ public class PlaybackRecoveryPolicyTest {
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 30000L, 20000L));
     }
 
+    @Test public void firstFrameDeadlineStartsWhenVideoTrackBecomesSelected() {
+        // The stream may be READY for a while before track selection completes.
+        // That earlier wait must not consume the decoder's first-frame budget.
+        assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 49000L, 20000L));
+        assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 50000L, 20000L));
+    }
+
     @Test public void receivedVideoFramesUseLastRenderedFrameTime() {
         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 44999L, 20000L));
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 45000L, 20000L));
