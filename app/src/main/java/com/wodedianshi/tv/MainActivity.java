@@ -4359,7 +4359,7 @@ public class MainActivity extends Activity {
             cancelLibVlcStartTimeout();
             usingLibVlc=true;
             sourceReadyAt=android.os.SystemClock.elapsedRealtime();
-            info.setText("正在播放："+channels.get(selected).name+"（独立 VLC 视频输出）");
+            info.setText("检测到 VLC 视频输出："+channels.get(selected).name+"（画面尚待确认）");
             showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
             saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
