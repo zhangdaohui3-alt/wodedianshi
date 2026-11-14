@@ -4050,14 +4050,14 @@ public class MainActivity extends Activity {
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
     Channel requested=channels.get(selected);
-    saveLiveDiagnostic("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
+    saveCriticalEngineStage("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
     try{
       startCurrentSourceInternal();
     }catch(Throwable tuneFailure){
       if(tuneFailure instanceof ThreadDeath)throw (ThreadDeath)tuneFailure;
       if(tuneFailure instanceof VirtualMachineError)throw (VirtualMachineError)tuneFailure;
       android.util.Log.e("MyTVPlayback","uncaught tune setup failure",tuneFailure);
-      saveLiveDiagnostic("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
+      saveCriticalEngineStage("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
       try{releaseLivePlayerSafely();}catch(Throwable ignored){}
       try{releaseLibVlcEngine();}catch(Throwable ignored){}
       setSourceUpdatePlaybackActive(false);
@@ -4076,8 +4076,9 @@ public class MainActivity extends Activity {
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
+    saveCriticalEngineStage("TUNE_STAGE","fullscreen layout enter begin");
     enterFullScreenPlayback();
-    saveLiveDiagnostic("TUNE_STAGE","fullscreen layout entered");
+    saveCriticalEngineStage("TUNE_STAGE","fullscreen layout entered");
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){
       saveLiveDiagnostic("SOURCE_SKIP","channel="+c.name+" has no playable URL entries");
@@ -4115,10 +4116,12 @@ public class MainActivity extends Activity {
     try{
     if(player==null){
       recordDecoderInventoryOnce();
+      saveCriticalEngineStage("TUNE_STAGE","Media3 player construction begin");
       player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
-      saveLiveDiagnostic("TUNE_STAGE","Media3 player constructed");
+      saveCriticalEngineStage("TUNE_STAGE","Media3 player constructed");
+      saveCriticalEngineStage("TUNE_STAGE","Media3 PlayerView attach begin");
       video.setPlayer(player);
-      saveLiveDiagnostic("TUNE_STAGE","Media3 PlayerView attached");
+      saveCriticalEngineStage("TUNE_STAGE","Media3 PlayerView attached");
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
       // watchdog below monitors the player timeline without touching codec callbacks.
       final ExoPlayer listenerOwner=player;
@@ -4297,16 +4300,22 @@ public class MainActivity extends Activity {
     }
     // Explicitly drain the previous live item before assigning another source. This
     // prevents stale audio/renderers from surviving rapid channel/source changes.
+    saveCriticalEngineStage("TUNE_STAGE","previous Media3 item stop begin");
     player.stop();
     player.clearMediaItems();
     MediaItem item=PlaybackPlayerFactory.buildMediaItem(c.backups.get(c.activeSource),currentMediaId);
+    saveCriticalEngineStage("TUNE_STAGE","media item assignment begin");
     player.setMediaItem(item);
-    saveLiveDiagnostic("TUNE_STAGE","media item assigned");
+    saveCriticalEngineStage("TUNE_STAGE","media item assigned");
+    saveCriticalEngineStage("TUNE_STAGE","Media3 prepare begin");
     player.prepare();
-    saveLiveDiagnostic("TUNE_STAGE","prepare requested");
+    saveCriticalEngineStage("TUNE_STAGE","Media3 prepare returned");
+    saveCriticalEngineStage("TUNE_STAGE","Media3 play begin");
     player.play();
+    saveCriticalEngineStage("TUNE_STAGE","Media3 play returned");
     }catch(RuntimeException e){
       String failedMediaId=currentMediaId;
+      saveCriticalEngineStage("TUNE_RUNTIME_ERROR",e.getClass().getSimpleName()+": "+e.getMessage());
       recordCurrentSourceFailure();
       releaseLivePlayerSafely();
       info.setText("直播播放器启动异常，正在尝试备用源…");
