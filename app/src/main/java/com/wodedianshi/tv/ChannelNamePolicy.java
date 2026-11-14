@@ -132,6 +132,12 @@ final class ChannelNamePolicy {
         String normalized = normalize(name);
         if (normalized.isEmpty()) return "";
         for (String[] aliases : SATELLITE_ALIASES) {
+            // Match the canonical Chinese label as well as English aliases.
+            // Public M3U feeds sometimes repeat a station name many times in
+            // one display label (for example "四川卫视 四川卫视 ...").
+            // Returning that raw label creates a visibly corrupted channel row.
+            String canonical = normalize(aliases[0]);
+            if (normalized.contains(canonical)) return aliases[0];
             for (int i = 1; i < aliases.length; i++) {
                 if (normalized.contains(normalize(aliases[i]))) return aliases[0];
             }
