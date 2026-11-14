@@ -2640,7 +2640,7 @@ public class MainActivity extends Activity {
   private boolean isSatelliteChannel(Channel c){
     String metadata=regionalMetadata(c);
     String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return ChannelNamePolicy.isSatellite(c==null?"":c.name, c==null?"":c.group)
+    return ChannelNamePolicy.isSatellite(metadata, c==null?"":c.group)
         ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
   private boolean matchesProvinceLocal(Channel c,String province){
@@ -2682,7 +2682,7 @@ public class MainActivity extends Activity {
     return matchesProvinceCity(c,activeLocalProvince,activeLocalCity);
   }
   private boolean categoryMatch(Channel c,String cat){
-    String x=(c.name+" "+c.group).toLowerCase(Locale.ROOT);
+    String x=(c.name+" "+c.group+" "+c.tvgName+" "+c.tvgId).toLowerCase(Locale.ROOT);
     String g=c.group.toLowerCase(Locale.ROOT);
     if(cat.equals("自建频道"))return "自建频道".equals(g)||"自定义".equals(g);
     if(cat.startsWith("城市:")){
