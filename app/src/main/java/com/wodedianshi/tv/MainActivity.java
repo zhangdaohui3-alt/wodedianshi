@@ -3685,18 +3685,22 @@ public class MainActivity extends Activity {
     synchronized(MainActivity.class){
       if(crashHandlerInstalled)return;
       final Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
+      final Context appContext=getApplicationContext();
       Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
         try{
+          String message=error==null?"":String.valueOf(error.getMessage());
+          message=message.replaceAll("(?i)https?://\\\\S+","[URL]").replaceAll("[\\\\r\\\\n\\\\t]+"," ");
+          if(message.length()>260)message=message.substring(0,260);
           StringBuilder detail=new StringBuilder();
           detail.append("thread=").append(thread==null?"?":thread.getName())
               .append(" exception=").append(error==null?"?":error.getClass().getName())
-              .append(" message=").append(error==null?"":safeDiagnosticDetail(String.valueOf(error.getMessage())));
+              .append(" message=").append(message);
           if(error!=null){
             StackTraceElement[] frames=error.getStackTrace();
             int limit=Math.min(frames==null?0:frames.length,24);
             for(int i=0;i<limit;i++)detail.append("\\n at ").append(frames[i].toString());
           }
-          getSharedPreferences("mytv",0).edit()
+          appContext.getSharedPreferences("mytv",0).edit()
               .putString("last_uncaught_crash_v1",detail.length()>7000?detail.substring(0,7000):detail.toString())
               .putString("last_uncaught_crash_time",new Date().toString())
               .commit();
