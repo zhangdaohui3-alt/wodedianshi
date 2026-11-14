@@ -729,6 +729,8 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     releaseLivePlayerSafely();
+    // The independent LibVLC live engine must also be stopped while the VOD catalogue owns the screen.
+    releaseLibVlcEngine();
     final java.util.ArrayList<Button> vodCategoryHoverTargets=new java.util.ArrayList<>();
     final GridView[] vodGridHoverTarget=new GridView[1];
     // Track pointer movement at the dialog content root. Some Android 9 TV
