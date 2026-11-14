@@ -2944,7 +2944,8 @@ public class MainActivity extends Activity {
       return;
     }
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
-    worker.execute(()->{
+    try{worker.execute(()->{
+      try{
       String[] feeds={
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
@@ -2972,15 +2973,22 @@ public class MainActivity extends Activity {
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
       }
       runOnUiThread(()->{
+        chinaLoading=false;
         if(isFinishing())return;
         if(total>0)refresh();
-        chinaLoading=false;
         String status=usefulChinaDirectory
             ?"已识别 "+recognizedChinaCount+" 个国内频道条目，频道缓存已保留。"
             :"国内有效频道不足（当前识别 "+recognizedChinaCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
         info.setText("国内频道目录检查完成：新增 "+total+" 个条目；"+status+(err.isEmpty()?"":"部分来源暂不可用："+err));
       });
-    });
+      }catch(Throwable failure){
+        final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
+        runOnUiThread(()->{chinaLoading=false;if(!isFinishing())info.setText("国内频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);});
+      }
+    });}catch(RuntimeException rejected){
+      chinaLoading=false;
+      info.setText("国内频道整理任务暂时无法启动，已有频道仍可使用；请稍后重试。");
+    }
   }
   private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
     ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,items);
@@ -3204,7 +3212,7 @@ public class MainActivity extends Activity {
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
-    if(fullscreenAspectMenuItem.getParent()==null&&categoryMenuItems!=null)categoryMenuItems.addView(fullscreenAspectMenuItem,0,new LinearLayout.LayoutParams(-1,dp(48)));
+    if(fullscreenAspectMenuItem.getParent()==null&&categoryPane!=null)categoryPane.addView(fullscreenAspectMenuItem,1,new LinearLayout.LayoutParams(-1,dp(48)));
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
     if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
     categoryPane.setVisibility(View.VISIBLE);channelPane.setVisibility(View.VISIBLE);
