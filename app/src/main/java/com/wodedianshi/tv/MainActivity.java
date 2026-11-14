@@ -642,11 +642,13 @@ public class MainActivity extends Activity {
   // Generic/local names retain host separation to avoid merging unrelated "News" channels.
   private String identity(Channel channel){
     if(channel==null)return "";
-    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
-        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    return identity(channel.name,channel.group,channel.url,channel.tvgName,channel.tvgId);
+  }
+  private String identity(String name,String group,String url,String tvgName,String tvgId){
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
     if(broadcaster.startsWith("CCTV-"))return broadcaster+"|cctv";
     if(broadcaster.endsWith("卫视"))return broadcaster.toLowerCase(Locale.ROOT)+"|satellite";
-    return identity(channel.name,channel.group,channel.url);
+    return identity(name,group,url);
   }
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
@@ -3354,18 +3356,19 @@ public class MainActivity extends Activity {
       String line=entry.url;
       synchronized(channels){
         if(!channelsByUrl.containsKey(line)){
-          Channel metadataProbe=new Channel(name,line,entry.group);
-          metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);
-          String key=identity(metadataProbe);
+          // The URL index already proved this source is new. Compute identity
+          // directly from metadata instead of allocating a temporary Channel for
+          // every playlist row; this matters for 15k+ entry imports.
+          String key=identity(name,entry.group,line,entry.tvgName,entry.tvgId);
           Channel same=channelsByIdentity.get(key);
           if(same!=null){
             same.mergeMetadata(entry.tvgId,entry.tvgName);
             normalizeBroadcasterLabel(same);
-            if(!same.backups.contains(line)){
-              same.backups.add(line);
-              channelsByUrl.put(line,same);
-              added[0]++;
-            }
+            // channelsByUrl.containsKey(line) was false above, so this URL cannot
+            // already be present in the channel's backup list.
+            same.backups.add(line);
+            channelsByUrl.put(line,same);
+            added[0]++;
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
