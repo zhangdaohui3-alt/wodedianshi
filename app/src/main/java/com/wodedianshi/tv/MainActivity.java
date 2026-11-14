@@ -48,6 +48,9 @@ public class MainActivity extends Activity {
   private LibVlcPlaybackEngine libVlcEngine;
   private boolean usingLibVlc=false;
   private boolean libVlcVideoOutputReady=false;
+  // Require two consecutive healthy VLC watchdog checks before remembering a source.
+  private int libVlcStableChecks=0;
+  private boolean libVlcStableRecorded=false;
   private boolean libVlcAttemptedForSource=false;
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
@@ -4152,6 +4155,8 @@ public class MainActivity extends Activity {
           if(!isCurrent())return;
           if(count>0){
             libVlcVideoOutputReady=true;
+            libVlcStableChecks=0;
+            libVlcStableRecorded=false;
             cancelLibVlcStartTimeout();
             usingLibVlc=true;
             sourceReadyAt=android.os.SystemClock.elapsedRealtime();
@@ -4201,11 +4206,26 @@ public class MainActivity extends Activity {
       libVlcWatchdog=null;
       if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
       if(!libVlcVideoOutputReady||!libVlcEngine.isPlaying()){
+        libVlcStableChecks=0;
         saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
         // advanceToNextSourceAutomatically owns the single failure-score update.
         advanceToNextSourceAutomatically("VLC 播放中断");
         return;
+      }
+      // Vout alone does not prove pixels reached the TV panel. Remember this endpoint
+      // only after two consecutive 12-second healthy checks.
+      libVlcStableChecks++;
+      if(!libVlcStableRecorded&&libVlcStableChecks>=2){
+        libVlcStableRecorded=true;
+        String stableUrl=currentSourceUrl();
+        Channel stableChannel=selected>=0&&selected<channels.size()?channels.get(selected):null;
+        if(stableChannel!=null){
+          SourceMemoryStore.saveLastGood(this,
+              SourceMemoryStore.channelKey(stableChannel.name,stableChannel.group,stableChannel.url),stableUrl);
+          recordSourceMetric(stableUrl,"stable",0L);
+          saveLiveDiagnostic("SOURCE_STABLE","LibVLC maintained video output and playing state across two watchdog checks");
+        }
       }
       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
     };
@@ -4215,7 +4235,7 @@ public class MainActivity extends Activity {
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
   private void releaseLibVlcEngine(){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
-    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(old!=null)try{old.release();}catch(RuntimeException ignored){}
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
   }
