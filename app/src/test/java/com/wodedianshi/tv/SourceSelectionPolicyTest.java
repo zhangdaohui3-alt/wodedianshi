@@ -99,6 +99,27 @@ public class SourceSelectionPolicyTest {
                 Collections.singleton("b"), Collections.emptySet()));
     }
 
+    @Test public void rememberedSourceMatchesHostCaseAndDefaultPortAliases() {
+        assertEquals(1, SourceSelectionPolicy.findEquivalentSource(
+                Arrays.asList("http://other/live", "HTTP://Example.COM:80/live.m3u8"),
+                "http://example.com/live.m3u8"));
+    }
+
+    @Test public void rememberedSourceDoesNotIgnoreSignedPathOrQueryDifferences() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/live?token=old"),
+                "https://example.com/live?token=new"));
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/Live"),
+                "https://example.com/live"));
+    }
+
+    @Test public void missingRememberedSourceDoesNotInventAnIndex() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/current"),
+                "https://example.com/removed"));
+    }
+
     @Test public void scanCursorFollowsLastUrlWhenPlaylistEntriesAreInserted() {
         java.util.List<String> oldList = Arrays.asList("a", "b", "c");
         String last = SourceSelectionPolicy.lastScannedKey(oldList, 0, 2);
