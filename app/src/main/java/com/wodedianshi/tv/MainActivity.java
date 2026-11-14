@@ -162,6 +162,11 @@ public class MainActivity extends Activity {
     worker.execute(()->{
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       restore();
+      // Run the one-time bundled-source migration on the same startup worker,
+      // before the channel list becomes visible or auto-resume can start playback.
+      // Previously this ran 900ms later while the UI/player read the same mutable
+      // channel objects, creating a startup race after process recreation.
+      loadBundledHdBackups();
       long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
       runOnUiThread(()->{
         if(isFinishing())return;
@@ -189,12 +194,6 @@ public class MainActivity extends Activity {
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
       });
     });
-    uiHandler.postDelayed(()->{
-      if(!isFinishing())worker.execute(()->{
-        loadBundledHdBackups();
-        runOnUiThread(()->{if(!isFinishing()){try{persist();refresh();}catch(Throwable e){android.util.Log.e("MyTVStartup","bundled channel refresh failed",e);if(info!=null)info.setText("频道缓存已保留，后台整理遇到问题；仍可手动选择频道。");}}});
-      });
-    },900L);
     uiHandler.postDelayed(()->{if(!isFinishing())scheduleAutomaticSourceUpdates();},1600L);
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
