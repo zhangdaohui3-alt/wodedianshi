@@ -311,7 +311,15 @@ public final class LibVlcPlaybackEngine {
             // Persist immediately before crash-prone JNI boundaries. Completion
             // markers can be applied asynchronously to avoid repeated fsyncs on
             // the UI thread during normal playback and teardown.
-            if (stage.endsWith("_BEGIN")) editor.commit();
+            boolean crashCriticalBoundary = "VLC_LIBVLC_CONSTRUCTOR_BEGIN".equals(stage)
+                    || "VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN".equals(stage)
+                    || "VLC_ATTACH_VIEWS_BEGIN".equals(stage)
+                    || "VLC_NATIVE_PLAY_BEGIN".equals(stage)
+                    || "VLC_MEDIAPLAYER_RELEASE_BEGIN".equals(stage)
+                    || "VLC_LIBVLC_RELEASE_BEGIN".equals(stage);
+            // Only fsync at native boundaries most likely to terminate the process.
+            // UI/layout/stop/diagnostic markers use apply() to avoid repeated main-thread disk stalls.
+            if (crashCriticalBoundary) editor.commit();
             else editor.apply();
         } catch (Throwable ignored) { }
     }
