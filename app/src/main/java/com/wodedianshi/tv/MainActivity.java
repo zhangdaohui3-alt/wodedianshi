@@ -131,11 +131,15 @@ public class MainActivity extends Activity {
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
   // per source so no ExoPlayer getter is ever called from that callback thread.
   private static class Channel {
-    String name, url, group;
+    String name, url, group, tvgId="", tvgName="";
     ArrayList<String> backups = new ArrayList<>();
     int activeSource = 0;
     Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
+    void mergeMetadata(String id,String displayName){
+      if((tvgId==null||tvgId.isEmpty())&&id!=null&&!id.isEmpty())tvgId=id;
+      if((tvgName==null||tvgName.isEmpty())&&displayName!=null&&!displayName.isEmpty())tvgName=displayName;
+    }
   }
   public void onCreate(Bundle b) {
     super.onCreate(b);
@@ -375,7 +379,7 @@ public class MainActivity extends Activity {
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}c.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),c.backups.size()-1));channels.add(c);}
+      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.getJSONObject(i);Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group","")); c.tvgId=o.optString("tvgId",""); c.tvgName=o.optString("tvgName",""); org.json.JSONArray src=o.optJSONArray("sources"); if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}c.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),c.backups.size()-1));channels.add(c);}
     } catch(Exception ignored) {}
     rebuildChannelIndexes();
     if(!p.getBoolean("defaults_loaded",false)){
@@ -532,7 +536,7 @@ public class MainActivity extends Activity {
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("tvgId",c.tvgId==null?"":c.tvgId);o.put("tvgName",c.tvgName==null?"":c.tvgName);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
       getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
     } catch(Exception ignored) {}
   }
@@ -2616,7 +2620,9 @@ public class MainActivity extends Activity {
   }
   private String regionalMetadata(Channel c){
     if(c==null)return "";
-    return (c.name+" "+c.group+" "+c.url).toLowerCase(Locale.ROOT)
+    // Use broadcaster metadata, never the stream URL: CDN hostnames can contain
+    // misleading city/province tokens and must not determine a channel's region.
+    return (c.name+" "+c.tvgName+" "+c.tvgId+" "+c.group).toLowerCase(Locale.ROOT)
         .replace("臺","台").replace("廣","广");
   }
   private boolean hasRegionalToken(String metadata,String token){
@@ -3105,40 +3111,31 @@ public class MainActivity extends Activity {
   private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
-    String name=null,group="",pendingGroup="";int added=0;
     if(data==null)return 0;
-    data=data.replace("\uFEFF","").replace("\r\n","\n").replace('\r','\n');
-    for(String raw:data.split("\n")){
-      String line=raw.trim();
-      if(line.isEmpty())continue;
-      if(line.startsWith("#EXTGRP:")){pendingGroup=line.substring(8).trim();continue;}
-      if(line.startsWith("#EXTINF")){
-        int comma=extinfComma(line);
-        name=comma>=0?line.substring(comma+1).trim():"";
-        java.util.regex.Matcher nm=java.util.regex.Pattern.compile("tvg-name=\"([^\"]+)\"").matcher(line);
-        String tvgName=nm.find()?nm.group(1).trim():"";
-        if(name.isEmpty())name=tvgName;
-        if(name.isEmpty())name="频道 "+(channels.size()+1);
-        group=pendingGroup;pendingGroup="";
-        java.util.regex.Matcher gm=java.util.regex.Pattern.compile("group-title=\"([^\"]*)\"").matcher(line);
-        if(gm.find()&&!gm.group(1).trim().isEmpty())group=gm.group(1).trim();
-        continue;
-      }
-      if(line.startsWith("#"))continue;
-      if(line.startsWith("http://")||line.startsWith("https://")){
-        if(name==null||name.trim().isEmpty())name="频道 "+(channels.size()+1);
-        synchronized(channels){
-          if(!channelsByUrl.containsKey(line)){
-            String key=identity(name,group,line);Channel same=channelsByIdentity.get(key);
-            if(same!=null){if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}}
-            else{Channel fresh=new Channel(name,line,group);channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;}
+    int added=0;
+    List<PlaylistParser.ChannelSource> entries=PlaylistParser.parse(data,Integer.MAX_VALUE);
+    for(PlaylistParser.ChannelSource entry:entries){
+      String name=entry.name==null||entry.name.trim().isEmpty()?"频道 "+(channels.size()+1):entry.name.trim();
+      String line=entry.url;
+      synchronized(channels){
+        if(!channelsByUrl.containsKey(line)){
+          String key=identity(name,entry.group,line);Channel same=channelsByIdentity.get(key);
+          if(same!=null){
+            same.mergeMetadata(entry.tvgId,entry.tvgName);
+            if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}
+          }else{
+            Channel fresh=new Channel(name,line,entry.group);
+            fresh.mergeMetadata(entry.tvgId,entry.tvgName);
+            channels.add(fresh);channelsByIdentity.put(key,fresh);channelsByUrl.put(line,fresh);added++;
           }
+        }else{
+          Channel existing=channelsByUrl.get(line);
+          if(existing!=null)existing.mergeMetadata(entry.tvgId,entry.tvgName);
         }
-        if(parsingGeoChannelKeys!=null){
-          Channel scoped=channelsByUrl.get(line);
-          if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
-        }
-        name=null;group="";
+      }
+      if(parsingGeoChannelKeys!=null){
+        Channel scoped=channelsByUrl.get(line);
+        if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
       }
     }
     return added;
