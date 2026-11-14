@@ -3971,7 +3971,7 @@ public class MainActivity extends Activity {
           if(selected>=0&&selected<channels.size()){
             Channel renderedChannel=channels.get(selected);
             SourceMemoryStore.saveLastGood(MainActivity.this,
-                SourceMemoryStore.channelKey(renderedChannel.name,renderedChannel.group,renderedChannel.url),
+                SourceMemoryStore.channelIdentityKey(identity(renderedChannel)),
                 renderedUrl);
           }
         }
@@ -4225,7 +4225,7 @@ public class MainActivity extends Activity {
         Channel stableChannel=selected>=0&&selected<channels.size()?channels.get(selected):null;
         if(stableChannel!=null){
           SourceMemoryStore.saveLastGood(this,
-              SourceMemoryStore.channelKey(stableChannel.name,stableChannel.group,stableChannel.url),stableUrl);
+              SourceMemoryStore.channelIdentityKey(identity(stableChannel)),stableUrl);
           recordSourceMetric(stableUrl,"stable",0L);
           saveLiveDiagnostic("SOURCE_STABLE","LibVLC maintained video output and playing state across two watchdog checks");
         }
@@ -4260,7 +4260,7 @@ public class MainActivity extends Activity {
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
     String remembered=SourceMemoryStore.getLastGood(this,
-        SourceMemoryStore.channelKey(c.name,c.group,c.url),
+        SourceMemoryStore.channelIdentityKey(identity(c)),
         SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
     if(remembered==null)return;
     int index=c.backups.indexOf(remembered);
