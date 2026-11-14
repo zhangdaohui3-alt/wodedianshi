@@ -3717,6 +3717,20 @@ public class MainActivity extends Activity {
     clean=clean.replaceAll("[\\r\\n\\t]+"," ");
     return clean.length()>260?clean.substring(0,260):clean;
   }
+  // Persist the last native transition synchronously: a native abort/SIGSEGV bypasses
+  // Java uncaught-exception handlers, so asynchronous diagnostic writes can be lost.
+  private void saveCriticalEngineStage(String stage,String detail){
+    String safe=safeDiagnosticDetail(detail);
+    String value=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
+        +" | "+stage+" | "+safe;
+    saveLiveDiagnostic(stage,detail);
+    try{
+      getSharedPreferences("mytv",0).edit()
+          .putString("last_native_engine_stage_v1",value)
+          .putLong("last_native_engine_stage_time_v1",System.currentTimeMillis())
+          .commit();
+    }catch(RuntimeException ignored){}
+  }
   private void saveLiveDiagnostic(String stage,String detail){
     String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
         +" | "+stage+" | "+safeDiagnosticDetail(detail);
@@ -3754,6 +3768,8 @@ public class MainActivity extends Activity {
     String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     String crash=diagnostics.getString("last_uncaught_crash_v1","");
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
+    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
+    if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
     final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
         .setMessage(copyDetails+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
@@ -4354,12 +4370,12 @@ public class MainActivity extends Activity {
         });}
         public void onStopped(){}
       });
-      saveLiveDiagnostic("ENGINE_STAGE","LibVLC initialize begin");
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize begin");
       engine.initialize();
-      saveLiveDiagnostic("ENGINE_STAGE","LibVLC initialize completed");
-      saveLiveDiagnostic("ENGINE_STAGE","LibVLC play begin");
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize completed");
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play begin");
       engine.play(url);
-      saveLiveDiagnostic("ENGINE_STAGE","LibVLC play returned");
+      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play returned");
       cancelLibVlcStartTimeout();
       libVlcStartTimeout=()->{
         libVlcStartTimeout=null;
