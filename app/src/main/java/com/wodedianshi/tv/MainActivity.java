@@ -4259,13 +4259,19 @@ public class MainActivity extends Activity {
   }
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
-    String remembered=SourceMemoryStore.getLastGood(this,
-        SourceMemoryStore.channelIdentityKey(identity(c)),
-        SourceMemoryStore.channelKey(c.name,c.group,c.url),
-        SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
-    if(remembered==null)return;
-    int index=c.backups.indexOf(remembered);
-    if(index>=0)c.activeSource=index;
+    // Try each persisted generation independently. A stale new-format URL must
+    // not mask an older remembered URL that is still present in this playlist.
+    String[] keys={
+      SourceMemoryStore.channelIdentityKey(identity(c)),
+      SourceMemoryStore.channelKey(c.name,c.group,c.url),
+      SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url)
+    };
+    for(String key:keys){
+      if(key==null||key.isEmpty())continue;
+      String remembered=SourceMemoryStore.getLastGood(this,key);
+      int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
+      if(index>=0){c.activeSource=index;return;}
+    }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
