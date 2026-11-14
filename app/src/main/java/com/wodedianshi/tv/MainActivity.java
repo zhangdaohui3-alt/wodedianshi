@@ -3867,8 +3867,10 @@ public class MainActivity extends Activity {
     selected=next;
     updateLiveChannelPresentation();
     Channel target=channels.get(selected);
+    // Playlist refreshes may reorder backups; never trust a persisted numeric index.
+    target.activeSource=0;
     applyLastKnownGoodSource(target);
-    if(target.activeSource<0||target.activeSource>=target.backups.size())target.activeSource=0;
+    sortSourcesByObservedQuality(target);
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
@@ -3882,10 +3884,11 @@ public class MainActivity extends Activity {
     selected=ix;
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    // Reuse only a source that previously rendered a real first video frame.
-    // The sorter preserves this active URL while still ranking the remaining backups.
-    applyLastKnownGoodSource(channels.get(ix));
-    sortSourcesByObservedQuality(channels.get(ix));
+    Channel target=channels.get(ix);
+    // Backup indices can change when playlists refresh; restore by URL identity instead.
+    target.activeSource=0;
+    applyLastKnownGoodSource(target);
+    sortSourcesByObservedQuality(target);
     startCurrentSource();
   }
   private void startCurrentSource(){
