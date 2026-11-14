@@ -55,6 +55,7 @@ public class MainActivity extends Activity {
   private boolean libVlcAttemptedForSource=false;
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
+  private Runnable libVlcBufferingTimeout;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -4442,7 +4443,16 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
           }
         });}
-        public void onBuffering(float percent){uiHandler.post(()->{if(isCurrent()&&!usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");});}
+        public void onBuffering(float percent){uiHandler.post(()->{
+          if(!isCurrent())return;
+          if(percent>=100f){
+            cancelLibVlcBufferingTimeout();
+            saveLiveDiagnostic("VLC_BUFFER_RECOVERED","buffering_percent=100");
+          }else{
+            if(usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");
+            scheduleLibVlcBufferingTimeout(expectedMediaId,expectedChannel,engine);
+          }
+        });}
         public void onFailure(String detail){uiHandler.post(()->{
           if(!isCurrent())return;
           cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
@@ -4513,10 +4523,23 @@ public class MainActivity extends Activity {
     };
     uiHandler.postDelayed(libVlcWatchdog,12000L);
   }
+  private void scheduleLibVlcBufferingTimeout(String expectedMediaId,int expectedChannel,LibVlcPlaybackEngine expectedEngine){
+    if(libVlcBufferingTimeout!=null)return;
+    libVlcBufferingTimeout=()->{
+      libVlcBufferingTimeout=null;
+      if(libVlcEngine!=expectedEngine||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||!usingLibVlc)return;
+      if(!libVlcVideoOutputReady)return; // Initial connection remains governed by the startup deadline.
+      saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for 12000ms after video output");
+      releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+      advanceToNextSourceAutomatically("VLC 连续缓冲超过 12 秒");
+    };
+    uiHandler.postDelayed(libVlcBufferingTimeout,12000L);
+  }
+  private void cancelLibVlcBufferingTimeout(){if(libVlcBufferingTimeout!=null){uiHandler.removeCallbacks(libVlcBufferingTimeout);libVlcBufferingTimeout=null;}}
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
   private void releaseLibVlcEngine(){
-    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(old!=null)try{old.release();}catch(RuntimeException ignored){}
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
