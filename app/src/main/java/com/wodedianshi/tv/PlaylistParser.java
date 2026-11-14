@@ -54,11 +54,16 @@ public final class PlaylistParser {
         int emitted = 0;
         int start = 0;
         while (start < data.length() && emitted < maxEntries) {
-            int end = data.indexOf('\n', start);
-            if (end < 0) end = data.length();
-            int lineEnd = end > start && data.charAt(end - 1) == '\r' ? end - 1 : end;
-            String line = data.substring(start, lineEnd).replace("\uFEFF", "").trim();
-            start = end + 1;
+            int end = start;
+            while (end < data.length() && data.charAt(end) != '\n' && data.charAt(end) != '\r') end++;
+            String line = data.substring(start, end).replace("\uFEFF", "").trim();
+            if (end >= data.length()) {
+                start = data.length();
+            } else {
+                char separator = data.charAt(end);
+                start = end + 1;
+                if (separator == '\r' && start < data.length() && data.charAt(start) == '\n') start++;
+            }
             if (line.isEmpty()) continue;
             if (line.startsWith("#EXTGRP:")) {
                 String extGroup = line.substring(8).trim();
