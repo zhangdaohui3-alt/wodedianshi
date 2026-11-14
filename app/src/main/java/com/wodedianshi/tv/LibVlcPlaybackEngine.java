@@ -52,51 +52,59 @@ public final class LibVlcPlaybackEngine {
     public void initialize() {
         recordNativeStage("VLC_INIT_BEGIN");
         release();
-        // release() hides the layout while tearing down any previous native session.
-        // Make it visible before attaching VLC's native video surfaces.
-        recordNativeStage("VLC_LAYOUT_VISIBLE_BEGIN");
-        videoLayout.setVisibility(View.VISIBLE);
-        ArrayList<String> options = new ArrayList<>();
-        options.add("--no-video-title-show");
-        options.add("--network-caching=1500");
-        options.add("--live-caching=1500");
-        options.add("--avcodec-hw=any");
-        recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_BEGIN");
-        libVlc = new LibVLC(appContext, options);
-        recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_RETURNED");
-        recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN");
-        mediaPlayer = new MediaPlayer(libVlc);
-        recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_RETURNED");
-        mediaPlayer.setEventListener(event -> {
-            if (released || listener == null) return;
-            switch (event.type) {
-                case MediaPlayer.Event.Playing:
-                    listener.onPlaying();
-                    break;
-                case MediaPlayer.Event.Vout:
-                    listener.onVideoOutput(event.getVoutCount());
-                    break;
-                case MediaPlayer.Event.Buffering:
-                    listener.onBuffering(event.getBuffering());
-                    break;
-                case MediaPlayer.Event.EncounteredError:
-                    listener.onFailure("LibVLC 遇到播放或解码错误");
-                    break;
-                case MediaPlayer.Event.Stopped:
-                    listener.onStopped();
-                    break;
-                case MediaPlayer.Event.EndReached:
-                    listener.onEndReached();
-                    break;
-                default:
-                    break;
-            }
-        });
-        recordNativeStage("VLC_ATTACH_VIEWS_BEGIN");
-        mediaPlayer.attachViews(videoLayout, null, false, false);
-        recordNativeStage("VLC_ATTACH_VIEWS_RETURNED");
-        released = false;
-        recordNativeStage("VLC_INIT_COMPLETED");
+        try {
+            // release() hides the layout while tearing down any previous native session.
+            // Make it visible before attaching VLC's native video surfaces.
+            recordNativeStage("VLC_LAYOUT_VISIBLE_BEGIN");
+            videoLayout.setVisibility(View.VISIBLE);
+            ArrayList<String> options = new ArrayList<>();
+            options.add("--no-video-title-show");
+            options.add("--network-caching=1500");
+            options.add("--live-caching=1500");
+            options.add("--avcodec-hw=any");
+            recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_BEGIN");
+            libVlc = new LibVLC(appContext, options);
+            recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_RETURNED");
+            recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN");
+            mediaPlayer = new MediaPlayer(libVlc);
+            recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_RETURNED");
+            mediaPlayer.setEventListener(event -> {
+                if (released || listener == null) return;
+                switch (event.type) {
+                    case MediaPlayer.Event.Playing:
+                        listener.onPlaying();
+                        break;
+                    case MediaPlayer.Event.Vout:
+                        listener.onVideoOutput(event.getVoutCount());
+                        break;
+                    case MediaPlayer.Event.Buffering:
+                        listener.onBuffering(event.getBuffering());
+                        break;
+                    case MediaPlayer.Event.EncounteredError:
+                        listener.onFailure("LibVLC 遇到播放或解码错误");
+                        break;
+                    case MediaPlayer.Event.Stopped:
+                        listener.onStopped();
+                        break;
+                    case MediaPlayer.Event.EndReached:
+                        listener.onEndReached();
+                        break;
+                    default:
+                        break;
+                }
+            });
+            recordNativeStage("VLC_ATTACH_VIEWS_BEGIN");
+            mediaPlayer.attachViews(videoLayout, null, false, false);
+            recordNativeStage("VLC_ATTACH_VIEWS_RETURNED");
+            released = false;
+            recordNativeStage("VLC_INIT_COMPLETED");
+        } catch (RuntimeException | LinkageError error) {
+            recordNativeStage("VLC_INIT_FAILED_" + error.getClass().getSimpleName());
+            // Constructors and attachViews can fail independently. Tear down whichever
+            // native objects were successfully created before reporting the failure.
+            release();
+            throw error;
+        }
     }
 
     public void play(String url) {
