@@ -86,7 +86,7 @@ final class ChannelNamePolicy {
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             for (int i = 1; i < aliases.length; i++) {
                 String alias = normalize(aliases[i]);
-                if (!normalized.contains(alias)) continue;
+                if (!containsAlias(metadata, aliases[i], normalized)) continue;
                 for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
                     if (alias.equals(ambiguous)) return "";
                 }
@@ -95,6 +95,19 @@ final class ChannelNamePolicy {
             }
         }
         return matchedProvince;
+    }
+
+    private static boolean containsAlias(String metadata, String alias, String normalizedMetadata) {
+        String normalizedAlias = normalize(alias);
+        if (normalizedAlias.isEmpty()) return false;
+        // Chinese names are naturally contiguous. English city names must be
+        // whole tokens so "Xiangyang" cannot accidentally match "Xian".
+        if (normalizedAlias.matches(".*[\\u4E00-\\u9FFF].*")) {
+            return normalizedMetadata.contains(normalizedAlias);
+        }
+        String upper = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
+        Pattern pattern = Pattern.compile("(^|[^A-Z])" + Pattern.quote(normalizedAlias) + "([^A-Z]|$)");
+        return pattern.matcher(upper).find();
     }
 
     static String canonicalSatelliteName(String name) {
