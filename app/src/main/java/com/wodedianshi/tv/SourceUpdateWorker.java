@@ -276,7 +276,7 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_update_pending_base",channelsSnapshot)
           .putString("source_update_pending_channels",saved.toString())
           .putString("source_update_time",now())
-          .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result","已安全暂存候选目录，待应用确认频道没有变化后再应用；"+(discoveryUnavailable?"所有公开目录暂不可用，仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
@@ -284,13 +284,9 @@ public class SourceUpdateWorker extends Worker {
   private boolean isActivityActive(SharedPreferences prefs){
     boolean active=prefs.getBoolean("source_update_activity_active",false);
     long heartbeat=prefs.getLong("source_update_activity_heartbeat",0L);
-    if(SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis()))return true;
-    if(active){
-      // Recover from a process death that occurred before onStop could clear the lease.
-      prefs.edit().putBoolean("source_update_activity_active",false)
-          .putLong("source_update_activity_heartbeat",0L).apply();
-    }
-    return false;
+    // An expired lease is treated as inactive without writing back a stale value.
+    // This avoids racing a just-started Activity that has refreshed the heartbeat.
+    return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
   }
   private static class Entry{
     String name,url,group;boolean savedSource;
