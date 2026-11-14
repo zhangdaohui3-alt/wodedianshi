@@ -402,7 +402,7 @@ public class MainActivity extends Activity {
       for(Channel c:channels){
         if(c.backups==null)c.backups=new ArrayList<>();
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
-        String key=identity(c.name,c.group,c.url);
+        String key=identity(c);
         Channel keep=firstByIdentity.get(key);
         if(keep==null){firstByIdentity.put(key,c);compact.add(c);}
         else{
@@ -414,7 +414,7 @@ public class MainActivity extends Activity {
       channelsByUrl.clear();channelsByIdentity.clear();
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
-        channelsByIdentity.put(identity(c.name,c.group,c.url),c);
+        channelsByIdentity.put(identity(c),c);
       }
     }
   }
@@ -483,6 +483,14 @@ public class MainActivity extends Activity {
   }
   // Satellite channels have a stable canonical identity across different source hosts.
   // Generic/local names retain host separation to avoid merging unrelated "News" channels.
+  private String identity(Channel channel){
+    if(channel==null)return "";
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
+    if(broadcaster.startsWith("CCTV-"))return broadcaster+"|cctv";
+    if(broadcaster.endsWith("卫视"))return broadcaster.toLowerCase(Locale.ROOT)+"|satellite";
+    return identity(channel.name,channel.group,channel.url);
+  }
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
     if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
@@ -2895,7 +2903,7 @@ public class MainActivity extends Activity {
       for(Channel channel:channels){
         if(channel==null)continue;
         if(categoryMatch(channel,"央视")||categoryMatch(channel,"卫视")||categoryMatch(channel,"地方")){
-          identities.add(identity(channel.name,channel.group,channel.url));
+          identities.add(identity(channel));
         }
       }
     }
@@ -3119,7 +3127,7 @@ public class MainActivity extends Activity {
       String line=entry.url;
       synchronized(channels){
         if(!channelsByUrl.containsKey(line)){
-          String key=identity(name,entry.group,line);Channel same=channelsByIdentity.get(key);
+          Channel metadataProbe=new Channel(name,line,entry.group);metadataProbe.mergeMetadata(entry.tvgId,entry.tvgName);String key=identity(metadataProbe);Channel same=channelsByIdentity.get(key);
           if(same!=null){
             same.mergeMetadata(entry.tvgId,entry.tvgName);
             if(!same.backups.contains(line)){same.backups.add(line);channelsByUrl.put(line,same);added++;}
