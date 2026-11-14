@@ -2837,7 +2837,7 @@ public class MainActivity extends Activity {
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
         b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
+        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{play(ix,j);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
       }
     }
@@ -3946,6 +3946,25 @@ public class MainActivity extends Activity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
+    startCurrentSource();
+  }
+  // Explicit backup selection must not be reset to the channel's default/last-good source.
+  // Keep this path separate from normal channel selection, which intentionally applies
+  // the remembered last-good source.
+  private void play(int ix,int requestedSourceIndex){
+    if(ix<0||ix>=channels.size())return;
+    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    Channel target=channels.get(ix);
+    if(target.backups==null||target.backups.isEmpty())return;
+    automaticSwitchCount=0;
+    automaticChannelSwitchCount=0;
+    sameSourceRecoveryCount=0;
+    manualSourceSwitch=true;
+    selected=ix;
+    target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
+    updateLiveChannelPresentation();
+    if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
+    persist();
     startCurrentSource();
   }
   private void startCurrentSource(){
