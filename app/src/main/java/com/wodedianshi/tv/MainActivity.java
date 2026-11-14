@@ -161,9 +161,17 @@ public class MainActivity extends Activity {
     });
     worker.execute(()->{
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
-      restore();
+      Throwable restoreFailure=null;
+      try{restore();}
+      catch(Throwable failure){
+        restoreFailure=failure;
+        android.util.Log.e("MyTVStartup","saved catalogue restore failed",failure);
+      }
+      final boolean restoreSucceeded=restoreFailure==null;
+      final String restoreFailureMessage=restoreFailure==null?"":restoreFailure.getClass().getSimpleName()+": "+String.valueOf(restoreFailure.getMessage());
       // Startup is cache-first: render and resume from the user's saved catalogue.
-      // Bundled catalogue maintenance must never delay the first usable screen.
+      // Even a corrupt preference or an unexpected restore exception must release
+      // the startup gate so the home screen never remains permanently disabled.
       long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
       runOnUiThread(()->{
         if(isFinishing())return;
@@ -172,14 +180,17 @@ public class MainActivity extends Activity {
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
         try{
           refresh();
-          if(info!=null)info.setText(channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+          if(info!=null)info.setText(!restoreSucceeded?"本地频道恢复遇到问题，主界面仍可使用；请稍后重试或重新导入频道。":channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
         }catch(Throwable renderFailure){
           android.util.Log.e("MyTVStartup","restored channel list render failed",renderFailure);
-          if(info!=null)info.setText("频道数据已恢复，但列表刷新遇到问题；可先切换栏目或重试。");
+          if(info!=null)info.setText("频道列表刷新遇到问题；主界面仍可使用，请稍后重试。");
         }
-        // Auto-resume is non-critical: a stale/corrupt last-channel state or
-        // decoder initialization must never take down the freshly rendered home screen.
-        uiHandler.postDelayed(()->{
+        if(!restoreSucceeded){
+          saveLiveDiagnostic("STARTUP_RESTORE_ERROR",restoreFailureMessage);
+        }
+        // Auto-resume is non-critical: do not attempt playback if saved catalogue
+        // recovery itself failed. A stale/corrupt state must not block manual use.
+        if(restoreSucceeded)uiHandler.postDelayed(()->{
           if(isFinishing()||selected>=0)return;
           try{restoreLastChannel();}
           catch(Throwable resumeFailure){
