@@ -4354,8 +4354,12 @@ public class MainActivity extends Activity {
         });}
         public void onStopped(){}
       });
+      saveLiveDiagnostic("ENGINE_STAGE","LibVLC initialize begin");
       engine.initialize();
+      saveLiveDiagnostic("ENGINE_STAGE","LibVLC initialize completed");
+      saveLiveDiagnostic("ENGINE_STAGE","LibVLC play begin");
       engine.play(url);
+      saveLiveDiagnostic("ENGINE_STAGE","LibVLC play returned");
       cancelLibVlcStartTimeout();
       libVlcStartTimeout=()->{
         libVlcStartTimeout=null;
@@ -4368,6 +4372,12 @@ public class MainActivity extends Activity {
       };
       uiHandler.postDelayed(libVlcStartTimeout,18000L);
       return true;
+    }catch(LinkageError ex){
+      // Missing/incompatible native ABI libraries must not terminate the TV app.
+      // Treat this engine as unavailable for this source and continue Media3 failover.
+      cancelLibVlcStartTimeout();releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+      saveLiveDiagnostic("ENGINE_LINKAGE_ERROR",ex.getClass().getSimpleName()+": "+ex.getMessage());
+      return false;
     }catch(RuntimeException ex){
       cancelLibVlcStartTimeout();releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
       saveLiveDiagnostic("ENGINE_INIT_ERROR",ex.getClass().getSimpleName()+": "+ex.getMessage());
