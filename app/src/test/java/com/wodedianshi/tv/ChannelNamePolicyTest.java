@@ -12,6 +12,15 @@ public class ChannelNamePolicyTest {
         assertEquals("福建东南卫视", ChannelNamePolicy.canonicalSatelliteName("Southeast Satellite TV"));
     }
 
+    @Test public void collapsesRepeatedChineseSatelliteNamesToOneCanonicalLabel() {
+        assertEquals("四川卫视", ChannelNamePolicy.canonicalSatelliteName(
+                "四川卫视 四川卫视 卫视台 四川卫视 卫视台"));
+        assertEquals("天津卫视", ChannelNamePolicy.canonicalSatelliteName(
+                "天津卫视 天津卫视 卫视频道"));
+        assertEquals("湖南卫视", ChannelNamePolicy.canonicalSatelliteName(
+                "高清 湖南卫视 湖南卫视 直播"));
+    }
+
     @Test public void resolvesSatelliteIdentityFromTvgMetadataEvenWhenDisplayNameIsGeneric() {
         assertEquals("湖南卫视", ChannelNamePolicy.canonicalBroadcasterName(
                 "高清频道", "Hunan TV", "HunanSatelliteTV", "China"));
