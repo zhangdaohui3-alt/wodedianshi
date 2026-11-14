@@ -4422,19 +4422,18 @@ public class MainActivity extends Activity {
         advanceToNextSourceAutomatically("VLC 播放中断");
         return;
       }
-      // Vout alone does not prove pixels reached the TV panel. Remember this endpoint
-      // only after two consecutive 12-second healthy checks.
+      // Vout plus isPlaying only proves that VLC still owns a video output and
+      // reports a live session. It does NOT prove that a decoded frame reached the
+      // TV surface. Never promote a VLC source to last-known-good or QoE "stable"
+      // from these signals alone; otherwise a black-screen source can outrank a
+      // source whose first frame was actually rendered by Media3.
       libVlcStableChecks++;
       if(!libVlcStableRecorded&&libVlcStableChecks>=2){
         libVlcStableRecorded=true;
-        String stableUrl=currentSourceUrl();
-        Channel stableChannel=selected>=0&&selected<channels.size()?channels.get(selected):null;
-        if(stableChannel!=null){
-          SourceMemoryStore.saveLastGood(this,
-              SourceMemoryStore.channelIdentityKey(identity(stableChannel)),stableUrl);
-          recordSourceMetric(stableUrl,"stable",0L);
-          saveLiveDiagnostic("SOURCE_STABLE","LibVLC maintained video output and playing state across two watchdog checks");
-        }
+        saveLiveDiagnostic("VLC_ENGINE_HEALTHY_UNVERIFIED",
+            "LibVLC maintained Vout and playing state across two watchdog checks; "
+            +"actual rendered-frame visibility is unverified, so this source was not "
+            +"promoted to last-known-good and no stable-play success was recorded");
       }
       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
     };
