@@ -83,6 +83,10 @@ public class MainActivity extends Activity {
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
+  // Snapshot of the last catalogue JSON this Activity restored or persisted.
+  // It lets onStart detect safe background-worker updates while this Activity was stopped.
+  private volatile String lastPersistedChannelsJson=null;
+  private Runnable sourceUpdateActivityHeartbeat;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -146,7 +150,8 @@ public class MainActivity extends Activity {
   }
   public void onCreate(Bundle b) {
     super.onCreate(b);
-    setSourceUpdatePlaybackActive(false); // Clear stale state if Android previously killed the process.
+    setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
+    setSourceUpdateActivityActive(true);
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
@@ -406,6 +411,7 @@ public class MainActivity extends Activity {
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    lastPersistedChannelsJson=p.getString("channels","[]");
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
@@ -592,7 +598,9 @@ public class MainActivity extends Activity {
     try {
       org.json.JSONArray a=new org.json.JSONArray();
       for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("tvgId",c.tvgId==null?"":c.tvgId);o.put("tvgName",c.tvgName==null?"":c.tvgName);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
+      String savedJson=a.toString();
+      getSharedPreferences("mytv",0).edit().putString("channels",savedJson).putStringSet("fav",new HashSet<>(favorites)).apply();
+      lastPersistedChannelsJson=savedJson;
     } catch(Exception ignored) {}
   }
   private String activeCategory="全部";
@@ -4827,6 +4835,14 @@ public class MainActivity extends Activity {
   private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
   protected void onStart(){
     super.onStart();
+    setSourceUpdateActivityActive(true);
+    if(startupDataReady){
+      try{reloadChannelsAfterBackgroundUpdateIfNeeded();}
+      catch(RuntimeException reloadFailure){
+        android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
+        saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
+      }
+    }
     remoteLockUiActive=true;
     if(remoteParentLockManager!=null){remoteParentLockManager.start();if(remoteParentLockManager.isLocked())enforceRemoteParentLock(remoteParentLockManager.getLockReason());}
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
@@ -4838,9 +4854,110 @@ public class MainActivity extends Activity {
     updateNetworkSpeedMonitor();
     if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){resumePlaybackOnStart=false;startCurrentSource();}
   }
+  private void setSourceUpdateActivityActive(boolean active){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    if(sourceUpdateActivityHeartbeat!=null){
+      uiHandler.removeCallbacks(sourceUpdateActivityHeartbeat);
+      sourceUpdateActivityHeartbeat=null;
+    }
+    if(!active){
+      prefs.edit().putBoolean("source_update_activity_active",false)
+          .putLong("source_update_activity_heartbeat",0L).apply();
+      return;
+    }
+    prefs.edit().putBoolean("source_update_activity_active",true)
+        .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
+    sourceUpdateActivityHeartbeat=new Runnable(){
+      @Override public void run(){
+        if(isFinishing())return;
+        getSharedPreferences("mytv",0).edit()
+            .putBoolean("source_update_activity_active",true)
+            .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
+        uiHandler.postDelayed(this,30_000L);
+      }
+    };
+    uiHandler.postDelayed(sourceUpdateActivityHeartbeat,30_000L);
+  }
+
+  // A Worker may safely refresh the persisted catalogue only while this Activity is
+  // stopped. On returning, reload its newer cache before any later persist() can
+  // serialize an old in-memory list over the updated backup sources.
+  private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
+    if(!startupDataReady)return;
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    String raw=prefs.getString("channels","[]");
+    if(raw.equals(lastPersistedChannelsJson))return;
+    ArrayList<Channel> refreshed=new ArrayList<>();
+    try{
+      org.json.JSONArray data=new org.json.JSONArray(raw);
+      for(int i=0;i<data.length();i++){
+        org.json.JSONObject item=data.getJSONObject(i);
+        Channel channel=new Channel(item.getString("name"),item.getString("url"),item.optString("group",""));
+        channel.tvgId=item.optString("tvgId","");
+        channel.tvgName=item.optString("tvgName","");
+        org.json.JSONArray sources=item.optJSONArray("sources");
+        if(sources!=null){
+          channel.backups.clear();
+          for(int j=0;j<sources.length();j++){
+            String url=sources.optString(j,"");
+            if(url.startsWith("http://")||url.startsWith("https://"))channel.backups.add(url);
+          }
+          if(channel.backups.isEmpty())channel.backups.add(channel.url);
+        }
+        channel.activeSource=Math.max(0,Math.min(item.optInt("activeSource",0),channel.backups.size()-1));
+        refreshed.add(channel);
+      }
+    }catch(Exception invalidCatalogue){
+      throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
+    }
+
+    String selectedIdentity="";
+    String selectedName="";
+    String selectedGroup="";
+    String selectedUrl="";
+    if(selected>=0&&selected<channels.size()){
+      Channel current=channels.get(selected);
+      selectedIdentity=identity(current);
+      selectedName=current.name;
+      selectedGroup=current.group;
+      selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
+          ?current.backups.get(current.activeSource):current.url;
+    }
+    synchronized(channels){
+      channels.clear();
+      channels.addAll(refreshed);
+    }
+    rebuildChannelIndexes();
+    if(!selectedIdentity.isEmpty()){
+      int found=-1;
+      for(int i=0;i<channels.size();i++){
+        Channel candidate=channels.get(i);
+        if(identity(candidate).equals(selectedIdentity)){found=i;break;}
+      }
+      // Generic-channel identity includes its original host. A worker can promote a
+      // better backup to the primary URL, so fall back to stable name/group matching.
+      if(found<0){
+        for(int i=0;i<channels.size();i++){
+          Channel candidate=channels.get(i);
+          if(candidate.name.equals(selectedName)&&candidate.group.equals(selectedGroup)){found=i;break;}
+        }
+      }
+      selected=found;
+      if(found>=0&&!selectedUrl.isEmpty()){
+        Channel candidate=channels.get(found);
+        for(int i=0;i<candidate.backups.size();i++){
+          if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
+        }
+      }
+    }
+    lastPersistedChannelsJson=raw;
+    refresh();
+    android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
+  }
+
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();releaseLibVlcEngine();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();releaseLibVlcEngine();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
