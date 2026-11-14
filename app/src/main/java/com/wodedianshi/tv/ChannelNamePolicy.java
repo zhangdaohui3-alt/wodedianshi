@@ -73,15 +73,28 @@ final class ChannelNamePolicy {
         {"新疆", "URUMQI", "KARAMAY", "TURPAN", "HAMI", "KASHGAR", "HOTAN", "AKSU", "KORLA", "YINING", "ALTAY"}
     };
 
+    // These names exist in more than one province. Without an explicit province
+    // marker in the metadata, a city-only station name must not be guessed.
+    private static final String[] AMBIGUOUS_LOCAL_CITY_ALIASES = {
+        "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU"
+    };
+
     static String provinceForLocalChannel(String metadata) {
         String normalized = normalize(metadata);
         if (normalized.isEmpty()) return "";
+        String matchedProvince = "";
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             for (int i = 1; i < aliases.length; i++) {
-                if (normalized.contains(normalize(aliases[i]))) return aliases[0];
+                String alias = normalize(aliases[i]);
+                if (!normalized.contains(alias)) continue;
+                for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
+                    if (alias.equals(ambiguous)) return "";
+                }
+                if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
+                matchedProvince = aliases[0];
             }
         }
-        return "";
+        return matchedProvince;
     }
 
     static String canonicalSatelliteName(String name) {
