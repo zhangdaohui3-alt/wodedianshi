@@ -30,26 +30,38 @@ public final class PlaylistParser {
         }
     }
 
+    public interface EntryConsumer {
+        void accept(ChannelSource entry);
+    }
+
     public static List<ChannelSource> parse(String data, int maxEntries) {
         if (data == null || data.isEmpty() || maxEntries <= 0) return Collections.emptyList();
         ArrayList<ChannelSource> result = new ArrayList<>();
+        parseEach(data, maxEntries, result::add);
+        return result;
+    }
+
+    /** Parse line-by-line without allocating a second full split-line array or a
+     *  15k-entry intermediate list. Intended for large user-imported playlists. */
+    public static int parseEach(String data, int maxEntries, EntryConsumer consumer) {
+        if (data == null || data.isEmpty() || maxEntries <= 0 || consumer == null) return 0;
         String name = null;
         String group = "";
         String pendingGroup = "";
         boolean groupTitlePresent = false;
         String tvgId = "";
         String tvgName = "";
-        String normalized = data.replace("\uFEFF", "");
-        String[] lines = normalized.split("\\r\\n|\\n|\\r");
-        for (String raw : lines) {
-            if (result.size() >= maxEntries) break;
-            String line = raw.trim();
+        int emitted = 0;
+        int start = 0;
+        while (start < data.length() && emitted < maxEntries) {
+            int end = data.indexOf('\n', start);
+            if (end < 0) end = data.length();
+            int lineEnd = end > start && data.charAt(end - 1) == '\r' ? end - 1 : end;
+            String line = data.substring(start, lineEnd).replace("\uFEFF", "").trim();
+            start = end + 1;
             if (line.isEmpty()) continue;
             if (line.startsWith("#EXTGRP:")) {
                 String extGroup = line.substring(8).trim();
-                // EXTGRP is found both before EXTINF and between EXTINF and its URL.
-                // Apply it to the current entry when possible, but never override the
-                // more explicit group-title attribute.
                 if (name != null) {
                     if (!groupTitlePresent) group = extGroup;
                 } else {
@@ -80,7 +92,8 @@ public final class PlaylistParser {
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
                 if (name != null && !name.trim().isEmpty()) {
-                    result.add(new ChannelSource(name, line, group, tvgId, tvgName));
+                    consumer.accept(new ChannelSource(name, line, group, tvgId, tvgName));
+                    emitted++;
                 }
                 name = null;
                 group = "";
@@ -89,7 +102,7 @@ public final class PlaylistParser {
                 tvgName = "";
             }
         }
-        return result;
+        return emitted;
     }
 
     private static int firstCommaOutsideQuotes(String line) {
