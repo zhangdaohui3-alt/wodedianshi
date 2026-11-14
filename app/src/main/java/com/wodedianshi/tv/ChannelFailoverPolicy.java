@@ -10,9 +10,9 @@ public final class ChannelFailoverPolicy {
      */
     public static int nextChannelIndex(int channelCount, int currentIndex,
                                        int alreadySwitchedCount) {
-        if (channelCount <= 1 || alreadySwitchedCount >= channelCount - 1) return -1;
-        int current = SourceSelectionPolicy.wrapIndex(currentIndex, channelCount);
-        if (current < 0) return -1;
-        return (current + 1) % channelCount;
+        if (channelCount <= 1 || currentIndex < 0 || currentIndex >= channelCount
+                || alreadySwitchedCount < 0
+                || alreadySwitchedCount >= channelCount - 1) return -1;
+        return (currentIndex + 1) % channelCount;
     }
 }
