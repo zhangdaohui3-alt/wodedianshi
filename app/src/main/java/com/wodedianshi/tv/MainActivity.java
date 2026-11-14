@@ -162,11 +162,8 @@ public class MainActivity extends Activity {
     worker.execute(()->{
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       restore();
-      // Run the one-time bundled-source migration on the same startup worker,
-      // before the channel list becomes visible or auto-resume can start playback.
-      // Previously this ran 900ms later while the UI/player read the same mutable
-      // channel objects, creating a startup race after process recreation.
-      loadBundledHdBackups();
+      // Startup is cache-first: render and resume from the user's saved catalogue.
+      // Bundled catalogue maintenance must never delay the first usable screen.
       long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
       runOnUiThread(()->{
         if(isFinishing())return;
@@ -191,10 +188,16 @@ public class MainActivity extends Activity {
             if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
           }
         },350L);
+        // Register periodic source maintenance only after the saved catalogue
+        // has been restored and the home screen is usable. WorkManager performs
+        // refreshes independently; no network discovery is part of app entry.
+        try{scheduleAutomaticSourceUpdates();}
+        catch(RuntimeException schedulingFailure){
+          android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
+        }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
       });
     });
-    uiHandler.postDelayed(()->{if(!isFinishing())scheduleAutomaticSourceUpdates();},1600L);
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
   // including for users whose channel list was already saved by an older build.
