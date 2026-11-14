@@ -40,7 +40,8 @@ import java.util.concurrent.TimeUnit;
 
 @UnstableApi
 public class MainActivity extends Activity {
-  private ExoPlayer player;
+  // Read by Media3's playback-thread frame callback as well as the UI thread.
+  private volatile ExoPlayer player;
   private boolean decoderInventoryRecorded=false;
   private PlayerView video;
   private FrameLayout liveStage;
