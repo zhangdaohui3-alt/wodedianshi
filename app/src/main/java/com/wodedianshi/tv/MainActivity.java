@@ -3912,6 +3912,12 @@ public class MainActivity extends Activity {
     closeFullscreenChannelMenu();
     enterFullScreenPlayback();
     Channel c=channels.get(selected);
+    if(c.backups==null||c.backups.isEmpty()){
+      saveLiveDiagnostic("SOURCE_SKIP","channel="+c.name+" has no playable URL entries");
+      info.setText(c.name+" 没有可用播放地址，正在跳过…");
+      advanceToNextChannelAutomatically("当前频道没有可用播放地址");
+      return;
+    }
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
