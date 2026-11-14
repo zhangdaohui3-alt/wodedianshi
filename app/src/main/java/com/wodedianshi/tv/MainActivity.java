@@ -895,7 +895,7 @@ public class MainActivity extends Activity {
         startCurrentSource();
       }
       resumeLiveAfterVod=false;
-      setSourceUpdatePlaybackActive(player!=null&&player.isPlaying());
+      setSourceUpdatePlaybackActive((player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
     });
     dialog.setOnShowListener(d->{
