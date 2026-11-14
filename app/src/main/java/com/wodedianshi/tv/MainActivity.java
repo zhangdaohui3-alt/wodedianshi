@@ -3746,7 +3746,10 @@ public class MainActivity extends Activity {
     inventoryThread.start();
   }
   private void showLiveDiagnostics(){
-    String details=getSharedPreferences("mytv",0).getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    android.content.SharedPreferences diagnostics=getSharedPreferences("mytv",0);
+    String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
+    String crash=diagnostics.getString("last_uncaught_crash_v1","");
+    if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
         .setMessage(details+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
         .setPositiveButton("复制记录",(d,w)->{
@@ -4029,13 +4032,15 @@ public class MainActivity extends Activity {
     saveLiveDiagnostic("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
     try{
       startCurrentSourceInternal();
-    }catch(RuntimeException tuneFailure){
+    }catch(Throwable tuneFailure){
+      if(tuneFailure instanceof ThreadDeath)throw (ThreadDeath)tuneFailure;
+      if(tuneFailure instanceof VirtualMachineError)throw (VirtualMachineError)tuneFailure;
       android.util.Log.e("MyTVPlayback","uncaught tune setup failure",tuneFailure);
       saveLiveDiagnostic("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
-      try{releaseLivePlayerSafely();}catch(RuntimeException ignored){}
-      try{releaseLibVlcEngine();}catch(RuntimeException ignored){}
+      try{releaseLivePlayerSafely();}catch(Throwable ignored){}
+      try{releaseLibVlcEngine();}catch(Throwable ignored){}
       setSourceUpdatePlaybackActive(false);
-      try{exitFullScreenPlayback();}catch(RuntimeException uiFailure){
+      try{exitFullScreenPlayback();}catch(Throwable uiFailure){
         saveLiveDiagnostic("TUNE_UI_RECOVERY_ERROR",uiFailure.getClass().getSimpleName()+": "+uiFailure.getMessage());
       }
       if(info!=null)info.setText("频道启动遇到异常，已停止播放器保护主界面；请打开“直播诊断记录”查看原因。");
@@ -4051,6 +4056,7 @@ public class MainActivity extends Activity {
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
     enterFullScreenPlayback();
+    saveLiveDiagnostic("TUNE_STAGE","fullscreen layout entered");
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){
       saveLiveDiagnostic("SOURCE_SKIP","channel="+c.name+" has no playable URL entries");
@@ -4089,7 +4095,9 @@ public class MainActivity extends Activity {
     if(player==null){
       recordDecoderInventoryOnce();
       player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
+      saveLiveDiagnostic("TUNE_STAGE","Media3 player constructed");
       video.setPlayer(player);
+      saveLiveDiagnostic("TUNE_STAGE","Media3 PlayerView attached");
       // Avoid per-frame reflection callbacks on older TV firmware; the playback
       // watchdog below monitors the player timeline without touching codec callbacks.
       final ExoPlayer listenerOwner=player;
@@ -4272,7 +4280,9 @@ public class MainActivity extends Activity {
     player.clearMediaItems();
     MediaItem item=PlaybackPlayerFactory.buildMediaItem(c.backups.get(c.activeSource),currentMediaId);
     player.setMediaItem(item);
+    saveLiveDiagnostic("TUNE_STAGE","media item assigned");
     player.prepare();
+    saveLiveDiagnostic("TUNE_STAGE","prepare requested");
     player.play();
     }catch(RuntimeException e){
       String failedMediaId=currentMediaId;
