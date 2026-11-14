@@ -40,6 +40,9 @@ public class ChannelNamePolicyTest {
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Suzhou TV"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Fuzhou TV"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yichun TV"));
     }
 
     @Test public void leavesUnknownEnglishChannelNamesUnchanged() {
