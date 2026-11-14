@@ -56,7 +56,11 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/index.m3u"
      };
     try{
-      JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
+      // Snapshot the user's current catalogue before discovery/probing. The Activity
+      // may save favorites, edits, imports or playback state while this worker runs.
+      // Never let a stale worker snapshot overwrite those newer user changes.
+      String channelsSnapshot=prefs.getString("channels","[]");
+      JSONArray saved=new JSONArray(channelsSnapshot);
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
@@ -206,6 +210,11 @@ public class SourceUpdateWorker extends Worker {
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       trimProbeScores(measuredScores,savedPool,probeCandidates);
+      String latestChannels=prefs.getString("channels","[]");
+      if(!channelsSnapshot.equals(latestChannels)){
+        saveStatus(prefs,"频道列表在后台检测期间发生变化，已保留最新用户数据并安排重试",0);
+        return Result.retry();
+      }
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
