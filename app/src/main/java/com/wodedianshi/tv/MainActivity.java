@@ -469,7 +469,8 @@ public class MainActivity extends Activity {
             case "tvgId": tvgId=readCatalogueJsonString(reader,"");break;
             case "tvgName": tvgName=readCatalogueJsonString(reader,"");break;
             case "activeSource":
-              try{activeSource=(int)reader.nextLong();}catch(Exception invalidIndex){reader.skipValue();}
+              String savedIndex=readCatalogueJsonString(reader,"0");
+              try{activeSource=Integer.parseInt(savedIndex);}catch(NumberFormatException ignoredIndex){activeSource=0;}
               break;
             case "sources":
               if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
