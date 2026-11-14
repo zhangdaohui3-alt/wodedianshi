@@ -205,7 +205,7 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
-      trimProbeScores(measuredScores);
+      trimProbeScores(measuredScores,savedPool,probeCandidates);
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
@@ -241,13 +241,31 @@ public class SourceUpdateWorker extends Worker {
   // thousands of URLs over time; an unbounded JSON object would slow every update
   // and gradually consume device storage. The current scan rewrites recent entries.
   private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
-  private void trimProbeScores(JSONObject scores){
+  private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates){
     if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
-    int removeCount=scores.length()-MAX_PERSISTED_PROBE_SCORES;
-    ArrayList<String> keysToRemove=new ArrayList<>(removeCount);
+    // JSONObject key iteration order is not an LRU contract. Preserve scores for
+    // currently saved channel URLs first, then this run's recent candidates, before
+    // filling remaining capacity with older entries.
+    LinkedHashSet<String> keep=new LinkedHashSet<>();
+    if(savedPool!=null)for(Entry entry:savedPool){
+      if(keep.size()>=MAX_PERSISTED_PROBE_SCORES)break;
+      String key=scoreKey(entry.url);if(scores.has(key))keep.add(key);
+    }
+    if(recentCandidates!=null)for(int i=recentCandidates.size()-1;i>=0&&keep.size()<MAX_PERSISTED_PROBE_SCORES;i--){
+      String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
+    }
     Iterator<String> keys=scores.keys();
-    while(keys.hasNext()&&keysToRemove.size()<removeCount)keysToRemove.add(keys.next());
-    for(String key:keysToRemove)scores.remove(key);
+    while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES)keep.add(keys.next());
+    JSONObject retained=new JSONObject();
+    for(String key:keep)try{retained.put(key,scores.get(key));}catch(JSONException ignored){}
+    Iterator<String> remove=scores.keys();ArrayList<String> oldKeys=new ArrayList<>();
+    while(remove.hasNext())oldKeys.add(remove.next());
+    for(String key:oldKeys)scores.remove(key);
+    Iterator<String> retainedKeys=retained.keys();
+    while(retainedKeys.hasNext()){
+      String key=retainedKeys.next();
+      try{scores.put(key,retained.get(key));}catch(JSONException ignored){}
+    }
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
