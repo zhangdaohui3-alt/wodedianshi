@@ -199,12 +199,18 @@ public class SourceUpdateWorker extends Worker {
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
+        // Preserve the user's last selected source across background re-ranking.
+        // Ranking may change the preferred primary URL, but must not silently
+        // replace the source that the user explicitly selected for this channel.
+        int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
+        String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
         ArrayList<String> ordered=new ArrayList<>();
         for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
-        JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
-        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
+        JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
+        for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
+        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",restoredActiveIndex);}
       }
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
