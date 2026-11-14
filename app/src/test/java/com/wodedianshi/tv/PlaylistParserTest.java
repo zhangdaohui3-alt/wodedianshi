@@ -17,8 +17,8 @@ public class PlaylistParserTest {
     }
 
     @Test public void streamingParserSupportsCrOnlyAndCountsWithoutIntermediateList() {
-        String m3u = "#EXTM3U\\r#EXTINF:-1,福建综合\\rhttps://a.example/live\\r"
-                + "#EXTINF:-1,湖南卫视\\rhttps://b.example/live";
+        String m3u = "#EXTM3U\r#EXTINF:-1,福建综合\rhttps://a.example/live\r"
+                + "#EXTINF:-1,湖南卫视\rhttps://b.example/live";
         final int[] count = {0};
         int parsed = PlaylistParser.parseEach(m3u, 10, entry -> {
             count[0]++;
