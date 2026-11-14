@@ -525,7 +525,7 @@ public class MainActivity extends Activity {
       // and backup-source de-duplication. ArrayList.contains() here made restoring
       // large catalogues quadratic when thousands of rows shared the same channel.
       HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
-      HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
+      HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>(16);
       ArrayList<Channel> compact=new ArrayList<>(channels.size());
       for(Channel c:channels){
         normalizeBroadcasterLabel(c);
