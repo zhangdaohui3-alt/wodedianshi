@@ -409,8 +409,32 @@ public class MainActivity extends Activity {
     return DecoderPolicy.isDecoderFallbackEnabled(
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
+  // Worker results are staged separately from the live catalogue. Apply them only
+  // when the user's current catalogue still matches the exact snapshot the Worker read.
+  // Any intervening channel edit/deletion wins; stale background results are discarded.
+  private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs){
+    String base=prefs.getString("source_update_pending_base",null);
+    String candidate=prefs.getString("source_update_pending_channels",null);
+    if(base==null||candidate==null||candidate.isEmpty())return false;
+    String current=prefs.getString("channels","[]");
+    android.content.SharedPreferences.Editor edit=prefs.edit();
+    boolean applied=base.equals(current);
+    if(applied){
+      edit.putString("channels",candidate)
+          .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
+    }else{
+      edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+    }
+    edit.remove("source_update_pending_base")
+        .remove("source_update_pending_channels")
+        .apply();
+    if(applied)lastPersistedChannelsJson=candidate;
+    return applied;
+  }
+
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    applyPendingSourceUpdateIfSafe(p);
     lastPersistedChannelsJson=p.getString("channels","[]");
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
@@ -4837,7 +4861,10 @@ public class MainActivity extends Activity {
     super.onStart();
     setSourceUpdateActivityActive(true);
     if(startupDataReady){
-      try{reloadChannelsAfterBackgroundUpdateIfNeeded();}
+      try{
+        applyPendingSourceUpdateIfSafe(getSharedPreferences("mytv",0));
+        reloadChannelsAfterBackgroundUpdateIfNeeded();
+      }
       catch(RuntimeException reloadFailure){
         android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
         saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
