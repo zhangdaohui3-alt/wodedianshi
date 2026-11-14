@@ -507,7 +507,7 @@ public class MainActivity extends Activity {
     // this before playback succeeds, so last_source_url could permanently remember
     // a dead endpoint and make every next launch start from that failed URL.
     getSharedPreferences("mytv",0).edit()
-        .putString("last_channel_identity",identity(c.name,c.group,c.url))
+        .putString("last_channel_identity",identity(c))
         .putString("last_channel_url",c.url).apply();
   }
   private void restoreLastChannel(){
@@ -518,7 +518,7 @@ public class MainActivity extends Activity {
     int found=-1;
     for(int i=0;i<channels.size();i++){
       Channel c=channels.get(i);
-      if(identity(c.name,c.group,c.url).equals(savedIdentity)
+      if((identity(c).equals(savedIdentity)||identity(c.name,c.group,c.url).equals(savedIdentity))
           &&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}
     }
     if(found<0){
