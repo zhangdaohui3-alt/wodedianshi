@@ -4261,6 +4261,7 @@ public class MainActivity extends Activity {
     if(c==null||c.backups==null||c.backups.isEmpty())return;
     String remembered=SourceMemoryStore.getLastGood(this,
         SourceMemoryStore.channelIdentityKey(identity(c)),
+        SourceMemoryStore.channelKey(c.name,c.group,c.url),
         SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url));
     if(remembered==null)return;
     int index=c.backups.indexOf(remembered);
