@@ -50,17 +50,23 @@ public final class LibVlcPlaybackEngine {
     }
 
     public void initialize() {
+        recordNativeStage("VLC_INIT_BEGIN");
         release();
         // release() hides the layout while tearing down any previous native session.
         // Make it visible before attaching VLC's native video surfaces.
+        recordNativeStage("VLC_LAYOUT_VISIBLE_BEGIN");
         videoLayout.setVisibility(View.VISIBLE);
         ArrayList<String> options = new ArrayList<>();
         options.add("--no-video-title-show");
         options.add("--network-caching=1500");
         options.add("--live-caching=1500");
         options.add("--avcodec-hw=any");
+        recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_BEGIN");
         libVlc = new LibVLC(appContext, options);
+        recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_RETURNED");
+        recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN");
         mediaPlayer = new MediaPlayer(libVlc);
+        recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_RETURNED");
         mediaPlayer.setEventListener(event -> {
             if (released || listener == null) return;
             switch (event.type) {
@@ -86,8 +92,11 @@ public final class LibVlcPlaybackEngine {
                     break;
             }
         });
+        recordNativeStage("VLC_ATTACH_VIEWS_BEGIN");
         mediaPlayer.attachViews(videoLayout, null, false, false);
+        recordNativeStage("VLC_ATTACH_VIEWS_RETURNED");
         released = false;
+        recordNativeStage("VLC_INIT_COMPLETED");
     }
 
     public void play(String url) {
@@ -97,13 +106,19 @@ public final class LibVlcPlaybackEngine {
             return;
         }
         if (!isInitialized()) initialize();
+        recordNativeStage("VLC_MEDIA_CONSTRUCTOR_BEGIN");
         Media media = new Media(libVlc, Uri.parse(url));
+        recordNativeStage("VLC_MEDIA_CONSTRUCTOR_RETURNED");
         media.setHWDecoderEnabled(true, false);
         media.addOption(":network-caching=1500");
         media.addOption(":live-caching=1500");
+        recordNativeStage("VLC_SET_MEDIA_BEGIN");
         mediaPlayer.setMedia(media);
+        recordNativeStage("VLC_SET_MEDIA_RETURNED");
         media.release();
+        recordNativeStage("VLC_NATIVE_PLAY_BEGIN");
         mediaPlayer.play();
+        recordNativeStage("VLC_NATIVE_PLAY_RETURNED");
     }
 
     public void pause() {
@@ -196,19 +211,42 @@ public final class LibVlcPlaybackEngine {
 
     public void release() {
         released = true;
+        recordNativeStage("VLC_RELEASE_BEGIN");
         if (mediaPlayer != null) {
             try {
+                recordNativeStage("VLC_STOP_BEGIN");
                 mediaPlayer.stop();
-                if (mediaPlayer.getVLCVout().areViewsAttached()) mediaPlayer.detachViews();
+                recordNativeStage("VLC_DETACH_CHECK_BEGIN");
+                if (mediaPlayer.getVLCVout().areViewsAttached()) {
+                    recordNativeStage("VLC_DETACH_VIEWS_BEGIN");
+                    mediaPlayer.detachViews();
+                }
                 mediaPlayer.setEventListener(null);
+                recordNativeStage("VLC_MEDIAPLAYER_RELEASE_BEGIN");
                 mediaPlayer.release();
             } catch (Exception ignored) { }
             mediaPlayer = null;
         }
         if (libVlc != null) {
-            try { libVlc.release(); } catch (Exception ignored) { }
+            try {
+                recordNativeStage("VLC_LIBVLC_RELEASE_BEGIN");
+                libVlc.release();
+            } catch (Exception ignored) { }
             libVlc = null;
         }
         if (videoLayout != null) videoLayout.setVisibility(View.GONE);
+        recordNativeStage("VLC_RELEASE_COMPLETED");
+    }
+
+    // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves
+    // the last attempted VLC operation available after the app is relaunched.
+    private void recordNativeStage(String stage) {
+        try {
+            appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
+                    .putString("last_native_engine_stage_v1",
+                            System.currentTimeMillis() + " | " + stage)
+                    .putLong("last_native_engine_stage_time_v1", System.currentTimeMillis())
+                    .commit();
+        } catch (Throwable ignored) { }
     }
 }
