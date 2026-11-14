@@ -210,31 +210,56 @@ public final class LibVlcPlaybackEngine {
     }
 
     public void release() {
+        // Mark the engine dead before touching JNI so queued native callbacks are ignored.
         released = true;
         recordNativeStage("VLC_RELEASE_BEGIN");
-        if (mediaPlayer != null) {
+
+        MediaPlayer player = mediaPlayer;
+        mediaPlayer = null;
+        if (player != null) {
+            // Never let a failed stop prevent detach/release. Vendor VLC builds can
+            // throw from one teardown call while still requiring the remaining cleanup.
             try {
                 recordNativeStage("VLC_STOP_BEGIN");
-                mediaPlayer.stop();
+                player.stop();
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_STOP_FAILED_" + error.getClass().getSimpleName());
+            }
+            try {
                 recordNativeStage("VLC_DETACH_CHECK_BEGIN");
-                if (mediaPlayer.getVLCVout().areViewsAttached()) {
+                if (player.getVLCVout().areViewsAttached()) {
                     recordNativeStage("VLC_DETACH_VIEWS_BEGIN");
-                    mediaPlayer.detachViews();
+                    player.detachViews();
                 }
-                mediaPlayer.setEventListener(null);
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_DETACH_FAILED_" + error.getClass().getSimpleName());
+            }
+            try {
+                player.setEventListener(null);
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_CLEAR_LISTENER_FAILED_" + error.getClass().getSimpleName());
+            }
+            try {
                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_BEGIN");
-                mediaPlayer.release();
-            } catch (Exception ignored) { }
-            mediaPlayer = null;
+                player.release();
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_MEDIAPLAYER_RELEASE_FAILED_" + error.getClass().getSimpleName());
+            }
         }
-        if (libVlc != null) {
+
+        LibVLC instance = libVlc;
+        libVlc = null;
+        if (instance != null) {
             try {
                 recordNativeStage("VLC_LIBVLC_RELEASE_BEGIN");
-                libVlc.release();
-            } catch (Exception ignored) { }
-            libVlc = null;
+                instance.release();
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_LIBVLC_RELEASE_FAILED_" + error.getClass().getSimpleName());
+            }
         }
-        if (videoLayout != null) videoLayout.setVisibility(View.GONE);
+        try {
+            if (videoLayout != null) videoLayout.setVisibility(View.GONE);
+        } catch (RuntimeException ignored) { }
         recordNativeStage("VLC_RELEASE_COMPLETED");
     }
 
