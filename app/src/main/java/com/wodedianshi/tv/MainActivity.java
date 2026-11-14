@@ -455,9 +455,11 @@ public class MainActivity extends Activity {
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
-      // Preserve display order while using a plain hash index for duplicate lookup.
-      // This avoids allocating a LinkedHashMap entry for every restored channel.
+      // Preserve display order while using hash indexes for both channel identity
+      // and backup-source de-duplication. ArrayList.contains() here made restoring
+      // large catalogues quadratic when thousands of rows shared the same channel.
       HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
+      HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>(Math.max(16,channels.size()*2));
       ArrayList<Channel> compact=new ArrayList<>(channels.size());
       for(Channel c:channels){
         normalizeBroadcasterLabel(c);
@@ -465,9 +467,18 @@ public class MainActivity extends Activity {
         if(c.backups.isEmpty()&&c.url!=null&&!c.url.isEmpty())c.backups.add(c.url);
         String key=identity(c);
         Channel keep=firstByIdentity.get(key);
-        if(keep==null){firstByIdentity.put(key,c);compact.add(c);}
-        else{
-          for(String source:c.backups)if(source!=null&&!source.isEmpty()&&!keep.backups.contains(source))keep.backups.add(source);
+        if(keep==null){
+          firstByIdentity.put(key,c);
+          HashSet<String> seen=new HashSet<>(Math.max(4,c.backups.size()*2));
+          for(String source:c.backups)if(source!=null&&!source.isEmpty())seen.add(source);
+          sourcesByIdentity.put(key,seen);
+          compact.add(c);
+        }else{
+          HashSet<String> seen=sourcesByIdentity.get(key);
+          if(seen==null){seen=new HashSet<>();sourcesByIdentity.put(key,seen);}
+          for(String source:c.backups){
+            if(source!=null&&!source.isEmpty()&&seen.add(source))keep.backups.add(source);
+          }
           if(favorites.contains(c.key()))favorites.add(keep.key());
         }
       }
