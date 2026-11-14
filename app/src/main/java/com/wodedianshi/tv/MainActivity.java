@@ -3813,7 +3813,9 @@ public class MainActivity extends Activity {
     String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     String crash=diagnostics.getString("last_uncaught_crash_v1","");
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
-    String previousExit=diagnostics.getString("previous_process_exit_v1","");\n    if(!previousExit.isEmpty())details+="\\n\\n===== 上一次进程退出原因（Android 11+ 系统记录） =====\\n"+previousExit;\n    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
+    String previousExit=diagnostics.getString("previous_process_exit_v1","");
+    if(!previousExit.isEmpty())details+="\n\n===== 上一次进程退出原因（Android 11+ 系统记录） =====\n"+previousExit;
+    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
     if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
     final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
