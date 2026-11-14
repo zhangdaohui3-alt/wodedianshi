@@ -108,7 +108,11 @@ public class SourceUpdateWorker extends Worker {
           ArrayList<Entry> feedCandidates=new ArrayList<>();
           parsePlaylist(data,feedCandidates);
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
-          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          // Enforce the per-feed quota as well as the global memory bound.
+          // Without this cap, the first large feed could consume the whole
+          // budget and silently starve later China/regional/category directories.
+          int feedLimit=Math.min(MAX_DISCOVERY_PER_FEED,remaining);
+          for(int i=0;i<feedCandidates.size()&&i<feedLimit;i++)candidates.add(feedCandidates.get(i));
           feedsOk++;
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();}
