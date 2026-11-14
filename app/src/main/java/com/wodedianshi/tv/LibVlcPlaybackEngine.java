@@ -109,16 +109,37 @@ public final class LibVlcPlaybackEngine {
         recordNativeStage("VLC_MEDIA_CONSTRUCTOR_BEGIN");
         Media media = new Media(libVlc, Uri.parse(url));
         recordNativeStage("VLC_MEDIA_CONSTRUCTOR_RETURNED");
-        media.setHWDecoderEnabled(true, false);
-        media.addOption(":network-caching=1500");
-        media.addOption(":live-caching=1500");
-        recordNativeStage("VLC_SET_MEDIA_BEGIN");
-        mediaPlayer.setMedia(media);
-        recordNativeStage("VLC_SET_MEDIA_RETURNED");
-        media.release();
+        try {
+            recordNativeStage("VLC_MEDIA_CONFIGURE_BEGIN");
+            media.setHWDecoderEnabled(true, false);
+            media.addOption(":network-caching=1500");
+            media.addOption(":live-caching=1500");
+            recordNativeStage("VLC_SET_MEDIA_BEGIN");
+            mediaPlayer.setMedia(media);
+            recordNativeStage("VLC_SET_MEDIA_RETURNED");
+        } catch (RuntimeException | LinkageError error) {
+            recordNativeStage("VLC_MEDIA_SETUP_FAILED_" + error.getClass().getSimpleName());
+            throw error;
+        } finally {
+            // Media is a native-backed object. Always release our local reference,
+            // even when configuration or setMedia fails before play() is reached.
+            recordNativeStage("VLC_MEDIA_RELEASE_BEGIN");
+            try {
+                media.release();
+                recordNativeStage("VLC_MEDIA_RELEASE_RETURNED");
+            } catch (RuntimeException | LinkageError error) {
+                recordNativeStage("VLC_MEDIA_RELEASE_FAILED_" + error.getClass().getSimpleName());
+                throw error;
+            }
+        }
         recordNativeStage("VLC_NATIVE_PLAY_BEGIN");
-        mediaPlayer.play();
-        recordNativeStage("VLC_NATIVE_PLAY_RETURNED");
+        try {
+            mediaPlayer.play();
+            recordNativeStage("VLC_NATIVE_PLAY_RETURNED");
+        } catch (RuntimeException | LinkageError error) {
+            recordNativeStage("VLC_NATIVE_PLAY_FAILED_" + error.getClass().getSimpleName());
+            throw error;
+        }
     }
 
     public void pause() {
