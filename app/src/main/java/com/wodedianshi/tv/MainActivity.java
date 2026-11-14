@@ -155,6 +155,7 @@ public class MainActivity extends Activity {
   public void onCreate(Bundle b) {
     super.onCreate(b);
     installCrashDiagnosticsHandler();
+    recordPreviousProcessExitReason();
     setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
     setSourceUpdateActivityActive(true);
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
@@ -3763,12 +3764,56 @@ public class MainActivity extends Activity {
     inventoryThread.setDaemon(true);
     inventoryThread.start();
   }
+  // Android 11+ exposes the previous process exit classification. This is the
+  // most useful way to distinguish a Java crash, native codec crash and ANR after
+  // Android has already killed the previous app process.
+  private void recordPreviousProcessExitReason(){
+    if(android.os.Build.VERSION.SDK_INT<30)return;
+    try{
+      android.app.ActivityManager manager=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
+      if(manager==null)return;
+      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+      long reported=prefs.getLong("last_reported_exit_timestamp_v1",0L);
+      java.util.List<android.app.ApplicationExitInfo> exits=manager.getHistoricalProcessExitReasons(getPackageName(),0,8);
+      if(exits==null||exits.isEmpty())return;
+      for(android.app.ApplicationExitInfo exit:exits){
+        if(exit==null||exit.getTimestamp()<=reported)continue;
+        int reason=exit.getReason();
+        String reasonName;
+        switch(reason){
+          case android.app.ApplicationExitInfo.REASON_CRASH: reasonName="JAVA_CRASH";break;
+          case android.app.ApplicationExitInfo.REASON_CRASH_NATIVE: reasonName="NATIVE_CRASH";break;
+          case android.app.ApplicationExitInfo.REASON_ANR: reasonName="ANR";break;
+          case android.app.ApplicationExitInfo.REASON_LOW_MEMORY: reasonName="LOW_MEMORY";break;
+          case android.app.ApplicationExitInfo.REASON_SIGNALED: reasonName="SIGNALED";break;
+          case android.app.ApplicationExitInfo.REASON_EXIT_SELF: reasonName="EXIT_SELF";break;
+          case android.app.ApplicationExitInfo.REASON_USER_REQUESTED: reasonName="USER_REQUESTED";break;
+          case android.app.ApplicationExitInfo.REASON_USER_STOPPED: reasonName="USER_STOPPED";break;
+          case android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: reasonName="EXCESSIVE_RESOURCE_USAGE";break;
+          case android.app.ApplicationExitInfo.REASON_DEPENDENCY_DIED: reasonName="DEPENDENCY_DIED";break;
+          default: reasonName="OTHER_"+reason;break;
+        }
+        String description=safeDiagnosticDetail(String.valueOf(exit.getDescription()));
+        String detail=reasonName+" | time="+new java.util.Date(exit.getTimestamp())
+            +" | process="+safeDiagnosticDetail(exit.getProcessName())
+            +" | status="+exit.getStatus()+" | importance="+exit.getImportance()
+            +" | pssKb="+exit.getPss()+" | rssKb="+exit.getRss()
+            +" | description="+description;
+        prefs.edit().putString("previous_process_exit_v1",detail)
+            .putLong("last_reported_exit_timestamp_v1",exit.getTimestamp()).commit();
+        saveLiveDiagnostic("PREVIOUS_PROCESS_EXIT",detail);
+        break;
+      }
+    }catch(RuntimeException error){
+      saveLiveDiagnostic("PREVIOUS_PROCESS_EXIT_UNAVAILABLE",error.getClass().getSimpleName());
+    }
+  }
   private void showLiveDiagnostics(){
     android.content.SharedPreferences diagnostics=getSharedPreferences("mytv",0);
     String details=diagnostics.getString("live_diagnostics_v1","暂无直播诊断记录。请打开一个直播频道并等待自动检测。");
     String crash=diagnostics.getString("last_uncaught_crash_v1","");
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
-    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
+    String previousExit=diagnostics.getString("previous_process_exit_v1","");\n    if(!previousExit.isEmpty())details+="\\n\\n===== 上一次进程退出原因（Android 11+ 系统记录） =====\\n"+previousExit;\n    String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
     if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
     final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
