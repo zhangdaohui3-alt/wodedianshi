@@ -120,9 +120,9 @@ final class ChannelNamePolicy {
         String satellite = canonicalSatelliteName(metadata);
         if (!satellite.isEmpty()) return satellite;
         String value = metadata.toUpperCase(Locale.ROOT)
-                .replaceAll("[\\\\s_—–·•]", "");
+                .replaceAll("[\\s_—–·•]", "");
         java.util.regex.Matcher matcher = Pattern.compile(
-                "(?:CCTV|中央电视台|央视)[-]?(\\\\d{1,2}\\\\+?|NEWS|4K|8K)")
+                "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)")
                 .matcher(value);
         if (matcher.find()) return "CCTV-" + matcher.group(1);
         return "";
