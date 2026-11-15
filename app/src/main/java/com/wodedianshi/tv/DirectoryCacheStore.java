@@ -80,6 +80,17 @@ public final class DirectoryCacheStore {
         File target = fileFor(which);
         File temp = new File(directory, target.getName() + ".tmp");
         File backup = new File(directory, target.getName() + ".bak");
+        // Recover an interrupted previous commit before rotating files again.
+        if (backup.isFile()) {
+            Snapshot backupSnapshot = readSnapshotFile(which, backup, null);
+            Snapshot targetSnapshot = target.isFile() ? readSnapshotFile(which, target, null) : null;
+            if (targetSnapshot == null && backupSnapshot != null) {
+                if (target.exists() && !target.delete()) throw new IOException("cannot replace invalid directory cache");
+                if (!backup.renameTo(target)) throw new IOException("cannot recover previous directory snapshot");
+            } else if (targetSnapshot != null && !backup.delete()) {
+                throw new IOException("cannot clear obsolete cache backup");
+            }
+        }
         if (temp.exists() && !temp.delete()) throw new IOException("cannot clear stale temporary cache");
 
         try {
@@ -127,11 +138,25 @@ public final class DirectoryCacheStore {
             throws IOException {
         if (which == null) throw new IllegalArgumentException("directory is null");
         File target = fileFor(which);
-        if (!target.isFile()) return null;
+        File backup = new File(directory, target.getName() + ".bak");
+        Snapshot current = target.isFile() ? readSnapshotFile(which, target, expectedFingerprint) : null;
+        if (current != null) return current;
 
-        DataInputStream in = new DataInputStream(
-                new BufferedInputStream(new FileInputStream(target)));
+        // A process/device interruption may happen after target->backup but
+        // before temp->target. Restore the last verified snapshot on next read.
+        Snapshot previous = backup.isFile()
+                ? readSnapshotFile(which, backup, expectedFingerprint) : null;
+        if (previous == null) return null;
+        if (target.exists() && !target.delete()) return previous;
+        if (backup.renameTo(target)) return previous;
+        return previous;
+    }
+
+    private Snapshot readSnapshotFile(Directory which, File source, String expectedFingerprint) {
+        if (source == null || !source.isFile()) return null;
+        DataInputStream in = null;
         try {
+            in = new DataInputStream(new BufferedInputStream(new FileInputStream(source)));
             if (in.readInt() != MAGIC) return null;
             if (in.readInt() != SCHEMA_VERSION) return null;
             long savedAt = in.readLong();
@@ -152,7 +177,7 @@ public final class DirectoryCacheStore {
             // A truncated or unreadable cache is a miss, not a fatal app startup error.
             return null;
         } finally {
-            try { in.close(); } catch (IOException ignored) {}
+            if (in != null) try { in.close(); } catch (IOException ignored) {}
         }
     }
 
