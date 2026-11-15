@@ -203,7 +203,10 @@ public class MainActivity extends Activity {
         }
         // Auto-resume is non-critical: do not attempt playback if saved catalogue
         // recovery itself failed. A stale/corrupt state must not block manual use.
-        startupAutoResumePending=restoreSucceeded;
+        // Diagnostic stabilization: do not construct or start a native playback engine during app entry.
+        // The user must be able to reach the channel catalogue first; playback begins only
+        // after an explicit channel selection. This isolates startup/UI crashes from codec startup.
+        startupAutoResumePending=false;
         scheduleStartupAutoResume();
         // Register periodic source maintenance only after the saved catalogue
         // has been restored and the home screen is usable. WorkManager performs
