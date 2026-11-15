@@ -11,6 +11,12 @@ final class RegionCategoryPolicy {
 
     private RegionCategoryPolicy() {}
 
+    /** Keeps HMT channels in China even when they arrive inside a global master index. */
+    static String catalogueScope(String name, String group, String requestedScope) {
+        if ("global".equals(requestedScope) && isHongKongMacauTaiwan(name, group)) return "china";
+        return requestedScope;
+    }
+
     static boolean isHongKongMacauTaiwan(String name, String group) {
         return !subcategory(name, group).isEmpty();
     }
