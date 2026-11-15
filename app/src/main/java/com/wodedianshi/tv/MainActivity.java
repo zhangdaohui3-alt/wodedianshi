@@ -3188,8 +3188,13 @@ public class MainActivity extends Activity {
     final long now=System.currentTimeMillis();
     final long last=cachePrefs.getLong("china_supplement_last_success",0L);
     final long refreshInterval=12L*60L*60L*1000L;
-    if(last>0L&&now-last<refreshInterval){
-      info.setText("已使用本地频道缓存 · 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+    // A recent timestamp is not enough: some earlier directory responses contained
+    // only a handful of recognized mainland channels. Keep retrying while the local
+    // catalogue is visibly incomplete instead of freezing that small result for 12h.
+    final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
+    final int minimumUsefulChinaChannels=60;
+    if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
+      info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
       return;
     }
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
@@ -3217,7 +3222,7 @@ public class MainActivity extends Activity {
       // refresh timestamp after the resulting catalogue contains a minimally
       // useful set of recognized mainland channels; HTTP 200 alone is not success.
       if(total>0)persist();
-      final boolean usefulChinaDirectory=recognizedChinaCount>=3;
+      final boolean usefulChinaDirectory=recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
       }
