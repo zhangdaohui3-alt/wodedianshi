@@ -4527,7 +4527,14 @@ public class MainActivity extends Activity {
           }else if(st==Player.STATE_IDLE||st==Player.STATE_ENDED){
             cancelPlaybackWatchdog();
             if(st==Player.STATE_IDLE)cancelBufferingFallback();
-            if(st==Player.STATE_ENDED)advanceToNextSourceAutomatically("当前播放流已结束");
+            if(st==Player.STATE_ENDED){
+              // A live URL may end because of a Media3 demuxer/decoder
+              // incompatibility even when the same stream works in VLC.
+              // Try the independent engine once before consuming a backup URL.
+              if(!tryStartLibVlcFallback("Media3 检测到直播流已结束")){
+                advanceToNextSourceAutomatically("当前播放流已结束");
+              }
+            }
           }
         }
       });
