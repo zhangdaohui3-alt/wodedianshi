@@ -110,6 +110,8 @@ public class MainActivity extends Activity {
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
   private volatile long catalogueFilterGeneration=0L;
+  private volatile int lastFilteredMatchCount=0;
+  private volatile java.util.concurrent.Future<?> pendingCatalogueFilter=null;
   // Bound queued thumbnail work: fast scrolling must not build an unbounded
   // network/decode backlog on Android TV. Rejected cards use the local fallback poster.
   private final ExecutorService posterWorker = new ThreadPoolExecutor(
@@ -3045,18 +3047,24 @@ public class MainActivity extends Activity {
   private void playChannelSourceByKey(String key,String sourceUrl){
     int index=findChannelIndexByKey(key);
     if(index<0||sourceUrl==null)return;
+    final int sourceIndex;
     synchronized(channels){
       if(index>=channels.size())return;
       Channel current=channels.get(index);
       if(current==null||!key.equals(current.key())||current.backups==null)return;
-      int sourceIndex=current.backups.indexOf(sourceUrl);
+      sourceIndex=current.backups.indexOf(sourceUrl);
       if(sourceIndex<0)return;
-      play(index,sourceIndex);
     }
+    // Release the catalogue lock before player setup, persistence, or UI work.
+    play(index,sourceIndex);
   }
   private void refresh(){
     if(list==null||search==null)return;
     final long generation=++catalogueFilterGeneration;
+    java.util.concurrent.Future<?> previousFilter=pendingCatalogueFilter;
+    if(previousFilter!=null)previousFilter.cancel(true);
+    if(livePreviousPageButton!=null)livePreviousPageButton.setEnabled(false);
+    if(liveNextPageButton!=null)liveNextPageButton.setEnabled(false);
     final String query=search.getText().toString().toLowerCase(Locale.ROOT);
     final String categorySnapshot=activeCategory;
     final boolean favoriteOnly=favoriteMode;
@@ -3086,10 +3094,12 @@ public class MainActivity extends Activity {
       }
     }
     final boolean customCategory="自建频道".equals(categorySnapshot);
-    catalogueFilterWorker.execute(()->{
+    pendingCatalogueFilter=catalogueFilterWorker.submit(()->{
       try{
         ArrayList<Channel> visible=new ArrayList<>();
+        int scanned=0;
         for(Channel c:snapshot){
+          if((++scanned&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
           if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
           if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
           if(regionOnly){
@@ -3175,6 +3185,7 @@ public class MainActivity extends Activity {
       });
       list.addView(b);
     }
+    lastFilteredMatchCount=visible.size();
     updateLivePaging(visible.size());
     updateLiveChannelPresentation();
     if(visible.isEmpty()){
@@ -3197,22 +3208,9 @@ public class MainActivity extends Activity {
     });
   }
   private int getCurrentLiveMatchCount(){
-    if(channels==null)return 0;
-    String q=search==null?"":search.getText().toString().toLowerCase(Locale.ROOT);
-    int count=0;
-    synchronized(channels){
-      for(Channel c:channels){
-        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(localRegionFilterActive&&activeCategory.equals("地方")){
-          if(!matchesLocalRegion(c))continue;
-        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
-        count++;
-      }
-    }
-    return count;
+    // The exact count is produced by the background filter and published with the
+    // rendered page. Never rescan a large catalogue from a paging-button click.
+    return lastFilteredMatchCount;
   }
   private void updateLivePaging(int total){
     int pages=Math.max(1,(total+59)/60);
