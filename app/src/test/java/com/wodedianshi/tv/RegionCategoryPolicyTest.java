@@ -1,4 +1,4 @@
-package com.wodedianshi;
+package com.wodedianshi.tv;
 
 import org.junit.Test;
 import static org.junit.Assert.*;
