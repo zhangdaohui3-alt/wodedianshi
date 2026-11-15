@@ -1670,7 +1670,10 @@ public class MainActivity extends Activity {
       }
     }
     if(old==null)return;
-    try{old.setPlayWhenReady(false);old.pause();}catch(RuntimeException error){
+    try{old.setPlayWhenReady(false);}catch(RuntimeException error){
+      saveLiveDiagnostic("VOD_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
+    }
+    try{old.pause();}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_PAUSE_RELEASE_ERROR",error.getClass().getSimpleName());
     }
     try{old.stop();}catch(RuntimeException error){
@@ -4172,14 +4175,34 @@ public class MainActivity extends Activity {
   private String lastAutoFailoverMediaId="";
   private void releaseLivePlayerSafely(){
     ExoPlayer old=player;
+    // Invalidate callbacks before touching the player; teardown can race a
+    // channel change or an OEM lifecycle callback.
     player=null;
-    if(old!=null){
-      try{old.setPlayWhenReady(false);old.pause();}catch(RuntimeException ignored){}
+    if(old==null){
+      if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
+        saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
+      }}
+      return;
     }
-    if(video!=null){try{video.setPlayer(null);}catch(RuntimeException ignored){}}
-    if(old!=null){
-      try{old.stop();old.clearMediaItems();}catch(RuntimeException ignored){}
-      try{old.release();}catch(RuntimeException ignored){}
+    try{old.setPlayWhenReady(false);}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
+    }
+    try{old.pause();}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_PAUSE_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
+    }}
+    // Keep every cleanup stage independent. A vendor pause/stop failure must
+    // not skip clearMediaItems() or release(), which could leave audio alive.
+    try{old.stop();}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    try{old.clearMediaItems();}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    try{old.release();}catch(RuntimeException error){
+      saveLiveDiagnostic("LIVE_PLAYER_RELEASE_ERROR",error.getClass().getSimpleName());
     }
   }
   private void cancelBufferingFallback(){
