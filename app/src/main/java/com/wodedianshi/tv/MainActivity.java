@@ -3079,7 +3079,7 @@ public class MainActivity extends Activity {
     final String previousFocusedKey;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     previousFocusedIndex=currentFocus!=null&&currentFocus.getTag() instanceof Integer?(Integer)currentFocus.getTag():-1;
-    Object focusedKeyTag=currentFocus==null?null:currentFocus.getTag(android.R.id.tag);
+    Object focusedKeyTag=currentFocus==null?null:currentFocus.getTag(R.id.tag_channel_key);
     previousFocusedKey=focusedKeyTag instanceof String?(String)focusedKeyTag:null;
     ArrayList<Channel> snapshot=new ArrayList<>();
     synchronized(channels){
@@ -3171,7 +3171,7 @@ public class MainActivity extends Activity {
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
       final int currentIndex=findChannelIndexByKey(channelKey);
-      Button b=new Button(this);b.setTag(currentIndex);b.setTag(android.R.id.tag,channelKey);
+      Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
       if(channelKey.equals(selectedKey))b.setContentDescription("当前正在播放："+title);
       b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));
@@ -3214,9 +3214,9 @@ public class MainActivity extends Activity {
       View target=null;
       // Channel indices can shift after a directory merge. Restore focus by stable
       // channel identity first, and use the old integer index only as a fallback.
-      if(previousFocusedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(android.R.id.tag);if(previousFocusedKey.equals(keyTag)){target=child;break;}}}
+      if(previousFocusedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(previousFocusedKey.equals(keyTag)){target=child;break;}}}
       if(target==null&&restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
-      if(target==null&&selectedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(android.R.id.tag);if(selectedKey.equals(keyTag)){target=child;break;}}}
+      if(target==null&&selectedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(selectedKey.equals(keyTag)){target=child;break;}}}
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
