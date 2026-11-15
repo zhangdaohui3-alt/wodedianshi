@@ -154,6 +154,8 @@ public class MainActivity extends Activity {
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
     ArrayList<String> backups = new ArrayList<>();
+    // Provenance is channel-level for now: a merged channel can belong to more than one catalogue.
+    final HashSet<String> sourceScopes = new HashSet<>();
     int activeSource = 0;
     Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
     String key(){return name+"|"+url;}
@@ -470,6 +472,7 @@ public class MainActivity extends Activity {
         String tvgName="";
         int activeSource=0;
         ArrayList<String> sources=null;
+        HashSet<String> sourceScopes=null;
         reader.beginObject();
         while(reader.hasNext()){
           String field=reader.nextName();
@@ -493,6 +496,16 @@ public class MainActivity extends Activity {
               }
               reader.endArray();
               break;
+            case "sourceScopes":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              sourceScopes=new HashSet<>();
+              reader.beginArray();
+              while(reader.hasNext()){
+                String scope=readCatalogueJsonString(reader,"");
+                if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))sourceScopes.add(scope);
+              }
+              reader.endArray();
+              break;
             default: reader.skipValue();break;
           }
         }
@@ -501,6 +514,10 @@ public class MainActivity extends Activity {
         Channel channel=new Channel(name,url,group);
         channel.tvgId=tvgId;
         channel.tvgName=tvgName;
+        if(sourceScopes!=null)channel.sourceScopes.addAll(sourceScopes);
+        // Older saved catalogues have no provenance metadata. Treat them as user-owned
+        // until a future explicit migration can safely establish their origin.
+        if(channel.sourceScopes.isEmpty())channel.sourceScopes.add("custom");
         if(sources!=null){
           channel.backups.clear();
           channel.backups.addAll(sources);
@@ -744,6 +761,8 @@ public class MainActivity extends Activity {
           copy.tvgId=source.tvgId==null?"":source.tvgId;
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           copy.activeSource=source.activeSource;
+          copy.sourceScopes.addAll(source.sourceScopes);
+          if(copy.sourceScopes.isEmpty())copy.sourceScopes.add("custom");
           copy.backups.clear();
           if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
           if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
@@ -764,6 +783,9 @@ public class MainActivity extends Activity {
           writer.name("activeSource").value(channel.activeSource);
           writer.name("sources").beginArray();
           for(String source:channel.backups)writer.value(source);
+          writer.endArray();
+          writer.name("sourceScopes").beginArray();
+          for(String scope:channel.sourceScopes)writer.value(scope);
           writer.endArray();
           writer.endObject();
         }
@@ -3266,7 +3288,7 @@ public class MainActivity extends Activity {
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
-  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors){
+  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
     ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(playlistWorker);
     ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
     for(String address:feeds){
@@ -3297,7 +3319,7 @@ public class MainActivity extends Activity {
           // global channel lock for an entire large playlist: the UI thread also
           // needs this lock while refreshing the visible list, otherwise category
           // clicks can freeze long enough to trigger Android input-dispatch ANRs.
-          added+=parse(result.data);
+          added+=parse(result.data,null,sourceScope);
         }
       }catch(Exception e){if(errors!=null)errors.append(e.getMessage()).append("; ");}
     }
@@ -3358,7 +3380,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
-      int added=fetchAndMergePlaylists(feeds,12000,errors);
+      int added=fetchAndMergePlaylists(feeds,12000,errors,"china");
       final int total=added;final String err=errors.toString();
       final int recognizedChinaCount=countRecognizedChinaChannels();
       // Keep the previous cache if no new entries were merged. Only advance the
@@ -3459,7 +3481,7 @@ public class MainActivity extends Activity {
       int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
       String data;try(InputStream in=c.getInputStream()){data=read(in);}
       final HashSet<String> destinationKeys=new HashSet<>();
-      parse(data,destinationKeys);
+      parse(data,destinationKeys,"global");
       final int matched=destinationKeys.size();
       runOnUiThread(()->{
         activeGeoChannelKeys=new HashSet<>(destinationKeys);
@@ -3483,7 +3505,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
       };
-      added=fetchAndMergePlaylists(feeds,22000,errors);
+      added=fetchAndMergePlaylists(feeds,22000,errors,"global");
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();globalLoading=false;info.setText("全球频道补充完成：新增 "+total+" 个频道条目（已去重并合并备用地址）。地区限制、版权和网络状况可能影响播放。"+(err.isEmpty()?"":"部分目录暂不可用："+err));});
     });
@@ -3530,7 +3552,7 @@ public class MainActivity extends Activity {
         String data;try(InputStream in=c.getInputStream()){data=read(in);}
         // parse() performs bounded per-entry synchronization; avoid locking the
          // entire channel catalogue while parsing a potentially large feed.
-         added+=parse(data);
+         added+=parse(data,null,"global");
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
@@ -3578,11 +3600,14 @@ public class MainActivity extends Activity {
   }
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
-    return parse(data,null);
+    return parse(data,null,"custom");
   }
-  // A destination scope belongs to this parse invocation, never to Activity-wide
-  // mutable state: imports and background directory updates may parse concurrently.
+  // Destination filtering and source ownership belong to each parse invocation,
+  // never to Activity-wide mutable state: imports and refreshes can overlap.
   private int parse(String data,Set<String> destinationKeys){
+    return parse(data,destinationKeys,"custom");
+  }
+  private int parse(String data,Set<String> destinationKeys,String sourceScope){
     if(data==null)return 0;
     final int[] added={0};
     PlaylistParser.parseEach(data,Integer.MAX_VALUE,entry->{
@@ -3601,11 +3626,13 @@ public class MainActivity extends Activity {
             // channelsByUrl.containsKey(line) was false above, so this URL cannot
             // already be present in the channel's backup list.
             same.backups.add(line);
+            same.sourceScopes.add(sourceScope);
             channelsByUrl.put(line,same);
             added[0]++;
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
+            fresh.sourceScopes.add(sourceScope);
             normalizeBroadcasterLabel(fresh);
             channels.add(fresh);
             channelsByIdentity.put(key,fresh);
@@ -3616,6 +3643,7 @@ public class MainActivity extends Activity {
           Channel existing=channelsByUrl.get(line);
           if(existing!=null){
             existing.mergeMetadata(entry.tvgId,entry.tvgName);
+            existing.sourceScopes.add(sourceScope);
             normalizeBroadcasterLabel(existing);
           }
         }
