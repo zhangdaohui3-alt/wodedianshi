@@ -4340,6 +4340,12 @@ public class MainActivity extends Activity {
       if(tuneFailure instanceof VirtualMachineError)throw (VirtualMachineError)tuneFailure;
       android.util.Log.e("MyTVPlayback","uncaught tune setup failure",tuneFailure);
       saveCriticalEngineStage("TUNE_SETUP_FATAL",tuneFailure.getClass().getSimpleName()+": "+tuneFailure.getMessage());
+      // A tune can fail before startCurrentSourceInternal reaches its normal
+      // watchdog reset. Cancel every old live timer before releasing engines so
+      // a stale timeout cannot run against the next tune or a recovered screen.
+      cancelBufferingFallback();
+      cancelPlaybackWatchdog();
+      cancelAudioTrackCheck();
       try{releaseLivePlayerSafely();}catch(Throwable ignored){}
       try{releaseLibVlcEngine();}catch(Throwable ignored){}
       setSourceUpdatePlaybackActive(false);
