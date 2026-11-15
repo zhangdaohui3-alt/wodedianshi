@@ -652,9 +652,7 @@ public class MainActivity extends Activity {
   }
   private String identity(String name,String group,String url,String tvgName,String tvgId){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
-    if(broadcaster.startsWith("CCTV-"))return broadcaster+"|cctv";
-    if(broadcaster.endsWith("卫视"))return broadcaster.toLowerCase(Locale.ROOT)+"|satellite";
-    return identity(name,group,url);
+    return ChannelIdentityPolicy.identity(broadcaster,tvgId,identity(name,group,url));
   }
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
