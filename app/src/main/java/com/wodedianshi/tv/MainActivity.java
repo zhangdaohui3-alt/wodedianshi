@@ -3127,7 +3127,15 @@ public class MainActivity extends Activity {
         });
       }catch(Throwable failure){
         android.util.Log.e("MyTVCatalogue","background catalogue filter failed",failure);
-        runOnUiThread(()->{if(generation==catalogueFilterGeneration&&info!=null)info.setText("频道目录筛选遇到问题，请重试");});
+        runOnUiThread(()->{
+          if(generation!=catalogueFilterGeneration||isFinishing()||isDestroyed())return;
+          // Keep the previously rendered catalogue usable when a new background
+          // filter fails. refresh() disables paging while work is pending; without
+          // restoring the buttons here, one transient exception strands the user
+          // on the old page with no way to navigate it.
+          updateLivePaging(lastFilteredMatchCount);
+          if(info!=null)info.setText("频道目录筛选遇到问题，已保留上一次频道列表；可以继续翻页或重试。");
+        });
       }
     });
   }
