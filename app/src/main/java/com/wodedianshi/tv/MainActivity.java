@@ -4620,7 +4620,16 @@ public class MainActivity extends Activity {
           // advanceToNextSourceAutomatically records this failed source exactly once.
           advanceToNextSourceAutomatically("Media3 与 VLC 均无法播放当前源");
         });}
-        public void onStopped(){}
+        public void onStopped(){uiHandler.post(()->{
+          if(!isCurrent())return;
+          saveLiveDiagnostic("ENGINE_STOPPED","LibVLC reported an unexpected stopped event; advancing to the next source");
+          releaseLibVlcEngine();
+          if(video!=null)video.setVisibility(View.VISIBLE);
+          // Explicit release clears libVlcEngine before native stop(), so teardown
+          // callbacks fail isCurrent(). A current-engine Stopped event is therefore
+          // an unexpected playback termination and should use the shared failover guard.
+          advanceToNextSourceAutomatically("VLC 播放已意外停止，正在尝试备用源");
+        });}
         public void onEndReached(){uiHandler.post(()->{
           if(!isCurrent())return;
           saveLiveDiagnostic("ENGINE_END_REACHED","LibVLC stream reached end of media; advancing to next source");
