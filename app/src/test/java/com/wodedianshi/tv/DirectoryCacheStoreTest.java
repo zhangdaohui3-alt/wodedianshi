@@ -70,6 +70,40 @@ public class DirectoryCacheStoreTest {
         assertNull(store.load(DirectoryCacheStore.Directory.CHINA, null));
     }
 
+
+    @Test public void interruptedCommitRecoversVerifiedBackup() throws Exception {
+        DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
+        byte[] stable = new byte[] {21, 22, 23};
+        store.save(DirectoryCacheStore.Directory.CHINA, "stable-feed", stable, 42L);
+        File target = store.fileFor(DirectoryCacheStore.Directory.CHINA);
+        File backup = new File(target.getParentFile(), target.getName() + ".bak");
+        assertTrue(target.renameTo(backup));
+
+        DirectoryCacheStore.Snapshot recovered =
+                store.load(DirectoryCacheStore.Directory.CHINA, null);
+        assertNotNull(recovered);
+        assertArrayEquals(stable, recovered.payload);
+        assertTrue(target.isFile());
+        assertFalse(backup.exists());
+    }
+
+    @Test public void corruptTargetFallsBackToVerifiedBackup() throws Exception {
+        DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
+        byte[] stable = new byte[] {31, 32, 33};
+        store.save(DirectoryCacheStore.Directory.GLOBAL, "world", stable, 55L);
+        File target = store.fileFor(DirectoryCacheStore.Directory.GLOBAL);
+        File backup = new File(target.getParentFile(), target.getName() + ".bak");
+        assertTrue(target.renameTo(backup));
+        java.io.FileOutputStream corrupt = new java.io.FileOutputStream(target);
+        try { corrupt.write(new byte[] {0, 1, 2}); } finally { corrupt.close(); }
+
+        DirectoryCacheStore.Snapshot recovered =
+                store.load(DirectoryCacheStore.Directory.GLOBAL, null);
+        assertNotNull(recovered);
+        assertArrayEquals(stable, recovered.payload);
+        assertTrue(target.isFile());
+    }
+
     @Test public void failedOversizedWriteDoesNotReplacePreviousSnapshot() throws Exception {
         DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
         byte[] stable = new byte[] {11, 12, 13};
