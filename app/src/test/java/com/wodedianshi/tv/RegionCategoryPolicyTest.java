@@ -1,4 +1,4 @@
-package com.wodedianshi.tv;
+package com.wodedianshi;
 
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -21,5 +21,13 @@ public class RegionCategoryPolicyTest {
         assertTrue(RegionCategoryPolicy.isHongKongMacauTaiwan("RTHK", "HK"));
         assertTrue(RegionCategoryPolicy.isHongKongMacauTaiwan("PTS", "Taiwan"));
         assertFalse(RegionCategoryPolicy.isHongKongMacauTaiwan("Talk TV", "Local"));
+    }
+
+    @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
+        assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
+        assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
+        assertEquals("台湾", RegionCategoryPolicy.subcategory("PTS", "Taiwan"));
+        assertEquals("港澳台", RegionCategoryPolicy.subcategory("区域综合频道", "港澳台"));
+        assertEquals("", RegionCategoryPolicy.subcategory("福州电视台", "福建"));
     }
 }
