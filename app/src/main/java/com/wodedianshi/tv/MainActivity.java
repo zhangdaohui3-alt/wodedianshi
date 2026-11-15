@@ -3505,7 +3505,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
       };
-      // Hong Kong, Macau and Taiwan belong to the China catalogue; keep their\n      // dedicated UI subcategories while sharing the China cache and channel store.\n      added=fetchAndMergePlaylists(feeds,22000,errors,"china");
+      added=fetchAndMergePlaylists(feeds,22000,errors,"global");
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();globalLoading=false;info.setText("全球频道补充完成：新增 "+total+" 个频道条目（已去重并合并备用地址）。地区限制、版权和网络状况可能影响播放。"+(err.isEmpty()?"":"部分目录暂不可用："+err));});
     });
@@ -3520,7 +3520,8 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      added=fetchAndMergePlaylists(feeds,22000,errors,"global");
+      // Hong Kong, Macau and Taiwan belong to the China catalogue; retain their child categories.
+      added=fetchAndMergePlaylists(feeds,22000,errors,"china");
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
@@ -3612,6 +3613,8 @@ public class MainActivity extends Activity {
     final int[] added={0};
     PlaylistParser.parseEach(data,Integer.MAX_VALUE,entry->{
       String name=entry.name==null||entry.name.trim().isEmpty()?"频道 "+(channels.size()+1):entry.name.trim();
+      // Global master indexes can include HMT stations; route them into China by metadata.
+      String channelScope=RegionCategoryPolicy.catalogueScope(name,entry.group,sourceScope);
       String line=entry.url;
       synchronized(channels){
         if(!channelsByUrl.containsKey(line)){
@@ -3626,13 +3629,13 @@ public class MainActivity extends Activity {
             // channelsByUrl.containsKey(line) was false above, so this URL cannot
             // already be present in the channel's backup list.
             same.backups.add(line);
-            same.sourceScopes.add(sourceScope);
+            same.sourceScopes.add(channelScope);
             channelsByUrl.put(line,same);
             added[0]++;
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
-            fresh.sourceScopes.add(sourceScope);
+            fresh.sourceScopes.add(channelScope);
             normalizeBroadcasterLabel(fresh);
             channels.add(fresh);
             channelsByIdentity.put(key,fresh);
@@ -3643,7 +3646,7 @@ public class MainActivity extends Activity {
           Channel existing=channelsByUrl.get(line);
           if(existing!=null){
             existing.mergeMetadata(entry.tvgId,entry.tvgName);
-            existing.sourceScopes.add(sourceScope);
+            existing.sourceScopes.add(channelScope);
             normalizeBroadcasterLabel(existing);
           }
         }
