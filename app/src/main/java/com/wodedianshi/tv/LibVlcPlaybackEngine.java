@@ -76,25 +76,29 @@ public final class LibVlcPlaybackEngine {
             mediaPlayer = new MediaPlayer(libVlc);
             recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_RETURNED");
             mediaPlayer.setEventListener(event -> {
-                if (released || listener == null) return;
+                // Snapshot the volatile callback once. Reading the field again in
+                // each branch could race release() clearing it and cause a native
+                // event thread to throw NullPointerException during teardown.
+                Listener callback = listener;
+                if (released || callback == null) return;
                 switch (event.type) {
                     case MediaPlayer.Event.Playing:
-                        listener.onPlaying();
+                        callback.onPlaying();
                         break;
                     case MediaPlayer.Event.Vout:
-                        listener.onVideoOutput(event.getVoutCount());
+                        callback.onVideoOutput(event.getVoutCount());
                         break;
                     case MediaPlayer.Event.Buffering:
-                        listener.onBuffering(event.getBuffering());
+                        callback.onBuffering(event.getBuffering());
                         break;
                     case MediaPlayer.Event.EncounteredError:
-                        listener.onFailure("LibVLC 遇到播放或解码错误");
+                        callback.onFailure("LibVLC 遇到播放或解码错误");
                         break;
                     case MediaPlayer.Event.Stopped:
-                        listener.onStopped();
+                        callback.onStopped();
                         break;
                     case MediaPlayer.Event.EndReached:
-                        listener.onEndReached();
+                        callback.onEndReached();
                         break;
                     default:
                         break;
@@ -246,8 +250,11 @@ public final class LibVlcPlaybackEngine {
     }
 
     public void release() {
-        // Mark the engine dead before touching JNI so queued native callbacks are ignored.
+        // Mark the engine dead and detach the app callback before touching JNI.
+        // A callback already in flight may finish, but MainActivity also checks
+        // the engine instance and playback generation before acting on it.
         released = true;
+        listener = null;
         recordNativeStage("VLC_RELEASE_BEGIN");
 
         MediaPlayer player = mediaPlayer;
