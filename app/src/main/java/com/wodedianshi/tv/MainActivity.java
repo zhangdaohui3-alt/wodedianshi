@@ -3520,7 +3520,7 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      added=fetchAndMergePlaylists(feeds,22000,errors);
+      added=fetchAndMergePlaylists(feeds,22000,errors,"global");
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
