@@ -4093,7 +4093,6 @@ public class MainActivity extends Activity {
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
         String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
-          recordCurrentSourceFailure();
           advanceToNextSourceAutomatically("检测到当前源"+reason);
         }
       }else if(missingAudio){
@@ -4527,7 +4526,6 @@ public class MainActivity extends Activity {
             return;
           }
           if(!tryStartLibVlcFallback("Media3 播放错误（代码 "+e.errorCode+"）")){
-            recordCurrentSourceFailure();
             advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
           }
         }
@@ -4606,7 +4604,6 @@ public class MainActivity extends Activity {
     }catch(RuntimeException e){
       String failedMediaId=currentMediaId;
       saveCriticalEngineStage("TUNE_RUNTIME_ERROR",e.getClass().getSimpleName()+": "+e.getMessage());
-      recordCurrentSourceFailure();
       releaseLivePlayerSafely();
       info.setText("直播播放器启动异常，正在尝试备用源…");
       if(!failedMediaId.isEmpty())advanceToNextSourceAutomatically("直播播放器启动异常");
