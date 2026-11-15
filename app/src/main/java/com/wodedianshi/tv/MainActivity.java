@@ -3045,46 +3045,69 @@ public class MainActivity extends Activity {
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
     final int maxRows=60;int shown=0,totalMatches=0;
-    ArrayList<Integer> visibleIndexes=new ArrayList<>();
+    // Detach a lightweight catalogue snapshot quickly. Never create/measure Android
+    // Views or sort the full catalogue while holding the shared channels monitor.
+    ArrayList<Channel> snapshot=new ArrayList<>();
     synchronized(channels){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(localRegionFilterActive&&activeCategory.equals("地方")){
-          if(!matchesLocalRegion(c))continue;
-        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c).toLowerCase(Locale.ROOT).contains(q))continue;
-        visibleIndexes.add(i);
+      for(Channel source:channels){
+        if(source==null)continue;
+        Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
+        copy.tvgId=source.tvgId==null?"":source.tvgId;
+        copy.tvgName=source.tvgName==null?"":source.tvgName;
+        copy.activeSource=source.activeSource;
+        copy.backups.clear();
+        if(source.backups!=null)copy.backups.addAll(source.backups);
+        if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
+        snapshot.add(copy);
       }
-      if(activeCategory.equals("央视")){
-        visibleIndexes.sort((a,b)->{
-          Channel ca=channels.get(a),cb=channels.get(b);
-          int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
-          if(oa!=ob)return Integer.compare(oa,ob);
-          return displayChannelName(ca).compareTo(displayChannelName(cb));
-        });
-      }
-      totalMatches=visibleIndexes.size();
-      int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
-      if(selectedPosition>=0)livePageIndex=selectedPosition/maxRows;
-      int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
-      if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
-      int pageStart=livePageIndex*maxRows;
-      for(int row=0;row<visibleIndexes.size();row++){
-        if(row<pageStart||row>=pageStart+maxRows)continue;
-        int ix=visibleIndexes.get(row);
-        Channel c=channels.get(ix);shown++;
-        Button b=new Button(this);b.setTag(ix);
-        String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
-        String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
-        b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
-        if(ix==selected)b.setContentDescription("当前正在播放："+title);
-        b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{play(ix,j);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
-        list.addView(b);
-      }
+    }
+    Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
+    Set<String> favoriteSnapshot=new HashSet<>(favorites);
+    String categorySnapshot=activeCategory;
+    boolean favoriteOnly=favoriteMode;
+    boolean regionOnly=localRegionFilterActive&&"地方".equals(categorySnapshot);
+    String provinceSnapshot=activeLocalProvince;
+    String citySnapshot=activeLocalCity;
+    ArrayList<Integer> visibleIndexes=new ArrayList<>();
+    for(int i=0;i<snapshot.size();i++){
+      Channel c=snapshot.get(i);
+      if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
+      if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
+      if(regionOnly){
+        boolean matches=provinceSnapshot==null?isLocalChannel(c):
+            citySnapshot==null?matchesProvinceLocal(c,provinceSnapshot):
+            matchesProvinceCity(c,provinceSnapshot,citySnapshot);
+        if(!matches)continue;
+      }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
+      if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+          &&!displayChannelName(c).toLowerCase(Locale.ROOT).contains(q))continue;
+      visibleIndexes.add(i);
+    }
+    if(categorySnapshot.equals("央视")){
+      visibleIndexes.sort((a,b)->{
+        Channel ca=snapshot.get(a),cb=snapshot.get(b);
+        int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
+        if(oa!=ob)return Integer.compare(oa,ob);
+        return displayChannelName(ca).compareTo(displayChannelName(cb));
+      });
+    }
+    totalMatches=visibleIndexes.size();
+    int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
+    if(selectedPosition>=0)livePageIndex=selectedPosition/maxRows;
+    int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
+    if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
+    int pageStart=livePageIndex*maxRows;
+    for(int row=pageStart;row<Math.min(visibleIndexes.size(),pageStart+maxRows);row++){
+      int ix=visibleIndexes.get(row);
+      Channel c=snapshot.get(ix);shown++;
+      String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
+      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
+      Button b=new Button(this);b.setTag(ix);
+      b.setText((ix==selected?"▶ ":"")+(favoriteSnapshot.contains(c.key())?"★ ":"")+title+group);
+      if(ix==selected)b.setContentDescription("当前正在播放："+title);
+      b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
+      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favoriteSnapshot.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{play(ix,j);}).setNegativeButton("关闭",null).show();}else{synchronized(channels){if(ix>=0&&ix<channels.size()&&channels.get(ix).key().equals(c.key()))channels.remove(ix);else{for(int k=0;k<channels.size();k++)if(channels.get(k).key().equals(c.key())){channels.remove(k);break;}}}favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
+      list.addView(b);
     }
     updateLivePaging(totalMatches);
     updateLiveChannelPresentation();
