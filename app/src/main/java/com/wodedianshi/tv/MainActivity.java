@@ -106,6 +106,10 @@ public class MainActivity extends Activity {
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  // Keep large catalogue filtering and sorting off the UI thread. Results are
+  // generation-checked so an older search/category cannot overwrite a newer one.
+  private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
+  private volatile long catalogueFilterGeneration=0L;
   // Bound queued thumbnail work: fast scrolling must not build an unbounded
   // network/decode backlog on Android TV. Rejected cards use the local fallback poster.
   private final ExecutorService posterWorker = new ThreadPoolExecutor(
@@ -3024,13 +3028,102 @@ public class MainActivity extends Activity {
     if(cat.equals("地方"))return isLocalChannel(c);
     return false;
   }
+  private int findChannelIndexByKey(String key){
+    if(key==null)return -1;
+    synchronized(channels){
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(c!=null&&key.equals(c.key()))return i;
+      }
+    }
+    return -1;
+  }
+  private void playChannelByKey(String key){
+    int index=findChannelIndexByKey(key);
+    if(index>=0)play(index);
+  }
+  private void playChannelSourceByKey(String key,String sourceUrl){
+    int index=findChannelIndexByKey(key);
+    if(index<0||sourceUrl==null)return;
+    synchronized(channels){
+      if(index>=channels.size())return;
+      Channel current=channels.get(index);
+      if(current==null||!key.equals(current.key())||current.backups==null)return;
+      int sourceIndex=current.backups.indexOf(sourceUrl);
+      if(sourceIndex<0)return;
+      play(index,sourceIndex);
+    }
+  }
   private void refresh(){
     if(list==null||search==null)return;
-    int previousFocusedIndex=-1;
+    final long generation=++catalogueFilterGeneration;
+    final String query=search.getText().toString().toLowerCase(Locale.ROOT);
+    final String categorySnapshot=activeCategory;
+    final boolean favoriteOnly=favoriteMode;
+    final boolean regionOnly=localRegionFilterActive&&"地方".equals(categorySnapshot);
+    final String provinceSnapshot=activeLocalProvince;
+    final String citySnapshot=activeLocalCity;
+    final Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
+    final Set<String> favoriteSnapshot=new HashSet<>(favorites);
+    final int requestedPage=livePageIndex;
+    final String selectedKey;
+    final int previousFocusedIndex;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
-    if(currentFocus!=null&&currentFocus.getTag() instanceof Integer)previousFocusedIndex=(Integer)currentFocus.getTag();
-    list.removeAllViews();String q=search.getText().toString().toLowerCase(Locale.ROOT);
-    final boolean customCategory=activeCategory.equals("自建频道");
+    previousFocusedIndex=currentFocus!=null&&currentFocus.getTag() instanceof Integer?(Integer)currentFocus.getTag():-1;
+    ArrayList<Channel> snapshot=new ArrayList<>();
+    synchronized(channels){
+      selectedKey=selected>=0&&selected<channels.size()&&channels.get(selected)!=null?channels.get(selected).key():null;
+      for(Channel source:channels){
+        if(source==null)continue;
+        Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
+        copy.tvgId=source.tvgId==null?"":source.tvgId;
+        copy.tvgName=source.tvgName==null?"":source.tvgName;
+        copy.activeSource=source.activeSource;
+        copy.backups.clear();
+        if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
+        if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
+        snapshot.add(copy);
+      }
+    }
+    final boolean customCategory="自建频道".equals(categorySnapshot);
+    catalogueFilterWorker.execute(()->{
+      try{
+        ArrayList<Channel> visible=new ArrayList<>();
+        for(Channel c:snapshot){
+          if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
+          if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
+          if(regionOnly){
+            boolean matches=provinceSnapshot==null?isLocalChannel(c):
+                citySnapshot==null?matchesProvinceLocal(c,provinceSnapshot):
+                matchesProvinceCity(c,provinceSnapshot,citySnapshot);
+            if(!matches)continue;
+          }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
+          String display=displayChannelName(c);
+          if(!c.name.toLowerCase(Locale.ROOT).contains(query)&&!c.group.toLowerCase(Locale.ROOT).contains(query)
+              &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
+          visible.add(c);
+        }
+        if(categorySnapshot.equals("央视")){
+          visible.sort((a,b)->{
+            int oa=cctvSortOrder(a),ob=cctvSortOrder(b);
+            if(oa!=ob)return Integer.compare(oa,ob);
+            return displayChannelName(a).compareTo(displayChannelName(b));
+          });
+        }
+        if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
+        runOnUiThread(()->{
+          if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
+          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex);
+        });
+      }catch(Throwable failure){
+        android.util.Log.e("MyTVCatalogue","background catalogue filter failed",failure);
+        runOnUiThread(()->{if(generation==catalogueFilterGeneration&&info!=null)info.setText("频道目录筛选遇到问题，请重试");});
+      }
+    });
+  }
+  private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
+      boolean customCategory,int requestedPage,int previousFocusedIndex){
+    list.removeAllViews();
     if(customCategory){
       TextView customHeader=new TextView(this);
       customHeader.setText("自建频道\\n添加自己的频道、网站播放列表入口；保存后会记住配置。");
@@ -3044,74 +3137,47 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=60;int shown=0,totalMatches=0;
-    // Detach a lightweight catalogue snapshot quickly. Never create/measure Android
-    // Views or sort the full catalogue while holding the shared channels monitor.
-    ArrayList<Channel> snapshot=new ArrayList<>();
-    synchronized(channels){
-      for(Channel source:channels){
-        if(source==null)continue;
-        Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
-        copy.tvgId=source.tvgId==null?"":source.tvgId;
-        copy.tvgName=source.tvgName==null?"":source.tvgName;
-        copy.activeSource=source.activeSource;
-        copy.backups.clear();
-        if(source.backups!=null)copy.backups.addAll(source.backups);
-        if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
-        snapshot.add(copy);
-      }
-    }
-    Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
-    Set<String> favoriteSnapshot=new HashSet<>(favorites);
-    String categorySnapshot=activeCategory;
-    boolean favoriteOnly=favoriteMode;
-    boolean regionOnly=localRegionFilterActive&&"地方".equals(categorySnapshot);
-    String provinceSnapshot=activeLocalProvince;
-    String citySnapshot=activeLocalCity;
-    ArrayList<Integer> visibleIndexes=new ArrayList<>();
-    for(int i=0;i<snapshot.size();i++){
-      Channel c=snapshot.get(i);
-      if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
-      if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
-      if(regionOnly){
-        boolean matches=provinceSnapshot==null?isLocalChannel(c):
-            citySnapshot==null?matchesProvinceLocal(c,provinceSnapshot):
-            matchesProvinceCity(c,provinceSnapshot,citySnapshot);
-        if(!matches)continue;
-      }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
-      if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-          &&!displayChannelName(c).toLowerCase(Locale.ROOT).contains(q))continue;
-      visibleIndexes.add(i);
-    }
-    if(categorySnapshot.equals("央视")){
-      visibleIndexes.sort((a,b)->{
-        Channel ca=snapshot.get(a),cb=snapshot.get(b);
-        int oa=cctvSortOrder(ca),ob=cctvSortOrder(cb);
-        if(oa!=ob)return Integer.compare(oa,ob);
-        return displayChannelName(ca).compareTo(displayChannelName(cb));
-      });
-    }
-    totalMatches=visibleIndexes.size();
-    int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
-    if(selectedPosition>=0)livePageIndex=selectedPosition/maxRows;
-    int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
+    final int maxRows=60;
+    int selectedPosition=-1;
+    if(selectedKey!=null)for(int i=0;i<visible.size();i++)if(selectedKey.equals(visible.get(i).key())){selectedPosition=i;break;}
+    livePageIndex=selectedPosition>=0?selectedPosition/maxRows:Math.max(0,requestedPage);
+    int pageCount=Math.max(1,(visible.size()+maxRows-1)/maxRows);
     if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
     int pageStart=livePageIndex*maxRows;
-    for(int row=pageStart;row<Math.min(visibleIndexes.size(),pageStart+maxRows);row++){
-      int ix=visibleIndexes.get(row);
-      Channel c=snapshot.get(ix);shown++;
-      String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
+    for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
+      Channel c=visible.get(row);
+      final String channelKey=c.key();
+      final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
-      Button b=new Button(this);b.setTag(ix);
-      b.setText((ix==selected?"▶ ":"")+(favoriteSnapshot.contains(c.key())?"★ ":"")+title+group);
-      if(ix==selected)b.setContentDescription("当前正在播放："+title);
-      b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-      b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favoriteSnapshot.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{play(ix,j);}).setNegativeButton("关闭",null).show();}else{synchronized(channels){if(ix>=0&&ix<channels.size()&&channels.get(ix).key().equals(c.key()))channels.remove(ix);else{for(int k=0;k<channels.size();k++)if(channels.get(k).key().equals(c.key())){channels.remove(k);break;}}}favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
+      final int currentIndex=findChannelIndexByKey(channelKey);
+      Button b=new Button(this);b.setTag(currentIndex);
+      b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
+      if(channelKey.equals(selectedKey))b.setContentDescription("当前正在播放："+title);
+      b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));
+      b.setOnClickListener(v->playChannelByKey(channelKey));
+      b.setOnLongClickListener(v->{
+        int current=findChannelIndexByKey(channelKey);if(current<0)return true;
+        Channel latest;
+        synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
+        ArrayList<String> sourceUrls=new ArrayList<>(latest.backups);
+        new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
+          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
+          else if(w==1){
+            if(sourceUrls.isEmpty())return;
+            String[] opts=new String[sourceUrls.size()];
+            for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");
+            new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{if(j>=0&&j<sourceUrls.size())playChannelSourceByKey(channelKey,sourceUrls.get(j));}).setNegativeButton("关闭",null).show();
+          }else{
+            synchronized(channels){for(int k=0;k<channels.size();k++){Channel item=channels.get(k);if(item!=null&&channelKey.equals(item.key())){channels.remove(k);break;}}}
+            favorites.remove(channelKey);rebuildChannelIndexes();persist();refresh();
+          }
+        }).show();return true;
+      });
       list.addView(b);
     }
-    updateLivePaging(totalMatches);
+    updateLivePaging(visible.size());
     updateLiveChannelPresentation();
-    if(totalMatches==0){
+    if(visible.isEmpty()){
       TextView empty=new TextView(this);
       empty.setText(customCategory
         ?"还没有自建频道。点击上方“添加频道”或“输入网站入口”开始添加。"
@@ -3119,13 +3185,13 @@ public class MainActivity extends Activity {
       empty.setTextColor(Color.LTGRAY);empty.setTextSize(15);empty.setGravity(Gravity.CENTER);
       empty.setPadding(dp(18),dp(22),dp(18),dp(22));list.addView(empty,new LinearLayout.LayoutParams(-1,dp(180)));
     }
-    if(totalMatches>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+totalMatches+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
+    if(visible.size()>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+visible.size()+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
     final int restoreIndex=previousFocusedIndex;
     if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())list.post(()->{
       if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
       View target=null;
       if(restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
-      if(target==null&&selected>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==selected){target=child;break;}}}
+      if(target==null&&selectedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getContentDescription()!=null&&child.getContentDescription().toString().contains(selectedKey)){target=child;break;}}}
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
@@ -5554,5 +5620,5 @@ public class MainActivity extends Activity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
