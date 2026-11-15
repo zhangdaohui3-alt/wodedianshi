@@ -1952,14 +1952,15 @@ public class MainActivity extends Activity {
 
   private ArrayList<VodItem> fetchLocPublicDomainVod(String query){
     ArrayList<VodItem> items=new ArrayList<>();
+    ArrayList<Future<VodItem>> tasks=new ArrayList<>();
     try{
+      if(Thread.currentThread().isInterrupted())return items;
       String api="https://www.loc.gov/film-and-videos/?q="+URLEncoder.encode(query,"UTF-8")+"&fo=json&c=18&sp=1";
       org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
       org.json.JSONArray docs=root.optJSONArray("results");if(docs==null)return items;
       ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
-      ArrayList<Future<VodItem>> tasks=new ArrayList<>();
       int submitted=0;
-      for(int i=0;i<docs.length()&&submitted<12;i++){
+      for(int i=0;i<docs.length()&&submitted<12&&!Thread.currentThread().isInterrupted();i++){
         org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
         String id=doc.optString("id","");if(!id.startsWith("http"))continue;
         String title=doc.optString("title","公开影像");
@@ -1967,13 +1968,21 @@ public class MainActivity extends Activity {
       }
       long deadline=android.os.SystemClock.elapsedRealtime()+7000L;
       while(items.size()<8&&submitted>0&&android.os.SystemClock.elapsedRealtime()<deadline&&!Thread.currentThread().isInterrupted()){
-        Future<VodItem> f=completion.poll(350,TimeUnit.MILLISECONDS);
-        if(f==null)continue;
+        Future<VodItem> completed=completion.poll(350,TimeUnit.MILLISECONDS);
+        if(completed==null)continue;
         submitted--;
-        try{VodItem v=f.get();if(v!=null)items.add(v);}catch(Exception ignored){}
+        try{VodItem item=completed.get();if(item!=null)items.add(item);}
+        catch(CancellationException ignored){}
+        catch(ExecutionException ignored){}
       }
+    }catch(InterruptedException interrupted){
+      Thread.currentThread().interrupt();
+    }catch(Exception ignored){
+      // A failed catalogue request must not leave its child metadata lookups running.
+    }finally{
       for(Future<VodItem> task:tasks)if(!task.isDone())task.cancel(true);
-    }catch(Exception ignored){}
+      purgeCancelledTasks(vodMetadataWorker);
+    }
     return items;
   }
 
