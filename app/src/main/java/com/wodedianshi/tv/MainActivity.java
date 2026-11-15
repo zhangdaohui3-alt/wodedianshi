@@ -3563,7 +3563,9 @@ public class MainActivity extends Activity {
     rootLayout.setPadding(0,0,0,0);
     mainPane.setPadding(0,0,0,0);
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(-1,-1));
-    LinearLayout.LayoutParams videoParams=new LinearLayout.LayoutParams(-1,0,1f);
+    // PlayerView is a direct child of liveStage (FrameLayout); always use matching params.
+    // LinearLayout.LayoutParams here crashes during FrameLayout measurement on device.
+    FrameLayout.LayoutParams videoParams=new FrameLayout.LayoutParams(-1,-1);
     video.setLayoutParams(videoParams);
     fullscreenMenuButton.setVisibility(View.GONE);
     fullscreenSourceButton.setVisibility(View.GONE);
@@ -3598,7 +3600,8 @@ public class MainActivity extends Activity {
     rootLayout.setPadding(dp(10),dp(8),dp(10),dp(8));
     mainPane.setPadding(dp(10),0,0,0);
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
-    video.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1f));
+    // Restore the PlayerView using its actual parent type, not LinearLayout params.
+    video.setLayoutParams(new FrameLayout.LayoutParams(-1,-1));
     getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     // Rebuild the list so the currently playing channel keeps its marker and selected tint.
     refresh();
