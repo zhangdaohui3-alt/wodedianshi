@@ -4576,6 +4576,15 @@ public class MainActivity extends Activity {
             player.play();
             return;
           }
+          String errorName=e.getErrorCodeName();
+          if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName)){
+            // A failed connection/timeout is endpoint availability, not a codec
+            // compatibility problem. Trying the same URL through a second engine
+            // can add another full connection timeout before we reach a backup.
+            saveLiveDiagnostic("NETWORK_ERROR_DIRECT_FAILOVER","error="+errorName);
+            advanceToNextSourceAutomatically("播放源网络连接失败，直接切换备用源（"+errorName+"）");
+            return;
+          }
           if(!tryStartLibVlcFallback("Media3 播放错误（代码 "+e.errorCode+"）")){
             advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
           }
