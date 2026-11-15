@@ -898,8 +898,18 @@ public class MainActivity extends Activity {
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.getJSONObject(i);
         Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group",""));
+        c.tvgId=o.optString("tvgId","");
+        c.tvgName=o.optString("tvgName","");
+        c.activeSource=o.optInt("activeSource",0);
+        org.json.JSONArray scopes=o.optJSONArray("sourceScopes");
+        if(scopes!=null)for(int j=0;j<scopes.length();j++){
+          String scope=scopes.optString(j,"");
+          if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))c.sourceScopes.add(scope);
+        }
+        if(c.sourceScopes.isEmpty())c.sourceScopes.add("custom");
         org.json.JSONArray src=o.optJSONArray("sources");
         if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
+        c.activeSource=Math.max(0,Math.min(c.activeSource,c.backups.size()-1));
         updated.add(c);
       }
       synchronized(channels){channels.clear();channels.addAll(updated);}
