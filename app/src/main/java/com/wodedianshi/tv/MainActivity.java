@@ -4621,6 +4621,16 @@ public class MainActivity extends Activity {
           advanceToNextSourceAutomatically("Media3 与 VLC 均无法播放当前源");
         });}
         public void onStopped(){}
+        public void onEndReached(){uiHandler.post(()->{
+          if(!isCurrent())return;
+          saveLiveDiagnostic("ENGINE_END_REACHED","LibVLC stream reached end of media; advancing to next source");
+          releaseLibVlcEngine();
+          if(video!=null)video.setVisibility(View.VISIBLE);
+          // A live endpoint that ends unexpectedly is a failed source too. Route
+          // through the shared guard so simultaneous VLC/Media3 callbacks cannot
+          // advance twice for the same playback generation.
+          advanceToNextSourceAutomatically("VLC 播放源已结束，正在尝试备用源");
+        });}
       });
       saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize begin");
       engine.initialize();
