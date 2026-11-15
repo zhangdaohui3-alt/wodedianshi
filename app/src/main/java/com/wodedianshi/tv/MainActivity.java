@@ -100,7 +100,6 @@ public class MainActivity extends Activity {
   private boolean localRegionFilterActive=false;
   private String activeLocalProvince=null;
   private String activeLocalCity=null;
-  private Set<String> parsingGeoChannelKeys=null;
   private final HashSet<String> favorites = new HashSet<>();
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
@@ -3326,10 +3325,7 @@ public class MainActivity extends Activity {
       int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
       String data;try(InputStream in=c.getInputStream()){data=read(in);}
       final HashSet<String> destinationKeys=new HashSet<>();
-      synchronized(channels){
-        parsingGeoChannelKeys=destinationKeys;
-        try{parse(data);}finally{parsingGeoChannelKeys=null;}
-      }
+      parse(data,destinationKeys);
       final int matched=destinationKeys.size();
       runOnUiThread(()->{
         activeGeoChannelKeys=new HashSet<>(destinationKeys);
@@ -3448,6 +3444,11 @@ public class MainActivity extends Activity {
   }
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
+    return parse(data,null);
+  }
+  // A destination scope belongs to this parse invocation, never to Activity-wide
+  // mutable state: imports and background directory updates may parse concurrently.
+  private int parse(String data,Set<String> destinationKeys){
     if(data==null)return 0;
     final int[] added={0};
     PlaylistParser.parseEach(data,Integer.MAX_VALUE,entry->{
@@ -3484,10 +3485,13 @@ public class MainActivity extends Activity {
             normalizeBroadcasterLabel(existing);
           }
         }
-      }
-      if(parsingGeoChannelKeys!=null){
-        Channel scoped=channelsByUrl.get(line);
-        if(scoped!=null)parsingGeoChannelKeys.add(scoped.key());
+        // Read the channel index under the same lock as its mutation. Keeping the
+        // destination set local prevents an unrelated concurrent import from
+        // contaminating a selected country/province result.
+        if(destinationKeys!=null){
+          Channel scoped=channelsByUrl.get(line);
+          if(scoped!=null)destinationKeys.add(scoped.key());
+        }
       }
     });
     return added[0];
