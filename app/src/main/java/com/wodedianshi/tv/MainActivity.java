@@ -3155,7 +3155,13 @@ public class MainActivity extends Activity {
         Future<PlaylistFetchResult> done=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);if(done==null)continue;
         remaining--;PlaylistFetchResult result=done.get();
         if(result.error!=null){if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");continue;}
-        if(result.data!=null){synchronized(channels){added+=parse(result.data);}}
+        if(result.data!=null){
+          // parse() synchronizes each catalogue mutation itself. Do not hold the
+          // global channel lock for an entire large playlist: the UI thread also
+          // needs this lock while refreshing the visible list, otherwise category
+          // clicks can freeze long enough to trigger Android input-dispatch ANRs.
+          added+=parse(result.data);
+        }
       }catch(Exception e){if(errors!=null)errors.append(e.getMessage()).append("; ");}
     }
     for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
@@ -3388,7 +3394,9 @@ public class MainActivity extends Activity {
         c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
         int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
         String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        synchronized(channels){added+=parse(data);}
+        // parse() performs bounded per-entry synchronization; avoid locking the
+         // entire channel catalogue while parsing a potentially large feed.
+         added+=parse(data);
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
       runOnUiThread(()->{persist();refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
