@@ -4434,7 +4434,7 @@ public class MainActivity extends Activity {
       final ExoPlayer listenerOwner=player;
       player.addAnalyticsListener(new AnalyticsListener(){
         @Override public void onLoadError(AnalyticsListener.EventTime eventTime,LoadEventInfo loadEventInfo,MediaLoadData mediaLoadData,IOException error,boolean wasCanceled){
-          if(listenerOwner!=MainActivity.this.player)return;
+          if(listenerOwner!=MainActivity.this.player||!isCurrentLiveAnalyticsEvent(eventTime))return;
           String detail="uriHost="+(loadEventInfo==null||loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))
               +" bytes="+(loadEventInfo==null?0:loadEventInfo.bytesLoaded)
               +" canceled="+wasCanceled+" exception="+error.getClass().getSimpleName()+": "+error.getMessage();
@@ -4458,9 +4458,8 @@ public class MainActivity extends Activity {
           if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))audioPositionAdvancing=true;
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
-          if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;
-          MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-          if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId))return;
+          if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded
+              ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
           // Frame-metadata callbacks are retained separately for the stall watchdog.
           sourceFirstFrameRecorded=true;
@@ -4477,17 +4476,17 @@ public class MainActivity extends Activity {
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
           // and the sustained-output watchdog decide whether the source actually failed.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"audioCodecError",0L);
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
           // A single sink warning is not proof of a dead stream; avoid premature failover.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
-          if(listenerOwner==MainActivity.this.player)
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
