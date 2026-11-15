@@ -23,6 +23,14 @@ public class RegionCategoryPolicyTest {
         assertFalse(RegionCategoryPolicy.isHongKongMacauTaiwan("Talk TV", "Local"));
     }
 
+    @Test public void globalMasterIndexRoutesHmtChannelsToChina() {
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("RTHK", "Hong Kong", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("TDM", "MO", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("PTS", "Taiwan", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope("BBC News", "United Kingdom", "global"));
+        assertEquals("custom", RegionCategoryPolicy.catalogueScope("自定义频道", "自建频道", "custom"));
+    }
+
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
         assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
         assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
