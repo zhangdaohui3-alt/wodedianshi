@@ -4239,6 +4239,7 @@ public class MainActivity extends Activity {
     lastAutoFailoverMediaId=failedMediaId;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
+    cancelAudioTrackCheck();
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
     if(c.backups.size()<2){
