@@ -4356,6 +4356,15 @@ public class MainActivity extends Activity {
       if(info!=null)info.setText("频道启动遇到异常，已停止播放器保护主界面；请打开“直播诊断记录”查看原因。");
     }
   }
+  private boolean isCurrentLiveAnalyticsEvent(AnalyticsListener.EventTime eventTime){
+    if(eventTime==null||eventTime.timeline==null||eventTime.windowIndex<0
+        ||eventTime.windowIndex>=eventTime.timeline.getWindowCount())return false;
+    try{
+      androidx.media3.common.Timeline.Window window=eventTime.timeline.getWindow(
+          eventTime.windowIndex,new androidx.media3.common.Timeline.Window());
+      return window.mediaItem!=null&&currentMediaId.equals(window.mediaItem.mediaId);
+    }catch(RuntimeException ignored){return false;}
+  }
   private void startCurrentSourceInternal(){
     if(selected<0||selected>=channels.size())return;
     releaseLibVlcEngine();
@@ -4427,13 +4436,17 @@ public class MainActivity extends Activity {
           saveLiveDiagnostic("LOAD_ERROR",detail);
         }
         @Override public void onLoadCompleted(AnalyticsListener.EventTime eventTime,LoadEventInfo loadEventInfo,MediaLoadData mediaLoadData){
-          if(listenerOwner==MainActivity.this.player&&loadEventInfo!=null&&!sourceFirstLoadCompleted){
-            sourceFirstLoadCompleted=true;
-            saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
-          }
+          // A single ExoPlayer instance is reused across channel changes. Ignore
+          // analytics events whose timeline belongs to an earlier MediaItem;
+          // otherwise an old source can falsely mark the newly selected source
+          // as having completed its first load.
+          if(listenerOwner!=MainActivity.this.player||loadEventInfo==null||sourceFirstLoadCompleted
+              ||!isCurrentLiveAnalyticsEvent(eventTime))return;
+          sourceFirstLoadCompleted=true;
+          saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
         }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
-          if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))audioPositionAdvancing=true;
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;
