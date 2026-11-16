@@ -5777,6 +5777,7 @@ public class MainActivity extends Activity {
   // serialize an old in-memory list over the updated backup sources.
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady)return;
+    final long reloadStarted=android.os.SystemClock.elapsedRealtime();
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
     String raw=prefs.getString("channels","[]");
     if(raw.equals(lastPersistedChannelsJson))return;
@@ -5860,6 +5861,9 @@ public class MainActivity extends Activity {
         refreshed.add(channel);
       }
       reader.endArray();
+      int reloadedSourceCount=0;
+      for(Channel restored:refreshed)if(restored!=null&&restored.backups!=null)reloadedSourceCount+=restored.backups.size();
+      logCatalogueMemory("background_reload_parse_ready",refreshed.size(),reloadedSourceCount,android.os.SystemClock.elapsedRealtime()-reloadStarted);
     }catch(Exception invalidCatalogue){
       throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
     }
@@ -5881,6 +5885,9 @@ public class MainActivity extends Activity {
       channels.addAll(refreshed);
     }
     rebuildChannelIndexes();
+    int indexedReloadSources=0;
+    synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedReloadSources+=restored.backups.size();}
+    logCatalogueMemory("background_reload_indexes_ready",channels.size(),indexedReloadSources,android.os.SystemClock.elapsedRealtime()-reloadStarted);
     if(!selectedIdentity.isEmpty()){
       int found=-1;
       for(int i=0;i<channels.size();i++){
