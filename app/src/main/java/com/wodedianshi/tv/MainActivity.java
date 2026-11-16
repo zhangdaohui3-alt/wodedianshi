@@ -799,8 +799,16 @@ public class MainActivity extends Activity {
       normalizeFrameLayoutChildren(child);
     }
   }
+  private void logCatalogueMemory(String stage,int channelCount,int sourceCount,long elapsedMs){
+    Runtime runtime=Runtime.getRuntime();
+    long used=Math.max(0L,runtime.totalMemory()-runtime.freeMemory());
+    android.util.Log.i("MyTVMemory","stage="+stage+" channels="+channelCount+" sources="+sourceCount+" used_mb="+(used/1048576L)+" heap_mb="+(runtime.totalMemory()/1048576L)+" max_mb="+(runtime.maxMemory()/1048576L)+" elapsed_ms="+elapsedMs);
+  }
   private boolean persist(){
+    long persistStarted=android.os.SystemClock.elapsedRealtime();
+    int persistedSources=0;
     try {
+      logCatalogueMemory("persist_begin",channels.size(),0,0);
       // Take a short, detached snapshot while holding the catalogue lock, then do
       // JSON encoding outside it. Encoding a 9–10 MB catalogue while locked used
       // to block the UI thread's category refresh and remote-control input.
@@ -820,9 +828,11 @@ public class MainActivity extends Activity {
           copy.backups.clear();
           if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
           if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
+          persistedSources+=copy.backups.size();
           snapshot.add(copy);
         }
       }
+      logCatalogueMemory("persist_snapshot_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       HashSet<String> favoriteSnapshot=new HashSet<>(favorites);
       StringWriter buffer=new StringWriter(Math.max(1024,snapshot.size()*160));
       try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
@@ -855,11 +865,13 @@ public class MainActivity extends Activity {
         writer.endArray();
       }
       String savedJson=buffer.toString();
+      logCatalogueMemory("persist_json_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       getSharedPreferences("mytv",0).edit()
           .putString("channels",savedJson)
           .putStringSet("fav",favoriteSnapshot).apply();
       lastPersistedChannelsJson=savedJson;
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+snapshot.size()+" channels, json_chars="+savedJson.length());
+      logCatalogueMemory("persist_done",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       return true;
     } catch(Exception failure) {
       android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
