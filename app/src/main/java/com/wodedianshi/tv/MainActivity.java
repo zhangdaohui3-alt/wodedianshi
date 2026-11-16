@@ -3425,6 +3425,12 @@ public class MainActivity extends Activity {
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
+    return fetchAndMergePlaylists(feeds,timeoutMs,errors,sourceScope,null);
+  }
+  // Publish the first usable batch immediately. Waiting for every remote feed
+  // before refreshing left a fresh install showing an empty channel pane with a
+  // permanent-looking "正在缓存" message when one slow source held the batch open.
+  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope,Runnable onFirstEntries){
     ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(playlistWorker);
     ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
     for(String address:feeds){
@@ -3441,6 +3447,7 @@ public class MainActivity extends Activity {
       }));
     }
     int added=0,remaining=tasks.size();
+    boolean firstBatchPublished=false;
     // Allow multiple bounded waves of feeds to finish. The former 20–24s global
     // deadline routinely cancelled queued feeds, producing tiny partial catalogues.
     long deadline=android.os.SystemClock.elapsedRealtime()+Math.max(60000L,timeoutMs*4L);
@@ -3449,15 +3456,28 @@ public class MainActivity extends Activity {
       try{
         Future<PlaylistFetchResult> done=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);if(done==null)continue;
         remaining--;PlaylistFetchResult result=done.get();
-        if(result.error!=null){if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");continue;}
+        if(result.error!=null){
+          android.util.Log.w("MyTVDirectory","feed failed: "+result.address+" reason="+result.error);
+          if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");
+          continue;
+        }
         if(result.data!=null){
           // parse() synchronizes each catalogue mutation itself. Do not hold the
           // global channel lock for an entire large playlist: the UI thread also
           // needs this lock while refreshing the visible list, otherwise category
           // clicks can freeze long enough to trigger Android input-dispatch ANRs.
-          added+=parse(result.data,null,sourceScope);
+          int parsed=parse(result.data,null,sourceScope);
+          added+=parsed;
+          android.util.Log.i("MyTVDirectory","feed="+result.address+" parsed="+parsed+" total_added="+added);
+          if(parsed>0&&!firstBatchPublished){
+            firstBatchPublished=true;
+            if(onFirstEntries!=null)onFirstEntries.run();
+          }
         }
-      }catch(Exception e){if(errors!=null)errors.append(e.getMessage()).append("; ");}
+      }catch(Exception e){
+        android.util.Log.w("MyTVDirectory","playlist result processing failed",e);
+        if(errors!=null)errors.append(e.getMessage()).append("; ");
+      }
     }
     for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
     return added;
@@ -3516,7 +3536,11 @@ public class MainActivity extends Activity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
       };
       StringBuilder errors=new StringBuilder();
-      int added=fetchAndMergePlaylists(feeds,12000,errors,"china");
+      int added=fetchAndMergePlaylists(feeds,12000,errors,"china",()->runOnUiThread(()->{
+        if(isFinishing()||isDestroyed())return;
+        refresh();
+        if(info!=null)info.setText("已载入首批国内频道，其他频道源仍在后台补充…");
+      }));
       final int total=added;final String err=errors.toString();
       final int recognizedChinaCount=countRecognizedChinaChannels();
       // Keep the previous cache if no new entries were merged. Only advance the
