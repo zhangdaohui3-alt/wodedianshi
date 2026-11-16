@@ -305,10 +305,7 @@ public class SourceUpdateWorker extends Worker {
     }
   }
   private String scopeForFeed(String feed){
-    String value=feed==null?"":feed.toLowerCase(Locale.ROOT);
-    if(value.contains("/countries/cn.")||value.contains("/countries/hk.")
-        ||value.contains("/countries/mo.")||value.contains("/countries/tw."))return "china";
-    return "global";
+    return SourceFeedScopePolicy.scopeForFeed(feed);
   }
   private void parsePlaylist(String data,List<Entry> out,String sourceScope){
     for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
