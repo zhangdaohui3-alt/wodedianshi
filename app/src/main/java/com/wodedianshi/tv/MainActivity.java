@@ -212,7 +212,26 @@ public class MainActivity extends Activity {
         restoreFailure=failure;
         android.util.Log.e("MyTVStartup","saved catalogue restore failed",failure);
       }
+      // A failed/empty saved-catalogue restore must not leave the channel pane blank.
+      // Keep the user's saved JSON untouched; load bundled starter entries into memory
+      // as a temporary fallback so the UI remains testable while the saved data issue
+      // is diagnosed. This is deliberately not persisted over the user's catalogue.
+      boolean bundledFallbackLoaded=false;
+      if(channels.isEmpty()){
+        try(InputStream in=getAssets().open("default_channels.m3u")){
+          String bundled=read(in);
+          int fallbackCount=parse(bundled);
+          rebuildChannelIndexes();
+          bundledFallbackLoaded=fallbackCount>0&&!channels.isEmpty();
+          android.util.Log.w("MyTVStartup","bundled_fallback_loaded="+bundledFallbackLoaded
+              +" added="+fallbackCount+" saved_catalogue_chars="
+              +getSharedPreferences("mytv",0).getString("channels","[]").length());
+        }catch(Throwable fallbackFailure){
+          android.util.Log.e("MyTVStartup","bundled channel fallback failed",fallbackFailure);
+        }
+      }
       final boolean restoreSucceeded=restoreFailure==null;
+      final boolean usedBundledFallback=bundledFallbackLoaded;
       final String restoreFailureMessage=restoreFailure==null?"":restoreFailure.getClass().getSimpleName()+": "+String.valueOf(restoreFailure.getMessage());
       // Startup is cache-first: render and resume from the user's saved catalogue.
       // Even a corrupt preference or an unexpected restore exception must release
@@ -225,7 +244,10 @@ public class MainActivity extends Activity {
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
         try{
           refresh();
-          if(info!=null)info.setText(!restoreSucceeded?"本地频道恢复遇到问题，主界面仍可使用；请稍后重试或重新导入频道。":channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+          if(info!=null)info.setText(usedBundledFallback
+              ?"本地频道缓存未能恢复，已临时载入 "+channels.size()+" 个内置频道；原有保存数据未覆盖，正在定位恢复原因。"
+              :!restoreSucceeded?"本地频道恢复遇到问题，主界面仍可使用；请稍后重试或重新导入频道。"
+              :channels.isEmpty()?"频道列表已就绪，请选择栏目或导入频道源":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
         }catch(Throwable renderFailure){
           android.util.Log.e("MyTVStartup","restored channel list render failed",renderFailure);
           if(info!=null)info.setText("频道列表刷新遇到问题；主界面仍可使用，请稍后重试。");
