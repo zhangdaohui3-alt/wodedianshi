@@ -25,4 +25,14 @@ public class SourceUpdateSchedulePolicyTest {
     @Test public void negativeTimestampIsTreatedAsMissing() {
         assertTrue(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, -1L));
     }
+
+    @Test public void emptyOrUnparseableFeedDoesNotCountAsUsefulDiscovery() {
+        assertFalse(SourceUpdateSchedulePolicy.hasUsableFeedEntries(0));
+        assertFalse(SourceUpdateSchedulePolicy.hasUsableFeedEntries(-1));
+    }
+
+    @Test public void parsedFeedEntriesCountAsUsefulDiscovery() {
+        assertTrue(SourceUpdateSchedulePolicy.hasUsableFeedEntries(1));
+        assertTrue(SourceUpdateSchedulePolicy.hasUsableFeedEntries(1200));
+    }
 }
