@@ -1058,9 +1058,9 @@ public class MainActivity extends Activity {
     setSourceUpdatePlaybackActive(true);
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
-    releaseLivePlayerSafely();
-    // The independent LibVLC live engine must also be stopped while the VOD catalogue owns the screen.
-    releaseLibVlcEngine();
+    // Defer decoder teardown until after the VOD dialog is shown. OEM ExoPlayer/
+    // LibVLC release calls can block the UI thread long enough to make the home
+    // screen appear stuck instead of opening the requested VOD window.
     final java.util.ArrayList<Button> vodCategoryHoverTargets=new java.util.ArrayList<>();
     final GridView[] vodGridHoverTarget=new GridView[1];
     // Track pointer movement at the dialog content root. Some Android 9 TV
@@ -1245,6 +1245,11 @@ public class MainActivity extends Activity {
     dialog.show();
     // Show the full-screen VOD window before parsing the potentially large cache.
     panel.post(()->{
+      if(!dialog.isShowing()||currentVodPanel!=panel)return;
+      // Pause happened before construction; now that the VOD window is visible,
+      // release both live decoder backends before starting catalogue work.
+      releaseLivePlayerSafely();
+      releaseLibVlcEngine();
       if(dialog.isShowing()&&currentVodPanel==panel)
         loadVodCatalogue("电影",panel,status,results);
     });
