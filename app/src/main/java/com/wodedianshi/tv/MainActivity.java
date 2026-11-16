@@ -277,7 +277,7 @@ public class MainActivity extends Activity {
         // Register periodic source maintenance only after the saved catalogue
         // has been restored and the home screen is usable. WorkManager performs
         // refreshes independently; no network discovery is part of app entry.
-        try{scheduleAutomaticSourceUpdates();}
+        try{scheduleAutomaticSourceUpdates();observeStartupSourceUpdateResults();}
         catch(RuntimeException schedulingFailure){
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
@@ -1021,6 +1021,20 @@ public class MainActivity extends Activity {
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+  }
+  private void observeStartupSourceUpdateResults(){
+    // Apply the guarded catalogue snapshot as soon as the startup refresh finishes.
+    // This avoids requiring the user to exit and relaunch to see newly found channels.
+    WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
+        .observe(this,workInfos->{
+          if(workInfos==null)return;
+          for(androidx.work.WorkInfo workInfo:workInfos){
+            if(workInfo.getState()==androidx.work.WorkInfo.State.SUCCEEDED){
+              reloadChannelsAfterBackgroundUpdateIfNeeded();
+              break;
+            }
+          }
+        });
   }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
