@@ -1685,13 +1685,25 @@ public class MainActivity extends Activity {
         // engine. Consuming an out-of-range DOWN key traps focus on the last row.
         if(target==VodGridNavigationPolicy.NATIVE_FOCUS)return false;
         final int destination=target;
+        // setSelection() schedules GridView layout; looking for the child in the
+        // same frame often finds it still off-screen. That left focus on the old
+        // poster and made UP appear unable to scroll back through search results.
         owner.setSelection(destination);
+        owner.requestLayout();
         owner.post(()->{
           int childIndex=destination-owner.getFirstVisiblePosition();
           if(childIndex>=0&&childIndex<owner.getChildCount()){
             View next=owner.getChildAt(childIndex);
-            if(next!=null)next.requestFocus();
-          }else owner.smoothScrollToPosition(destination);
+            if(next!=null){next.requestFocus();return;}
+          }
+          owner.smoothScrollToPosition(destination);
+          owner.post(()->{
+            int retryIndex=destination-owner.getFirstVisiblePosition();
+            if(retryIndex>=0&&retryIndex<owner.getChildCount()){
+              View next=owner.getChildAt(retryIndex);
+              if(next!=null)next.requestFocus();
+            }
+          });
         });
         return true;
       });
