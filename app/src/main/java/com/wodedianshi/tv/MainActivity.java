@@ -561,9 +561,9 @@ public class MainActivity extends Activity {
         channel.tvgId=tvgId;
         channel.tvgName=tvgName;
         if(sourceScopes!=null)channel.sourceScopes.addAll(sourceScopes);
-        // Older saved catalogues have no provenance metadata. Treat them as user-owned
-        // until a future explicit migration can safely establish their origin.
-        if(channel.sourceScopes.isEmpty())channel.sourceScopes.add("custom");
+        // Older saved catalogues have unknown provenance. Preserve that uncertainty;
+        // do not silently relabel legacy URLs as user-created sources.
+        
         if(sources!=null){
           channel.backups.clear();
           channel.backups.addAll(sources);
@@ -969,7 +969,7 @@ public class MainActivity extends Activity {
           String scope=scopes.optString(j,"");
           if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))c.sourceScopes.add(scope);
         }
-        if(c.sourceScopes.isEmpty())c.sourceScopes.add("custom");
+        // Empty means legacy provenance is unknown, not that the channel is custom.
         org.json.JSONArray src=o.optJSONArray("sources");
         if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
         org.json.JSONArray ownership=o.optJSONArray("backupSourceScopes");
@@ -5689,7 +5689,7 @@ public class MainActivity extends Activity {
           String scope=scopes.optString(j,"");
           if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))channel.sourceScopes.add(scope);
         }
-        if(channel.sourceScopes.isEmpty())channel.sourceScopes.add("custom");
+        // Empty means legacy provenance is unknown, not that the channel is custom.
         org.json.JSONArray sources=item.optJSONArray("sources");
         if(sources!=null){
           channel.backups.clear();

@@ -117,7 +117,7 @@ public class SourceUpdateWorker extends Worker {
           if(savedPool.size()>=20000)break;
           // A shared URL only needs one network probe, even if several channel
           // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
+          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
         }
       }
       for(String feed:feeds){
@@ -298,8 +298,9 @@ public class SourceUpdateWorker extends Worker {
   }
   private static class Entry{
     String name,url,group,scope;boolean savedSource;
-    Entry(String n,String u,String g){this(n,u,g,false,"custom");}
-    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"custom");}
+    // Unscoped saved URLs have unknown provenance; only discovered feeds carry an explicit scope.
+    Entry(String n,String u,String g){this(n,u,g,false,"");}
+    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"");}
     Entry(String n,String u,String g,boolean saved,String sourceScope){
       name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
     }
