@@ -1217,7 +1217,7 @@ public class MainActivity extends Activity {
       }
       rowScroll.addView(row);suggestionPanel.addView(rowScroll,new LinearLayout.LayoutParams(-1,dp(34)));
     }
-    loadVodCatalogue("电影",panel,status,results);
+    // Initial catalogue loading is deferred until after dialog.show().
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
       if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
@@ -1243,6 +1243,11 @@ public class MainActivity extends Activity {
       }
     });
     dialog.show();
+    // Show the full-screen VOD window before parsing the potentially large cache.
+    panel.post(()->{
+      if(dialog.isShowing()&&currentVodPanel==panel)
+        loadVodCatalogue("电影",panel,status,results);
+    });
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
     if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
