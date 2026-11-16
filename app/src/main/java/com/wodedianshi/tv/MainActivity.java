@@ -495,8 +495,14 @@ public class MainActivity extends Activity {
   }
 
   private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
-    if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();return fallback;}
-    return reader.nextString();
+    android.util.JsonToken token=reader.peek();
+    if(token==android.util.JsonToken.NULL){reader.nextNull();return fallback;}
+    // nextString accepts STRING and NUMBER only. A malformed legacy field may
+    // contain an object, array, or boolean; skip that complete value so the
+    // reader remains aligned and later channel records can still be restored.
+    if(token==android.util.JsonToken.STRING||token==android.util.JsonToken.NUMBER)return reader.nextString();
+    reader.skipValue();
+    return fallback;
   }
   private void restore(){
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
@@ -508,14 +514,24 @@ public class MainActivity extends Activity {
     // Parse the large saved catalogue as a stream. JSONArray/JSONObject builds a
     // second complete object tree beside the original SharedPreferences String;
     // on phones/TV boxes this peak heap can kill the process around 10k-20k rows.
-    // Build into a temporary list and publish only after the entire JSON is valid,
-    // so a malformed/interrupted restore can never leave a half-loaded catalogue.
+    // Decode in bounded batches. Completed batches are retained if a later
+    // record is malformed; the original saved JSON is never overwritten here.
+    // The UI is rendered after restore finishes, so batch publication bounds the
+    // temporary list but is not described as visible progressive rendering.
     ArrayList<Channel> restoredChannels=new ArrayList<>(128);
     int publishedRestoreChannels=0;
+    int skippedCatalogueEntries=0;
     try(android.util.JsonReader reader=new android.util.JsonReader(
         new java.io.StringReader(savedChannelsJson))){
       reader.beginArray();
       while(reader.hasNext()){
+        // Ignore a non-object array member without losing alignment with the
+        // following valid channel objects.
+        if(reader.peek()!=android.util.JsonToken.BEGIN_OBJECT){
+          reader.skipValue();
+          skippedCatalogueEntries++;
+          continue;
+        }
         String name="";
         String url="";
         String group="";
@@ -539,7 +555,7 @@ public class MainActivity extends Activity {
               try{activeSource=Integer.parseInt(savedIndex);}catch(NumberFormatException ignoredIndex){activeSource=0;}
               break;
             case "sources":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
               sources=new ArrayList<>();
               reader.beginArray();
               while(reader.hasNext()){
@@ -549,7 +565,7 @@ public class MainActivity extends Activity {
               reader.endArray();
               break;
             case "sourceScopes":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
               sourceScopes=new HashSet<>();
               reader.beginArray();
               while(reader.hasNext()){
@@ -559,16 +575,18 @@ public class MainActivity extends Activity {
               reader.endArray();
               break;
             case "backupSourceScopes":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
               backupScopes=new HashMap<>();
               reader.beginArray();
               while(reader.hasNext()){
+                if(reader.peek()!=android.util.JsonToken.BEGIN_OBJECT){reader.skipValue();continue;}
                 String source="";HashSet<String> scopes=new HashSet<>();
                 reader.beginObject();
                 while(reader.hasNext()){
                   String ownershipField=reader.nextName();
                   if("url".equals(ownershipField))source=readCatalogueJsonString(reader,"");
                   else if("scopes".equals(ownershipField)){
+                    if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();continue;}
                     reader.beginArray();
                     while(reader.hasNext()){
                       String scope=readCatalogueJsonString(reader,"");
@@ -619,6 +637,7 @@ public class MainActivity extends Activity {
       int restoredSourceCount=0;
       for(Channel restored:restoredChannels)if(restored!=null&&restored.backups!=null)restoredSourceCount+=restored.backups.size();
       logCatalogueMemory("restore_parse_ready",publishedRestoreChannels+restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
+      if(skippedCatalogueEntries>0)android.util.Log.w("MyTVStartup","skipped_non_object_catalogue_entries="+skippedCatalogueEntries);
     }catch(Exception invalidCatalogue){
       // Keep both completed batches and the final partial batch visible. Never
       // replace the saved JSON; diagnostics retain the original failure details.
