@@ -2435,7 +2435,7 @@ public class MainActivity extends Activity {
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
       });
-    })
+    });
   }
   private void purgeCancelledTasks(ExecutorService executor){
     if(executor instanceof ThreadPoolExecutor)((ThreadPoolExecutor)executor).purge();
