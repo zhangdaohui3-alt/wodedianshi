@@ -2149,18 +2149,28 @@ public class MainActivity extends Activity {
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
     final String requestRegion=activeVodRegion;
-    ArrayList<VodItem> cached=readVodCache(category);
-    if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
-    else{status.setText("正在启动多页点播检索「"+category+"」…");GridView grid=resetVodGrid(results,4);grid.setAdapter(new VodGridAdapter(new ArrayList<>()));}
-    // Show fresh cache immediately. A manual refresh is still possible by reopening
-    // the category after its cache expires; stale cache never blocks a new harvest.
-    if(!forceRefresh&&!cached.isEmpty()&&isVodCacheFresh(category)){
-      status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
-      return;
-    }
-    // A forced refresh must remain stale if the request is cancelled before
-    // the first partial batch or fails before a complete result is published.
-    if(forceRefresh)invalidateVodCacheFreshness(category);
+    // SharedPreferences may contain a very large catalogue JSON. Read and parse it
+    // away from the UI thread; only publish the resulting list on the main thread.
+    activeVodCatalogueTask=vodWorker.submit(()->{
+      ArrayList<VodItem> cached=readVodCache(category);
+      uiHandler.post(()->{
+        if(isFinishing()||request!=vodRequestId||panel!=currentVodPanel)return;
+        if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
+        else{
+          status.setText("正在启动多页点播检索「"+category+"」…");
+          GridView grid=resetVodGrid(results,4);
+          grid.setAdapter(new VodGridAdapter(new ArrayList<>()));
+        }
+        if(!forceRefresh&&!cached.isEmpty()&&isVodCacheFresh(category)){
+          status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
+          return;
+        }
+        if(forceRefresh)invalidateVodCacheFreshness(category);
+        startVodCatalogueSearch(category,panel,status,results,forceRefresh,request,requestRegion,cached);
+      });
+    });
+  }
+  private void startVodCatalogueSearch(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh,int request,String requestRegion,ArrayList<VodItem> cached){
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
@@ -2425,7 +2435,7 @@ public class MainActivity extends Activity {
           status.setText("显示上次缓存的 "+cached.size()+" 部影片；本次多源检索暂不可用。");
         }
       });
-    });
+    })
   }
   private void purgeCancelledTasks(ExecutorService executor){
     if(executor instanceof ThreadPoolExecutor)((ThreadPoolExecutor)executor).purge();
