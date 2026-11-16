@@ -3576,25 +3576,78 @@ public class MainActivity extends Activity {
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
   }
+  private int countChannelsForScope(String scope){
+    HashSet<String> identities=new HashSet<>();
+    synchronized(channels){
+      for(Channel channel:channels){
+        if(channel==null||!channel.sourceScopes.contains(scope))continue;
+        identities.add(identity(channel));
+      }
+    }
+    return identities.size();
+  }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
-    globalLoading=true;info.setText("正在连接全球公开频道目录（含国家、地区及合规公开目录）…");
-    worker.execute(()->{
-      int added=0;StringBuilder errors=new StringBuilder();
-      String[] feeds={
-        "https://iptv-org.github.io/iptv/index.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/jp.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
-      };
-      added=fetchAndMergePlaylists(feeds,22000,errors,"global");
-      final int total=added;final String err=errors.toString();
-      runOnUiThread(()->{persist();refresh();globalLoading=false;info.setText("全球频道补充完成：新增 "+total+" 个频道条目（已去重并合并备用地址）。地区限制、版权和网络状况可能影响播放。"+(err.isEmpty()?"":"部分目录暂不可用："+err));});
-    });
+    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
+    // Match the domestic directory's cache-first behavior. Reopening 全球频道
+    // should not redownload the full international index on every visit.
+    final long now=System.currentTimeMillis();
+    final long last=cachePrefs.getLong("global_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    final int cachedGlobalCount=countChannelsForScope("global");
+    final int minimumUsefulGlobalChannels=60;
+    if(last>0L&&now-last<refreshInterval&&cachedGlobalCount>=minimumUsefulGlobalChannels){
+      info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+      return;
+    }
+    globalLoading=true;
+    info.setText("正在检查全球公开频道目录（已有频道仍可使用）…");
+    try{
+      worker.execute(()->{
+        try{
+          StringBuilder errors=new StringBuilder();
+          String[] feeds={
+            "https://iptv-org.github.io/iptv/index.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/jp.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
+          };
+          int added=fetchAndMergePlaylists(feeds,22000,errors,"global");
+          final int total=added;
+          final String err=errors.toString();
+          final int recognizedGlobalCount=countChannelsForScope("global");
+          // Persist away from the UI thread. A failed/empty directory refresh must
+          // not advance the success timestamp or replace the last saved catalogue.
+          if(total>0)persist();
+          final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
+          if(usefulGlobalDirectory){
+            cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
+          }
+          runOnUiThread(()->{
+            globalLoading=false;
+            if(isFinishing())return;
+            if(total>0)refresh();
+            String status=usefulGlobalDirectory
+                ?"已识别 "+recognizedGlobalCount+" 个全球频道，目录缓存已保留。"
+                :"全球有效频道不足（当前识别 "+recognizedGlobalCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
+            info.setText("全球频道目录检查完成：新增 "+total+" 个条目；"+status+(err.isEmpty()?"":"部分来源暂不可用："+err));
+          });
+        }catch(Throwable failure){
+          final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
+          runOnUiThread(()->{
+            globalLoading=false;
+            if(!isFinishing())info.setText("全球频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);
+          });
+        }
+      });
+    }catch(RuntimeException rejected){
+      globalLoading=false;
+      info.setText("全球频道整理任务暂时无法启动，已有频道仍可使用；请稍后重试。");
+    }
   }
   private void loadRegionChannels(){
     if(regionLoading){info.setText("港澳台频道正在载入，请稍候…");return;}
