@@ -3549,20 +3549,31 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Publish the first usable batch immediately. Waiting for every remote feed
   // before refreshing left a fresh install showing an empty channel pane with a
   // permanent-looking "正在缓存" message when one slow source held the batch open.
+  private static final long MAX_PLAYLIST_FEED_BYTES=50L*1024L*1024L;
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope,Runnable onFirstEntries){
     ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(playlistWorker);
     ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
     for(String address:feeds){
       tasks.add(completion.submit(()->{
-        HttpURLConnection c=null;
+        HttpURLConnection connection=null;
+        int[] parsedAdded={0};
         try{
-          c=(HttpURLConnection)new URL(address).openConnection();
-          c.setConnectTimeout(8000);c.setReadTimeout(timeoutMs);c.setInstanceFollowRedirects(true);
-          c.setRequestProperty("User-Agent","MyTV/1.84 Android TV");c.setRequestProperty("Accept","*/*");
-          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          try(InputStream in=c.getInputStream()){return new PlaylistFetchResult(address,read(in),null);}
-        }catch(Exception e){return new PlaylistFetchResult(address,null,e.getMessage());}
-        finally{if(c!=null)c.disconnect();}
+          connection=(HttpURLConnection)new URL(address).openConnection();
+          connection.setConnectTimeout(8000);connection.setReadTimeout(timeoutMs);connection.setInstanceFollowRedirects(true);
+          connection.setRequestProperty("User-Agent","MyTV/1.84 Android TV");connection.setRequestProperty("Accept","*/*");
+          int code=connection.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+          // Parse as bytes arrive. Do not hold a whole 10–50 MB playlist String
+          // alongside the growing in-memory channel catalogue.
+          try(InputStream in=new PlaylistByteLimitInputStream(connection.getInputStream(),MAX_PLAYLIST_FEED_BYTES);
+              Reader reader=new BufferedReader(new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8))){
+            parse(reader,null,sourceScope,parsedAdded);
+          }
+          return new PlaylistFetchResult(address,parsedAdded[0],null);
+        }catch(Exception e){
+          // A feed may have yielded usable rows before a connection or size-limit
+          // failure. Keep those rows and report the incomplete feed separately.
+          return new PlaylistFetchResult(address,parsedAdded[0],e.getMessage());
+        }finally{if(connection!=null)connection.disconnect();}
       }));
     }
     int added=0,remaining=tasks.size();
@@ -3576,19 +3587,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         Future<PlaylistFetchResult> done=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);if(done==null)continue;
         remaining--;PlaylistFetchResult result=done.get();
         if(result.error!=null){
-          android.util.Log.w("MyTVDirectory","feed failed: "+result.address+" reason="+result.error);
+          android.util.Log.w("MyTVDirectory","feed failed: "+result.address+" reason="+result.error+" partial_added="+result.parsed);
           if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");
-          continue;
         }
-        if(result.data!=null){
-          // parse() synchronizes each catalogue mutation itself. Do not hold the
-          // global channel lock for an entire large playlist: the UI thread also
-          // needs this lock while refreshing the visible list, otherwise category
-          // clicks can freeze long enough to trigger Android input-dispatch ANRs.
-          int parsed=parse(result.data,null,sourceScope);
-          added+=parsed;
-          android.util.Log.i("MyTVDirectory","feed="+result.address+" parsed="+parsed+" total_added="+added);
-          if(parsed>0&&!firstBatchPublished){
+        if(result.parsed>0){
+          added+=result.parsed;
+          android.util.Log.i("MyTVDirectory","feed="+result.address+" parsed_added="+result.parsed+" total_added="+added);
+          if(!firstBatchPublished){
             firstBatchPublished=true;
             if(onFirstEntries!=null)onFirstEntries.run();
           }
@@ -3601,9 +3606,37 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
     return added;
   }
+  private static final class PlaylistByteLimitInputStream extends java.io.FilterInputStream{
+    private final long maximumBytes;
+    private long bytesRead=0L;
+    PlaylistByteLimitInputStream(InputStream source,long maximumBytes){super(source);this.maximumBytes=maximumBytes;}
+    @Override public int read()throws IOException{
+      if(bytesRead>=maximumBytes){
+        int extra=super.read();
+        if(extra<0)return -1;
+        throw new IOException("频道目录超过 50 MB，已停止读取");
+      }
+      int value=super.read();
+      if(value>=0)bytesRead++;
+      return value;
+    }
+    @Override public int read(byte[] buffer,int offset,int length)throws IOException{
+      if(length==0)return 0;
+      if(bytesRead>=maximumBytes){
+        int extra=super.read();
+        if(extra<0)return -1;
+        throw new IOException("频道目录超过 50 MB，已停止读取");
+      }
+      int allowed=(int)Math.min((long)length,maximumBytes-bytesRead);
+      int count=super.read(buffer,offset,allowed);
+      if(count>0)bytesRead+=count;
+      return count;
+    }
+  }
   private static class PlaylistFetchResult{
-    final String address,data,error;
-    PlaylistFetchResult(String a,String d,String e){address=a;data=d;error=e;}
+    final String address,error;
+    final int parsed;
+    PlaylistFetchResult(String a,int p,String e){address=a;parsed=p;error=e;}
   }
   // Count actual mainland channel identities, not successful HTTP responses.
   // A directory returning an empty playlist or only non-China entries must not
@@ -3945,53 +3978,72 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(data==null)return 0;
     final int[] added={0};
     PlaylistParser.parseEach(data,Integer.MAX_VALUE,entry->{
-      String name=entry.name==null||entry.name.trim().isEmpty()?"频道 "+(channels.size()+1):entry.name.trim();
-      // Global master indexes can include HMT stations; route them into China by metadata.
-      String channelScope=RegionCategoryPolicy.catalogueScope(name,entry.group,sourceScope);
-      String line=entry.url;
-      synchronized(channels){
-        if(!channelsByUrl.containsKey(line)){
-          // The URL index already proved this source is new. Compute identity
-          // directly from metadata instead of allocating a temporary Channel for
-          // every playlist row; this matters for 15k+ entry imports.
-          String key=identity(name,entry.group,line,entry.tvgName,entry.tvgId);
-          Channel same=channelsByIdentity.get(key);
-          if(same!=null){
-            same.mergeMetadata(entry.tvgId,entry.tvgName);
-            normalizeBroadcasterLabel(same);
-            // channelsByUrl.containsKey(line) was false above, so this URL cannot
-            // already be present in the channel's backup list.
-            same.addBackupSource(line,channelScope);
-            channelsByUrl.put(line,same);
-            added[0]++;
-          }else{
-            Channel fresh=new Channel(name,line,entry.group);
-            fresh.mergeMetadata(entry.tvgId,entry.tvgName);
-            fresh.addBackupSource(line,channelScope);
-            normalizeBroadcasterLabel(fresh);
-            channels.add(fresh);
-            channelsByIdentity.put(key,fresh);
-            channelsByUrl.put(line,fresh);
-            added[0]++;
-          }
-        }else{
-          Channel existing=channelsByUrl.get(line);
-          if(existing!=null){
-            existing.mergeMetadata(entry.tvgId,entry.tvgName);
-            existing.addBackupSource(line,channelScope);
-            normalizeBroadcasterLabel(existing);
-          }
-        }
-        // Read the channel index under the same lock as its mutation. Keeping the
-        // destination set local prevents an unrelated concurrent import from
-        // contaminating a selected country/province result.
-        if(destinationKeys!=null){
-          Channel scoped=channelsByUrl.get(line);
-          if(scoped!=null)destinationKeys.add(scoped.key());
-        }
+      if(mergePlaylistEntry(entry,destinationKeys,sourceScope))added[0]++;
+    });
+    return added[0];
+  }
+  // Reader overload lets remote feeds be merged incrementally. partialAdded is updated
+  // after each successful row so useful rows are not lost from the progress report if
+  // the remote stream later fails or exceeds the configured byte cap.
+  private int parse(Reader reader,Set<String> destinationKeys,String sourceScope,int[] partialAdded)throws IOException{
+    final int[] added={0};
+    PlaylistParser.parseEach(reader,Integer.MAX_VALUE,entry->{
+      if(mergePlaylistEntry(entry,destinationKeys,sourceScope)){
+        added[0]++;
+        if(partialAdded!=null)partialAdded[0]++;
       }
     });
     return added[0];
+  }
+  private boolean mergePlaylistEntry(PlaylistParser.ChannelSource entry,Set<String> destinationKeys,String sourceScope){
+    String name=entry.name==null?"":entry.name.trim();
+    String line=entry.url;
+    boolean added=false;
+    synchronized(channels){
+      if(name.isEmpty())name="频道 "+(channels.size()+1);
+      // Global master indexes can include HMT stations; route them into China by metadata.
+      String channelScope=RegionCategoryPolicy.catalogueScope(name,entry.group,sourceScope);
+      if(!channelsByUrl.containsKey(line)){
+        // The URL index already proved this source is new. Compute identity
+        // directly from metadata instead of allocating a temporary Channel for
+        // every playlist row; this matters for 15k+ entry imports.
+        String key=identity(name,entry.group,line,entry.tvgName,entry.tvgId);
+        Channel same=channelsByIdentity.get(key);
+        if(same!=null){
+          same.mergeMetadata(entry.tvgId,entry.tvgName);
+          normalizeBroadcasterLabel(same);
+          // channelsByUrl.containsKey(line) was false above, so this URL cannot
+          // already be present in the channel's backup list.
+          same.addBackupSource(line,channelScope);
+          channelsByUrl.put(line,same);
+          added=true;
+        }else{
+          Channel fresh=new Channel(name,line,entry.group);
+          fresh.mergeMetadata(entry.tvgId,entry.tvgName);
+          fresh.addBackupSource(line,channelScope);
+          normalizeBroadcasterLabel(fresh);
+          channels.add(fresh);
+          channelsByIdentity.put(key,fresh);
+          channelsByUrl.put(line,fresh);
+          added=true;
+        }
+      }else{
+        Channel existing=channelsByUrl.get(line);
+        if(existing!=null){
+          existing.mergeMetadata(entry.tvgId,entry.tvgName);
+          existing.addBackupSource(line,channelScope);
+          normalizeBroadcasterLabel(existing);
+        }
+      }
+      // Read the channel index under the same lock as its mutation. Keeping the
+      // destination set local prevents an unrelated concurrent import from
+      // contaminating a selected country/province result.
+      if(destinationKeys!=null){
+        Channel scoped=channelsByUrl.get(line);
+        if(scoped!=null)destinationKeys.add(scoped.key());
+      }
+    }
+    return added;
   }
   protected void onActivityResult(int req,int result,Intent data){
     super.onActivityResult(req,result,data);
