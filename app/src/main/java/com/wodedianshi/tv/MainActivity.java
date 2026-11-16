@@ -3242,31 +3242,37 @@ public class MainActivity extends Activity {
     final Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
     final Set<String> favoriteSnapshot=new HashSet<>(favorites);
     final int requestedPage=livePageIndex;
-    final String selectedKey;
     final int previousFocusedIndex;
     final String previousFocusedKey;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
     previousFocusedIndex=currentFocus!=null&&currentFocus.getTag() instanceof Integer?(Integer)currentFocus.getTag():-1;
     Object focusedKeyTag=currentFocus==null?null:currentFocus.getTag(R.id.tag_channel_key);
     previousFocusedKey=focusedKeyTag instanceof String?(String)focusedKeyTag:null;
-    ArrayList<Channel> snapshot=new ArrayList<>();
-    synchronized(channels){
-      selectedKey=selected>=0&&selected<channels.size()&&channels.get(selected)!=null?channels.get(selected).key():null;
-      for(Channel source:channels){
-        if(source==null)continue;
-        Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
-        copy.tvgId=source.tvgId==null?"":source.tvgId;
-        copy.tvgName=source.tvgName==null?"":source.tvgName;
-        // Filtering only needs the channel's display metadata and stable primary
-        // identity. Copying every backup URL and ownership HashSet for every UI
-        // refresh multiplied heap churn on large catalogues and contributed to
-        // input-dispatch ANRs. The live Channel object remains untouched.
-        snapshot.add(copy);
-      }
-    }
     final boolean customCategory="自建频道".equals(categorySnapshot);
+    // Do not walk and clone a potentially huge catalogue on the UI thread.
+    // Capture only the list of references under the short catalogue lock, then
+    // copy the small filtering metadata on the catalogue worker.
     pendingCatalogueFilter=catalogueFilterWorker.submit(()->{
       try{
+        if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
+        ArrayList<Channel> sources;
+        final String selectedKey;
+        synchronized(channels){
+          sources=new ArrayList<>(channels);
+          selectedKey=selected>=0&&selected<sources.size()&&sources.get(selected)!=null
+              ?sources.get(selected).key():null;
+        }
+        ArrayList<Channel> snapshot=new ArrayList<>(sources.size());
+        for(int i=0;i<sources.size();i++){
+          if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
+          Channel source=sources.get(i);
+          if(source==null)continue;
+          Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
+          copy.tvgId=source.tvgId==null?"":source.tvgId;
+          copy.tvgName=source.tvgName==null?"":source.tvgName;
+          snapshot.add(copy);
+        }
+        if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         ArrayList<Channel> visible=new ArrayList<>();
         int scanned=0;
         for(Channel c:snapshot){
