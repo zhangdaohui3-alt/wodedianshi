@@ -536,10 +536,6 @@ public class SourceUpdateWorker extends Worker {
     final String finalUrl;
     SampleResponse(byte[] data,String url){bytes=data;finalUrl=url;}
   }
-  private int requestTimeout(long deadline,int maximumMillis){
-    return SourceProbeTimePolicy.boundedTimeoutMillis(
-        deadline,android.os.SystemClock.elapsedRealtime(),maximumMillis);
-  }
   private boolean probeDeadlineReached(long deadline){
     return android.os.SystemClock.elapsedRealtime()>=deadline;
   }
@@ -551,16 +547,20 @@ public class SourceUpdateWorker extends Worker {
     HttpURLConnection c=null;
     try{
       c=(HttpURLConnection)new URL(address).openConnection();
-      int connectTimeout=requestTimeout(deadline,2500);
-      if(connectTimeout<=0)return null;
+      // URLConnection options must be configured before the first operation that connects it.
+      // Reserve half the remaining budget for connection setup and the rest for response reads.
+      long now=android.os.SystemClock.elapsedRealtime();
+      long remaining=deadline-now;
+      if(remaining<2L)return null;
+      int connectTimeout=(int)Math.min(2500L,Math.max(1L,remaining/2L));
+      int readTimeout=SourceProbeTimePolicy.boundedTimeoutMillis(
+          deadline,now+connectTimeout,3000);
+      if(readTimeout<=0)return null;
       c.setConnectTimeout(connectTimeout);
+      c.setReadTimeout(readTimeout);
       c.setInstanceFollowRedirects(true);
       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
       c.setRequestProperty("Range","bytes=0-"+(maxBytes-1));
-      c.connect();
-      int readTimeout=requestTimeout(deadline,3000);
-      if(readTimeout<=0)return null;
-      c.setReadTimeout(readTimeout);
       int code=c.getResponseCode();if(code<200||code>=400)return null;
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
@@ -568,9 +568,7 @@ public class SourceUpdateWorker extends Worker {
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[4096];int n,total=0;
         while(total<maxBytes){
-          readTimeout=requestTimeout(deadline,3000);
-          if(readTimeout<=0)return null;
-          c.setReadTimeout(readTimeout);
+          if(probeDeadlineReached(deadline))return null;
           n=in.read(buffer);
           if(n==-1)break;
           int take=Math.min(n,maxBytes-total);out.write(buffer,0,take);total+=take;
