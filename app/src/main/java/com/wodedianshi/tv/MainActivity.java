@@ -3263,6 +3263,7 @@ public class MainActivity extends Activity {
               ?sources.get(selected).key():null;
         }
         ArrayList<Channel> snapshot=new ArrayList<>(sources.size());
+        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,sources.size()*2));
         for(int i=0;i<sources.size();i++){
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
           Channel source=sources.get(i);
@@ -3271,6 +3272,8 @@ public class MainActivity extends Activity {
           copy.tvgId=source.tvgId==null?"":source.tvgId;
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           snapshot.add(copy);
+          String key=copy.key();
+          if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         ArrayList<Channel> visible=new ArrayList<>();
@@ -3301,7 +3304,7 @@ public class MainActivity extends Activity {
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+snapshot.size()+" matches="+visible.size()+" generation="+generation);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
-          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex,previousFocusedKey);
+          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
         });
       }catch(Throwable failure){
         android.util.Log.e("MyTVCatalogue","background catalogue filter failed",failure);
@@ -3318,7 +3321,8 @@ public class MainActivity extends Activity {
     });
   }
   private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
-      boolean customCategory,int requestedPage,int previousFocusedIndex,String previousFocusedKey){
+      boolean customCategory,int requestedPage,int previousFocusedIndex,String previousFocusedKey,
+      HashMap<String,Integer> sourceIndexByKey){
     android.util.Log.i("MyTVDirectory","render category="+activeCategory+" visible="+visible.size()+" page="+requestedPage);
     list.removeAllViews();
     if(customCategory){
@@ -3347,7 +3351,8 @@ public class MainActivity extends Activity {
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
       String channelGroup=c.group==null?"":c.group;
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
-      final int currentIndex=findChannelIndexByKey(channelKey);
+      Integer mappedIndex=sourceIndexByKey.get(channelKey);
+      final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
       if(channelKey.equals(selectedKey))b.setContentDescription("当前正在播放："+title);
