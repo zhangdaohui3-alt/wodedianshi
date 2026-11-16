@@ -154,10 +154,31 @@ public class MainActivity extends Activity {
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
     ArrayList<String> backups = new ArrayList<>();
-    // Provenance is channel-level for now: a merged channel can belong to more than one catalogue.
+    // Channel-level scopes support category routing; URL-level scopes prevent a
+    // refresh from deleting or misclassifying another catalogue's backup.
     final HashSet<String> sourceScopes = new HashSet<>();
+    final HashMap<String,HashSet<String>> backupSourceScopes = new HashMap<>();
     int activeSource = 0;
-    Channel(String n,String u,String g){name=n;url=u;group=g;backups.add(u);}
+    Channel(String n,String u,String g){name=n;url=u;backups.add(u);}
+    void addBackupSource(String source,String scope){
+      if(source==null||source.isEmpty())return;
+      if(backups==null)backups=new ArrayList<>();
+      if(!backups.contains(source))backups.add(source);
+      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope)){
+        HashSet<String> scopes=backupSourceScopes.get(source);
+        if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(source,scopes);}
+        scopes.add(scope);sourceScopes.add(scope);
+      }
+    }
+    void mergeBackupOwnership(Channel other){
+      if(other==null)return;
+      sourceScopes.addAll(other.sourceScopes);
+      for(Map.Entry<String,HashSet<String>> entry:other.backupSourceScopes.entrySet()){
+        HashSet<String> scopes=backupSourceScopes.get(entry.getKey());
+        if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(entry.getKey(),scopes);}
+        scopes.addAll(entry.getValue());
+      }
+    }
     String key(){return name+"|"+url;}
     void mergeMetadata(String id,String displayName){
       if((tvgId==null||tvgId.isEmpty())&&id!=null&&!id.isEmpty())tvgId=id;
@@ -473,6 +494,7 @@ public class MainActivity extends Activity {
         int activeSource=0;
         ArrayList<String> sources=null;
         HashSet<String> sourceScopes=null;
+        HashMap<String,HashSet<String>> backupScopes=null;
         reader.beginObject();
         while(reader.hasNext()){
           String field=reader.nextName();
@@ -506,6 +528,30 @@ public class MainActivity extends Activity {
               }
               reader.endArray();
               break;
+            case "backupSourceScopes":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              backupScopes=new HashMap<>();
+              reader.beginArray();
+              while(reader.hasNext()){
+                String source="";HashSet<String> scopes=new HashSet<>();
+                reader.beginObject();
+                while(reader.hasNext()){
+                  String ownershipField=reader.nextName();
+                  if("url".equals(ownershipField))source=readCatalogueJsonString(reader,"");
+                  else if("scopes".equals(ownershipField)){
+                    reader.beginArray();
+                    while(reader.hasNext()){
+                      String scope=readCatalogueJsonString(reader,"");
+                      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))scopes.add(scope);
+                    }
+                    reader.endArray();
+                  }else reader.skipValue();
+                }
+                reader.endObject();
+                if(!source.isEmpty()&&!scopes.isEmpty())backupScopes.put(source,scopes);
+              }
+              reader.endArray();
+              break;
             default: reader.skipValue();break;
           }
         }
@@ -522,6 +568,10 @@ public class MainActivity extends Activity {
           channel.backups.clear();
           channel.backups.addAll(sources);
           if(channel.backups.isEmpty())channel.backups.add(channel.url);
+        }
+        if(backupScopes!=null)for(Map.Entry<String,HashSet<String>> entry:backupScopes.entrySet()){
+          HashSet<String> valid=new HashSet<>(entry.getValue());
+          if(!valid.isEmpty())channel.backupSourceScopes.put(entry.getKey(),valid);
         }
         channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
         restoredChannels.add(channel);
@@ -576,6 +626,7 @@ public class MainActivity extends Activity {
           for(String source:c.backups){
             if(source!=null&&!source.isEmpty()&&seen.add(source))keep.backups.add(source);
           }
+          keep.mergeBackupOwnership(c);
           if(favorites.contains(c.key()))favorites.add(keep.key());
         }
       }
@@ -762,6 +813,9 @@ public class MainActivity extends Activity {
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           copy.activeSource=source.activeSource;
           copy.sourceScopes.addAll(source.sourceScopes);
+          copy.backupSourceScopes.clear();
+          for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet())
+            copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
           if(copy.sourceScopes.isEmpty())copy.sourceScopes.add("custom");
           copy.backups.clear();
           if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
@@ -786,6 +840,15 @@ public class MainActivity extends Activity {
           writer.endArray();
           writer.name("sourceScopes").beginArray();
           for(String scope:channel.sourceScopes)writer.value(scope);
+          writer.endArray();
+          writer.name("backupSourceScopes").beginArray();
+          for(String source:channel.backups){
+            HashSet<String> scopes=channel.backupSourceScopes.get(source);
+            if(scopes==null||scopes.isEmpty())continue;
+            writer.beginObject().name("url").value(source).name("scopes").beginArray();
+            for(String scope:scopes)writer.value(scope);
+            writer.endArray().endObject();
+          }
           writer.endArray();
           writer.endObject();
         }
@@ -909,6 +972,15 @@ public class MainActivity extends Activity {
         if(c.sourceScopes.isEmpty())c.sourceScopes.add("custom");
         org.json.JSONArray src=o.optJSONArray("sources");
         if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
+        org.json.JSONArray ownership=o.optJSONArray("backupSourceScopes");
+        if(ownership!=null)for(int j=0;j<ownership.length();j++){
+          org.json.JSONObject item=ownership.optJSONObject(j);if(item==null)continue;
+          String source=item.optString("url","");org.json.JSONArray values=item.optJSONArray("scopes");
+          if(values==null||source.isEmpty())continue;
+          HashSet<String> valid=new HashSet<>();
+          for(int k=0;k<values.length();k++){String scope=values.optString(k,"");if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))valid.add(scope);}
+          if(!valid.isEmpty())c.backupSourceScopes.put(source,valid);
+        }
         c.activeSource=Math.max(0,Math.min(c.activeSource,c.backups.size()-1));
         updated.add(c);
       }
@@ -3123,6 +3195,9 @@ public class MainActivity extends Activity {
         copy.tvgId=source.tvgId==null?"":source.tvgId;
         copy.tvgName=source.tvgName==null?"":source.tvgName;
         copy.activeSource=source.activeSource;
+        copy.sourceScopes.addAll(source.sourceScopes);
+        for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet())
+          copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
         copy.backups.clear();
         if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
         if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
@@ -3639,14 +3714,13 @@ public class MainActivity extends Activity {
             normalizeBroadcasterLabel(same);
             // channelsByUrl.containsKey(line) was false above, so this URL cannot
             // already be present in the channel's backup list.
-            same.backups.add(line);
-            same.sourceScopes.add(channelScope);
+            same.addBackupSource(line,channelScope);
             channelsByUrl.put(line,same);
             added[0]++;
           }else{
             Channel fresh=new Channel(name,line,entry.group);
             fresh.mergeMetadata(entry.tvgId,entry.tvgName);
-            fresh.sourceScopes.add(channelScope);
+            fresh.addBackupSource(line,channelScope);
             normalizeBroadcasterLabel(fresh);
             channels.add(fresh);
             channelsByIdentity.put(key,fresh);
@@ -3657,7 +3731,7 @@ public class MainActivity extends Activity {
           Channel existing=channelsByUrl.get(line);
           if(existing!=null){
             existing.mergeMetadata(entry.tvgId,entry.tvgName);
-            existing.sourceScopes.add(channelScope);
+            existing.addBackupSource(line,channelScope);
             normalizeBroadcasterLabel(existing);
           }
         }
@@ -5610,6 +5684,12 @@ public class MainActivity extends Activity {
         Channel channel=new Channel(item.getString("name"),item.getString("url"),item.optString("group",""));
         channel.tvgId=item.optString("tvgId","");
         channel.tvgName=item.optString("tvgName","");
+        org.json.JSONArray scopes=item.optJSONArray("sourceScopes");
+        if(scopes!=null)for(int j=0;j<scopes.length();j++){
+          String scope=scopes.optString(j,"");
+          if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))channel.sourceScopes.add(scope);
+        }
+        if(channel.sourceScopes.isEmpty())channel.sourceScopes.add("custom");
         org.json.JSONArray sources=item.optJSONArray("sources");
         if(sources!=null){
           channel.backups.clear();
@@ -5618,6 +5698,15 @@ public class MainActivity extends Activity {
             if(url.startsWith("http://")||url.startsWith("https://"))channel.backups.add(url);
           }
           if(channel.backups.isEmpty())channel.backups.add(channel.url);
+        }
+        org.json.JSONArray ownership=item.optJSONArray("backupSourceScopes");
+        if(ownership!=null)for(int j=0;j<ownership.length();j++){
+          org.json.JSONObject owned=ownership.optJSONObject(j);if(owned==null)continue;
+          String source=owned.optString("url","");org.json.JSONArray values=owned.optJSONArray("scopes");
+          if(source.isEmpty()||values==null)continue;
+          HashSet<String> valid=new HashSet<>();
+          for(int k=0;k<values.length();k++){String scope=values.optString(k,"");if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))valid.add(scope);}
+          if(!valid.isEmpty())channel.backupSourceScopes.put(source,valid);
         }
         channel.activeSource=Math.max(0,Math.min(item.optInt("activeSource",0),channel.backups.size()-1));
         refreshed.add(channel);
