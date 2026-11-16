@@ -154,13 +154,21 @@ public class MainActivity extends Activity {
   // per source so no ExoPlayer getter is ever called from that callback thread.
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
-    ArrayList<String> backups = new ArrayList<>();
+    // Catalogue filter snapshots never use playback/source ownership. Keep these
+    // collections lazy for those short-lived copies to avoid three extra objects
+    // per channel while filtering a large directory.
+    ArrayList<String> backups;
     // Channel-level scopes support category routing; URL-level scopes prevent a
     // refresh from deleting or misclassifying another catalogue's backup.
-    final HashSet<String> sourceScopes = new HashSet<>();
-    final HashMap<String,HashSet<String>> backupSourceScopes = new HashMap<>();
+    HashSet<String> sourceScopes;
+    HashMap<String,HashSet<String>> backupSourceScopes;
     int activeSource = 0;
-    Channel(String n,String u,String g){name=n;url=u;group=g==null?"":g;backups.add(u);}
+    Channel(String n,String u,String g){this(n,u,g,false);}
+    Channel(String n,String u,String g,boolean filterSnapshot){
+      name=n==null?"":n;url=u==null?"":u;group=g==null?"":g;
+      if(filterSnapshot){backups=null;sourceScopes=null;backupSourceScopes=null;}
+      else{backups=new ArrayList<>();if(!url.isEmpty())backups.add(url);sourceScopes=new HashSet<>();backupSourceScopes=new HashMap<>();}
+    }
     void addBackupSource(String source,String scope){
       if(source==null||source.isEmpty())return;
       if(backups==null)backups=new ArrayList<>();
@@ -890,7 +898,7 @@ public class MainActivity extends Activity {
       synchronized(channels){
         for(Channel source:channels){
           if(source==null)continue;
-          Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
+          Channel copy=new Channel(source.name,source.url,source.group,true);
           copy.tvgId=source.tvgId==null?"":source.tvgId;
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           copy.activeSource=source.activeSource;
@@ -3411,9 +3419,10 @@ public class MainActivity extends Activity {
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
       Channel c=visible.get(row);
       final String channelKey=c.key();
-      final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
+      final String channelName=c.name==null?"":c.name;
+      final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
       String channelGroup=c.group==null?"":c.group;
-      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
+      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":((channelGroup==null||channelGroup.isEmpty())?"":" · "+channelGroup);
       Integer mappedIndex=sourceIndexByKey.get(channelKey);
       final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
@@ -3425,7 +3434,7 @@ public class MainActivity extends Activity {
         int current=findChannelIndexByKey(channelKey);if(current<0)return true;
         Channel latest;
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
-        ArrayList<String> sourceUrls=new ArrayList<>(latest.backups);
+        ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
           if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
           else if(w==1){
