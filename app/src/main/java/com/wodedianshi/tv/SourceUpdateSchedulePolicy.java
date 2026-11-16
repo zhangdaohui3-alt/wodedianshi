@@ -13,4 +13,9 @@ public final class SourceUpdateSchedulePolicy {
                                                     long lastSuccessfulUpdateMillis) {
         return automaticUpdatesEnabled && lastSuccessfulUpdateMillis <= 0L;
     }
+
+    /** At least one newly discovered source must pass the media preflight. */
+    public static boolean hasValidatedDiscoverySources(int validatedSourceCount) {
+        return validatedSourceCount > 0;
+    }
 }

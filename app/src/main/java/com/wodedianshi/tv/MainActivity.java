@@ -3640,13 +3640,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
     try{worker.execute(()->{
       try{
+      // The same CCTV, provincial and iptv-org China feeds are owned by SourceUpdateWorker.
+      // Keep only supplemental feeds here to avoid downloading those URLs twice.
       String[] feeds={
-        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
-        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
         "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u",
         "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
-        "https://iptv-org.github.io/iptv/countries/cn.m3u",
         "https://iptv-cn.github.io/IPTV/countries/cn.m3u",
         "https://m3u.ibert.me/o_s_cn.m3u",
         "https://m3u.ibert.me/o_cn.m3u",

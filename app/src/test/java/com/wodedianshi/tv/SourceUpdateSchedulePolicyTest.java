@@ -25,4 +25,14 @@ public class SourceUpdateSchedulePolicyTest {
     @Test public void negativeTimestampIsTreatedAsMissing() {
         assertTrue(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, -1L));
     }
+
+    @Test public void emptyOrUnvalidatedDiscoveryDoesNotCountAsSuccessful() {
+        assertFalse(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(0));
+        assertFalse(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(-1));
+    }
+
+    @Test public void validatedDiscoverySourceCountsAsSuccessful() {
+        assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(1));
+        assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(24));
+    }
 }
