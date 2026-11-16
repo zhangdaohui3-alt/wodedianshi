@@ -27,10 +27,9 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
       return Result.retry();
     }
-    if(isActivityActive(prefs)){
-      saveStatus(prefs,"电视应用正在前台使用，暂缓后台频道整理以避免干扰操作",0);
-      return Result.retry();
-    }
+    // Do not postpone the first useful catalogue refresh just because the TV UI is open.
+    // While foregrounded, process China/HK/MO/TW first; global feeds remain deferred.
+    final boolean foregroundAtStart=isActivityActive(prefs);
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
@@ -120,14 +119,13 @@ public class SourceUpdateWorker extends Worker {
           if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
         }
       }
-      for(String feed:feeds){
+      for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
+        if(foregroundAtStart&&feedIndex>=6)break;
+        if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
+        String feed=feeds[feedIndex];
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
-          return Result.retry();
-        }
-        if(isActivityActive(prefs)){
-          saveStatus(prefs,"电视应用已回到前台，本轮频道整理已暂停",0);
           return Result.retry();
         }
         HttpURLConnection c=null;
@@ -175,10 +173,6 @@ public class SourceUpdateWorker extends Worker {
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
-          return Result.retry();
-        }
-        if(isActivityActive(prefs)){
-          saveStatus(prefs,"电视应用已回到前台，本轮线路检测已暂停",0);
           return Result.retry();
         }
         if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
@@ -269,10 +263,6 @@ public class SourceUpdateWorker extends Worker {
         saveStatus(prefs,"检测到节目刚开始播放，已放弃本轮写入并安排稍后重试",0);
         return Result.retry();
       }
-      if(isActivityActive(prefs)){
-        saveStatus(prefs,"检测到电视应用已回到前台，本轮结果暂存取消并安排重试",0);
-        return Result.retry();
-      }
       if(isStopped())return Result.retry();
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -284,7 +274,7 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_update_pending_base",channelsSnapshot)
           .putString("source_update_pending_channels",saved.toString())
           .putString("source_update_time",now())
-          .putString("source_update_result","已安全暂存候选目录，待应用确认频道没有变化后再应用；"+(discoveryUnavailable?"所有公开目录暂不可用，仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""))
+          .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
