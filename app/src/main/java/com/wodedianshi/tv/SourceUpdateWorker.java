@@ -139,7 +139,7 @@ public class SourceUpdateWorker extends Worker {
           String normalized=data.replace("\uFEFF","").trim();
           if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
           ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates);
+          parsePlaylist(data,feedCandidates,scopeForFeed(feed));
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
           feedsOk++;
@@ -193,19 +193,24 @@ public class SourceUpdateWorker extends Worker {
         measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
         measuredScores.remove(legacyScoreKey(e.url));
         if(!measured.valid)continue;
-        // Known sources are re-tested and re-scored, but never inserted twice.
-        if(knownUrls.contains(e.url))continue;
         String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
+        // A known URL may appear in a second directory. Record that provenance
+        // without duplicating the backup or probing the same address twice.
+        if(knownUrls.contains(e.url)){
+          if(target!=null)addBackupSourceScope(target,e.url,e.scope);
+          continue;
+        }
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
           target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
+          addBackupSourceScope(target,e.url,e.scope);
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
           JSONArray sources=target.optJSONArray("sources");
           if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
           boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
           if(!duplicate){
-            if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);added++;}
+            if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
             else{
               int worstIndex=-1,worstScore=Integer.MAX_VALUE;
               for(int i=0;i<sources.length();i++){
@@ -214,7 +219,7 @@ public class SourceUpdateWorker extends Worker {
                 if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
               }
               int candidateScore=(int)Math.round(combinedScore(e.url,measuredScores,observedQoe));
-              if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);added++;}
+              if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
             }
           }
         }
@@ -243,7 +248,10 @@ public class SourceUpdateWorker extends Worker {
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
-        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",restoredActiveIndex);}
+        if(ranked.length()>0){
+          channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",restoredActiveIndex);
+          retainBackupSourceScopes(channel,ranked);
+        }
       }
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
@@ -289,14 +297,57 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
   }
   private static class Entry{
-    String name,url,group;boolean savedSource;
-    Entry(String n,String u,String g){this(n,u,g,false);}
-    Entry(String n,String u,String g,boolean saved){name=n;url=u;group=g;savedSource=saved;}
-  }
-  private void parsePlaylist(String data,List<Entry> out){
-    for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
-      out.add(new Entry(source.name,source.url,source.group));
+    String name,url,group,scope;boolean savedSource;
+    Entry(String n,String u,String g){this(n,u,g,false,"custom");}
+    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"custom");}
+    Entry(String n,String u,String g,boolean saved,String sourceScope){
+      name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
     }
+  }
+  private String scopeForFeed(String feed){
+    String value=feed==null?"":feed.toLowerCase(Locale.ROOT);
+    if(value.contains("/countries/cn.")||value.contains("/countries/hk.")
+        ||value.contains("/countries/mo.")||value.contains("/countries/tw."))return "china";
+    return "global";
+  }
+  private void parsePlaylist(String data,List<Entry> out,String sourceScope){
+    for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
+      String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
+      out.add(new Entry(source.name,source.url,source.group,false,scope));
+    }
+  }
+  private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
+    if(channel==null||url==null||url.isEmpty())return;
+    if(!"china".equals(scope)&&!"global".equals(scope)&&!"custom".equals(scope))return;
+    JSONArray channelScopes=channel.optJSONArray("sourceScopes");
+    if(channelScopes==null){channelScopes=new JSONArray();channel.put("sourceScopes",channelScopes);}
+    boolean channelHasScope=false;
+    for(int i=0;i<channelScopes.length();i++)if(scope.equals(channelScopes.optString(i))){channelHasScope=true;break;}
+    if(!channelHasScope)channelScopes.put(scope);
+    JSONArray ownership=channel.optJSONArray("backupSourceScopes");
+    if(ownership==null){ownership=new JSONArray();channel.put("backupSourceScopes",ownership);}
+    for(int i=0;i<ownership.length();i++){
+      JSONObject item=ownership.optJSONObject(i);
+      if(item==null||!url.equals(item.optString("url","")))continue;
+      JSONArray scopes=item.optJSONArray("scopes");
+      if(scopes==null){scopes=new JSONArray();item.put("scopes",scopes);}
+      for(int j=0;j<scopes.length();j++)if(scope.equals(scopes.optString(j)))return;
+      scopes.put(scope);return;
+    }
+    JSONObject item=new JSONObject();JSONArray scopes=new JSONArray();
+    scopes.put(scope);item.put("url",url);item.put("scopes",scopes);ownership.put(item);
+  }
+  private void retainBackupSourceScopes(JSONObject channel,JSONArray retainedSources)throws JSONException{
+    JSONArray previous=channel.optJSONArray("backupSourceScopes");
+    if(previous==null)return;
+    HashSet<String> retainedUrls=new HashSet<>();
+    for(int i=0;i<retainedSources.length();i++)retainedUrls.add(retainedSources.optString(i,""));
+    JSONArray filtered=new JSONArray();
+    for(int i=0;i<previous.length();i++){
+      JSONObject item=previous.optJSONObject(i);
+      if(item!=null&&retainedUrls.contains(item.optString("url","")))filtered.put(item);
+    }
+    channel.put("backupSourceScopes",filtered);
   }
   private int sourceQualityScore(String address){
     return SourceQualityScorer.labelScore(address);
