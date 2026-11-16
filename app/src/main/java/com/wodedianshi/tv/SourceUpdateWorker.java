@@ -13,6 +13,7 @@ import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
+  private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
@@ -173,7 +174,7 @@ public class SourceUpdateWorker extends Worker {
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
-      long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
+      long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
@@ -187,7 +188,12 @@ public class SourceUpdateWorker extends Worker {
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         if(!visitedUrls.add(e.url))continue;
         checked++;
-        ProbeResult measured=probe(e.url);
+        ProbeResult measured=probe(e.url,probeDeadline);
+        if(probeDeadlineReached(probeDeadline)){
+          // A source interrupted by the global deadline is inconclusive, not a failed source.
+          if(e.savedSource)savedScanned--;else discoveryScanned--;
+          break;
+        }
         // A previously good source that now fails its probe must lose its old high score.
         // Keep the URL as a fallback, but rank it below sources that still pass validation.
         measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
@@ -420,11 +426,12 @@ public class SourceUpdateWorker extends Worker {
   }
   // Sniff the response body as well as the URL: some IPTV gateways expose
   // HLS manifests through extensionless or tokenized endpoint URLs.
-  private ProbeResult probe(String address){
+  private ProbeResult probe(String address,long deadline){
     ProbeResult result=new ProbeResult();
     long started=android.os.SystemClock.elapsedRealtime();
     try{
-      SampleResponse initialResponse=fetchSampleResponse(address,32768);
+      if(probeDeadlineReached(deadline))return result;
+      SampleResponse initialResponse=fetchSampleResponse(address,32768,deadline);
       byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
       if(initialBytes==null||initialBytes.length<7)return result;
       String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
@@ -446,10 +453,11 @@ public class SourceUpdateWorker extends Worker {
         byte[] sample=null;
         long segmentStart=0L;
         for(HlsVariantPolicy.Variant candidate:variants){
+          if(probeDeadlineReached(deadline))return result;
           String candidateManifestUrl=candidate.url;
           String candidateManifest=manifest;
           if(!candidate.url.equals(manifestUrl)){
-            SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536);
+            SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,deadline);
             byte[] variant=variantResponse==null?null:variantResponse.bytes;
             if(variant==null||variant.length==0)continue;
             candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
@@ -463,18 +471,18 @@ public class SourceUpdateWorker extends Worker {
           // Media3 performs AES-128 decryption during playback. Preflight only verifies
           // that the identity key endpoint returns the required 16-byte key; never log or persist it.
           if(resources.aes128Encrypted){
-            byte[] key=fetchSample(resources.encryptionKeyUrl,32);
+            byte[] key=fetchSample(resources.encryptionKeyUrl,32,deadline);
             if(key==null||key.length!=16)continue;
           }
           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
           // Validate its container header before treating the media fragments as usable.
           if(resources.initializationUrl!=null){
-            byte[] initialization=fetchSample(resources.initializationUrl,32768);
+            byte[] initialization=fetchSample(resources.initializationUrl,32768,deadline);
             if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization)))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
-          byte[] candidateSample=fetchSample(candidateSegmentUrl,32768);
+          byte[] candidateSample=fetchSample(candidateSegmentUrl,32768,deadline);
           if(candidateSample==null||(resources.aes128Encrypted?candidateSample.length<16:!looksLikeHlsSegment(candidateSample)))continue;
           mediaUrl=candidateManifestUrl;
           bestBandwidth=candidate.bandwidth;
@@ -491,7 +499,7 @@ public class SourceUpdateWorker extends Worker {
         boolean secondSegmentOk=true;
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
-          byte[] second=fetchSample(secondUrl,8192);
+          byte[] second=fetchSample(secondUrl,8192,deadline);
           secondSegmentOk=second!=null&&(selectedAes128?second.length>=16:looksLikeHlsSegment(second));
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
@@ -528,15 +536,29 @@ public class SourceUpdateWorker extends Worker {
     final String finalUrl;
     SampleResponse(byte[] data,String url){bytes=data;finalUrl=url;}
   }
-  private byte[] fetchSample(String address,int maxBytes)throws Exception{
-    SampleResponse response=fetchSampleResponse(address,maxBytes);
+  private boolean probeDeadlineReached(long deadline){
+    return android.os.SystemClock.elapsedRealtime()>=deadline;
+  }
+  private byte[] fetchSample(String address,int maxBytes,long deadline)throws Exception{
+    SampleResponse response=fetchSampleResponse(address,maxBytes,deadline);
     return response==null?null:response.bytes;
   }
-  private SampleResponse fetchSampleResponse(String address,int maxBytes)throws Exception{
+  private SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline)throws Exception{
     HttpURLConnection c=null;
     try{
       c=(HttpURLConnection)new URL(address).openConnection();
-      c.setConnectTimeout(2500);c.setReadTimeout(3000);c.setInstanceFollowRedirects(true);
+      // URLConnection options must be configured before the first operation that connects it.
+      // Reserve half the remaining budget for connection setup and the rest for response reads.
+      long now=android.os.SystemClock.elapsedRealtime();
+      long remaining=deadline-now;
+      if(remaining<2L)return null;
+      int connectTimeout=(int)Math.min(2500L,Math.max(1L,remaining/2L));
+      int readTimeout=SourceProbeTimePolicy.boundedTimeoutMillis(
+          deadline,now+connectTimeout,3000);
+      if(readTimeout<=0)return null;
+      c.setConnectTimeout(connectTimeout);
+      c.setReadTimeout(readTimeout);
+      c.setInstanceFollowRedirects(true);
       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
       c.setRequestProperty("Range","bytes=0-"+(maxBytes-1));
       int code=c.getResponseCode();if(code<200||code>=400)return null;
@@ -545,10 +567,13 @@ public class SourceUpdateWorker extends Worker {
       String finalUrl=c.getURL().toString();
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[4096];int n,total=0;
-        while((n=in.read(buffer))!=-1&&total<maxBytes){
+        while(total<maxBytes){
+          if(probeDeadlineReached(deadline))return null;
+          n=in.read(buffer);
+          if(n==-1)break;
           int take=Math.min(n,maxBytes-total);out.write(buffer,0,take);total+=take;
-          if(total>=maxBytes)break;
         }
+        if(probeDeadlineReached(deadline))return null;
         return new SampleResponse(out.toByteArray(),finalUrl);
       }
     }finally{if(c!=null)c.disconnect();}
