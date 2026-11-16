@@ -101,22 +101,27 @@ public class SourceUpdateWorker extends Worker {
       // so a saved backup could silently die without ever losing its old score.
       ArrayList<Entry> savedPool=new ArrayList<>();
       HashSet<String> savedPoolUrls=new HashSet<>();
-      for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
-        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
-        String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
-        LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
-        JSONArray sources=channel.optJSONArray("sources");
-        if(sources!=null)for(int j=0;j<sources.length();j++){
-          String u=sources.optString(j,"");
-          if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
-        }
-        String primary=channel.optString("url","");
-        if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
-        for(String u:channelUrls){
-          if(savedPool.size()>=20000)break;
-          // A shared URL only needs one network probe, even if several channel
-          // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
+      // A foreground China-first pass validates newly discovered domestic candidates only.
+      // Avoid allocating up to 20,000 additional saved-source Entry objects while the
+      // TV UI is open; the full rotating health-check pool is retained for background runs.
+      if(!foregroundAtStart){
+        for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
+          JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+          String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
+          LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
+          JSONArray sources=channel.optJSONArray("sources");
+          if(sources!=null)for(int j=0;j<sources.length();j++){
+            String u=sources.optString(j,"");
+            if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
+          }
+          String primary=channel.optString("url","");
+          if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
+          for(String u:channelUrls){
+            if(savedPool.size()>=20000)break;
+            // A shared URL only needs one network probe, even if several channel
+            // entries reference it. Keep the first channel identity for diagnostics.
+            if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
+          }
         }
       }
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
