@@ -326,8 +326,11 @@ public final class LibVlcPlaybackEngine {
                     || "VLC_LIBVLC_RELEASE_BEGIN".equals(stage);
             // Only fsync at native boundaries most likely to terminate the process.
             // UI/layout/stop/diagnostic markers use apply() to avoid repeated main-thread disk stalls.
-            if (crashCriticalBoundary) editor.commit();
-            else editor.apply();
+            // Native-stage breadcrumbs are diagnostic only. commit() forced a
+            // synchronous disk flush on the playback/UI thread immediately before
+            // JNI calls; on slow TV storage that can trigger input-dispatch ANRs.
+            // apply() publishes the latest value in memory now and persists it off-thread.
+            editor.apply();
         } catch (Throwable ignored) { }
     }
 }
