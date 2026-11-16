@@ -1,5 +1,9 @@
 package com.wodedianshi.tv;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -41,10 +45,26 @@ public final class PlaylistParser {
         return result;
     }
 
-    /** Parse line-by-line without allocating a second full split-line array or a
-     *  15k-entry intermediate list. Intended for large user-imported playlists. */
+    /** Compatibility overload for callers that already have an in-memory string. */
     public static int parseEach(String data, int maxEntries, EntryConsumer consumer) {
         if (data == null || data.isEmpty() || maxEntries <= 0 || consumer == null) return 0;
+        try {
+            return parseEach(new StringReader(data), maxEntries, consumer);
+        } catch (IOException impossible) {
+            // StringReader never performs I/O; keep the historical no-throws API.
+            throw new IllegalStateException("Unexpected StringReader failure", impossible);
+        }
+    }
+
+    /**
+     * Parse directly from a stream without materializing the complete playlist or
+     * a split-line array. The caller owns and closes the Reader.
+     */
+    public static int parseEach(Reader source, int maxEntries, EntryConsumer consumer)
+            throws IOException {
+        if (source == null || maxEntries <= 0 || consumer == null) return 0;
+        BufferedReader reader = source instanceof BufferedReader
+                ? (BufferedReader) source : new BufferedReader(source, 8192);
         String name = null;
         String group = "";
         String pendingGroup = "";
@@ -52,18 +72,9 @@ public final class PlaylistParser {
         String tvgId = "";
         String tvgName = "";
         int emitted = 0;
-        int start = 0;
-        while (start < data.length() && emitted < maxEntries) {
-            int end = start;
-            while (end < data.length() && data.charAt(end) != '\n' && data.charAt(end) != '\r') end++;
-            String line = data.substring(start, end).replace("\uFEFF", "").trim();
-            if (end >= data.length()) {
-                start = data.length();
-            } else {
-                char separator = data.charAt(end);
-                start = end + 1;
-                if (separator == '\r' && start < data.length() && data.charAt(start) == '\n') start++;
-            }
+        String rawLine;
+        while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
+            String line = rawLine.replace("\uFEFF", "").trim();
             if (line.isEmpty()) continue;
             if (line.startsWith("#EXTGRP:")) {
                 String extGroup = line.substring(8).trim();
