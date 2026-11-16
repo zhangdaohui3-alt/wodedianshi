@@ -471,6 +471,7 @@ public class MainActivity extends Activity {
     return reader.nextString();
   }
   private void restore(){
+    final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     applyPendingSourceUpdateIfSafe(p);
     String savedChannelsJson=p.getString("channels","[]");
@@ -577,6 +578,9 @@ public class MainActivity extends Activity {
         restoredChannels.add(channel);
       }
       reader.endArray();
+      int restoredSourceCount=0;
+      for(Channel restored:restoredChannels)if(restored!=null&&restored.backups!=null)restoredSourceCount+=restored.backups.size();
+      logCatalogueMemory("restore_parse_ready",restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
     }catch(Exception invalidCatalogue){
       android.util.Log.e("MyTVStartup","saved catalogue JSON parse failed; keeping restore atomic",invalidCatalogue);
       throw new IllegalStateException("本地频道数据格式异常，未载入不完整列表",invalidCatalogue);
@@ -586,6 +590,9 @@ public class MainActivity extends Activity {
       channels.addAll(restoredChannels);
     }
     rebuildChannelIndexes();
+    int indexedSourceCount=0;
+    synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedSourceCount+=restored.backups.size();}
+    logCatalogueMemory("restore_indexes_ready",channels.size(),indexedSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
     if(!p.getBoolean("defaults_loaded",false)){
       if(channels.isEmpty()){
         try(InputStream in=getAssets().open("default_channels.m3u")){
@@ -808,7 +815,9 @@ public class MainActivity extends Activity {
     long persistStarted=android.os.SystemClock.elapsedRealtime();
     int persistedSources=0;
     try {
-      logCatalogueMemory("persist_begin",channels.size(),0,0);
+      int startingChannelCount;
+      synchronized(channels){startingChannelCount=channels.size();}
+      logCatalogueMemory("persist_begin",startingChannelCount,0,0);
       // Take a short, detached snapshot while holding the catalogue lock, then do
       // JSON encoding outside it. Encoding a 9–10 MB catalogue while locked used
       // to block the UI thread's category refresh and remote-control input.
