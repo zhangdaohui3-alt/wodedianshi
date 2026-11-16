@@ -1005,19 +1005,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
   private void scheduleAutomaticSourceUpdates(){
     WorkManager wm=WorkManager.getInstance(this);
-    boolean enabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    boolean enabled=prefs.getBoolean("auto_source_update",true);
     if(!enabled){
       wm.cancelUniqueWork("mytv_periodic_source_update");
       wm.cancelUniqueWork("mytv_startup_source_refresh");
       return;
     }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    // Cache-first startup: the first screen is already rendered before this is
-    // enqueued. Probe saved/discovered sources in the background; never gate UI
-    // or mutate the in-memory channel list during startup.
-    OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
-        .setConstraints(constraints).build();
-    wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
+    // Run the one-time China-first discovery only until at least one configured
+    // feed has been read successfully. Later launches use the 24-hour periodic
+    // worker instead of repeating the same foreground catalogue download.
+    if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
+        enabled,prefs.getLong("source_update_last_success_at",0L))){
+      OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+          .setConstraints(constraints).build();
+      wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
+    }
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
         .setConstraints(constraints).build();
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
@@ -1040,7 +1044,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     boolean enabled=!p.getBoolean("auto_source_update",true);
     p.edit().putBoolean("auto_source_update",enabled).apply();
-    if(enabled)scheduleAutomaticSourceUpdates();else WorkManager.getInstance(this).cancelUniqueWork("mytv_periodic_source_update");
+    if(enabled)scheduleAutomaticSourceUpdates();else{
+      WorkManager wm=WorkManager.getInstance(this);
+      wm.cancelUniqueWork("mytv_periodic_source_update");
+      wm.cancelUniqueWork("mytv_startup_source_refresh");
+    }
     toast(enabled?"后台自动更新已开启（有网络时约每 24 小时检查）":"后台自动更新已关闭；仍可在设置中手动更新");
   }
   private void startManualSourceUpdate(){
