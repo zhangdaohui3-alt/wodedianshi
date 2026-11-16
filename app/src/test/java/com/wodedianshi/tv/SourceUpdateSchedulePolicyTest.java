@@ -26,13 +26,13 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, -1L));
     }
 
-    @Test public void emptyOrUnparseableFeedDoesNotCountAsUsefulDiscovery() {
-        assertFalse(SourceUpdateSchedulePolicy.hasUsableFeedEntries(0));
-        assertFalse(SourceUpdateSchedulePolicy.hasUsableFeedEntries(-1));
+    @Test public void emptyOrUnvalidatedDiscoveryDoesNotCountAsSuccessful() {
+        assertFalse(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(0));
+        assertFalse(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(-1));
     }
 
-    @Test public void parsedFeedEntriesCountAsUsefulDiscovery() {
-        assertTrue(SourceUpdateSchedulePolicy.hasUsableFeedEntries(1));
-        assertTrue(SourceUpdateSchedulePolicy.hasUsableFeedEntries(1200));
+    @Test public void validatedDiscoverySourceCountsAsSuccessful() {
+        assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(1));
+        assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(24));
     }
 }
