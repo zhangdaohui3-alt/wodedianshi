@@ -14,8 +14,8 @@ public final class SourceUpdateSchedulePolicy {
         return automaticUpdatesEnabled && lastSuccessfulUpdateMillis <= 0L;
     }
 
-    /** A feed must yield at least one parsed channel before discovery is marked complete. */
-    public static boolean hasUsableFeedEntries(int parsedEntryCount) {
-        return parsedEntryCount > 0;
+    /** At least one newly discovered source must pass the media preflight. */
+    public static boolean hasValidatedDiscoverySources(int validatedSourceCount) {
+        return validatedSourceCount > 0;
     }
 }
