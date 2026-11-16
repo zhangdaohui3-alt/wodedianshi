@@ -210,7 +210,11 @@ public class MainActivity extends Activity {
       try{restore();}
       catch(Throwable failure){
         restoreFailure=failure;
-        android.util.Log.e("MyTVStartup","saved catalogue restore failed",failure);
+        // OutOfMemoryError is not an Exception. Earlier 128-row batches may
+        // already be visible; rebuild their indexes before opening the UI.
+        try{if(!channels.isEmpty())rebuildChannelIndexes();}
+        catch(Throwable indexFailure){android.util.Log.e("MyTVStartup","restore recovery index rebuild failed",indexFailure);}
+        android.util.Log.e("MyTVStartup","saved catalogue restore failed; retained_channels="+channels.size(),failure);
       }
       // A failed/empty saved-catalogue restore must not leave the channel pane blank.
       // Keep the user's saved JSON untouched; load bundled starter entries into memory
@@ -506,7 +510,8 @@ public class MainActivity extends Activity {
     // on phones/TV boxes this peak heap can kill the process around 10k-20k rows.
     // Build into a temporary list and publish only after the entire JSON is valid,
     // so a malformed/interrupted restore can never leave a half-loaded catalogue.
-    ArrayList<Channel> restoredChannels=new ArrayList<>();
+    ArrayList<Channel> restoredChannels=new ArrayList<>(128);
+    int publishedRestoreChannels=0;
     try(android.util.JsonReader reader=new android.util.JsonReader(
         new java.io.StringReader(savedChannelsJson))){
       reader.beginArray();
@@ -600,17 +605,34 @@ public class MainActivity extends Activity {
         }
         channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
         restoredChannels.add(channel);
+        // Publish small batches during startup. A large catalogue must not remain
+        // invisible until its final row parses: if a later row is corrupt or the
+        // device runs short of heap, the already decoded channels remain usable.
+        if(restoredChannels.size()>=128){
+          synchronized(channels){channels.addAll(restoredChannels);}
+          publishedRestoreChannels+=restoredChannels.size();
+          restoredChannels.clear();
+          android.util.Log.i("MyTVStartup","restore_batch_published channels="+publishedRestoreChannels);
+        }
       }
       reader.endArray();
       int restoredSourceCount=0;
       for(Channel restored:restoredChannels)if(restored!=null&&restored.backups!=null)restoredSourceCount+=restored.backups.size();
-      logCatalogueMemory("restore_parse_ready",restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
+      logCatalogueMemory("restore_parse_ready",publishedRestoreChannels+restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
     }catch(Exception invalidCatalogue){
-      android.util.Log.e("MyTVStartup","saved catalogue JSON parse failed; keeping restore atomic",invalidCatalogue);
-      throw new IllegalStateException("本地频道数据格式异常，未载入不完整列表",invalidCatalogue);
+      // Keep both completed batches and the final partial batch visible. Never
+      // replace the saved JSON; diagnostics retain the original failure details.
+      synchronized(channels){channels.addAll(restoredChannels);}
+      publishedRestoreChannels+=restoredChannels.size();
+      restoredChannels.clear();
+      try{rebuildChannelIndexes();}catch(Throwable indexFailure){
+        android.util.Log.e("MyTVStartup","partial restore index rebuild failed",indexFailure);
+      }
+      android.util.Log.e("MyTVStartup","saved catalogue JSON parse failed; partial channels retained="
+          +publishedRestoreChannels,invalidCatalogue);
+      throw new IllegalStateException("本地频道数据格式异常，已保留成功恢复的频道",invalidCatalogue);
     }
     synchronized(channels){
-      channels.clear();
       channels.addAll(restoredChannels);
     }
     rebuildChannelIndexes();
