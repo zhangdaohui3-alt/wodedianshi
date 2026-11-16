@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
   // Snapshot of the last catalogue JSON this Activity restored or persisted.
   // It lets onStart detect safe background-worker updates while this Activity was stopped.
   private volatile String lastPersistedChannelsJson=null;
+  // Invalidates a queued reload when a newer foreground return supersedes it.
   private Runnable sourceUpdateActivityHeartbeat;
   private boolean activityStarted=false;
   private static volatile boolean crashHandlerInstalled=false;
@@ -5704,14 +5705,7 @@ public class MainActivity extends Activity {
     activityStarted=true;
     setSourceUpdateActivityActive(true);
     if(startupDataReady){
-      try{
-        applyPendingSourceUpdateIfSafe(getSharedPreferences("mytv",0));
-        reloadChannelsAfterBackgroundUpdateIfNeeded();
-      }
-      catch(RuntimeException reloadFailure){
-        android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
-        saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
-      }
+      reloadChannelsAfterBackgroundUpdateIfNeeded();
     }
     remoteLockUiActive=true;
     if(remoteParentLockManager!=null){remoteParentLockManager.start();if(remoteParentLockManager.isLocked())enforceRemoteParentLock(remoteParentLockManager.getLockReason());}
@@ -5775,12 +5769,19 @@ public class MainActivity extends Activity {
   // A Worker may safely refresh the persisted catalogue only while this Activity is
   // stopped. On returning, reload its newer cache before any later persist() can
   // serialize an old in-memory list over the updated backup sources.
+  private volatile long backgroundCatalogueReloadGeneration=0L;
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
-    if(!startupDataReady)return;
-    final long reloadStarted=android.os.SystemClock.elapsedRealtime();
-    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    String raw=prefs.getString("channels","[]");
-    if(raw.equals(lastPersistedChannelsJson))return;
+    if(!startupDataReady||isFinishing()||isDestroyed())return;
+    final long generation=++backgroundCatalogueReloadGeneration;
+    final String expectedPersisted=lastPersistedChannelsJson;
+    try{
+      worker.execute(()->{
+        try{
+          android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+          applyPendingSourceUpdateIfSafe(prefs);
+          String raw=prefs.getString("channels","[]");
+          if(raw.equals(expectedPersisted))return;
+          final long reloadStarted=android.os.SystemClock.elapsedRealtime();
     ArrayList<Channel> refreshed=new ArrayList<>();
     // Keep this return-from-background path aligned with startup restore: streaming
     // avoids constructing a second full JSONArray/JSONObject tree beside the
@@ -5867,7 +5868,11 @@ public class MainActivity extends Activity {
     }catch(Exception invalidCatalogue){
       throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
     }
-
+          uiHandler.post(()->{
+            if(!activityStarted||isFinishing()||isDestroyed()
+                ||generation!=backgroundCatalogueReloadGeneration
+                ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted)
+                ||!raw.equals(prefs.getString("channels","[]")))return;
     String selectedIdentity="";
     String selectedName="";
     String selectedGroup="";
@@ -5913,6 +5918,15 @@ public class MainActivity extends Activity {
     lastPersistedChannelsJson=raw;
     refresh();
     android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
+          });
+        }catch(RuntimeException reloadFailure){
+          android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
+          saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
+        }
+      });
+    }catch(RuntimeException rejected){
+      android.util.Log.e("MyTVStartup","background catalogue reload was rejected",rejected);
+    }
   }
 
   private void setSourceUpdatePlaybackActive(boolean active){
