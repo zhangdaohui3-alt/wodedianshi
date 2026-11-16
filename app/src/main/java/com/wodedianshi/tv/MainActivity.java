@@ -816,7 +816,7 @@ public class MainActivity extends Activity {
           copy.backupSourceScopes.clear();
           for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet())
             copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-          if(copy.sourceScopes.isEmpty())copy.sourceScopes.add("custom");
+          // Preserve an empty scope set for legacy channels with unknown provenance.
           copy.backups.clear();
           if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
           if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
