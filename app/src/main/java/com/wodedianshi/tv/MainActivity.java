@@ -4378,7 +4378,10 @@ public class MainActivity extends Activity {
       getSharedPreferences("mytv",0).edit()
           .putString("last_native_engine_stage_v1",value)
           .putLong("last_native_engine_stage_time_v1",System.currentTimeMillis())
-          .commit();
+          // apply() updates the in-memory snapshot immediately and writes on the
+          // preferences worker. commit() here ran on the UI thread for every
+          // player stage and could stall tune/startup on slower TV storage.
+          .apply();
     }catch(RuntimeException ignored){}
   }
   private void saveLiveDiagnostic(String stage,String detail){
