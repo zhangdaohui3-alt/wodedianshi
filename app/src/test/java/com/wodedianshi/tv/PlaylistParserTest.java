@@ -1,6 +1,9 @@
 package com.wodedianshi.tv;
 
 import org.junit.Test;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.List;
 import static org.junit.Assert.*;
 
@@ -26,6 +29,34 @@ public class PlaylistParserTest {
         });
         assertEquals(2, parsed);
         assertEquals(2, count[0]);
+    }
+
+    @Test public void readerParserHandlesBomAndCrOnlyLines() throws IOException {
+        String m3u = "\uFEFF#EXTM3U\r"
+                + "#EXTINF:-1 tvg-id=\"CCTV1\" group-title=\"央视\",中央电视台综合频道\r"
+                + "https://example.com/cctv1.m3u8\r";
+        ArrayList<PlaylistParser.ChannelSource> items = new ArrayList<>();
+        int parsed;
+        try (StringReader reader = new StringReader(m3u)) {
+            parsed = PlaylistParser.parseEach(reader, 10, items::add);
+        }
+        assertEquals(1, parsed);
+        assertEquals(1, items.size());
+        assertEquals("CCTV1", items.get(0).tvgId);
+        assertEquals("央视", items.get(0).group);
+        assertEquals("中央电视台综合频道", items.get(0).name);
+    }
+
+    @Test public void readerParserStopsAtTheRequestedEntryLimit() throws IOException {
+        String m3u = "#EXTINF:-1,A\nhttps://a.example/live\n"
+                + "#EXTINF:-1,B\nhttps://b.example/live\n"
+                + "#EXTINF:-1,C\nhttps://c.example/live";
+        ArrayList<PlaylistParser.ChannelSource> items = new ArrayList<>();
+        try (StringReader reader = new StringReader(m3u)) {
+            assertEquals(2, PlaylistParser.parseEach(reader, 2, items::add));
+        }
+        assertEquals(2, items.size());
+        assertEquals("B", items.get(1).name);
     }
 
     @Test public void usesTvgNameWhenDisplayNameIsMissing() {
