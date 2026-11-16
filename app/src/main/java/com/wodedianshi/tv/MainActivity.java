@@ -5781,40 +5781,85 @@ public class MainActivity extends Activity {
     String raw=prefs.getString("channels","[]");
     if(raw.equals(lastPersistedChannelsJson))return;
     ArrayList<Channel> refreshed=new ArrayList<>();
-    try{
-      org.json.JSONArray data=new org.json.JSONArray(raw);
-      for(int i=0;i<data.length();i++){
-        org.json.JSONObject item=data.getJSONObject(i);
-        Channel channel=new Channel(item.getString("name"),item.getString("url"),item.optString("group",""));
-        channel.tvgId=item.optString("tvgId","");
-        channel.tvgName=item.optString("tvgName","");
-        org.json.JSONArray scopes=item.optJSONArray("sourceScopes");
-        if(scopes!=null)for(int j=0;j<scopes.length();j++){
-          String scope=scopes.optString(j,"");
-          if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))channel.sourceScopes.add(scope);
-        }
-        // Empty means legacy provenance is unknown, not that the channel is custom.
-        org.json.JSONArray sources=item.optJSONArray("sources");
-        if(sources!=null){
-          channel.backups.clear();
-          for(int j=0;j<sources.length();j++){
-            String url=sources.optString(j,"");
-            if(url.startsWith("http://")||url.startsWith("https://"))channel.backups.add(url);
+    // Keep this return-from-background path aligned with startup restore: streaming
+    // avoids constructing a second full JSONArray/JSONObject tree beside the
+    // large SharedPreferences string. Publish only after the complete array parses.
+    try(android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(raw))){
+      reader.beginArray();
+      while(reader.hasNext()){
+        String name="",url="",group="",tvgId="",tvgName="";
+        int activeSource=0;
+        ArrayList<String> sources=null;
+        HashSet<String> scopes=null;
+        HashMap<String,HashSet<String>> ownership=null;
+        reader.beginObject();
+        while(reader.hasNext()){
+          String field=reader.nextName();
+          switch(field){
+            case "name":name=readCatalogueJsonString(reader,"");break;
+            case "url":url=readCatalogueJsonString(reader,"");break;
+            case "group":group=readCatalogueJsonString(reader,"");break;
+            case "tvgId":tvgId=readCatalogueJsonString(reader,"");break;
+            case "tvgName":tvgName=readCatalogueJsonString(reader,"");break;
+            case "activeSource":
+              String savedIndex=readCatalogueJsonString(reader,"0");
+              try{activeSource=Integer.parseInt(savedIndex);}catch(NumberFormatException ignored){activeSource=0;}
+              break;
+            case "sources":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              sources=new ArrayList<>();reader.beginArray();
+              while(reader.hasNext()){
+                String source=readCatalogueJsonString(reader,"");
+                if(source.startsWith("http://")||source.startsWith("https://"))sources.add(source);
+              }
+              reader.endArray();break;
+            case "sourceScopes":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              scopes=new HashSet<>();reader.beginArray();
+              while(reader.hasNext()){
+                String scope=readCatalogueJsonString(reader,"");
+                if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))scopes.add(scope);
+              }
+              reader.endArray();break;
+            case "backupSourceScopes":
+              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
+              ownership=new HashMap<>();reader.beginArray();
+              while(reader.hasNext()){
+                String source="";HashSet<String> sourceScopes=new HashSet<>();reader.beginObject();
+                while(reader.hasNext()){
+                  String key=reader.nextName();
+                  if("url".equals(key))source=readCatalogueJsonString(reader,"");
+                  else if("scopes".equals(key)){
+                    reader.beginArray();
+                    while(reader.hasNext()){
+                      String scope=readCatalogueJsonString(reader,"");
+                      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))sourceScopes.add(scope);
+                    }
+                    reader.endArray();
+                  }else reader.skipValue();
+                }
+                reader.endObject();
+                if(!source.isEmpty()&&!sourceScopes.isEmpty())ownership.put(source,sourceScopes);
+              }
+              reader.endArray();break;
+            default:reader.skipValue();break;
           }
+        }
+        reader.endObject();
+        if(name.isEmpty()||url.isEmpty())continue;
+        Channel channel=new Channel(name,url,group);
+        channel.tvgId=tvgId;channel.tvgName=tvgName;
+        if(scopes!=null)channel.sourceScopes.addAll(scopes);
+        // Empty means legacy provenance is unknown, not that the channel is custom.
+        if(sources!=null){
+          channel.backups.clear();channel.backups.addAll(sources);
           if(channel.backups.isEmpty())channel.backups.add(channel.url);
         }
-        org.json.JSONArray ownership=item.optJSONArray("backupSourceScopes");
-        if(ownership!=null)for(int j=0;j<ownership.length();j++){
-          org.json.JSONObject owned=ownership.optJSONObject(j);if(owned==null)continue;
-          String source=owned.optString("url","");org.json.JSONArray values=owned.optJSONArray("scopes");
-          if(source.isEmpty()||values==null)continue;
-          HashSet<String> valid=new HashSet<>();
-          for(int k=0;k<values.length();k++){String scope=values.optString(k,"");if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))valid.add(scope);}
-          if(!valid.isEmpty())channel.backupSourceScopes.put(source,valid);
-        }
-        channel.activeSource=Math.max(0,Math.min(item.optInt("activeSource",0),channel.backups.size()-1));
+        if(ownership!=null)channel.backupSourceScopes.putAll(ownership);
+        channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
         refreshed.add(channel);
       }
+      reader.endArray();
     }catch(Exception invalidCatalogue){
       throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
     }
