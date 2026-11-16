@@ -3409,7 +3409,8 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=60;
+    // Keep the catalogue complete, but limit live View inflation per page on low-memory TV boxes.
+    final int maxRows=48;
     int selectedPosition=-1;
     if(selectedKey!=null)for(int i=0;i<visible.size();i++)if(selectedKey.equals(visible.get(i).key())){selectedPosition=i;break;}
     livePageIndex=selectedPosition>=0?selectedPosition/maxRows:Math.max(0,requestedPage);
@@ -3481,7 +3482,7 @@ public class MainActivity extends Activity {
     return lastFilteredMatchCount;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+59)/60);
+    int pages=Math.max(1,(total+47)/48);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){
