@@ -30,7 +30,7 @@ public class SourceUpdateWorker extends Worker {
     // Do not postpone the first useful catalogue refresh just because the TV UI is open.
     // While foregrounded, process China/HK/MO/TW first; global feeds remain deferred.
     final boolean foregroundAtStart=isActivityActive(prefs);
-    int added=0,feedsOk=0,feedsFailed=0,checked=0;
+    int added=0,feedsOk=0,feedsWithEntries=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
        // China-first discovery: domestic and regional channels are read before the global index.
@@ -143,6 +143,7 @@ public class SourceUpdateWorker extends Worker {
           if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
           ArrayList<Entry> feedCandidates=new ArrayList<>();
           parsePlaylist(data,feedCandidates,scopeForFeed(feed));
+          if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
           feedsOk++;
@@ -280,11 +281,11 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_update_pending_base",channelsSnapshot)
           .putString("source_update_pending_channels",saved.toString())
           .putString("source_update_time",now())
-          .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
-      // A readable feed is enough to finish the one-time discovery. If every
-      // feed is unavailable, leave this unset so WorkManager retries and a later
-      // app launch can schedule discovery again after a terminal failure.
-      if(feedsOk>0)update.putLong("source_update_last_success_at",System.currentTimeMillis());
+          .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":"成功读取 "+feedsOk+" 个目录，其中 "+feedsWithEntries+" 个包含频道条目；"))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+      // Do not mark initial discovery complete for an HTTP-200 but empty or
+      // unparseable playlist. A later app launch can retry the initial discovery.
+      if(SourceUpdateSchedulePolicy.hasUsableFeedEntries(feedsWithEntries))
+        update.putLong("source_update_last_success_at",System.currentTimeMillis());
       update.apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
