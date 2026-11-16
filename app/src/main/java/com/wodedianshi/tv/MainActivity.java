@@ -39,7 +39,7 @@ import androidx.work.WorkInfo;
 import java.util.concurrent.TimeUnit;
 
 @UnstableApi
-public class MainActivity extends Activity {
+public class MainActivity extends androidx.activity.ComponentActivity {
   // Read by Media3's playback-thread frame callback as well as the UI thread.
   private volatile ExoPlayer player;
   private boolean decoderInventoryRecorded=false;
