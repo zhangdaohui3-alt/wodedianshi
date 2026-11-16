@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
     final HashSet<String> sourceScopes = new HashSet<>();
     final HashMap<String,HashSet<String>> backupSourceScopes = new HashMap<>();
     int activeSource = 0;
-    Channel(String n,String u,String g){name=n;url=u;backups.add(u);}
+    Channel(String n,String u,String g){name=n;url=u;group=g==null?"":g;backups.add(u);}
     void addBackupSource(String source,String scope){
       if(source==null||source.isEmpty())return;
       if(backups==null)backups=new ArrayList<>();
@@ -336,7 +336,8 @@ public class MainActivity extends Activity {
         if(index<0||index>=channels.size())continue;
         Channel channel=channels.get(index);
         String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channel.name):channel.name;
-        String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channel.group.isEmpty()?"":" · "+channel.group);
+        String channelGroup=channel.group==null?"":channel.group;
+        String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
         ((Button)child).setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
         ((Button)child).setContentDescription(index==selected?"当前正在播放："+title:title);
         applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
@@ -3270,7 +3271,7 @@ public class MainActivity extends Activity {
             if(!matches)continue;
           }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
           String display=displayChannelName(c);
-          if(!c.name.toLowerCase(Locale.ROOT).contains(query)&&!c.group.toLowerCase(Locale.ROOT).contains(query)
+          if(!c.name.toLowerCase(Locale.ROOT).contains(query)&&!(c.group==null?"":c.group).toLowerCase(Locale.ROOT).contains(query)
               &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
           visible.add(c);
         }
@@ -3327,7 +3328,8 @@ public class MainActivity extends Activity {
       Channel c=visible.get(row);
       final String channelKey=c.key();
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):c.name;
-      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(c.group.isEmpty()?"":" · "+c.group);
+      String channelGroup=c.group==null?"":c.group;
+      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
       final int currentIndex=findChannelIndexByKey(channelKey);
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
@@ -3889,7 +3891,7 @@ public class MainActivity extends Activity {
         StringBuilder b=new StringBuilder("#EXTM3U\n");
         synchronized(channels){
           for(Channel c:channels){
-            String group=c.group.replace("\"","'");
+            String group=(c.group==null?"":c.group).replace("\"","'");
             String name=c.name.replace("\n"," ").replace("\r"," ").replace("\"","'");
             for(String source:c.backups){
               b.append("#EXTINF:-1 group-title=\"").append(group).append("\",").append(name).append("\n")
@@ -4132,7 +4134,7 @@ public class MainActivity extends Activity {
         Channel c=channels.get(i);
         if(favoriteMode&&!favorites.contains(c.key()))continue;
         if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!(c.group==null?"":c.group).toLowerCase(Locale.ROOT).contains(q)
             &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
         order.add(i);
       }
@@ -5933,7 +5935,7 @@ public class MainActivity extends Activity {
       if(found<0){
         for(int i=0;i<channels.size();i++){
           Channel candidate=channels.get(i);
-          if(candidate.name.equals(selectedName)&&candidate.group.equals(selectedGroup)){found=i;break;}
+          if(candidate.name.equals(selectedName)&&java.util.Objects.equals(candidate.group,selectedGroup)){found=i;break;}
         }
       }
       selected=found;
