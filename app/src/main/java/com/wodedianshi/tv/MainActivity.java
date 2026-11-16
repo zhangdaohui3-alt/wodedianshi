@@ -3104,8 +3104,16 @@ public class MainActivity extends Activity {
     return matchesProvinceCity(c,activeLocalProvince,activeLocalCity);
   }
   private boolean categoryMatch(Channel c,String cat){
-    String x=(c.name+" "+c.group+" "+c.tvgName+" "+c.tvgId).toLowerCase(Locale.ROOT);
-    String g=c.group.toLowerCase(Locale.ROOT);
+    if(c==null||cat==null)return false;
+    // Legacy/imported M3U entries may omit group or metadata fields. Category
+    // counting runs before a refresh, so a single incomplete record must never
+    // crash the UI or prevent the rest of the saved catalogue from being counted.
+    String name=c.name==null?"":c.name;
+    String group=c.group==null?"":c.group;
+    String tvgName=c.tvgName==null?"":c.tvgName;
+    String tvgId=c.tvgId==null?"":c.tvgId;
+    String x=(name+" "+group+" "+tvgName+" "+tvgId).toLowerCase(Locale.ROOT);
+    String g=group.toLowerCase(Locale.ROOT);
     if(cat.equals("自建频道"))return "自建频道".equals(g)||"自定义".equals(g);
     if(cat.startsWith("城市:")){
       String city=cat.substring(3);
