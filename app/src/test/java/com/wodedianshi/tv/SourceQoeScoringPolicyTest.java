@@ -22,6 +22,22 @@ public class SourceQoeScoringPolicyTest {
         assertTrue(renderedAndStable > readyOnly);
     }
 
+    @Test public void videoSourceNeedsAConfirmedRenderedFirstFrameForStableSuccess() {
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                true, false, true, true));
+        assertTrue(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                true, true, true, true));
+    }
+
+    @Test public void audioOnlySourceNeedsAdvancingSelectedAudio() {
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, true, false));
+        assertTrue(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, true, true));
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, false, true));
+    }
+
     @Test public void codecWarningsRemainSmallAndNeverBecomeFailures() {
         double clean = SourceQoeScoringPolicy.adjustment(4, 4, 4, 2, 0, 0, 1000L, 500L, 0);
         double warning = SourceQoeScoringPolicy.adjustment(4, 4, 4, 2, 0, 0, 1000L, 500L, 1);
