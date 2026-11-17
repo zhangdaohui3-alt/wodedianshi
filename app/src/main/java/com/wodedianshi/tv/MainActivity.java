@@ -350,9 +350,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
-        // Build the Room copy only after the original SharedPreferences catalogue
-        // has been restored and the UI is usable. The import is transactional and
-        // leaves both legacy channels and favorites untouched on any failure.
+        // Transitional single-store audit: the complete catalogue already includes
+        // China, international and custom rows with per-source scope metadata.
+        // Import it once into the master Room database; do not build duplicate
+        // regional databases from the same large SharedPreferences snapshot.
         if(restoreSucceeded&&!channels.isEmpty()){
           worker.execute(()->{
             try{
@@ -360,23 +361,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               com.wodedianshi.tv.db.LegacyCatalogueImporter.Result result=
                   com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(
                       getApplicationContext(),legacy);
-              android.util.Log.i("MyTVRoomMigration","validated channels="+result.channels
+              android.util.Log.i("MyTVRoomMigration","single_store validated channels="+result.channels
                   +" backup_sources="+result.sources+" favorites="+result.favorites);
-              // China-first split store: only explicitly China-tagged records are
-              // copied. The legacy catalogue remains authoritative and untouched.
-              com.wodedianshi.tv.db.LegacyCatalogueImporter.Result chinaResult=
-                  com.wodedianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(
-                      getApplicationContext(),legacy);
-              android.util.Log.i("MyTVRoomMigration","china_store validated channels="+chinaResult.channels
-                  +" backup_sources="+chinaResult.sources+" favorites="+chinaResult.favorites);
-              com.wodedianshi.tv.db.LegacyCatalogueImporter.Result internationalResult=
-                  com.wodedianshi.tv.db.LegacyCatalogueImporter.importInternationalIfNeeded(
-                      getApplicationContext(),legacy);
-              android.util.Log.i("MyTVRoomMigration","international_store validated channels="+internationalResult.channels
-                  +" backup_sources="+internationalResult.sources+" favorites="+internationalResult.favorites);
             }catch(Throwable migrationFailure){
               android.util.Log.e("MyTVRoomMigration",
-                  "background import failed; legacy catalogue remains authoritative",migrationFailure);
+                  "background import failed; SharedPreferences remains temporarily authoritative",
+                  migrationFailure);
               saveLiveDiagnostic("ROOM_IMPORT_ERROR",
                   migrationFailure.getClass().getSimpleName()+": "+String.valueOf(migrationFailure.getMessage()));
             }
@@ -3831,36 +3821,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
-  // Keep all three Room stores current after a completed catalogue import.
-  // This runs only on a background worker and only after the legacy save succeeds;
-  // a failed Room transaction leaves the previous committed snapshots intact.
+  // Transitional single-store reconciliation. China/international are scope
+  // filters over the complete catalogue, not independent databases.
   private void syncRoomCataloguesAfterSave(){
     try{
       android.content.SharedPreferences saved=getSharedPreferences("mytv",0);
       com.wodedianshi.tv.db.LegacyCatalogueImporter.Result all=
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(getApplicationContext(),saved);
-      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result china=
-          com.wodedianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(getApplicationContext(),saved);
-      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result international=
-          com.wodedianshi.tv.db.LegacyCatalogueImporter.importInternationalIfNeeded(getApplicationContext(),saved);
-      // Import completion is not enough for a future read cutover: verify all
-      // three independent snapshots again through their read-side repositories.
       boolean masterReady=new com.wodedianshi.tv.db.MasterCatalogueRepository(
           getApplicationContext()).isSnapshotReady();
-      boolean chinaReady=new com.wodedianshi.tv.db.ChinaCatalogueRepository(
-          getApplicationContext()).isSnapshotReady();
-      boolean internationalReady=new com.wodedianshi.tv.db.InternationalCatalogueRepository(
-          getApplicationContext()).isSnapshotReady();
-      if(!masterReady||!chinaReady||!internationalReady){
-        throw new IllegalStateException("Room snapshot readiness mismatch master="+masterReady
-            +" china="+chinaReady+" international="+internationalReady);
-      }
-      android.util.Log.i("MyTVRoomSync","catalogues reconciled and verified all="+all.channels
-          +" china="+china.channels+" international="+international.channels
-          +" masterReady="+masterReady+" chinaReady="+chinaReady
-          +" internationalReady="+internationalReady);
+      if(!masterReady)throw new IllegalStateException("single Room catalogue snapshot is not ready");
+      android.util.Log.i("MyTVRoomSync","single catalogue reconciled channels="+all.channels
+          +" backup_sources="+all.sources+" favorites="+all.favorites);
     }catch(Throwable failure){
-      android.util.Log.e("MyTVRoomSync","catalogue reconcile failed; previous Room snapshots retained",failure);
+      android.util.Log.e("MyTVRoomSync","single catalogue reconcile failed",failure);
       saveLiveDiagnostic("ROOM_RECONCILE_ERROR",
           failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
     }
