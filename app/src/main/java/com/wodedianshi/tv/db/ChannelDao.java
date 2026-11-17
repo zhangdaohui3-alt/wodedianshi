@@ -81,9 +81,8 @@ public interface ChannelDao {
 
     // Legacy favorites are keyed by name|primaryUrl. Update every matching row
     // so duplicate legacy entries keep the same behavior as the old Set<String>.
-    @Query("INSERT OR REPLACE INTO favorites(channelId, addedAt) "
-            + "SELECT id, :addedAt FROM channels WHERE legacyKey = :legacyKey")
-    void addFavoritesForLegacyKey(String legacyKey, long addedAt);
+    @Query("SELECT id FROM channels WHERE legacyKey = :legacyKey")
+    List<String> getChannelIdsByLegacyKey(String legacyKey);
 
     @Query("DELETE FROM favorites WHERE channelId IN "
             + "(SELECT id FROM channels WHERE legacyKey = :legacyKey)")

@@ -19,10 +19,16 @@ public final class RoomShadowSync {
         // A missing checkpoint means the initial shadow import has not completed.
         // Do not manufacture partial rows or make Room authoritative by accident.
         if (dao.getMigration(LegacyCatalogueImporter.MIGRATION_KEY) == null) return;
+        java.util.List<String> channelIds = dao.getChannelIdsByLegacyKey(legacyKey);
         if (favorite) {
-            dao.addFavoritesForLegacyKey(legacyKey, System.currentTimeMillis());
+            long addedAt = System.currentTimeMillis();
+            for (String channelId : channelIds) {
+                dao.addFavorite(new FavoriteEntity(channelId, addedAt));
+            }
         } else {
-            dao.removeFavoritesForLegacyKey(legacyKey);
+            for (String channelId : channelIds) {
+                dao.removeFavorite(channelId);
+            }
         }
     }
 
