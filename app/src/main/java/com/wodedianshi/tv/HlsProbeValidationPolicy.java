@@ -12,4 +12,9 @@ public final class HlsProbeValidationPolicy {
     public static boolean acceptsSecondSegment(boolean secondSegmentValid) {
         return secondSegmentValid;
     }
+
+    /** A capped sample is not a complete resource, even when its byte count equals the cap. */
+    public static boolean isCompleteSample(boolean truncated) {
+        return !truncated;
+    }
 }
