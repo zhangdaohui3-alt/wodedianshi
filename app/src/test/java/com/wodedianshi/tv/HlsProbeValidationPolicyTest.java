@@ -11,4 +11,9 @@ public class HlsProbeValidationPolicyTest {
     @Test public void rejectsMissingOrInvalidSecondSegment() {
         assertFalse(HlsProbeValidationPolicy.acceptsSecondSegment(false));
     }
+
+    @Test public void distinguishesTruncatedSamplesFromCompleteResources() {
+        assertFalse(HlsProbeValidationPolicy.isCompleteSample(true));
+        assertTrue(HlsProbeValidationPolicy.isCompleteSample(false));
+    }
 }
