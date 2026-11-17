@@ -61,7 +61,7 @@ public class PlaylistParserTest {
     }
 
     @Test public void readerParserKeepsEntriesBeforeTransientReadFailure() throws IOException {
-        String prefix = "#EXTINF:-1,已解析频道\\nhttps://a.example/live\\n";
+        String prefix = "#EXTINF:-1,已解析频道\nhttps://a.example/live\n";
         Reader failingReader = new Reader() {
             private int offset;
             @Override public int read(char[] buffer, int start, int length) throws IOException {
