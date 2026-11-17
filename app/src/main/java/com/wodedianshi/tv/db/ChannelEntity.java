@@ -13,6 +13,7 @@ import androidx.room.PrimaryKey;
     indices = {@Index("categoryId"), @Index("name"), @Index("groupName")})
 public class ChannelEntity {
     @PrimaryKey @NonNull public String id;
+    @NonNull public String legacyKey;
     @NonNull public String name;
     @NonNull public String primaryUrl;
     @NonNull public String groupName;
@@ -29,6 +30,7 @@ public class ChannelEntity {
             @NonNull String tvgName, @NonNull String channelScopesJson,
             int activeSource, int sortOrder) {
         this.id = id;
+        this.legacyKey = legacyKey;
         this.name = name;
         this.primaryUrl = primaryUrl;
         this.groupName = groupName;
