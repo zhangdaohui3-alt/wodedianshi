@@ -33,12 +33,12 @@ public interface ChannelDao {
 
     // Lightweight paged projection for startup/category rendering. Unlike
     // ChannelWithSources, this query does not load backup_sources relations.
-    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+    @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
             + "activeSource, sortOrder FROM channels WHERE categoryId = :categoryId "
             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
     List<ChannelListRow> getChannelListPage(String categoryId, int limit, int offset);
 
-    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+    @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
             + "activeSource, sortOrder FROM channels ORDER BY sortOrder, name, id "
             + "LIMIT :limit OFFSET :offset")
     List<ChannelListRow> getAllChannelListPage(int limit, int offset);
@@ -69,7 +69,7 @@ public interface ChannelDao {
     @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name, id")
     List<ChannelWithSources> searchChannels(String query);
 
-    @Query("SELECT c.id, c.name, c.primaryUrl, c.groupName, c.categoryId, c.tvgId, "
+    @Query("SELECT c.id, c.legacyKey, c.name, c.primaryUrl, c.groupName, c.categoryId, c.tvgId, "
             + "c.tvgName, c.activeSource, c.sortOrder FROM channels c "
             + "INNER JOIN favorites f ON f.channelId = c.id "
             + "ORDER BY f.addedAt DESC, c.sortOrder, c.name, c.id "
@@ -81,7 +81,7 @@ public interface ChannelDao {
 
     // Search projections stay lightweight too: the list screen does not need
     // to load every backup-source relation just to show matching channel names.
-    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+    @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
             + "activeSource, sortOrder FROM channels "
             + "WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' "
             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
