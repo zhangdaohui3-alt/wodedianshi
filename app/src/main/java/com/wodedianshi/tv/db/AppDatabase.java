@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase;
     BackupSourceEntity.class,
     FavoriteEntity.class,
     CatalogueMigrationEntity.class
-}, version = 3, exportSchema = true)
+}, version = 4, exportSchema = true)
 public abstract class AppDatabase extends RoomDatabase {
     public abstract ChannelDao channelDao();
 }
