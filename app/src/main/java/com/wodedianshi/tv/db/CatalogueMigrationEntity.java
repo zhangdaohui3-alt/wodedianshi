@@ -13,15 +13,17 @@ public class CatalogueMigrationEntity {
     public int channelsCount;
     public int backupSourcesCount;
     public int favoritesCount;
+    @ColumnInfo(defaultValue = "0") public int categoriesCount;
     public long completedAt;
 
     public CatalogueMigrationEntity(@NonNull String migrationKey, int channelsCount,
-            int backupSourcesCount, int favoritesCount, long completedAt, @NonNull String catalogueFingerprint) {
+            int backupSourcesCount, int favoritesCount, int categoriesCount, long completedAt, @NonNull String catalogueFingerprint) {
         this.migrationKey = migrationKey;
         this.catalogueFingerprint = catalogueFingerprint;
         this.channelsCount = channelsCount;
         this.backupSourcesCount = backupSourcesCount;
         this.favoritesCount = favoritesCount;
+        this.categoriesCount = categoriesCount;
         this.completedAt = completedAt;
     }
 }
