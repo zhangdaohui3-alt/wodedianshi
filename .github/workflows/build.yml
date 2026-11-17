@@ -8,7 +8,12 @@ on:
       - 'fix/**'
       - 'upgrade/**'
       - 'feat/**'
-      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+      - 'fix/**'
+      - 'upgrade/**'
+      - 'feat/**'
 
 concurrency:
   # Keep builds on separate branches from cancelling each other.
