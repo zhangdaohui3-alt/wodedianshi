@@ -334,6 +334,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                       getApplicationContext(),legacy);
               android.util.Log.i("MyTVRoomMigration","validated channels="+result.channels
                   +" backup_sources="+result.sources+" favorites="+result.favorites);
+              // China-first split store: only explicitly China-tagged records are
+              // copied. The legacy catalogue remains authoritative and untouched.
+              com.wodedianshi.tv.db.LegacyCatalogueImporter.Result chinaResult=
+                  com.wodedianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(
+                      getApplicationContext(),legacy);
+              android.util.Log.i("MyTVRoomMigration","china_store validated channels="+chinaResult.channels
+                  +" backup_sources="+chinaResult.sources+" favorites="+chinaResult.favorites);
             }catch(Throwable migrationFailure){
               android.util.Log.e("MyTVRoomMigration",
                   "background import failed; legacy catalogue remains authoritative",migrationFailure);

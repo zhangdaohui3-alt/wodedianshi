@@ -40,15 +40,29 @@ public final class LegacyCatalogueImporter {
     }
 
     public static Result importIfNeeded(Context context, SharedPreferences prefs) throws Exception {
-        if (context == null || prefs == null) throw new IllegalArgumentException("context/prefs is null");
-        AppDatabase db = RoomDatabaseProvider.get(context);
+        return importInto(context, prefs, RoomDatabaseProvider.get(context), MIGRATION_KEY, null);
+    }
+
+    /** Imports only records explicitly tagged as China into the dedicated China database. */
+    public static Result importChinaIfNeeded(Context context, SharedPreferences prefs) throws Exception {
+        return importInto(context, prefs, RoomDatabaseProvider.getChina(context), MIGRATION_KEY + "_china", "china");
+    }
+
+    /** Imports only records explicitly tagged as global into the independent international database. */
+    public static Result importInternationalIfNeeded(Context context, SharedPreferences prefs) throws Exception {
+        return importInto(context, prefs, RoomDatabaseProvider.getInternational(context), MIGRATION_KEY + "_international", "global");
+    }
+
+    private static Result importInto(Context context, SharedPreferences prefs, AppDatabase db,
+            String migrationKey, String requiredScope) throws Exception {
+        if (context == null || prefs == null || db == null) throw new IllegalArgumentException("context/prefs/database is null");
         ChannelDao dao = db.channelDao();
         final String json = prefs.getString("channels", "[]");
         final Set<String> legacyFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
         if (json == null || json.trim().isEmpty()) throw new IllegalStateException("legacy catalogue is empty");
         final String snapshotFingerprint = fingerprint(json, legacyFavorites);
 
-        CatalogueMigrationEntity checkpoint = dao.getMigration(MIGRATION_KEY);
+        CatalogueMigrationEntity checkpoint = dao.getMigration(migrationKey);
         if (checkpoint != null && snapshotFingerprint.equals(checkpoint.catalogueFingerprint)) {
             int channels = dao.countChannels();
             int sources = dao.countBackupSources();
@@ -63,7 +77,7 @@ public final class LegacyCatalogueImporter {
                     && channels > 0) {
                 return new Result(channels, sources, favorites);
             }
-            dao.removeMigration(MIGRATION_KEY);
+            dao.removeMigration(migrationKey);
         }
 
         // Track category rows as well as channels/sources/favorites. A matching
@@ -92,6 +106,7 @@ public final class LegacyCatalogueImporter {
                         continue;
                     }
                     LegacyChannel item = readChannel(reader);
+                    if (requiredScope != null && !item.channelScopes.contains(requiredScope)) continue;
                     if (item.name.isEmpty() || item.url.isEmpty()) continue;
 
                     String categoryId = item.group.isEmpty() ? "__ungrouped__" : item.group;
@@ -153,7 +168,7 @@ public final class LegacyCatalogueImporter {
             // Commit the checkpoint in the same SQLite transaction as the imported
             // rows. A changed legacy snapshot gets a different fingerprint next time.
             dao.removeMigration("room_catalogue_migration_v1");
-            dao.insertMigration(new CatalogueMigrationEntity(MIGRATION_KEY,
+            dao.insertMigration(new CatalogueMigrationEntity(migrationKey,
                     totals[0], totals[1], totals[2], totals[3], System.currentTimeMillis(), snapshotFingerprint));
         });
 
@@ -163,7 +178,7 @@ public final class LegacyCatalogueImporter {
         String committedJson = prefs.getString("channels", "[]");
         Set<String> committedFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
         if (!snapshotFingerprint.equals(fingerprint(committedJson == null ? "" : committedJson, committedFavorites))) {
-            dao.removeMigration(MIGRATION_KEY);
+            dao.removeMigration(migrationKey);
             throw new IllegalStateException("legacy catalogue changed immediately after Room import; checkpoint invalidated");
         }
 
