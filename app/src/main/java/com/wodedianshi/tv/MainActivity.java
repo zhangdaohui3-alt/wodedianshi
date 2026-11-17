@@ -532,7 +532,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void restore(){
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    applyPendingSourceUpdateIfSafe(p);
+    // Startup must display the exact last-saved catalogue first. A staged source-update
+    // candidate is intentionally not applied here; maintenance/reconciliation runs later,
+    // after the complete saved list has been rendered and is usable.
     String savedChannelsJson=p.getString("channels","[]");
     lastPersistedChannelsJson=savedChannelsJson;
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
@@ -648,10 +650,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
         restoredChannels.add(channel);
-        // Publish small batches during startup. A large catalogue must not remain
-        // invisible until its final row parses: if a later row is corrupt or the
-        // device runs short of heap, the already decoded channels remain usable.
-        if(restoredChannels.size()>=128){
+        // Move decoded rows into the retained catalogue in bounded batches to limit
+        // temporary memory. Do not expose a partial list: the UI is released only
+        // after every saved row has been parsed and indexes have been rebuilt.
+        if(restoredChannels.size()>=64){
           synchronized(channels){channels.addAll(restoredChannels);}
           publishedRestoreChannels+=restoredChannels.size();
           restoredChannels.clear();
@@ -664,8 +666,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       logCatalogueMemory("restore_parse_ready",publishedRestoreChannels+restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
       if(skippedCatalogueEntries>0)android.util.Log.w("MyTVStartup","skipped_non_object_catalogue_entries="+skippedCatalogueEntries);
     }catch(Exception invalidCatalogue){
-      // Keep both completed batches and the final partial batch visible. Never
-      // replace the saved JSON; diagnostics retain the original failure details.
+      // Keep all successfully decoded batches and the final partial batch available
+      // for recovery. Never replace the saved JSON; diagnostics retain original details.
       synchronized(channels){channels.addAll(restoredChannels);}
       publishedRestoreChannels+=restoredChannels.size();
       restoredChannels.clear();
@@ -696,6 +698,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
+      // If the user starts playback from the first progressively revealed page,
+      // retain that selection when final de-duplication compacts the catalogue.
+      String selectedIdentity=selected>=0&&selected<channels.size()
+          ?identity(channels.get(selected)):null;
       // Preserve display order while using hash indexes for both channel identity
       // and backup-source de-duplication. ArrayList.contains() here made restoring
       // large catalogues quadratic when thousands of rows shared the same channel.
@@ -732,6 +738,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
         channelsByIdentity.put(identity(c),c);
+      }
+      if(selectedIdentity!=null){
+        selected=-1;
+        for(int i=0;i<channels.size();i++){
+          if(selectedIdentity.equals(identity(channels.get(i)))){selected=i;break;}
+        }
       }
     }
   }
