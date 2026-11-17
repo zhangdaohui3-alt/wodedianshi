@@ -69,6 +69,28 @@ public interface ChannelDao {
     @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name, id")
     List<ChannelWithSources> searchChannels(String query);
 
+    @Query("SELECT c.id, c.name, c.primaryUrl, c.groupName, c.categoryId, c.tvgId, "
+            + "c.tvgName, c.activeSource, c.sortOrder FROM channels c "
+            + "INNER JOIN favorites f ON f.channelId = c.id "
+            + "ORDER BY f.addedAt DESC, c.sortOrder, c.name, c.id "
+            + "LIMIT :limit OFFSET :offset")
+    List<ChannelListRow> getFavoriteChannelListPage(int limit, int offset);
+
+    @Query("SELECT COUNT(*) FROM channels c INNER JOIN favorites f ON f.channelId = c.id")
+    int countFavoriteChannels();
+
+    // Search projections stay lightweight too: the list screen does not need
+    // to load every backup-source relation just to show matching channel names.
+    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+            + "activeSource, sortOrder FROM channels "
+            + "WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' "
+            + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+    List<ChannelListRow> getSearchChannelListPage(String query, int limit, int offset);
+
+    @Query("SELECT COUNT(*) FROM channels "
+            + "WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%'")
+    int countSearchChannels(String query);
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void addFavorite(FavoriteEntity favorite);
 
