@@ -468,6 +468,8 @@ public class SourceUpdateWorker extends Worker {
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
         boolean selectedAes128=false;
+        HlsMediaPlaylistPolicy.Resources selectedResources=null;
+        byte[] selectedAesKey=null;
         ArrayList<String> segments=null;
         byte[] sample=null;
         long segmentStart=0L;
@@ -521,6 +523,8 @@ public class SourceUpdateWorker extends Worker {
           bestHeight=candidate.height;
           segments=candidateSegments;
           selectedAes128=resources.aes128Encrypted;
+          selectedResources=resources;
+          selectedAesKey=aesKey;
           sample=candidateSample;
           segmentStart=candidateSegmentStart;
           break;
@@ -532,11 +536,11 @@ public class SourceUpdateWorker extends Worker {
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192,deadline);
           if(selectedAes128&&second!=null){
-            byte[] secondIv=resources.encryptionIv!=null
-                ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
-                :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber+1L);
+            byte[] secondIv=selectedResources.encryptionIv!=null
+                ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
+                :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
             secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
-                second,aesKey,secondIv,second.length<8192);
+                second,selectedAesKey,secondIv,second.length<8192);
           }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
