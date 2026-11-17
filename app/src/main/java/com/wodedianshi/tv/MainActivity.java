@@ -543,29 +543,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return DecoderPolicy.isDecoderFallbackEnabled(
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
-  // Worker results are staged separately from the live catalogue. Apply them only
-  // when the user's current catalogue still matches the exact snapshot the Worker read.
-  // Any intervening channel edit/deletion wins; stale background results are discarded.
-  private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs){
-    // Serialize the compare-and-apply with persistNow's final compare-and-write.
-    // Otherwise a save could pass its stale-cache check just before this method
-    // applies a Worker candidate, then overwrite that candidate milliseconds later.
+  // Worker candidates live in an app-private atomic file, not the large
+  // SharedPreferences XML. The already-parsed background snapshot is passed in,
+  // so this publication check performs no large file read or hash on the UI thread.
+  private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs,
+      String expectedPersisted,String candidate){
     synchronized(cataloguePersistLock){
-      String base=prefs.getString("source_update_pending_base",null);
-      String candidate=prefs.getString("source_update_pending_channels",null);
-      if(base==null||candidate==null||candidate.isEmpty())return false;
+      if(candidate==null||candidate.isEmpty())return false;
       String current=prefs.getString("channels","[]");
+      boolean applied=expectedPersisted!=null&&expectedPersisted.equals(current);
       android.content.SharedPreferences.Editor edit=prefs.edit();
-      boolean applied=base.equals(current);
       if(applied){
         edit.putString("channels",candidate)
             .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
       }else{
         edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
       }
-      edit.remove("source_update_pending_base")
+      edit.remove("source_update_pending_base_fingerprint")
+          .remove("source_update_pending_base")
           .remove("source_update_pending_channels")
           .apply();
+      if(applied)PendingCatalogueStore.delete(getApplicationContext());
       return applied;
     }
   }
@@ -6167,10 +6165,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // deferred until the UI-thread publication check, so user edits made
           // while parsing cannot be lost to an early SharedPreferences write.
           String pendingBase=prefs.getString("source_update_pending_base",null);
-          String pendingCandidate=prefs.getString("source_update_pending_channels",null);
+          String legacyPendingCandidate=prefs.getString("source_update_pending_channels",null);
+          String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
           String persisted=prefs.getString("channels","[]");
-          final boolean hasApplicablePending=pendingBase!=null&&pendingCandidate!=null
+          String pendingCandidate=PendingCatalogueStore.read(getApplicationContext());
+          if(pendingCandidate==null)pendingCandidate=legacyPendingCandidate;
+          boolean fingerprintMatches=pendingFingerprint!=null&&pendingCandidate!=null
+              &&!pendingCandidate.isEmpty()
+              &&pendingFingerprint.equals(CatalogueFingerprint.sha256(persisted));
+          boolean legacyMatches=pendingBase!=null&&pendingCandidate!=null
               &&!pendingCandidate.isEmpty()&&pendingBase.equals(persisted);
+          final boolean hasApplicablePending=fingerprintMatches||legacyMatches;
           final String raw=hasApplicablePending?pendingCandidate:persisted;
           if(generation!=backgroundCatalogueReloadGeneration)return;
           if(raw.equals(expectedPersisted))return;
@@ -6284,7 +6289,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     "staged refresh omitted one or more cached channel/source identities; old catalogue retained");
                 return;
               }
-              if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
+              if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs,persisted,raw))return;
               if(!raw.equals(prefs.getString("channels","[]")))return;
               if(selected>=0&&selected<channels.size()){
                 Channel current=channels.get(selected);
