@@ -769,6 +769,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // future writes. The bundled fallback below is safe only when the saved JSON
     // itself was valid (for example, an intentionally empty first-run catalogue).
     catalogueSnapshotTrusted=true;
+    boolean roomReconcileQueued=false;
     if(!p.getBoolean("defaults_loaded",false)){
       boolean defaultsReady=!channels.isEmpty();
       if(!defaultsReady){
@@ -778,12 +779,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Do not mark defaults loaded unless the complete bundled snapshot
           // reached durable legacy storage. A failed save must remain retryable.
           defaultsReady=!channels.isEmpty()&&persist();
-          if(defaultsReady)queueRoomCatalogueReconcileAfterPersist();
+          if(defaultsReady){
+            queueRoomCatalogueReconcileAfterPersist();
+            roomReconcileQueued=true;
+          }
         } catch(Exception failure){
           android.util.Log.w("MyTVCatalogue","bundled channel initialization will retry",failure);
         }
       }
       if(defaultsReady)p.edit().putBoolean("defaults_loaded",true).apply();
+    }
+    // A process can be killed after the legacy SharedPreferences commit but
+    // before its queued Room shadow import. Reconcile the already-restored
+    // durable snapshot on every normal startup so a stale checkpoint is never
+    // mistaken for the latest catalogue when the eventual Room read cutover begins.
+    if(!roomReconcileQueued&&p.getBoolean("defaults_loaded",false)){
+      try{
+        cataloguePersistWorker.execute(this::syncRoomCataloguesAfterSave);
+      }catch(RuntimeException rejected){
+        android.util.Log.w("MyTVRoomSync","startup Room reconciliation queue rejected",rejected);
+      }
     }
   }
   private void rebuildChannelIndexes(){
