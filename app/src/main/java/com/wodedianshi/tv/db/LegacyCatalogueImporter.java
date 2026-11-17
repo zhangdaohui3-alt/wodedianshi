@@ -40,7 +40,8 @@ public final class LegacyCatalogueImporter {
         if (context == null || prefs == null) throw new IllegalArgumentException("context/prefs is null");
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
-        if (prefs.getBoolean(PREF_MIGRATED, false)) {
+        CatalogueMigrationEntity checkpoint = dao.getMigration(PREF_MIGRATED);
+        if (checkpoint != null) {
             return new Result(dao.countChannels(), dao.countBackupSources(), dao.countFavorites());
         }
 
@@ -125,6 +126,11 @@ public final class LegacyCatalogueImporter {
             if (dao.countChannels() != totals[0] || dao.countBackupSources() != totals[1] || dao.countFavorites() != totals[2]) {
                 throw new IllegalStateException("Room import count validation failed");
             }
+            // Commit the checkpoint in the same SQLite transaction as the imported
+            // rows. This avoids rewriting the legacy 17 MB SharedPreferences XML just
+            // to store a one-bit migration flag, and prevents partial-import markers.
+            dao.insertMigration(new CatalogueMigrationEntity(PREF_MIGRATED,
+                    totals[0], totals[1], totals[2], System.currentTimeMillis()));
         });
 
         int actualChannels = dao.countChannels();
@@ -132,9 +138,8 @@ public final class LegacyCatalogueImporter {
         if (actualChannels != totals[0] || actualSources != totals[1] || dao.countFavorites() != totals[2] || actualChannels == 0) {
             throw new IllegalStateException("Room import validation mismatch");
         }
-        // This marker is written only after the transaction and row-count checks.
         // Legacy channels/favorites remain intact for rollback and future diagnosis.
-        prefs.edit().putBoolean(PREF_MIGRATED, true).apply();
+        // The durable checkpoint was committed atomically with the catalogue rows.
         return new Result(actualChannels, actualSources, totals[2]);
     }
 
