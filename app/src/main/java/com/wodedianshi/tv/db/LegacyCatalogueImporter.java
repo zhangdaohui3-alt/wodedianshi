@@ -81,14 +81,23 @@ public final class LegacyCatalogueImporter {
 
                     String id = "legacy:" + row++;
                     String legacyKey = item.name + "|" + item.url;
+                    if (item.sources.isEmpty()) item.sources.add(item.url);
+                    // Keep the legacy unique-source invariant before inserting the composite PK.
+                    ArrayList<String> uniqueSources = new ArrayList<>();
+                    HashSet<String> seenSources = new HashSet<>();
+                    for (String sourceUrl : item.sources) {
+                        if (sourceUrl != null && !sourceUrl.isEmpty() && seenSources.add(sourceUrl)) {
+                            uniqueSources.add(sourceUrl);
+                        }
+                    }
+                    if (uniqueSources.isEmpty()) uniqueSources.add(item.url);
+                    int activeSource = Math.max(0, Math.min(item.activeSource, uniqueSources.size() - 1));
                     channels.add(new ChannelEntity(id, legacyKey, item.name, item.url,
                             item.group, categoryId, item.tvgId, item.tvgName,
-                            toJson(item.channelScopes), item.activeSource, row - 1));
+                            toJson(item.channelScopes), activeSource, row - 1));
 
-                    if (item.sources.isEmpty()) item.sources.add(item.url);
-                    for (int i = 0; i < item.sources.size(); i++) {
-                        String sourceUrl = item.sources.get(i);
-                        if (sourceUrl == null || sourceUrl.isEmpty()) continue;
+                    for (int i = 0; i < uniqueSources.size(); i++) {
+                        String sourceUrl = uniqueSources.get(i);
                         sources.add(new BackupSourceEntity(id, sourceUrl, i,
                                 toJson(item.backupScopes.get(sourceUrl))));
                     }
@@ -96,7 +105,7 @@ public final class LegacyCatalogueImporter {
                         favorites.add(new FavoriteEntity(id, System.currentTimeMillis()));
                     }
                     totals[0]++;
-                    totals[1] += item.sources.size();
+                    totals[1] += uniqueSources.size();
                     if (legacyFavorites.contains(legacyKey)) totals[2]++;
 
                     if (channels.size() >= BATCH_SIZE) {
@@ -108,14 +117,14 @@ public final class LegacyCatalogueImporter {
                 throw new IllegalStateException("legacy catalogue parse failed; transaction rolled back", malformed);
             }
             flush(dao, categories, channels, sources, favorites);
-            if (dao.countChannels() != totals[0] || dao.countBackupSources() != totals[1]) {
+            if (dao.countChannels() != totals[0] || dao.countBackupSources() != totals[1] || dao.countFavorites() != totals[2]) {
                 throw new IllegalStateException("Room import count validation failed");
             }
         });
 
         int actualChannels = dao.countChannels();
         int actualSources = dao.countBackupSources();
-        if (actualChannels != totals[0] || actualSources != totals[1] || actualChannels == 0) {
+        if (actualChannels != totals[0] || actualSources != totals[1] || dao.countFavorites() != totals[2] || actualChannels == 0) {
             throw new IllegalStateException("Room import validation mismatch");
         }
         // This marker is written only after the transaction and row-count checks.
