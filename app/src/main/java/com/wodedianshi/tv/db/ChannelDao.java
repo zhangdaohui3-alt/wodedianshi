@@ -10,6 +10,9 @@ import java.util.List;
 @Dao
 public interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void insertCategory(CategoryEntity category);
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertCategories(List<CategoryEntity> categories);
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
