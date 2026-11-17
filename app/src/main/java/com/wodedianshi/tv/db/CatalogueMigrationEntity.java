@@ -2,13 +2,14 @@ package com.wodedianshi.tv.db;
 
 import androidx.annotation.NonNull;
 import androidx.room.Entity;
+import androidx.room.ColumnInfo;
 import androidx.room.PrimaryKey;
 
 /** Durable migration checkpoint stored atomically with the imported catalogue. */
 @Entity(tableName = "catalogue_migrations")
 public class CatalogueMigrationEntity {
     @PrimaryKey @NonNull public String migrationKey;
-    @NonNull public String catalogueFingerprint;
+    @NonNull @ColumnInfo(defaultValue = "''") public String catalogueFingerprint;
     public int channelsCount;
     public int backupSourcesCount;
     public int favoritesCount;
