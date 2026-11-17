@@ -83,6 +83,16 @@ public final class SourceSelectionPolicy {
         }
     }
 
+    /** Finds a remembered URL in the current list without rewriting its signed path/query. */
+    public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
+        if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
+        String rememberedKey = endpointKey(rememberedUrl);
+        for (int i = 0; i < sources.size(); i++) {
+            if (rememberedKey.equals(endpointKey(sources.get(i)))) return i;
+        }
+        return -1;
+    }
+
     /**
      * Resumes a rotating scan after the last URL identity rather than relying only
      * on a list index. This keeps progress stable when a playlist inserts or removes

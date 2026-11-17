@@ -27,6 +27,10 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
       return Result.retry();
     }
+    if(isActivityActive(prefs)){
+      saveStatus(prefs,"电视应用正在前台使用，暂缓后台频道整理以避免干扰操作",0);
+      return Result.retry();
+    }
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
@@ -56,7 +60,32 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/index.m3u"
      };
     try{
-      JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
+      // Snapshot the user's current catalogue before discovery/probing. The Activity
+      // may save favorites, edits, imports or playback state while this worker runs.
+      // Never let a stale worker snapshot overwrite those newer user changes.
+      String channelsSnapshot=prefs.getString("channels","[]");
+      String savedChannelsJson=channelsSnapshot;
+      String pendingBase=prefs.getString("source_update_pending_base",null);
+      String pendingChannels=prefs.getString("source_update_pending_channels",null);
+      if(pendingBase!=null&&pendingChannels!=null&&!pendingChannels.isEmpty()){
+        if(channelsSnapshot.equals(pendingBase)){
+          // Carry forward an unapplied staged refresh; the persisted user catalogue
+          // remains the conflict baseline until the Activity explicitly applies it.
+          savedChannelsJson=pendingChannels;
+        }else{
+          // User changes supersede any staged Worker result.
+          prefs.edit().remove("source_update_pending_base")
+              .remove("source_update_pending_channels").apply();
+        }
+      }
+      JSONArray saved;
+      try{saved=new JSONArray(savedChannelsJson);}
+      catch(JSONException invalidPending){
+        saved=new JSONArray(channelsSnapshot);
+        savedChannelsJson=channelsSnapshot;
+        prefs.edit().remove("source_update_pending_base")
+            .remove("source_update_pending_channels").apply();
+      }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
@@ -95,6 +124,10 @@ public class SourceUpdateWorker extends Worker {
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+          return Result.retry();
+        }
+        if(isActivityActive(prefs)){
+          saveStatus(prefs,"电视应用已回到前台，本轮频道整理已暂停",0);
           return Result.retry();
         }
         HttpURLConnection c=null;
@@ -142,6 +175,10 @@ public class SourceUpdateWorker extends Worker {
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
+          return Result.retry();
+        }
+        if(isActivityActive(prefs)){
+          saveStatus(prefs,"电视应用已回到前台，本轮线路检测已暂停",0);
           return Result.retry();
         }
         if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
@@ -195,26 +232,61 @@ public class SourceUpdateWorker extends Worker {
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
+        // Preserve the user's last selected source across background re-ranking.
+        // Ranking may change the preferred primary URL, but must not silently
+        // replace the source that the user explicitly selected for this channel.
+        int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
+        String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
         ArrayList<String> ordered=new ArrayList<>();
         for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
-        JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
-        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
+        JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
+        for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
+        if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",restoredActiveIndex);}
       }
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
+      trimProbeScores(measuredScores,savedPool,probeCandidates);
+      String latestChannels=prefs.getString("channels","[]");
+      if(!channelsSnapshot.equals(latestChannels)){
+        saveStatus(prefs,"频道列表在后台检测期间发生变化，已保留最新用户数据并安排重试",0);
+        return Result.retry();
+      }
+      // Playback can begin after the last probe-loop check but before persistence.
+      // Re-check immediately before the catalogue commit so a just-started session
+      // is not overlapped by the worker's final state write.
+      if(prefs.getBoolean("source_update_playback_active",false)){
+        saveStatus(prefs,"检测到节目刚开始播放，已放弃本轮写入并安排稍后重试",0);
+        return Result.retry();
+      }
+      if(isActivityActive(prefs)){
+        saveStatus(prefs,"检测到电视应用已回到前台，本轮结果暂存取消并安排重试",0);
+        return Result.retry();
+      }
+      if(isStopped())return Result.retry();
       prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
-          .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
+          // Stage catalogue output instead of replacing the live cache. The Activity
+          // applies it only if the user's persisted catalogue still equals this base.
+          .putString("source_update_pending_base",channelsSnapshot)
+          .putString("source_update_pending_channels",saved.toString())
+          .putString("source_update_time",now())
+          .putString("source_update_result","已安全暂存候选目录，待应用确认频道没有变化后再应用；"+(discoveryUnavailable?"所有公开目录暂不可用，仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""))
           .apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private boolean isActivityActive(SharedPreferences prefs){
+    boolean active=prefs.getBoolean("source_update_activity_active",false);
+    long heartbeat=prefs.getLong("source_update_activity_heartbeat",0L);
+    // An expired lease is treated as inactive without writing back a stale value.
+    // This avoids racing a just-started Activity that has refreshed the heartbeat.
+    return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
   }
   private static class Entry{
     String name,url,group;boolean savedSource;
@@ -235,6 +307,36 @@ public class SourceUpdateWorker extends Worker {
     int width,height;
     long latencyMs;
     long bitrate;
+  }
+  // Keep the persisted preflight-score index bounded. Discovery feeds can rotate
+  // thousands of URLs over time; an unbounded JSON object would slow every update
+  // and gradually consume device storage. The current scan rewrites recent entries.
+  private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
+  private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates){
+    if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
+    // JSONObject key iteration order is not an LRU contract. Preserve scores for
+    // currently saved channel URLs first, then this run's recent candidates, before
+    // filling remaining capacity with older entries.
+    LinkedHashSet<String> keep=new LinkedHashSet<>();
+    if(savedPool!=null)for(Entry entry:savedPool){
+      if(keep.size()>=MAX_PERSISTED_PROBE_SCORES)break;
+      String key=scoreKey(entry.url);if(scores.has(key))keep.add(key);
+    }
+    if(recentCandidates!=null)for(int i=recentCandidates.size()-1;i>=0&&keep.size()<MAX_PERSISTED_PROBE_SCORES;i--){
+      String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
+    }
+    Iterator<String> keys=scores.keys();
+    while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES)keep.add(keys.next());
+    JSONObject retained=new JSONObject();
+    for(String key:keep)try{retained.put(key,scores.get(key));}catch(JSONException ignored){}
+    Iterator<String> remove=scores.keys();ArrayList<String> oldKeys=new ArrayList<>();
+    while(remove.hasNext())oldKeys.add(remove.next());
+    for(String key:oldKeys)scores.remove(key);
+    Iterator<String> retainedKeys=retained.keys();
+    while(retainedKeys.hasNext()){
+      String key=retainedKeys.next();
+      try{scores.put(key,retained.get(key));}catch(JSONException ignored){}
+    }
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
@@ -264,71 +366,81 @@ public class SourceUpdateWorker extends Worker {
     }
     return score;
   }
-  // GET rather than HEAD: many public IPTV hosts reject HEAD. HLS is accepted only
-  // after its media playlist and a real media segment can both be reached.
+  // Sniff the response body as well as the URL: some IPTV gateways expose
+  // HLS manifests through extensionless or tokenized endpoint URLs.
   private ProbeResult probe(String address){
     ProbeResult result=new ProbeResult();
     long started=android.os.SystemClock.elapsedRealtime();
     try{
+      SampleResponse initialResponse=fetchSampleResponse(address,32768);
+      byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
+      if(initialBytes==null||initialBytes.length<7)return result;
+      String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
       String lower=address.toLowerCase(Locale.ROOT);
-      if(lower.contains(".m3u8")||lower.contains("m3u8?")){
-        // Resolve relative HLS paths against the final URL after HTTP redirects.
-        // CDN front doors commonly redirect playlists to a different host/path.
-        SampleResponse manifestResponse=fetchSampleResponse(address,65536);
-        byte[] manifestBytes=manifestResponse==null?null:manifestResponse.bytes;
-        if(manifestBytes==null||manifestBytes.length==0)return result;
-        String manifest=new String(manifestBytes,"UTF-8").replace("\uFEFF","");
-        if(!manifest.contains("#EXTM3U"))return result;
+      boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
+      boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
+      if(playlistUrl||hlsPlaylist){
+        if(!hlsPlaylist)return result;
+        SampleResponse manifestResponse=initialResponse;
+        String manifest=initialText;
         String manifestUrl=manifestResponse.finalUrl;
+        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
+        if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
         String mediaUrl=manifestUrl;
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
-        String[] lines=manifest.replace("\r","").split("\n");
-        for(int i=0;i<lines.length;i++){
-          String line=lines[i].trim();
-          if(!line.startsWith("#EXT-X-STREAM-INF:"))continue;
-          long bw=0L;int w=0,h=0;
-          java.util.regex.Matcher bm=java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(line);
-          if(bm.find())try{bw=Long.parseLong(bm.group(1));}catch(Exception ignored){}
-          java.util.regex.Matcher rm=java.util.regex.Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(line);
-          if(rm.find())try{w=Integer.parseInt(rm.group(1));h=Integer.parseInt(rm.group(2));}catch(Exception ignored){}
-          String child="";
-          for(int j=i+1;j<lines.length;j++){String candidate=lines[j].trim();if(!candidate.isEmpty()&&!candidate.startsWith("#")){child=candidate;break;}}
-          if(!child.isEmpty()&&bw>=bestBandwidth){
-            bestBandwidth=bw;bestWidth=w;bestHeight=h;
-            mediaUrl=new URL(new URL(manifestUrl),child).toString();
+        boolean selectedAes128=false;
+        ArrayList<String> segments=null;
+        byte[] sample=null;
+        long segmentStart=0L;
+        for(HlsVariantPolicy.Variant candidate:variants){
+          String candidateManifestUrl=candidate.url;
+          String candidateManifest=manifest;
+          if(!candidate.url.equals(manifestUrl)){
+            SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536);
+            byte[] variant=variantResponse==null?null:variantResponse.bytes;
+            if(variant==null||variant.length==0)continue;
+            candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
+            if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
+            candidateManifestUrl=variantResponse.finalUrl;
           }
-        }
-        if(!mediaUrl.equals(manifestUrl)){
-          SampleResponse variantResponse=fetchSampleResponse(mediaUrl,65536);
-          byte[] variant=variantResponse==null?null:variantResponse.bytes;
-          if(variant==null||variant.length==0)return result;
-          String variantText=new String(variant,"UTF-8").replace("\uFEFF","");
-          if(!variantText.contains("#EXTM3U"))return result;
-          manifest=variantText;
-          mediaUrl=variantResponse.finalUrl;
-        }
-        ArrayList<String> segments=new ArrayList<>();
-        String[] mediaLines=manifest.replace("\r","").split("\n");
-        for(int i=0;i<mediaLines.length&&segments.size()<2;i++){
-          if(mediaLines[i].trim().startsWith("#EXTINF:")){
-            for(int j=i+1;j<mediaLines.length;j++){
-              String candidate=mediaLines[j].trim();
-              if(!candidate.isEmpty()&&!candidate.startsWith("#")){segments.add(candidate);break;}
-            }
+          HlsMediaPlaylistPolicy.Resources resources=
+              HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
+          ArrayList<String> candidateSegments=resources.mediaUrls;
+          if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedInitializationMap||resources.unsupportedEncryption)continue;
+          // Media3 performs AES-128 decryption during playback. Preflight only verifies
+          // that the identity key endpoint returns the required 16-byte key; never log or persist it.
+          if(resources.aes128Encrypted){
+            byte[] key=fetchSample(resources.encryptionKeyUrl,32);
+            if(key==null||key.length!=16)continue;
           }
+          // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
+          // Validate its container header before treating the media fragments as usable.
+          if(resources.initializationUrl!=null){
+            byte[] initialization=fetchSample(resources.initializationUrl,32768);
+            if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization)))continue;
+          }
+          String candidateSegmentUrl=candidateSegments.get(0);
+          long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
+          byte[] candidateSample=fetchSample(candidateSegmentUrl,32768);
+          if(candidateSample==null||(resources.aes128Encrypted?candidateSample.length<16:!looksLikeHlsSegment(candidateSample)))continue;
+          mediaUrl=candidateManifestUrl;
+          bestBandwidth=candidate.bandwidth;
+          bestWidth=candidate.width;
+          bestHeight=candidate.height;
+          segments=candidateSegments;
+          selectedAes128=resources.aes128Encrypted;
+          sample=candidateSample;
+          segmentStart=candidateSegmentStart;
+          break;
         }
-        if(segments.isEmpty())return result;
-        String segmentUrl=new URL(new URL(mediaUrl),segments.get(0)).toString();
-        long segmentStart=android.os.SystemClock.elapsedRealtime();
-        byte[] sample=fetchSample(segmentUrl,32768);
-        if(!looksLikeHlsSegment(sample))return result;
+        if(segments==null||sample==null)return result;
         long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
         boolean secondSegmentOk=true;
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192);
-          secondSegmentOk=looksLikeHlsSegment(second);
+          secondSegmentOk=second!=null&&(selectedAes128?second.length>=16:looksLikeHlsSegment(second));
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
@@ -339,16 +451,12 @@ public class SourceUpdateWorker extends Worker {
         result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
         return result;
       }
-      long before=android.os.SystemClock.elapsedRealtime();
-      byte[] sample=fetchSample(address,32768);
-      if(sample==null||sample.length<188)return result;
-      result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-before);
+      result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
       URL url=new URL(address);
       String ext=url.getPath().toLowerCase(Locale.ROOT);
-      boolean knownExtension=ext.endsWith(".ts")||ext.endsWith(".mp4")||ext.endsWith(".m4v")||ext.endsWith(".flv")||ext.endsWith(".aac");
-      if(!knownExtension&&!looksLikeMediaPayload(sample))return result;
+      if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes,ext))return result;
       result.valid=true;
-      result.score=350+(int)Math.min(300L,(sample.length*1000L/result.latencyMs)/2048L);
+      result.score=350+(int)Math.min(300L,(initialBytes.length*1000L/result.latencyMs)/2048L);
       return result;
     }catch(Exception e){return result;}
   }

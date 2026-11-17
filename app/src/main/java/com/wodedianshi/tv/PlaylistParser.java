@@ -8,7 +8,8 @@ import java.util.regex.Pattern;
 
 /** Pure M3U parser shared by discovery and deterministic unit tests. */
 public final class PlaylistParser {
-    private static final Pattern TVG_NAME = Pattern.compile("tvg-name=\"([^\"]+)\"");
+    private static final Pattern TVG_NAME = Pattern.compile("tvg-name=\"([^\"]*)\"");
+    private static final Pattern TVG_ID = Pattern.compile("tvg-id=\"([^\"]*)\"");
     private static final Pattern GROUP_TITLE = Pattern.compile("group-title=\"([^\"]*)\"");
 
     private PlaylistParser() {}
@@ -17,11 +18,15 @@ public final class PlaylistParser {
         public final String name;
         public final String url;
         public final String group;
+        public final String tvgId;
+        public final String tvgName;
 
-        private ChannelSource(String name, String url, String group) {
+        private ChannelSource(String name, String url, String group, String tvgId, String tvgName) {
             this.name = name;
             this.url = url;
             this.group = group;
+            this.tvgId = tvgId;
+            this.tvgName = tvgName;
         }
     }
 
@@ -32,6 +37,8 @@ public final class PlaylistParser {
         String group = "";
         String pendingGroup = "";
         boolean groupTitlePresent = false;
+        String tvgId = "";
+        String tvgName = "";
         String normalized = data.replace("\uFEFF", "");
         String[] lines = normalized.split("\\r\\n|\\n|\\r");
         for (String raw : lines) {
@@ -58,6 +65,10 @@ public final class PlaylistParser {
                     if (matcher.find()) name = matcher.group(1).trim();
                 }
                 if (name.isEmpty()) name = "未命名频道";
+                Matcher idMatcher = TVG_ID.matcher(line);
+                tvgId = idMatcher.find() ? idMatcher.group(1).trim() : "";
+                Matcher tvgNameMatcher = TVG_NAME.matcher(line);
+                tvgName = tvgNameMatcher.find() ? tvgNameMatcher.group(1).trim() : "";
                 group = pendingGroup;
                 pendingGroup = "";
                 groupTitlePresent = false;
@@ -69,11 +80,13 @@ public final class PlaylistParser {
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
                 if (name != null && !name.trim().isEmpty()) {
-                    result.add(new ChannelSource(name, line, group));
+                    result.add(new ChannelSource(name, line, group, tvgId, tvgName));
                 }
                 name = null;
                 group = "";
                 groupTitlePresent = false;
+                tvgId = "";
+                tvgName = "";
             }
         }
         return result;
