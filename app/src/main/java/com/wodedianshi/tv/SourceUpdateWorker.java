@@ -398,14 +398,6 @@ public class SourceUpdateWorker extends Worker {
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
-  // Match MainActivity's QoE aging so background ranking and playback ranking
-  // do not disagree about the same source history.
-  private double sourceHistoryWeight(long updatedAt){
-    if(updatedAt<=0L)return 0.12d;
-    long ageMs=Math.max(0L,System.currentTimeMillis()-updatedAt);
-    double halfLifeMs=30.0d*24.0d*60.0d*60.0d*1000.0d;
-    return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
-  }
   private double combinedScore(String url,JSONObject probes,JSONObject qoe){
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
@@ -420,7 +412,10 @@ public class SourceUpdateWorker extends Worker {
           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
           codecWarnings);
-      score+=qoeAdjustment*sourceHistoryWeight(m.optLong("updated",0L));
+      long now=System.currentTimeMillis();
+      score+=qoeAdjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
+      score+=SourceQoeScoringPolicy.recentSuccessBonus(
+          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
     }
     return score;
   }
