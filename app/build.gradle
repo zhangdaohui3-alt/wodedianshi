@@ -61,5 +61,9 @@ dependencies {
     implementation "org.videolan.android:libvlc-all:3.7.7"
     implementation "androidx.work:work-runtime:2.10.1"
     implementation "androidx.activity:activity:1.10.1"
+    // Room 2.x is the stable Java-friendly Room line for this Java Android TV app.
+    implementation "androidx.room:room-runtime:2.8.5"
+    annotationProcessor "androidx.room:room-compiler:2.8.5"
+    testImplementation "androidx.room:room-testing:2.8.5"
     testImplementation "junit:junit:4.13.2"
 }
