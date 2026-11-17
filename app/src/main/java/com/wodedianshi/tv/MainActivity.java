@@ -4649,7 +4649,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(bad.isEmpty()){toast("当前播放源地址为空");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{persist();setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
           return;
         }
@@ -4661,7 +4661,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
+        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,url);startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
@@ -4699,6 +4699,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
+    queueRoomActiveSourceSync(selected,c.backups.get(next));
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
@@ -5162,6 +5163,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
+    if(target.activeSource>=0&&target.activeSource<target.backups.size())
+      queueRoomActiveSourceSync(selected,target.backups.get(target.activeSource));
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
