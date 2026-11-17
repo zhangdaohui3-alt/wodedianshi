@@ -3727,6 +3727,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
     }
   }
+  // Queue Room reconciliation behind the durable legacy save. UI callers may return
+  // as soon as persistence is queued, so using the same serial writer guarantees
+  // the importer never races ahead and reads the previous SharedPreferences snapshot.
+  private void queueRoomCatalogueReconcileAfterPersist(){
+    try{cataloguePersistWorker.execute(this::syncRoomCataloguesAfterSave);}
+    catch(RuntimeException rejected){
+      android.util.Log.e("MyTVRoomSync","Room reconcile queue rejected",rejected);
+      saveLiveDiagnostic("ROOM_RECONCILE_QUEUE_ERROR",rejected.getClass().getSimpleName());
+    }
+  }
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
     return fetchAndMergePlaylists(feeds,timeoutMs,errors,sourceScope,null);
   }
@@ -3996,7 +4006,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final int matched=destinationKeys.size();
       runOnUiThread(()->{
         activeGeoChannelKeys=new HashSet<>(destinationKeys);
-        activeCategory="全部";favoriteMode=false;persist();refresh();
+        activeCategory="全部";favoriteMode=false;persist();queueRoomCatalogueReconcileAfterPersist();refresh();
         info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
@@ -4142,6 +4152,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         int added=parse(data);
         if(!persist())throw new IllegalStateException("频道配置保存失败");
+        queueRoomCatalogueReconcileAfterPersist();
         runOnUiThread(()->{
           if(isFinishing())return;
           refresh();
@@ -4279,7 +4290,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
-  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
+  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();queueRoomCatalogueReconcileAfterPersist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
@@ -6455,6 +6466,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
     lastPersistedChannelsJson=raw;
+    if(hasApplicablePending)queueRoomCatalogueReconcileAfterPersist();
     refresh();
     android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
           });
