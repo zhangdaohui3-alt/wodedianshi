@@ -3627,7 +3627,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
-          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
+          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();queueRoomFavoriteSync(channelKey,favorites.contains(channelKey));refresh();}
           else if(w==1){
             if(sourceUrls.isEmpty())return;
             String[] opts=new String[sourceUrls.size()];
