@@ -72,15 +72,25 @@ public class SourceUpdateWorker extends Worker {
       String channelsSnapshot=prefs.getString("channels","[]");
       String savedChannelsJson=channelsSnapshot;
       String pendingBase=prefs.getString("source_update_pending_base",null);
-      String pendingChannels=prefs.getString("source_update_pending_channels",null);
-      if(pendingBase!=null&&pendingChannels!=null&&!pendingChannels.isEmpty()){
-        if(channelsSnapshot.equals(pendingBase)){
-          // Carry forward an unapplied staged refresh; the persisted user catalogue
-          // remains the conflict baseline until the Activity explicitly applies it.
+      String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
+      String legacyPendingChannels=prefs.getString("source_update_pending_channels",null);
+      String pendingChannels=PendingCatalogueStore.read(getApplicationContext());
+      if(pendingChannels==null)pendingChannels=legacyPendingChannels;
+      boolean hasPending=pendingFingerprint!=null||pendingBase!=null||legacyPendingChannels!=null;
+      boolean fingerprintMatches=pendingFingerprint!=null&&pendingChannels!=null
+          &&!pendingChannels.isEmpty()
+          &&pendingFingerprint.equals(CatalogueFingerprint.sha256(channelsSnapshot));
+      boolean legacyMatches=pendingBase!=null&&pendingChannels!=null
+          &&!pendingChannels.isEmpty()&&channelsSnapshot.equals(pendingBase);
+      if(hasPending){
+        if(fingerprintMatches||legacyMatches){
+          // Carry forward a still-current atomic candidate; the live catalogue
+          // remains authoritative until MainActivity publishes it after parsing.
           savedChannelsJson=pendingChannels;
         }else{
-          // User changes supersede any staged Worker result.
-          prefs.edit().remove("source_update_pending_base")
+          PendingCatalogueStore.delete(getApplicationContext());
+          prefs.edit().remove("source_update_pending_base_fingerprint")
+              .remove("source_update_pending_base")
               .remove("source_update_pending_channels").apply();
         }
       }
@@ -89,7 +99,9 @@ public class SourceUpdateWorker extends Worker {
       catch(JSONException invalidPending){
         saved=new JSONArray(channelsSnapshot);
         savedChannelsJson=channelsSnapshot;
-        prefs.edit().remove("source_update_pending_base")
+        PendingCatalogueStore.delete(getApplicationContext());
+        prefs.edit().remove("source_update_pending_base_fingerprint")
+            .remove("source_update_pending_base")
             .remove("source_update_pending_channels").apply();
       }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
@@ -305,16 +317,20 @@ public class SourceUpdateWorker extends Worker {
         return Result.retry();
       }
       if(isStopped())return Result.retry();
+      // Write the large candidate atomically to private app storage first. Only
+      // its short base fingerprint remains in SharedPreferences, avoiding another
+      // multi-megabyte XML rewrite and making interrupted writes recoverable.
+      PendingCatalogueStore.write(getApplicationContext(),saved.toString());
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
-          // Stage catalogue output instead of replacing the live cache. The Activity
-          // applies it only if the user's persisted catalogue still equals this base.
-          .putString("source_update_pending_base",channelsSnapshot)
-          .putString("source_update_pending_channels",saved.toString())
+          // The exact catalogue snapshot is represented by a compact fingerprint.
+          .putString("source_update_pending_base_fingerprint",CatalogueFingerprint.sha256(channelsSnapshot))
+          .remove("source_update_pending_base")
+          .remove("source_update_pending_channels")
           .putString("source_update_time",now())
           .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?"已解析频道条目，但候选线路均未通过媒体预检，本次不计为首次发现成功；":"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       // Do not mark initial discovery complete for an HTTP-200 but empty playlist,
