@@ -468,6 +468,8 @@ public class SourceUpdateWorker extends Worker {
         long bestBandwidth=0L;
         int bestWidth=0,bestHeight=0;
         boolean selectedAes128=false;
+        HlsMediaPlaylistPolicy.Resources selectedResources=null;
+        byte[] selectedAesKey=null;
         ArrayList<String> segments=null;
         byte[] sample=null;
         long segmentStart=0L;
@@ -487,28 +489,42 @@ public class SourceUpdateWorker extends Worker {
               HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
           ArrayList<String> candidateSegments=resources.mediaUrls;
           if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedInitializationMap||resources.unsupportedEncryption)continue;
-          // Media3 performs AES-128 decryption during playback. Preflight only verifies
-          // that the identity key endpoint returns the required 16-byte key; never log or persist it.
+          // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
+          byte[] aesKey=null;
           if(resources.aes128Encrypted){
-            byte[] key=fetchSample(resources.encryptionKeyUrl,32,deadline);
-            if(key==null||key.length!=16)continue;
+            aesKey=fetchSample(resources.encryptionKeyUrl,32,deadline);
+            if(aesKey==null||aesKey.length!=16)continue;
           }
           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
-          // Validate its container header before treating the media fragments as usable.
+          // AES-128 maps require their explicit IV and must validate after decryption.
           if(resources.initializationUrl!=null){
             byte[] initialization=fetchSample(resources.initializationUrl,32768,deadline);
-            if(initialization==null||(resources.aes128Encrypted?initialization.length<16:!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization)))continue;
+            if(initialization==null)continue;
+            if(resources.aes128Encrypted){
+              byte[] mapIv=HlsAes128Preflight.parseExplicitIv(resources.encryptionIv);
+              if(mapIv==null||!HlsAes128Preflight.validatesInitializationSegment(
+                  initialization,aesKey,mapIv,initialization.length<32768))continue;
+            }else if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
           byte[] candidateSample=fetchSample(candidateSegmentUrl,32768,deadline);
-          if(candidateSample==null||(resources.aes128Encrypted?candidateSample.length<16:!looksLikeHlsSegment(candidateSample)))continue;
+          if(candidateSample==null)continue;
+          if(resources.aes128Encrypted){
+            byte[] segmentIv=resources.encryptionIv!=null
+                ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
+                :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber);
+            if(!HlsAes128Preflight.validatesMediaSegment(
+                candidateSample,aesKey,segmentIv,candidateSample.length<32768))continue;
+          }else if(!looksLikeHlsSegment(candidateSample))continue;
           mediaUrl=candidateManifestUrl;
           bestBandwidth=candidate.bandwidth;
           bestWidth=candidate.width;
           bestHeight=candidate.height;
           segments=candidateSegments;
           selectedAes128=resources.aes128Encrypted;
+          selectedResources=resources;
+          selectedAesKey=aesKey;
           sample=candidateSample;
           segmentStart=candidateSegmentStart;
           break;
@@ -519,7 +535,13 @@ public class SourceUpdateWorker extends Worker {
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
           byte[] second=fetchSample(secondUrl,8192,deadline);
-          secondSegmentOk=second!=null&&(selectedAes128?second.length>=16:looksLikeHlsSegment(second));
+          if(selectedAes128&&second!=null){
+            byte[] secondIv=selectedResources.encryptionIv!=null
+                ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
+                :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
+            secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
+                second,selectedAesKey,secondIv,second.length<8192);
+          }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
         }
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);

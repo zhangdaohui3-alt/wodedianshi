@@ -2,6 +2,7 @@ package com.wodedianshi.tv;
 
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,49 +21,62 @@ public final class HlsMediaPlaylistPolicy {
         public final boolean unsupportedInitializationMap;
         public final boolean aes128Encrypted;
         public final String encryptionKeyUrl;
+        public final String encryptionIv;
+        public final long firstMediaSequenceNumber;
         public final boolean unsupportedEncryption;
         public final ArrayList<String> mediaUrls;
         Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
-                  boolean encryptionUnsupported, ArrayList<String> media) {
+                  String iv, long firstSequence, boolean encryptionUnsupported, ArrayList<String> media) {
             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
             unsupportedInitializationMap=mapUnsupported;
-            aes128Encrypted=aes128; encryptionKeyUrl=keyUrl;
+            aes128Encrypted=aes128; encryptionKeyUrl=keyUrl; encryptionIv=iv;
+            firstMediaSequenceNumber=firstSequence;
             unsupportedEncryption=encryptionUnsupported; mediaUrls=media;
         }
     }
 
     public static Resources parse(String playlist, String finalPlaylistUrl) throws Exception {
         ArrayList<String> media = new ArrayList<>();
-        String initialization = null, activeKeyUrl = null, aesKeyUrl = null;
+        String initialization = null, activeKeyUrl = null, aesKeyUrl = null, activeIv = null, aesIv = null;
         boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
-        boolean activeKeyHasExplicitIv = false;
+        boolean activeKeyHasExplicitIv = false, hasFirstSequence = false;
+        long mediaSequence = 0L, nextSequence = 0L, firstSequence = 0L;
         if (playlist == null || finalPlaylistUrl == null)
-            return new Resources(null,false,false,false,null,false,media);
-        String[] lines = playlist.replace("\r", "").split("\n");
+            return new Resources(null,false,false,false,null,null,0L,false,media);
+        String[] lines = playlist.replace("\\r", "").split("\\n");
         // Continue scanning the bounded playlist after the media URL cap is reached: key
         // rotation or METHOD=NONE may appear later and must not be missed.
         for (int i=0;i<lines.length;i++) {
             String line=lines[i].trim();
-            if(line.startsWith("#EXT-X-KEY:")) {
+            if(line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+                try {
+                    long parsed=Long.parseLong(line.substring("#EXT-X-MEDIA-SEQUENCE:".length()).trim());
+                    if(parsed<0L)unsupportedEncryption=true;
+                    else { mediaSequence=parsed; nextSequence=parsed; }
+                } catch(NumberFormatException invalid) { unsupportedEncryption=true; }
+            } else if(line.startsWith("#EXT-X-KEY:")) {
                 String attrs=line.substring("#EXT-X-KEY:".length());
                 String method=attribute(METHOD_ATTRIBUTE,attrs);
                 String format=attribute(KEYFORMAT_ATTRIBUTE,attrs);
                 if("NONE".equals(method)) {
-                    // Resources currently expose playlist-level encryption metadata rather
-                    // than a per-segment key timeline. If encryption was already active,
-                    // fail closed instead of probing a later clear segment with the old key.
+                    // Resources expose one encryption timeline only; do not probe a mixed
+                    // encrypted/clear playlist using a stale key.
                     if(aes128) unsupportedEncryption=true;
-                    activeKeyUrl=null; activeKeyHasExplicitIv=false;
+                    activeKeyUrl=null; activeIv=null; activeKeyHasExplicitIv=false;
                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
                     String uri=uriAttribute(attrs);
                     String resolved=resolve(uri,finalPlaylistUrl);
                     if(resolved==null) unsupportedEncryption=true;
                     else {
-                        if(aesKeyUrl!=null && !aesKeyUrl.equals(resolved)) unsupportedEncryption=true;
                         String iv=attribute(IV_ATTRIBUTE,attrs);
-                        activeKeyHasExplicitIv=isValidIv(iv);
-                        if(iv!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
-                        aesKeyUrl=resolved; activeKeyUrl=resolved; aes128=true;
+                        if(iv!=null&&!isValidIv(iv))unsupportedEncryption=true;
+                        String normalizedIv=iv==null?null:iv.toLowerCase(Locale.ROOT);
+                        if(aesKeyUrl!=null && (!aesKeyUrl.equals(resolved)
+                                || (aesIv==null?normalizedIv!=null:!aesIv.equals(normalizedIv))))
+                            unsupportedEncryption=true;
+                        aesKeyUrl=resolved; aesIv=normalizedIv;
+                        activeKeyUrl=resolved; activeIv=normalizedIv;
+                        activeKeyHasExplicitIv=normalizedIv!=null; aes128=true;
                     }
                 } else {
                     // SAMPLE-AES, DRM key formats and unknown methods are not
@@ -78,19 +92,17 @@ public final class HlsMediaPlaylistPolicy {
                 } else if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
                     unsupportedMapRange=true; initialization=null;
                 } else {
-                    // This preflight model stores one init map and probes the first
-                    // media candidate. Reject a changed map rather than validating
-                    // the wrong initialization section for the first segment.
                     if(initialization!=null&&!initialization.equals(mapUrl))unsupportedMap=true;
-                    // RFC 8216 requires an explicit IV when an AES-128 key encrypts
-                    // an EXT-X-MAP initialization section. Segment sequence-number IV
-                    // defaults do not apply to the initialization section.
+                    // RFC 8216 requires an explicit IV for an AES-128 encrypted EXT-X-MAP.
                     if(activeKeyUrl!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
                     initialization=mapUrl;
                 }
             } else if(line.startsWith("#EXT-X-PART:")) {
                 String attrs=line.substring("#EXT-X-PART:".length());
-                if(!attrs.contains("BYTERANGE=")) {
+                if(activeKeyUrl!=null) {
+                    // This bounded probe does not map LL-HLS parts to media sequence IVs.
+                    unsupportedEncryption=true;
+                } else if(!attrs.contains("BYTERANGE=")) {
                     String uri=uriAttribute(attrs);
                     if(uri!=null)addUnique(media,resolve(uri,finalPlaylistUrl));
                 }
@@ -99,11 +111,17 @@ public final class HlsMediaPlaylistPolicy {
                     String candidate=lines[j].trim();
                     if(candidate.isEmpty())continue;
                     if(candidate.startsWith("#"))break;
-                    addUnique(media,resolve(candidate,finalPlaylistUrl)); i=j; break;
+                    if(!hasFirstSequence) { firstSequence=nextSequence; hasFirstSequence=true; }
+                    addUnique(media,resolve(candidate,finalPlaylistUrl));
+                    if(nextSequence==Long.MAX_VALUE)unsupportedEncryption=true;
+                    else nextSequence++;
+                    i=j; break;
                 }
             }
         }
-        return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,unsupportedEncryption,media);
+        if(aes128&&!hasFirstSequence)unsupportedEncryption=true;
+        return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,
+                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,media);
     }
 
     private static String attribute(Pattern pattern,String attributes) {
