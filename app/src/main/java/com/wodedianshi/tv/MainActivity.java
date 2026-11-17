@@ -3409,6 +3409,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
     final Set<String> favoriteSnapshot=new HashSet<>(favorites);
     final int requestedPage=livePageIndex;
+    final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
+    android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
     final int previousFocusedIndex;
     final String previousFocusedKey;
     View currentFocus=rootLayout==null?null:rootLayout.findFocus();
@@ -3420,6 +3422,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Capture only the list of references under the short catalogue lock, then
     // copy the small filtering metadata on the catalogue worker.
     pendingCatalogueFilter=catalogueFilterWorker.submit(()->{
+      int scanned=0,categoryMatches=0,queryMatches=0,nullRecords=0,nullNames=0,nullGroups=0,nullTvgNames=0,nullTvgIds=0,nullUrls=0;
       try{
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         ArrayList<Channel> sources;
@@ -3438,8 +3441,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ArrayList<Channel> visible=new ArrayList<>();
         for(int i=0;i<sources.size();i++){
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
+          scanned++;
           Channel c=sources.get(i);
-          if(c==null)continue;
+          if(c==null){nullRecords++;continue;}
+          if(c.name==null)nullNames++;
+          if(c.group==null)nullGroups++;
+          if(c.tvgName==null)nullTvgNames++;
+          if(c.tvgId==null)nullTvgIds++;
+          if(c.url==null)nullUrls++;
           if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
           if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
           if(regionOnly){
@@ -3448,11 +3457,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 matchesProvinceCity(c,provinceSnapshot,citySnapshot);
             if(!matches)continue;
           }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
+          categoryMatches++;
           String display=displayChannelName(c);
           String safeName=c.name==null?"":c.name;
           String safeGroup=c.group==null?"":c.group;
           if(!safeName.toLowerCase(Locale.ROOT).contains(query)&&!safeGroup.toLowerCase(Locale.ROOT).contains(query)
               &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
+          queryMatches++;
           visible.add(c);
           String key=c.key();
           if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
@@ -3465,13 +3476,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           });
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" matches="+visible.size()+" generation="+generation);
+        long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
+        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
         });
       }catch(Throwable failure){
-        android.util.Log.e("MyTVCatalogue","background catalogue filter failed",failure);
+        android.util.Log.e("MyTVCatalogue","background catalogue filter failed category="+categorySnapshot+" scanned="+scanned+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt),failure);
         runOnUiThread(()->{
           if(generation!=catalogueFilterGeneration||isFinishing()||isDestroyed())return;
           // Keep the previously rendered catalogue usable when a new background
@@ -3487,7 +3499,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
       boolean customCategory,int requestedPage,int previousFocusedIndex,String previousFocusedKey,
       HashMap<String,Integer> sourceIndexByKey){
-    android.util.Log.i("MyTVDirectory","render category="+activeCategory+" visible="+visible.size()+" page="+requestedPage);
+    final long renderStartedAt=android.os.SystemClock.elapsedRealtime();
+    android.util.Log.i("MyTVDirectory","render_start category="+activeCategory+" visible="+visible.size()+" page="+requestedPage);
     list.removeAllViews();
     if(customCategory){
       TextView customHeader=new TextView(this);
@@ -3564,6 +3577,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       empty.setPadding(dp(18),dp(22),dp(18),dp(22));list.addView(empty,new LinearLayout.LayoutParams(-1,dp(180)));
     }
     if(visible.size()>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+visible.size()+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
+    android.util.Log.i("MyTVDirectory","render_ready category="+activeCategory+" total_matches="+visible.size()+" rendered_buttons="+Math.min(maxRows,Math.max(0,visible.size()-pageStart))+" child_views="+list.getChildCount()+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-renderStartedAt));
     final int restoreIndex=previousFocusedIndex;
     if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())list.post(()->{
       if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
