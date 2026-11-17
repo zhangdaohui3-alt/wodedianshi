@@ -1156,48 +1156,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }catch(Exception ignored){}
     },worker);
   }
-  private void reloadChannelsAfterSourceUpdate(){
-    String keepIdentity="";
-    if(selected>=0&&selected<channels.size())keepIdentity=identity(channels.get(selected).name,channels.get(selected).group,channels.get(selected).url);
-    try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      ArrayList<Channel> updated=new ArrayList<>();
-      for(int i=0;i<a.length();i++){
-        org.json.JSONObject o=a.getJSONObject(i);
-        Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group",""));
-        c.tvgId=o.optString("tvgId","");
-        c.tvgName=o.optString("tvgName","");
-        c.activeSource=o.optInt("activeSource",0);
-        org.json.JSONArray scopes=o.optJSONArray("sourceScopes");
-        if(scopes!=null)for(int j=0;j<scopes.length();j++){
-          String scope=scopes.optString(j,"");
-          if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))c.sourceScopes.add(scope);
-        }
-        // Empty means legacy provenance is unknown, not that the channel is custom.
-        org.json.JSONArray src=o.optJSONArray("sources");
-        if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
-        org.json.JSONArray ownership=o.optJSONArray("backupSourceScopes");
-        if(ownership!=null)for(int j=0;j<ownership.length();j++){
-          org.json.JSONObject item=ownership.optJSONObject(j);if(item==null)continue;
-          String source=item.optString("url","");org.json.JSONArray values=item.optJSONArray("scopes");
-          if(values==null||source.isEmpty())continue;
-          HashSet<String> valid=new HashSet<>();
-          for(int k=0;k<values.length();k++){String scope=values.optString(k,"");if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))valid.add(scope);}
-          if(!valid.isEmpty())c.backupSourceScopes.put(source,valid);
-        }
-        c.activeSource=Math.max(0,Math.min(c.activeSource,c.backups.size()-1));
-        updated.add(c);
-      }
-      synchronized(channels){channels.clear();channels.addAll(updated);}
-      favorites.clear();favorites.addAll(p.getStringSet("fav",new HashSet<>()));
-      rebuildChannelIndexes();
-      selected=-1;
-      if(!keepIdentity.isEmpty())for(int i=0;i<channels.size();i++)if(identity(channels.get(i).name,channels.get(i).group,channels.get(i).url).equals(keepIdentity)){selected=i;break;}
-      refresh();
-      if(selected>=0)info.setText("频道源更新完成，当前仍保留原播放画面："+channels.get(selected).name+"。如需使用新备用源，可在卡顿时自动切换或手动切换。");
-    }catch(Exception e){info.setText("更新已完成，但刷新频道列表失败："+e.getMessage());}
-  }
   private void showSourceUpdateStatus(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     String time=p.getString("source_update_time","尚未更新");
