@@ -16,4 +16,11 @@ public class HlsProbeValidationPolicyTest {
         assertFalse(HlsProbeValidationPolicy.isCompleteSample(true));
         assertTrue(HlsProbeValidationPolicy.isCompleteSample(false));
     }
+
+    @Test public void detectsOnlyBytesBeyondTheSampleLimitAsTruncation() {
+        assertFalse(HlsProbeValidationPolicy.isTruncatedSample(32767,32768));
+        assertFalse(HlsProbeValidationPolicy.isTruncatedSample(32768,32768));
+        assertTrue(HlsProbeValidationPolicy.isTruncatedSample(32769,32768));
+        assertFalse(HlsProbeValidationPolicy.isTruncatedSample(1,0));
+    }
 }
