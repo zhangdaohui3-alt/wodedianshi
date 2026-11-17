@@ -66,6 +66,9 @@ public interface ChannelDao {
     @Query("DELETE FROM categories")
     void clearCategories();
 
+    @Query("SELECT COUNT(*) FROM categories")
+    int countCategories();
+
     @Query("SELECT COUNT(*) FROM channels")
     int countChannels();
 
