@@ -3775,8 +3775,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(getApplicationContext(),saved);
       com.wodedianshi.tv.db.LegacyCatalogueImporter.Result international=
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importInternationalIfNeeded(getApplicationContext(),saved);
-      android.util.Log.i("MyTVRoomSync","catalogues reconciled all="+all.channels
-          +" china="+china.channels+" international="+international.channels);
+      // Import completion is not enough for a future read cutover: verify all
+      // three independent snapshots again through their read-side repositories.
+      boolean masterReady=new com.wodedianshi.tv.db.MasterCatalogueRepository(
+          getApplicationContext()).isSnapshotReady();
+      boolean chinaReady=new com.wodedianshi.tv.db.ChinaCatalogueRepository(
+          getApplicationContext()).isSnapshotReady();
+      boolean internationalReady=new com.wodedianshi.tv.db.InternationalCatalogueRepository(
+          getApplicationContext()).isSnapshotReady();
+      if(!masterReady||!chinaReady||!internationalReady){
+        throw new IllegalStateException("Room snapshot readiness mismatch master="+masterReady
+            +" china="+chinaReady+" international="+internationalReady);
+      }
+      android.util.Log.i("MyTVRoomSync","catalogues reconciled and verified all="+all.channels
+          +" china="+china.channels+" international="+international.channels
+          +" masterReady="+masterReady+" chinaReady="+chinaReady
+          +" internationalReady="+internationalReady);
     }catch(Throwable failure){
       android.util.Log.e("MyTVRoomSync","catalogue reconcile failed; previous Room snapshots retained",failure);
       saveLiveDiagnostic("ROOM_RECONCILE_ERROR",
