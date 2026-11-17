@@ -120,6 +120,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // serial writer coalesces bursts of remote-control actions into the newest state.
   private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
   private final Object cataloguePersistLock = new Object();
+  // Serializes disk commits with background-candidate preference publication.
+  // UI persistence requests use cataloguePersistLock only, never this I/O lock.
+  private final Object cataloguePreferenceWriteLock = new Object();
   private long cataloguePersistRequestedGeneration=0L;
   private long cataloguePersistCompletedGeneration=0L;
   private boolean cataloguePersistLastSuccess=true;
@@ -569,25 +572,30 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // so this publication check performs no large file read or hash on the UI thread.
   private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs,
       String expectedPersisted,String candidate){
-    synchronized(cataloguePersistLock){
-      if(candidate==null||candidate.isEmpty())return false;
-      String current=prefs.getString("channels","[]");
-      boolean applied=expectedPersisted!=null&&expectedPersisted.equals(current);
-      android.content.SharedPreferences.Editor edit=prefs.edit();
-      if(applied){
-        edit.putString("channels",candidate)
-            .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
-      }else{
-        edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+    // Candidate publication is rare (returning from background). Coordinate it with
+    // the background disk writer without making ordinary UI persist() calls wait
+    // for the large SharedPreferences commit.
+    synchronized(cataloguePreferenceWriteLock){
+      synchronized(cataloguePersistLock){
+        if(candidate==null||candidate.isEmpty())return false;
+        String current=prefs.getString("channels","[]");
+        boolean applied=expectedPersisted!=null&&expectedPersisted.equals(current);
+        android.content.SharedPreferences.Editor edit=prefs.edit();
+        if(applied){
+          edit.putString("channels",candidate)
+              .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
+        }else{
+          edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+        }
+        edit.remove("source_update_pending_base_fingerprint")
+            .remove("source_update_pending_base")
+            .remove("source_update_pending_channels")
+            .apply();
+        // Metadata is removed in either outcome, so discard the now-unreferenced
+        // candidate file whether it was applied or rejected as stale.
+        PendingCatalogueStore.delete(getApplicationContext());
+        return applied;
       }
-      edit.remove("source_update_pending_base_fingerprint")
-          .remove("source_update_pending_base")
-          .remove("source_update_pending_channels")
-          .apply();
-      // Metadata is removed in either outcome, so discard the now-unreferenced
-      // candidate file whether it was applied or rejected as stale.
-      PendingCatalogueStore.delete(getApplicationContext());
-      return applied;
     }
   }
 
@@ -1135,21 +1143,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       logCatalogueMemory("persist_json_ready",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-      synchronized(cataloguePersistLock){
-        // A background Worker result may have been applied while this snapshot was
-        // being encoded. Never let an older in-memory snapshot overwrite that newer
-        // persisted catalogue; the Activity reload path will adopt it before retrying.
-        String expectedPersisted=lastPersistedChannelsJson;
-        String currentPersisted=prefs.getString("channels","[]");
-        if(expectedPersisted!=null&&!java.util.Objects.equals(currentPersisted,expectedPersisted)){
-          android.util.Log.w("MyTVCatalogue","skip stale catalogue save: persisted base changed during snapshot");
-          saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
-          return false;
+      synchronized(cataloguePreferenceWriteLock){
+        final String expectedPersisted;
+        // Read/check the base under the lightweight state lock, but do not hold it
+        // during disk I/O. UI persist() calls must remain able to enqueue a new
+        // generation while this 20+ MB preference file is being committed.
+        synchronized(cataloguePersistLock){
+          expectedPersisted=lastPersistedChannelsJson;
+          String currentPersisted=prefs.getString("channels","[]");
+          if(expectedPersisted!=null&&!java.util.Objects.equals(currentPersisted,expectedPersisted)){
+            android.util.Log.w("MyTVCatalogue","skip stale catalogue save: persisted base changed during snapshot");
+            saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
+            return false;
+          }
         }
         // This method runs only on cataloguePersistWorker, never on the UI thread.
-        // apply() updates the in-memory preference immediately but does not confirm the
-        // file reached disk. Room shadow reconciliation is queued behind this writer,
-        // so require commit() to succeed before publishing the new saved-snapshot marker.
+        // commit() confirms the file reached disk before Room can treat this
+        // snapshot as saved. cataloguePreferenceWriteLock also excludes candidate
+        // publication, while cataloguePersistLock stays free for UI enqueue calls.
         boolean committed=prefs.edit()
             .putString("channels",savedJson)
             .putStringSet("fav",favoriteSnapshot)
@@ -1160,7 +1171,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               "SharedPreferences commit returned false; Room reconcile must not use this snapshot");
           return false;
         }
-        lastPersistedChannelsJson=savedJson;
+        synchronized(cataloguePersistLock){
+          lastPersistedChannelsJson=savedJson;
+        }
       }
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+persistedChannels+" channels, json_chars="+savedJson.length());
       logCatalogueMemory("persist_done",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
@@ -6540,7 +6553,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
     lastPersistedChannelsJson=raw;
-    if(hasApplicablePending)queueRoomCatalogueReconcileAfterPersist();
+    if(hasApplicablePending){
+      // The UI publication above uses apply() to stay non-blocking. Queue a normal
+      // background persist/commit before Room import so the staged candidate is
+      // confirmed on disk and any edits queued after publication remain ordered.
+      persist();
+      queueRoomCatalogueReconcileAfterPersist();
+    }
     refresh();
     android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
           });
