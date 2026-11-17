@@ -3743,15 +3743,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // A recent timestamp is not enough: some earlier directory responses contained
     // only a handful of recognized mainland channels. Keep retrying while the local
     // catalogue is visibly incomplete instead of freezing that small result for 12h.
-    final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
     final int minimumUsefulChinaChannels=60;
-    if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
-      info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
-      return;
-    }
-    chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
+    // Do not count/classify 11k+ saved channels on the UI thread when the user
+    // opens CCTV/Satellite. The old synchronous scan repeatedly built identities
+    // and could itself block MotionEvent dispatch long enough to trigger an ANR.
+    chinaLoading=true;info.setText("正在检查国内频道缓存（已有频道仍可继续使用）…");
     try{worker.execute(()->{
       try{
+      final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
+      if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
+        runOnUiThread(()->{
+          chinaLoading=false;
+          if(!isFinishing()&&info!=null)info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+        });
+        return;
+      }
       // The same CCTV, provincial and iptv-org China feeds are owned by SourceUpdateWorker.
       // Keep only supplemental feeds here to avoid downloading those URLs twice.
       String[] feeds={
