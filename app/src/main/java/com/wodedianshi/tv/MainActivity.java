@@ -211,25 +211,45 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   public void onCreate(Bundle b) {
     super.onCreate(b);
     installCrashDiagnosticsHandler();
-    recordPreviousProcessExitReason();
-    setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
-    setSourceUpdateActivityActive(true);
-    // Keep the display awake only while the saved catalogue is being restored.
-    // The flag is cleared as soon as the home screen becomes usable.
     getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-    // Render the shell immediately. Parsing a large saved playlist and rebuilding
-    // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
-    makeUi();
-    remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
-      @Override public void onLockStateChanged(boolean locked, String reason) {
-        if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
-        else dismissRemoteParentLock();
+
+    // IMPORTANT: SharedPreferences is backed by a single XML file. The legacy
+    // catalogue is about 17 MB, and the first getSharedPreferences() can wait for
+    // that file to load. Warm it on the worker thread before any UI code reads it.
+    // Show a tiny native loading surface immediately so the main thread stays free.
+    TextView startup = new TextView(this);
+    startup.setText("我的电视\\n正在安全恢复频道数据…");
+    startup.setTextColor(Color.WHITE);
+    startup.setTextSize(22);
+    startup.setGravity(Gravity.CENTER);
+    startup.setBackgroundColor(Color.rgb(8,13,24));
+    setContentView(startup);
+
+    worker.execute(() -> {
+      long prefsWarmStarted = android.os.SystemClock.elapsedRealtime();
+      try {
+        getSharedPreferences("mytv",0); // first access: load the large XML off the UI thread
+        recordPreviousProcessExitReason();
+        setSourceUpdatePlaybackActive(false);
+        android.util.Log.i("MyTVStartup","preferences_warm_ms="
+            +(android.os.SystemClock.elapsedRealtime()-prefsWarmStarted));
+      } catch (Throwable warmFailure) {
+        android.util.Log.e("MyTVStartup","background preferences warm-up failed",warmFailure);
       }
-      @Override public void onStatus(String message) {
-        android.util.Log.i("MyTVRemoteLock", message);
-      }
-    });
-    worker.execute(()->{
+      runOnUiThread(() -> {
+        if (isFinishing()) return;
+        setSourceUpdateActivityActive(true);
+        makeUi();
+        remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
+          @Override public void onLockStateChanged(boolean locked, String reason) {
+            if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
+            else dismissRemoteParentLock();
+          }
+          @Override public void onStatus(String message) {
+            android.util.Log.i("MyTVRemoteLock", message);
+          }
+        });
+        worker.execute(() -> {
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       Throwable restoreFailure=null;
       try{restore();}
@@ -300,6 +320,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
+      });
+
+        });
       });
     });
   }
