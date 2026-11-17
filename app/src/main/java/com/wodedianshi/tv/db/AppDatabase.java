@@ -1,4 +1,4 @@
-package com.wodianshi.tv.db;
+package com.wodedianshi.tv.db;
 
 import androidx.room.Database;
 import androidx.room.RoomDatabase;
