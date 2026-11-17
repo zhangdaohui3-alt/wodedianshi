@@ -7,17 +7,22 @@ import java.security.NoSuchAlgorithmException;
 /**
  * Stable Room primary keys for imported legacy channels.
  *
- * Row-number IDs change when a channel is inserted or removed before another
- * row. A content identity plus duplicate occurrence keeps IDs stable for
- * ordinary catalogue edits and enables safe incremental Room synchronization.
+ * Length-prefixed name and URL avoid delimiter collisions in the legacy
+ * "name|url" favorite key. Duplicate occurrences distinguish truly repeated
+ * legacy rows without depending on unrelated rows' positions.
  */
 public final class LegacyChannelIdPolicy {
     private LegacyChannelIdPolicy() {}
 
-    public static String idFor(String legacyKey, int occurrence) {
-        String key = legacyKey == null ? "" : legacyKey;
+    public static String identityKey(String name, String primaryUrl) {
+        String safeName = name == null ? "" : name;
+        String safeUrl = primaryUrl == null ? "" : primaryUrl;
+        return safeName.length() + ":" + safeName + safeUrl.length() + ":" + safeUrl;
+    }
+
+    public static String idFor(String name, String primaryUrl, int occurrence) {
         int ordinal = Math.max(0, occurrence);
-        String identity = key.length() + ":" + key + ":" + ordinal;
+        String identity = identityKey(name, primaryUrl) + ":" + ordinal;
         final byte[] digest;
         try {
             digest = MessageDigest.getInstance("SHA-256")
