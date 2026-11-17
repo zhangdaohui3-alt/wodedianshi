@@ -45,7 +45,7 @@ public final class PendingCatalogueStore {
         }
     }
 
-    public static String read(Context context) throws IOException {
+    public static String read(Context context) {
         AtomicFile file = atomicFile(context);
         try (FileInputStream stream = file.openRead();
              InputStreamReader input = new InputStreamReader(stream, StandardCharsets.UTF_8);
@@ -58,6 +58,9 @@ public final class PendingCatalogueStore {
             }
             return json.toString();
         } catch (FileNotFoundException missing) {
+            return null;
+        } catch (IOException failure) {
+            android.util.Log.w("MyTVCatalogueStore", "could not read staged catalogue; old catalogue remains active", failure);
             return null;
         }
     }
