@@ -31,4 +31,17 @@ public final class ChannelListRow {
         this.activeSource = activeSource;
         this.sortOrder = sortOrder;
     }
+
+    /**
+     * Recover the original legacy primary URL used by favorites and channel
+     * identity. primaryUrl is the first URL in this Room partition and may be
+     * different when a channel is shared across China/international catalogues.
+     */
+    public String legacyPrimaryUrl() {
+        if (legacyKey != null && name != null) {
+            String prefix = name + "|";
+            if (legacyKey.startsWith(prefix)) return legacyKey.substring(prefix.length());
+        }
+        return primaryUrl == null ? "" : primaryUrl;
+    }
 }
