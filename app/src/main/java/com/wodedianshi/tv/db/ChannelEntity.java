@@ -10,7 +10,12 @@ import androidx.room.PrimaryKey;
     foreignKeys = @ForeignKey(entity = CategoryEntity.class,
         parentColumns = "id", childColumns = "categoryId",
         onDelete = ForeignKey.RESTRICT),
-    indices = {@Index("categoryId"), @Index("name"), @Index("groupName")})
+    indices = {
+        @Index(value = {"categoryId", "sortOrder", "name", "id"}),
+        @Index(value = {"sortOrder", "name", "id"}),
+        @Index("name"),
+        @Index("groupName")
+    })
 public class ChannelEntity {
     @PrimaryKey @NonNull public String id;
     @NonNull public String legacyKey;
