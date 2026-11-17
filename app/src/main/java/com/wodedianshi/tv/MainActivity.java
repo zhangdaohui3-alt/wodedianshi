@@ -3746,14 +3746,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // persist() on the UI thread means "queued", not "durably saved".
         // Never import a failed/old SharedPreferences snapshot into Room.
         final boolean durable;
+        final long completedGeneration;
+        final boolean lastSaveSuccess;
         synchronized(cataloguePersistLock){
-          durable=cataloguePersistCompletedGeneration>=expectedGeneration
-              &&cataloguePersistLastSuccess;
+          completedGeneration=cataloguePersistCompletedGeneration;
+          lastSaveSuccess=cataloguePersistLastSuccess;
+          durable=completedGeneration>=expectedGeneration&&lastSaveSuccess;
         }
         if(!durable){
           android.util.Log.w("MyTVRoomSync","skip Room reconcile: legacy save not confirmed generation="+expectedGeneration
-              +" completed="+cataloguePersistCompletedGeneration
-              +" success="+cataloguePersistLastSuccess);
+              +" completed="+completedGeneration
+              +" success="+lastSaveSuccess);
           saveLiveDiagnostic("ROOM_RECONCILE_SKIPPED_UNSAVED","generation="+expectedGeneration);
           return;
         }
