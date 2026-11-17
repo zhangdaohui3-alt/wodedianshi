@@ -4353,12 +4353,67 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
+  // The Room database is still a shadow catalogue. Resolve exactly the same
+  // stable identity scheme used by LegacyCatalogueImporter, including duplicate
+  // rows, before queuing a small write-through update off the UI thread.
+  private String roomChannelIdAt(int channelIndex){
+    synchronized(channels){
+      if(channelIndex<0||channelIndex>=channels.size())return "";
+      Channel target=channels.get(channelIndex);
+      if(target==null||target.name==null||target.url==null)return "";
+      int occurrence=0;
+      for(int i=0;i<channelIndex;i++){
+        Channel prior=channels.get(i);
+        if(prior!=null&&java.util.Objects.equals(prior.name,target.name)
+            &&java.util.Objects.equals(prior.url,target.url))occurrence++;
+      }
+      return com.wodedianshi.tv.db.LegacyChannelIdPolicy.idFor(
+          target.name,target.url,occurrence);
+    }
+  }
+
+  private void queueRoomFavoriteSync(String legacyKey,boolean favorite){
+    if(legacyKey==null||legacyKey.isEmpty())return;
+    try{
+      worker.execute(()->{
+        try{
+          com.wodedianshi.tv.db.RoomShadowSync.setFavorite(
+              getApplicationContext(),legacyKey,favorite);
+        }catch(Throwable failure){
+          android.util.Log.w("MyTVRoomSync","favorite shadow update skipped",failure);
+        }
+      });
+    }catch(RuntimeException rejected){
+      android.util.Log.w("MyTVRoomSync","favorite shadow update queue rejected",rejected);
+    }
+  }
+
+  private void queueRoomActiveSourceSync(int channelIndex,String sourceUrl){
+    final String channelId=roomChannelIdAt(channelIndex);
+    if(channelId.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
+    try{
+      worker.execute(()->{
+        try{
+          boolean updated=com.wodedianshi.tv.db.RoomShadowSync.setActiveSourceUrl(
+              getApplicationContext(),channelId,sourceUrl);
+          if(!updated)android.util.Log.d("MyTVRoomSync",
+              "active source not mirrored (catalogue row/source not imported yet)");
+        }catch(Throwable failure){
+          android.util.Log.w("MyTVRoomSync","active source shadow update skipped",failure);
+        }
+      });
+    }catch(RuntimeException rejected){
+      android.util.Log.w("MyTVRoomSync","active source shadow update queue rejected",rejected);
+    }
+  }
+
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
     else{favorites.add(c.key());toast("已加入收藏："+c.name);}
     persist();
+    queueRoomFavoriteSync(c.key(),favorites.contains(c.key()));
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
   }
@@ -4997,6 +5052,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     automaticSwitchCount++;
     c.activeSource=next;
+    queueRoomActiveSourceSync(selected,c.backups.get(next));
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
@@ -5049,6 +5105,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
+    if(target.activeSource>=0&&target.activeSource<target.backups.size())
+      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
     startCurrentSource();
   }
   // Explicit backup selection must not be reset to the channel's default/last-good source.
@@ -5068,6 +5126,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     persist();
+    if(target.activeSource>=0&&target.activeSource<target.backups.size())
+      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
     startCurrentSource();
   }
   private void startCurrentSource(){

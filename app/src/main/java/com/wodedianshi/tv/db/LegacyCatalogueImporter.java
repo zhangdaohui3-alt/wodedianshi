@@ -23,7 +23,7 @@ public final class LegacyCatalogueImporter {
     // v2 switches row-number primary keys to stable content identities. The
     // first v2 import rebuilds the shadow catalogue once; the legacy preferences
     // remain untouched and authoritative throughout.
-    private static final String PREF_MIGRATED = "room_catalogue_migration_v2";
+    public static final String MIGRATION_KEY = "room_catalogue_migration_v2";
     private static final int BATCH_SIZE = 96;
 
     private LegacyCatalogueImporter() {}
@@ -48,7 +48,7 @@ public final class LegacyCatalogueImporter {
         if (json == null || json.trim().isEmpty()) throw new IllegalStateException("legacy catalogue is empty");
         final String snapshotFingerprint = fingerprint(json, legacyFavorites);
 
-        CatalogueMigrationEntity checkpoint = dao.getMigration(PREF_MIGRATED);
+        CatalogueMigrationEntity checkpoint = dao.getMigration(MIGRATION_KEY);
         if (checkpoint != null && snapshotFingerprint.equals(checkpoint.catalogueFingerprint)) {
             int channels = dao.countChannels();
             int sources = dao.countBackupSources();
@@ -63,7 +63,7 @@ public final class LegacyCatalogueImporter {
                     && channels > 0) {
                 return new Result(channels, sources, favorites);
             }
-            dao.removeMigration(PREF_MIGRATED);
+            dao.removeMigration(MIGRATION_KEY);
         }
 
         // Track category rows as well as channels/sources/favorites. A matching
@@ -153,7 +153,7 @@ public final class LegacyCatalogueImporter {
             // Commit the checkpoint in the same SQLite transaction as the imported
             // rows. A changed legacy snapshot gets a different fingerprint next time.
             dao.removeMigration("room_catalogue_migration_v1");
-            dao.insertMigration(new CatalogueMigrationEntity(PREF_MIGRATED,
+            dao.insertMigration(new CatalogueMigrationEntity(MIGRATION_KEY,
                     totals[0], totals[1], totals[2], totals[3], System.currentTimeMillis(), snapshotFingerprint));
         });
 
@@ -163,7 +163,7 @@ public final class LegacyCatalogueImporter {
         String committedJson = prefs.getString("channels", "[]");
         Set<String> committedFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
         if (!snapshotFingerprint.equals(fingerprint(committedJson == null ? "" : committedJson, committedFavorites))) {
-            dao.removeMigration(PREF_MIGRATED);
+            dao.removeMigration(MIGRATION_KEY);
             throw new IllegalStateException("legacy catalogue changed immediately after Room import; checkpoint invalidated");
         }
 

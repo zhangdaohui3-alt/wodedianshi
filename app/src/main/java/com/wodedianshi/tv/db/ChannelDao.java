@@ -71,6 +71,24 @@ public interface ChannelDao {
     @Query("SELECT EXISTS(SELECT 1 FROM favorites WHERE channelId = :channelId)")
     boolean isFavorite(String channelId);
 
+    // Keep the Room shadow aligned with explicit source choices without relying
+    // on an array index that may differ after a source-ranking refresh.
+    @Query("UPDATE channels SET activeSource = (SELECT priority FROM backup_sources "
+            + "WHERE channelId = :channelId AND url = :sourceUrl LIMIT 1) "
+            + "WHERE id = :channelId AND EXISTS (SELECT 1 FROM backup_sources "
+            + "WHERE channelId = :channelId AND url = :sourceUrl)")
+    int setActiveSourceByUrl(String channelId, String sourceUrl);
+
+    // Legacy favorites are keyed by name|primaryUrl. Update every matching row
+    // so duplicate legacy entries keep the same behavior as the old Set<String>.
+    @Query("INSERT OR REPLACE INTO favorites(channelId, addedAt) "
+            + "SELECT id, :addedAt FROM channels WHERE legacyKey = :legacyKey")
+    void addFavoritesForLegacyKey(String legacyKey, long addedAt);
+
+    @Query("DELETE FROM favorites WHERE channelId IN "
+            + "(SELECT id FROM channels WHERE legacyKey = :legacyKey)")
+    void removeFavoritesForLegacyKey(String legacyKey);
+
     @Query("DELETE FROM backup_sources")
     void clearBackupSources();
 
