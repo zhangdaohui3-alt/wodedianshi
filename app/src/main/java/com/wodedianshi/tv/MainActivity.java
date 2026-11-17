@@ -320,6 +320,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
+        // Build the Room copy only after the original SharedPreferences catalogue
+        // has been restored and the UI is usable. The import is transactional and
+        // leaves both legacy channels and favorites untouched on any failure.
+        if(restoreSucceeded&&!channels.isEmpty()){
+          worker.execute(()->{
+            try{
+              android.content.SharedPreferences legacy=getSharedPreferences("mytv",0);
+              com.wodedianshi.tv.db.LegacyCatalogueImporter.Result result=
+                  com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(
+                      getApplicationContext(),legacy);
+              android.util.Log.i("MyTVRoomMigration","validated channels="+result.channels
+                  +" backup_sources="+result.sources+" favorites="+result.favorites);
+            }catch(Throwable migrationFailure){
+              android.util.Log.e("MyTVRoomMigration",
+                  "background import failed; legacy catalogue remains authoritative",migrationFailure);
+              saveLiveDiagnostic("ROOM_IMPORT_ERROR",
+                  migrationFailure.getClass().getSimpleName()+": "+String.valueOf(migrationFailure.getMessage()));
+            }
+          });
+        }
       });
 
         });
