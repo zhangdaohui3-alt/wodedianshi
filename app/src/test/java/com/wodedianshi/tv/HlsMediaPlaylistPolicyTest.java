@@ -185,4 +185,39 @@ public class HlsMediaPlaylistPolicyTest {
         assertEquals(4, resources.mediaUrls.size());
         assertFalse(resources.mediaUrls.contains("https://cdn.example/e.m4s"));
     }
+
+    @Test public void retainsFirstMediaSequenceForImplicitAesIv() throws Exception {
+        String playlist = "#EXTM3U\\n"
+                + "#EXT-X-MEDIA-SEQUENCE:42\\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\\\"key.bin\\\"\\n"
+                + "#EXTINF:6,\\nseg-42.ts\\n"
+                + "#EXTINF:6,\\nseg-43.ts\\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.aes128Encrypted);
+        assertNull(resources.encryptionIv);
+        assertEquals(42L, resources.firstMediaSequenceNumber);
+        assertEquals(2, resources.mediaUrls.size());
+    }
+
+    @Test public void retainsExplicitIvForEncryptedSegments() throws Exception {
+        String iv = "0x0000000000000000000000000000002a";
+        String playlist = "#EXTM3U\\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\\\"key.bin\\\",IV=" + iv + "\\n"
+                + "#EXTINF:6,\\nseg.ts\\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertEquals(iv, resources.encryptionIv);
+        assertEquals(0L, resources.firstMediaSequenceNumber);
+        assertFalse(resources.unsupportedEncryption);
+    }
+
+    @Test public void rejectsAesEncryptedLowLatencyPartsWithoutSequenceMapping() throws Exception {
+        String playlist = "#EXTM3U\\n"
+                + "#EXT-X-KEY:METHOD=AES-128,URI=\\\"key.bin\\\"\\n"
+                + "#EXT-X-PART:DURATION=0.333,URI=\\\"part-1.ts\\\"\\n";
+        HlsMediaPlaylistPolicy.Resources resources = HlsMediaPlaylistPolicy.parse(
+                playlist, "https://cdn.example/live/index.m3u8");
+        assertTrue(resources.unsupportedEncryption);
+    }
 }
