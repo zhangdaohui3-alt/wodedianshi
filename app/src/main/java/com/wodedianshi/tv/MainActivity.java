@@ -107,6 +107,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  // Catalogue snapshots and JSON encoding must never run on the UI thread. One
+  // serial writer coalesces bursts of remote-control actions into the newest state.
+  private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
+  private final Object cataloguePersistLock = new Object();
+  private long cataloguePersistRequestedGeneration=0L;
+  private long cataloguePersistCompletedGeneration=0L;
+  private boolean cataloguePersistLastSuccess=true;
+  private boolean cataloguePersistScheduled=false;
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
@@ -884,7 +892,63 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long used=Math.max(0L,runtime.totalMemory()-runtime.freeMemory());
     android.util.Log.i("MyTVMemory","stage="+stage+" channels="+channelCount+" sources="+sourceCount+" used_mb="+(used/1048576L)+" heap_mb="+(runtime.totalMemory()/1048576L)+" max_mb="+(runtime.maxMemory()/1048576L)+" elapsed_ms="+elapsedMs);
   }
+  /**
+   * Queue catalogue persistence off the UI thread. Multiple rapid requests are
+   * coalesced: the writer always snapshots the latest in-memory catalogue, and
+   * a single worker prevents older snapshots from overwriting newer ones.
+   *
+   * Background callers wait for the requested generation so import flows can
+   * still report a real save failure. UI callers return after the write is queued.
+   */
   private boolean persist(){
+    final long requestedGeneration;
+    synchronized(cataloguePersistLock){
+      requestedGeneration=++cataloguePersistRequestedGeneration;
+      if(!cataloguePersistScheduled){
+        cataloguePersistScheduled=true;
+        try{
+          cataloguePersistWorker.execute(()->{
+            while(true){
+              final long generationToWrite;
+              synchronized(cataloguePersistLock){
+                generationToWrite=cataloguePersistRequestedGeneration;
+              }
+              boolean success=persistNow();
+              synchronized(cataloguePersistLock){
+                cataloguePersistCompletedGeneration=generationToWrite;
+                cataloguePersistLastSuccess=success;
+                cataloguePersistLock.notifyAll();
+                if(cataloguePersistRequestedGeneration==generationToWrite){
+                  cataloguePersistScheduled=false;
+                  return;
+                }
+              }
+            }
+          });
+        }catch(RuntimeException rejected){
+          cataloguePersistScheduled=false;
+          cataloguePersistLastSuccess=false;
+          cataloguePersistCompletedGeneration=requestedGeneration;
+          cataloguePersistLock.notifyAll();
+          android.util.Log.e("MyTVCatalogue","catalogue persistence queue rejected",rejected);
+          return false;
+        }
+      }
+      if(Looper.myLooper()==Looper.getMainLooper()){
+        android.util.Log.i("MyTVCatalogue","persist queued generation="+requestedGeneration);
+        return true;
+      }
+      while(cataloguePersistCompletedGeneration<requestedGeneration){
+        try{cataloguePersistLock.wait();}
+        catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();
+          return false;
+        }
+      }
+      return cataloguePersistLastSuccess;
+    }
+  }
+  private boolean persistNow(){
     long persistStarted=android.os.SystemClock.elapsedRealtime();
     int persistedSources=0;
     try {
