@@ -3325,9 +3325,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return "";
   }
   private boolean isSatelliteChannel(Channel c){
+    if(c==null)return false;
     String metadata=regionalMetadata(c);
-    String group=c==null||c.group==null?"":c.group.toLowerCase(Locale.ROOT);
-    return ChannelNamePolicy.isSatellite(metadata, c==null?"":c.group)
+    // Legacy and partially imported records can have a null group. Keep the
+    // same normalized value for both the policy call and the fast group checks.
+    String rawGroup=c.group==null?"":c.group;
+    String group=rawGroup.toLowerCase(Locale.ROOT);
+    return ChannelNamePolicy.isSatellite(metadata,rawGroup)
         ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
   private boolean matchesProvinceLocal(Channel c,String province){

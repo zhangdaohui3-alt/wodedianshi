@@ -72,4 +72,10 @@ public class ChannelNamePolicyTest {
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("Fuzhou TV"));
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("CCTV-1"));
     }
+
+    @Test public void satelliteClassificationToleratesNullGroupMetadata() {
+        assertFalse(ChannelNamePolicy.isSatellite("International News", null));
+        assertTrue(ChannelNamePolicy.isSatellite("湖南卫视", null));
+        assertFalse(ChannelNamePolicy.isSatellite(null, null));
+    }
 }
