@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 @UnstableApi
 public class MainActivity extends androidx.activity.ComponentActivity {
+  private static final int LIVE_PAGE_SIZE=48;
   // Read by Media3's playback-thread frame callback as well as the UI thread.
   private volatile ExoPlayer player;
   private boolean decoderInventoryRecorded=false;
@@ -1185,7 +1186,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -3608,7 +3609,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
     // Keep the catalogue complete, but limit live View inflation per page on low-memory TV boxes.
-    final int maxRows=48;
+    final int maxRows=LIVE_PAGE_SIZE;
     int selectedPosition=-1;
     if(selectedKey!=null)for(int i=0;i<visible.size();i++){Channel candidate=visible.get(i);if(candidate!=null&&selectedKey.equals(candidate.key())){selectedPosition=i;break;}}
     livePageIndex=selectedPosition>=0?selectedPosition/maxRows:Math.max(0,requestedPage);
@@ -3689,7 +3690,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return lastFilteredMatchCount;
   }
   private void updateLivePaging(int total){
-    int pages=Math.max(1,(total+47)/48);
+    int pages=LivePagePolicy.pageCount(total,LIVE_PAGE_SIZE);
     if(livePageIndex>=pages)livePageIndex=pages-1;
     if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
     if(livePreviousPageButton!=null){

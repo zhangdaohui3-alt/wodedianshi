@@ -1,0 +1,28 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+public class LivePagePolicyTest {
+    @Test public void countsPagesUsingTheRenderedPageSize() {
+        assertEquals(1, LivePagePolicy.pageCount(48, 48));
+        assertEquals(2, LivePagePolicy.pageCount(49, 48));
+        assertEquals(2, LivePagePolicy.pageCount(96, 48));
+        assertEquals(3, LivePagePolicy.pageCount(97, 48));
+    }
+
+    @Test public void nextPageRemainsAvailableUntilTheLastRenderedPage() {
+        assertTrue(LivePagePolicy.canAdvance(0, 49, 48));
+        assertTrue(LivePagePolicy.canAdvance(1, 97, 48));
+        assertFalse(LivePagePolicy.canAdvance(1, 96, 48));
+        assertFalse(LivePagePolicy.canAdvance(2, 97, 48));
+    }
+
+    @Test public void emptyOrInvalidPageSizeIsSafe() {
+        assertEquals(1, LivePagePolicy.pageCount(0, 48));
+        assertEquals(1, LivePagePolicy.pageCount(20, 0));
+        assertFalse(LivePagePolicy.canAdvance(0, 0, 48));
+    }
+}
