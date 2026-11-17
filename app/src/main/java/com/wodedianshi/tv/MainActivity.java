@@ -135,6 +135,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep live channel-directory downloads isolated from VOD source lookups. A busy VOD
   // search must not occupy every source thread and leave the live catalogue half-loaded.
   private final ExecutorService playlistWorker = Executors.newFixedThreadPool(6);
+  // Domestic catalogue supplementation must not queue behind the legacy restore/Room import worker.
+  private final ExecutorService chinaCatalogueWorker = Executors.newSingleThreadExecutor();
   private volatile Future<?> activeVodCatalogueTask;
   // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
   // capped independently of large heaps so image browsing cannot crowd playback.
@@ -3824,7 +3826,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // opens CCTV/Satellite. The old synchronous scan repeatedly built identities
     // and could itself block MotionEvent dispatch long enough to trigger an ANR.
     chinaLoading=true;info.setText("正在检查国内频道缓存（已有频道仍可继续使用）…");
-    try{worker.execute(()->{
+    android.util.Log.i("MyTVDirectory","china_catalogue_task_start cached_channels="+channels.size()+" last_success="+last);
+    try{chinaCatalogueWorker.execute(()->{
       try{
       final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
       if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
