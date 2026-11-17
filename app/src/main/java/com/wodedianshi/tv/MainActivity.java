@@ -1027,71 +1027,66 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean persistNow(){
     long persistStarted=android.os.SystemClock.elapsedRealtime();
     int persistedSources=0;
+    int persistedChannels=0;
     try {
       int startingChannelCount;
       synchronized(channels){startingChannelCount=channels.size();}
       logCatalogueMemory("persist_begin",startingChannelCount,0,0);
-      // Take a short, detached snapshot while holding the catalogue lock, then do
-      // JSON encoding outside it. Encoding a 9–10 MB catalogue while locked used
-      // to block the UI thread's category refresh and remote-control input.
-      ArrayList<Channel> snapshot=new ArrayList<>();
-      synchronized(channels){
-        for(Channel source:channels){
-          if(source==null)continue;
-          // Persistence needs the full Channel collections. The lightweight filter-snapshot
-          // constructor deliberately sets them to null and must never be used here.
-          Channel copy=new Channel(source.name,source.url,source.group);
-          copy.tvgId=source.tvgId==null?"":source.tvgId;
-          copy.tvgName=source.tvgName==null?"":source.tvgName;
-          copy.activeSource=source.activeSource;
-          if(source.sourceScopes!=null)copy.sourceScopes.addAll(source.sourceScopes);
-          if(source.backupSourceScopes!=null)for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet()){
-            if(entry.getKey()!=null&&entry.getValue()!=null)
-              copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-          }
-          // Preserve an empty scope set for legacy channels with unknown provenance.
-          copy.backups.clear();
-          if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
-          if(copy.backups.isEmpty()&&!copy.url.isEmpty())copy.backups.add(copy.url);
-          persistedSources+=copy.backups.size();
-          snapshot.add(copy);
-        }
-      }
-      logCatalogueMemory("persist_snapshot_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
-      StringWriter buffer=new StringWriter(Math.max(1024,snapshot.size()*160));
-      try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
-        writer.beginArray();
-        for(Channel channel:snapshot){
-          writer.beginObject();
-          writer.name("name").value(channel.name);
-          writer.name("url").value(channel.url);
-          writer.name("group").value(channel.group);
-          writer.name("tvgId").value(channel.tvgId);
-          writer.name("tvgName").value(channel.tvgName);
-          writer.name("activeSource").value(channel.activeSource);
-          writer.name("sources").beginArray();
-          for(String source:channel.backups)writer.value(source);
-          writer.endArray();
-          writer.name("sourceScopes").beginArray();
-          for(String scope:channel.sourceScopes)writer.value(scope);
-          writer.endArray();
-          writer.name("backupSourceScopes").beginArray();
-          for(String source:channel.backups){
-            HashSet<String> scopes=channel.backupSourceScopes.get(source);
-            if(scopes==null||scopes.isEmpty())continue;
-            writer.beginObject().name("url").value(source).name("scopes").beginArray();
-            for(String scope:scopes)writer.value(scope);
-            writer.endArray().endObject();
+
+      // Do not deep-copy 11k+ Channel objects before encoding. The previous
+      // implementation retained both that detached object graph and the complete
+      // StringWriter buffer, then toString() allocated another full-size char array.
+      // That peak caused OOM on TV boxes with a 256 MB app heap.
+      //
+      // Serialize the live catalogue while holding its lock. This trades a longer
+      // background critical section for a much lower memory peak; all UI work stays
+      // off this worker and mutations wait until the durable snapshot is complete.
+      String savedJson;
+      synchronized(channels){
+        persistedChannels=channels.size();
+        StringWriter buffer=new StringWriter(Math.max(1024,Math.min(1024*1024,persistedChannels*64)));
+        try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
+          writer.beginArray();
+          for(Channel channel:channels){
+            if(channel==null)continue;
+            writer.beginObject();
+            writer.name("name").value(channel.name);
+            writer.name("url").value(channel.url);
+            writer.name("group").value(channel.group);
+            writer.name("tvgId").value(channel.tvgId);
+            writer.name("tvgName").value(channel.tvgName);
+            writer.name("activeSource").value(channel.activeSource);
+            writer.name("sources").beginArray();
+            if(channel.backups!=null){
+              for(String source:channel.backups){
+                writer.value(source);
+                persistedSources++;
+              }
+            }
+            writer.endArray();
+            writer.name("sourceScopes").beginArray();
+            if(channel.sourceScopes!=null)for(String scope:channel.sourceScopes)writer.value(scope);
+            writer.endArray();
+            writer.name("backupSourceScopes").beginArray();
+            if(channel.backups!=null&&channel.backupSourceScopes!=null){
+              for(String source:channel.backups){
+                HashSet<String> scopes=channel.backupSourceScopes.get(source);
+                if(scopes==null||scopes.isEmpty())continue;
+                writer.beginObject().name("url").value(source).name("scopes").beginArray();
+                for(String scope:scopes)writer.value(scope);
+                writer.endArray().endObject();
+              }
+            }
+            writer.endArray();
+            writer.endObject();
           }
           writer.endArray();
-          writer.endObject();
         }
-        writer.endArray();
+        savedJson=buffer.toString();
       }
-      String savedJson=buffer.toString();
-      logCatalogueMemory("persist_json_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
+      logCatalogueMemory("persist_json_ready",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
       synchronized(cataloguePersistLock){
         // A background Worker result may have been applied while this snapshot was
@@ -1109,8 +1104,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             .putStringSet("fav",favoriteSnapshot).apply();
         lastPersistedChannelsJson=savedJson;
       }
-      saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+snapshot.size()+" channels, json_chars="+savedJson.length());
-      logCatalogueMemory("persist_done",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
+      saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+persistedChannels+" channels, json_chars="+savedJson.length());
+      logCatalogueMemory("persist_done",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       return true;
     } catch(Exception failure) {
       android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
