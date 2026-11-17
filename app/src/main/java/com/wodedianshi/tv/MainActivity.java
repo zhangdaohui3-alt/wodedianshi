@@ -4786,8 +4786,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
       // A source that was healthy for a long time should not consume the startup retry budget forever.
-      if(!sourceStableRecorded&&sourceReadyAt>0L&&now-sourceReadyAt>=30000L
-          &&now-watchdogLastAdvanceAt<15000L){
+      boolean confirmedOutput=SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+          videoTrackPresent,sourceFirstFrameRecorded,audioTrackSelected,audioPositionAdvancing);
+      if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
+          &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L){
         sourceStableRecorded=true;
         recordSourceMetric(currentSourceUrl(),"stable",0L);
       }
