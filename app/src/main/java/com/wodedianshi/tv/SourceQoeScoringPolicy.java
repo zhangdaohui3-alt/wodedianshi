@@ -3,6 +3,20 @@ package com.wodedianshi.tv;
 public final class SourceQoeScoringPolicy {
     private SourceQoeScoringPolicy() {}
 
+
+    /**
+     * A source is eligible for a stable-play success only after an actual output
+     * is confirmed. Video streams require Media3's rendered-first-frame event;
+     * audio-only streams require a selected audio track and advancing audio.
+     */
+    public static boolean hasConfirmedOutputForStablePlay(boolean videoTrackPresent,
+                                                           boolean firstFrameRendered,
+                                                           boolean audioTrackSelected,
+                                                           boolean audioPositionAdvancing) {
+        return firstFrameRendered
+                || (!videoTrackPresent && audioTrackSelected && audioPositionAdvancing);
+    }
+
     /** Returns the shared foreground/background QoE adjustment. */
     public static double adjustment(int attempts, int ready, int firstFrames,
                                     int stablePlays, int failures, int buffers,
