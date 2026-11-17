@@ -549,6 +549,7 @@ public class SourceUpdateWorker extends Worker {
         if(segments.size()>1&&!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))
           return result;
         result.valid=true;result.width=bestWidth;result.height=bestHeight;
+        result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
         int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
         int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
         int speed=(int)Math.min(300L,(sample.length*1000L/segmentMs)/2048L);
