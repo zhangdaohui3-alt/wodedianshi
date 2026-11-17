@@ -987,14 +987,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       synchronized(channels){
         for(Channel source:channels){
           if(source==null)continue;
-          Channel copy=new Channel(source.name,source.url,source.group,true);
+          // Persistence needs the full Channel collections. The lightweight filter-snapshot
+          // constructor deliberately sets them to null and must never be used here.
+          Channel copy=new Channel(source.name,source.url,source.group);
           copy.tvgId=source.tvgId==null?"":source.tvgId;
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           copy.activeSource=source.activeSource;
-          copy.sourceScopes.addAll(source.sourceScopes);
-          copy.backupSourceScopes.clear();
-          for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet())
-            copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+          if(source.sourceScopes!=null)copy.sourceScopes.addAll(source.sourceScopes);
+          if(source.backupSourceScopes!=null)for(Map.Entry<String,HashSet<String>> entry:source.backupSourceScopes.entrySet()){
+            if(entry.getKey()!=null&&entry.getValue()!=null)
+              copy.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+          }
           // Preserve an empty scope set for legacy channels with unknown provenance.
           copy.backups.clear();
           if(source.backups!=null)for(String url:source.backups)if(url!=null)copy.backups.add(url);
@@ -3445,7 +3448,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(!matches)continue;
           }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
           String display=displayChannelName(c);
-          if(!c.name.toLowerCase(Locale.ROOT).contains(query)&&!(c.group==null?"":c.group).toLowerCase(Locale.ROOT).contains(query)
+          String safeName=c.name==null?"":c.name;
+          String safeGroup=c.group==null?"":c.group;
+          if(!safeName.toLowerCase(Locale.ROOT).contains(query)&&!safeGroup.toLowerCase(Locale.ROOT).contains(query)
               &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
           visible.add(c);
         }
@@ -3497,7 +3502,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Keep the catalogue complete, but limit live View inflation per page on low-memory TV boxes.
     final int maxRows=48;
     int selectedPosition=-1;
-    if(selectedKey!=null)for(int i=0;i<visible.size();i++)if(selectedKey.equals(visible.get(i).key())){selectedPosition=i;break;}
+    if(selectedKey!=null)for(int i=0;i<visible.size();i++){Channel candidate=visible.get(i);if(candidate!=null&&selectedKey.equals(candidate.key())){selectedPosition=i;break;}}
     livePageIndex=selectedPosition>=0?selectedPosition/maxRows:Math.max(0,requestedPage);
     int pageCount=Math.max(1,(visible.size()+maxRows-1)/maxRows);
     if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
@@ -3505,12 +3510,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
       Channel c=visible.get(row);
       if(c==null)continue;
+      // Legacy and partially migrated catalogue rows may contain null metadata.
+      // Normalize display fields before any naming/category helper can inspect them.
+      if(c.name==null)c.name="";
+      if(c.url==null)c.url="";
+      if(c.group==null)c.group="";
+      if(c.tvgName==null)c.tvgName="";
+      if(c.tvgId==null)c.tvgId="";
       final String channelKey=c.key();
       final String channelName=c.name==null?"":c.name;
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
       String channelGroup=c.group==null?"":c.group;
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":((channelGroup==null||channelGroup.isEmpty())?"":" · "+channelGroup);
-      Integer mappedIndex=sourceIndexByKey.get(channelKey);
+      Integer mappedIndex=sourceIndexByKey==null?null:sourceIndexByKey.get(channelKey);
       final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
