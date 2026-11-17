@@ -4696,7 +4696,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Updated from the decoder playback thread whenever a video frame is about to render.
   private volatile long lastVideoFrameAt=0L;
   private volatile boolean videoFrameMonitoringActive=false;
-  private volatile boolean hasReceivedVideoFrame=false;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   // A stale HLS live-window position gets one in-place recovery before source failover.
@@ -4778,11 +4777,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Monitor as soon as a video track is selected. Requiring
       // videoFrameMonitoringActive here would make the first-frame timeout
       // unreachable, because that flag is set only by the first frame callback.
-      if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,hasReceivedVideoFrame,
+      if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,sourceFirstFrameRecorded,
           videoTrackSelectedAt,lastVideoFrameAt,now,20000L)){
-        recoverFromSilentFreeze(hasReceivedVideoFrame
+        recoverFromSilentFreeze(sourceFirstFrameRecorded
             ?"检测到视频帧连续 20 秒没有输出"
-            :"播放器已连接，但 20 秒内没有输出视频画面");
+            :"播放器已连接，但 20 秒内没有渲染出首帧画面");
         return;
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
@@ -5039,7 +5038,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
     sourceReadyAt=0L;
     lastVideoFrameAt=0L;
-    hasReceivedVideoFrame=false;
     videoFrameMonitoringActive=false;
     sourceReadyRecorded=false;
     sourceStableRecorded=false;
@@ -5096,8 +5094,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
-          // Frame-metadata callbacks are retained separately for the stall watchdog.
+          // Metadata callbacks alone are not proof that the TV output displayed a frame.
           sourceFirstFrameRecorded=true;
+          lastVideoFrameAt=android.os.SystemClock.elapsedRealtime();
           String renderedUrl=currentSourceUrl();
           recordSourceMetric(renderedUrl,"firstFrame",
               android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
@@ -5125,15 +5124,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
-      // Real decoded-frame callbacks: the old watchdog fields existed but were never
-      // activated, so READY could be mistaken for visible video on silent/black streams.
+      // Decoder frame metadata indicates pipeline activity, not confirmed display output.
+      // The startup deadline is therefore gated by AnalyticsListener.onRenderedFirstFrame.
       player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
         // Media3 invokes this callback on ExoPlayer:Playback, not the UI thread.
         // Do not call getCurrentMediaItem() or any other player API here.
         if(listenerOwner!=MainActivity.this.player)return;
         long frameAt=android.os.SystemClock.elapsedRealtime();
         lastVideoFrameAt=frameAt;
-        hasReceivedVideoFrame=true;
         videoFrameMonitoringActive=true;
       });
       player.addListener(new Player.Listener(){
@@ -5212,7 +5210,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             sourceWasBuffering=true;
             if(firstBuffering)showChannelZapMessage(sourceReadyRecorded?"网络波动，正在缓冲…":"正在连接播放源…");
             // Do not charge network buffering time against the decoder's first-frame deadline.
-            if(!hasReceivedVideoFrame)videoTrackSelectedAt=0L;
+            if(!sourceFirstFrameRecorded)videoTrackSelectedAt=0L;
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             sourceWasBuffering=false;
@@ -5228,7 +5226,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
             // Begin the first-frame deadline only after READY; earlier BUFFERING time is excluded.
-            if(videoTrackSelected&&!hasReceivedVideoFrame)videoTrackSelectedAt=watchdogLastAdvanceAt;
+            if(videoTrackSelected&&!sourceFirstFrameRecorded)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
             lastVideoFrameAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
