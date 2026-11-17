@@ -51,8 +51,8 @@ public final class LegacyCatalogueImporter {
 
         final int[] totals = new int[3];
         db.runInTransaction(() -> {
-            // A previous process may have died after SQLite committed but before
-            // the preference marker was written. Rebuilding is safe and atomic.
+            // A previous process may have died before the import transaction
+            // committed. Rebuilding is safe because the transaction is atomic.
             dao.clearBackupSources();
             dao.clearFavorites();
             dao.clearChannels();
