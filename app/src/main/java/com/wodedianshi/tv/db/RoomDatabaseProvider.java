@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 public final class RoomDatabaseProvider {
     private static volatile AppDatabase instance;
+    private static volatile AppDatabase chinaInstance;
+    private static volatile AppDatabase internationalInstance;
 
     // Version 1 was the initial catalogue schema. Version 2 adds only the
     // migration checkpoint table; preserve all existing rows during upgrade.
@@ -64,17 +66,58 @@ public final class RoomDatabaseProvider {
             synchronized (RoomDatabaseProvider.class) {
                 local = instance;
                 if (local == null) {
-                    local = Room.databaseBuilder(
-                        context.getApplicationContext(),
-                        AppDatabase.class,
-                        "mytv_catalogue.db"
-                    ).addMigrations(
-                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
-                    ).build();
+                    local = build(context, "mytv_catalogue.db");
                     instance = local;
                 }
             }
         }
         return local;
+    }
+
+    /**
+     * Dedicated China catalogue database. It is separate from the legacy
+     * shadow database so China-first migration can be validated without
+     * modifying the existing catalogue or its rollback data.
+     */
+    public static AppDatabase getChina(Context context) {
+        AppDatabase local = chinaInstance;
+        if (local == null) {
+            synchronized (RoomDatabaseProvider.class) {
+                local = chinaInstance;
+                if (local == null) {
+                    local = build(context, "mytv_china_catalogue.db");
+                    chinaInstance = local;
+                }
+            }
+        }
+        return local;
+    }
+
+    /**
+     * Dedicated international catalogue database. Independent storage keeps
+     * later international imports and refreshes isolated from the China store.
+     */
+    public static AppDatabase getInternational(Context context) {
+        AppDatabase local = internationalInstance;
+        if (local == null) {
+            synchronized (RoomDatabaseProvider.class) {
+                local = internationalInstance;
+                if (local == null) {
+                    local = build(context, "mytv_international_catalogue.db");
+                    internationalInstance = local;
+                }
+            }
+        }
+        return local;
+    }
+
+    private static AppDatabase build(Context context, String databaseName) {
+        return Room.databaseBuilder(
+                context.getApplicationContext(),
+                AppDatabase.class,
+                databaseName
+        ).addMigrations(
+                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
+        ).build();
     }
 }
