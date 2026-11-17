@@ -3,26 +3,19 @@ package com.wodedianshi.tv.db;
 import android.content.Context;
 
 /**
- * Write-through bridge for scoped Room catalogues.
- * Scoped imports assign IDs within each catalogue, so updates use the stable
- * legacy channel identity rather than an index or an ID from the master list.
+ * Temporary bridge for the single Room shadow catalogue.
+ *
+ * MainActivity is still being moved to Room write-through. Until that cutover
+ * is complete, mirror the two mutable fields that have explicit callbacks.
+ * China and international are filters over this catalogue, not separate stores.
  */
 public final class RoomShadowSync {
     private RoomShadowSync() {}
 
     public static void setFavorite(Context context, String legacyKey, boolean favorite) {
         if (context == null || legacyKey == null || legacyKey.isEmpty()) return;
-        Context app = context.getApplicationContext();
-        syncFavorite(RoomDatabaseProvider.getChina(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_china_partition_v2", legacyKey, favorite);
-        syncFavorite(RoomDatabaseProvider.getInternational(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_international_partition_v2", legacyKey, favorite);
-        syncFavorite(RoomDatabaseProvider.get(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY, legacyKey, favorite);
-    }
-
-    private static void syncFavorite(ChannelDao dao, String migrationKey,
-            String legacyKey, boolean favorite) {
+        ChannelDao dao = RoomDatabaseProvider.get(context.getApplicationContext()).channelDao();
+        String migrationKey = LegacyCatalogueImporter.MIGRATION_KEY;
         if (dao.getMigration(migrationKey) == null) return;
         java.util.List<String> ids = dao.getChannelIdsByLegacyKey(legacyKey);
         long addedAt = System.currentTimeMillis();
@@ -30,26 +23,14 @@ public final class RoomShadowSync {
             if (favorite) dao.addFavorite(new FavoriteEntity(id, addedAt));
             else dao.removeFavorite(id);
         }
-        // Keep snapshot integrity metadata consistent with this committed favorite mutation.
         dao.refreshFavoriteCheckpointCount(migrationKey);
     }
 
     public static boolean setActiveSourceUrl(Context context, String legacyKey, String sourceUrl) {
         if (context == null || legacyKey == null || legacyKey.isEmpty()
                 || sourceUrl == null || sourceUrl.isEmpty()) return false;
-        Context app = context.getApplicationContext();
-        boolean updated = false;
-        updated |= syncActiveSource(RoomDatabaseProvider.getChina(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_china_partition_v2", legacyKey, sourceUrl);
-        updated |= syncActiveSource(RoomDatabaseProvider.getInternational(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_international_partition_v2", legacyKey, sourceUrl);
-        updated |= syncActiveSource(RoomDatabaseProvider.get(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY, legacyKey, sourceUrl);
-        return updated;
-    }
-
-    private static boolean syncActiveSource(ChannelDao dao, String migrationKey,
-            String legacyKey, String sourceUrl) {
+        ChannelDao dao = RoomDatabaseProvider.get(context.getApplicationContext()).channelDao();
+        String migrationKey = LegacyCatalogueImporter.MIGRATION_KEY;
         if (dao.getMigration(migrationKey) == null) return false;
         return dao.setActiveSourceByLegacyKeyAndUrl(legacyKey, sourceUrl) > 0;
     }
