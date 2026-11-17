@@ -3707,6 +3707,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
+  // Keep all three Room stores current after a completed catalogue import.
+  // This runs only on a background worker and only after the legacy save succeeds;
+  // a failed Room transaction leaves the previous committed snapshots intact.
+  private void syncRoomCataloguesAfterSave(){
+    try{
+      android.content.SharedPreferences saved=getSharedPreferences("mytv",0);
+      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result all=
+          com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(getApplicationContext(),saved);
+      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result china=
+          com.wodianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(getApplicationContext(),saved);
+      com.wodianshi.tv.db.LegacyCatalogueImporter.Result international=
+          com.wodedianshi.tv.db.LegacyCatalogueImporter.importInternationalIfNeeded(getApplicationContext(),saved);
+      android.util.Log.i("MyTVRoomSync","catalogues reconciled all="+all.channels
+          +" china="+china.channels+" international="+international.channels);
+    }catch(Throwable failure){
+      android.util.Log.e("MyTVRoomSync","catalogue reconcile failed; previous Room snapshots retained",failure);
+      saveLiveDiagnostic("ROOM_RECONCILE_ERROR",
+          failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
+    }
+  }
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
     return fetchAndMergePlaylists(feeds,timeoutMs,errors,sourceScope,null);
   }
@@ -3877,7 +3897,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Keep the previous cache if no new entries were merged. Only advance the
       // refresh timestamp after the resulting catalogue contains a minimally
       // useful set of recognized mainland channels; HTTP 200 alone is not success.
-      if(total>0)persist();
+      if(total>0){persist();syncRoomCataloguesAfterSave();}
       final boolean usefulChinaDirectory=recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
@@ -4027,7 +4047,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int recognizedGlobalCount=countChannelsForScope("global");
           // Persist away from the UI thread. A failed/empty directory refresh must
           // not advance the success timestamp or replace the last saved catalogue.
-          if(total>0)persist();
+          if(total>0){persist();syncRoomCataloguesAfterSave();}
           final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
           if(usefulGlobalDirectory){
             cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
@@ -4068,6 +4088,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       added=fetchAndMergePlaylists(feeds,22000,errors,"china");
       final int total=added;final String err=errors.toString();
       persist();
+      syncRoomCataloguesAfterSave();
       runOnUiThread(()->{refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
@@ -4102,6 +4123,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
       persist();
+      syncRoomCataloguesAfterSave();
       runOnUiThread(()->{refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
