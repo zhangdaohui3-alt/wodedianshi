@@ -139,12 +139,12 @@ public final class LegacyCatalogueImporter {
                     String scopedPrimaryUrl = scopedSources.urls.get(0);
                     channels.add(new ChannelEntity(id, legacyKey, item.name, scopedPrimaryUrl,
                             item.group, categoryId, item.tvgId, item.tvgName,
-                            scopedSources.channelScopesJson(item.channelScopes), scopedSources.activeIndex, row - 1));
+                            toJson(scopedSources.channelScopes(item.channelScopes)), scopedSources.activeIndex, row - 1));
 
                     for (int i = 0; i < scopedSources.urls.size(); i++) {
                         String sourceUrl = scopedSources.urls.get(i);
                         sources.add(new BackupSourceEntity(id, sourceUrl, i,
-                                scopedSources.sourceScopesJson(sourceUrl, item.backupScopes)));
+                                toJson(scopedSources.sourceScopes(sourceUrl, item.backupScopes))));
                     }
                     if (legacyFavorites.contains(legacyKey)) {
                         favorites.add(new FavoriteEntity(id, System.currentTimeMillis()));

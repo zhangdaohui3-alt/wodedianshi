@@ -23,7 +23,7 @@ public class LegacySourceScopePolicyTest {
         ownership.put(urls.get(2), new HashSet<>(Arrays.asList("china", "global")));
 
         LegacySourceScopePolicy.Selection china =
-                LegacySourceScopePolicy.select(urls, 1, ownership, "china");
+                LegacySourceScopePolicy.select(urls, 2, ownership, "china");
         LegacySourceScopePolicy.Selection global =
                 LegacySourceScopePolicy.select(urls, 2, ownership, "global");
 
@@ -31,7 +31,7 @@ public class LegacySourceScopePolicyTest {
         assertEquals(1, china.activeIndex); // active shared URL remains selected
         assertEquals(Arrays.asList(urls.get(1), urls.get(2)), global.urls);
         assertEquals(1, global.activeIndex);
-        assertTrue(china.channelScopesJson(Collections.emptySet()).contains("china"));
+        assertTrue(china.channelScopes(Collections.emptySet()).contains("china"));
     }
 
     @Test public void channelIsExcludedWhenNoSourceBelongsToRequestedScope() {
@@ -62,6 +62,6 @@ public class LegacySourceScopePolicyTest {
                 LegacySourceScopePolicy.select(urls, 0, ownership, null);
         assertEquals(urls, all.urls);
         assertEquals(0, all.activeIndex);
-        assertTrue(all.sourceScopesJson(urls.get(1), ownership).contains("global"));
+        assertTrue(all.sourceScopes(urls.get(1), ownership).contains("global"));
     }
 }

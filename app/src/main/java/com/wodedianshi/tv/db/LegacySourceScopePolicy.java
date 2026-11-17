@@ -31,19 +31,18 @@ public final class LegacySourceScopePolicy {
             requestedScope = scope;
         }
 
-        public String channelScopesJson(Set<String> originalChannelScopes) {
-            if (requestedScope == null) return jsonArray(originalChannelScopes);
-            return jsonArray(Collections.singleton(requestedScope));
+        public Set<String> channelScopes(Set<String> originalChannelScopes) {
+            if (requestedScope != null) return Collections.singleton(requestedScope);
+            return originalChannelScopes == null
+                    ? Collections.emptySet() : new HashSet<>(originalChannelScopes);
         }
 
-        public String sourceScopesJson(String url,
+        public Set<String> sourceScopes(String url,
                 Map<String, Set<String>> originalOwnership) {
-            if (requestedScope != null) {
-                return jsonArray(Collections.singleton(requestedScope));
-            }
+            if (requestedScope != null) return Collections.singleton(requestedScope);
             Set<String> scopes = scopesByUrl.get(url);
             if (scopes == null && originalOwnership != null) scopes = originalOwnership.get(url);
-            return jsonArray(scopes);
+            return scopes == null ? Collections.emptySet() : new HashSet<>(scopes);
         }
     }
 
@@ -93,13 +92,4 @@ public final class LegacySourceScopePolicy {
         return new Selection(result, selectedActiveIndex, selectedScopes, requestedScope);
     }
 
-    private static String jsonArray(Set<String> values) {
-        org.json.JSONArray array = new org.json.JSONArray();
-        if (values != null) {
-            for (String value : values) {
-                if (value != null && !value.isEmpty()) array.put(value);
-            }
-        }
-        return array.toString();
-    }
 }
