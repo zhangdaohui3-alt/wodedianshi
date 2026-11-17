@@ -88,6 +88,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Snapshot of the last catalogue JSON this Activity restored or persisted.
   // It lets onStart detect safe background-worker updates while this Activity was stopped.
   private volatile String lastPersistedChannelsJson=null;
+  // A partially restored catalogue is browseable for recovery, but it must never
+  // be serialized over the original SharedPreferences snapshot. This remains
+  // false until the complete saved JSON has parsed and indexes have rebuilt.
+  private volatile boolean catalogueSnapshotTrusted=false;
   // Invalidates a queued reload when a newer foreground return supersedes it.
   private Runnable sourceUpdateActivityHeartbeat;
   private boolean activityStarted=false;
@@ -595,6 +599,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return fallback;
   }
   private void restore(){
+    catalogueSnapshotTrusted=false;
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     // Startup must display the exact last-saved catalogue first. A staged source-update
@@ -750,6 +755,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     int indexedSourceCount=0;
     synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedSourceCount+=restored.backups.size();}
     logCatalogueMemory("restore_indexes_ready",channels.size(),indexedSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
+    // Only a complete parse plus index rebuild makes this snapshot eligible for
+    // future writes. The bundled fallback below is safe only when the saved JSON
+    // itself was valid (for example, an intentionally empty first-run catalogue).
+    catalogueSnapshotTrusted=true;
     if(!p.getBoolean("defaults_loaded",false)){
       if(channels.isEmpty()){
         try(InputStream in=getAssets().open("default_channels.m3u")){
@@ -1039,6 +1048,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private boolean persistNow(){
+    if(!catalogueSnapshotTrusted){
+      android.util.Log.e("MyTVCatalogue",
+          "save blocked: last restore was incomplete; original saved catalogue is being preserved");
+      saveLiveDiagnostic("CATALOGUE_PERSIST_BLOCKED",
+          "incomplete restore; temporary/partial in-memory channels were not written over saved catalogue");
+      return false;
+    }
     long persistStarted=android.os.SystemClock.elapsedRealtime();
     int persistedSources=0;
     int persistedChannels=0;
@@ -6323,6 +6339,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
+    if(!catalogueSnapshotTrusted){
+      android.util.Log.w("MyTVStartup",
+          "background candidate publication skipped: saved catalogue restore was incomplete");
+      saveLiveDiagnostic("BACKGROUND_CATALOGUE_PUBLISH_BLOCKED",
+          "saved catalogue restore was incomplete; staged candidate was left untouched");
+      return;
+    }
     final long generation=++backgroundCatalogueReloadGeneration;
     final long expectedMutationGeneration=catalogueMutationGeneration;
     final String expectedPersisted=lastPersistedChannelsJson;
