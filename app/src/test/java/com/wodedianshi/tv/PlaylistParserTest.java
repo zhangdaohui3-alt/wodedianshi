@@ -3,6 +3,7 @@ package com.wodedianshi.tv;
 import org.junit.Test;
 import java.io.IOException;
 import java.io.StringReader;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.List;
 import static org.junit.Assert.*;
@@ -57,6 +58,28 @@ public class PlaylistParserTest {
         }
         assertEquals(2, items.size());
         assertEquals("B", items.get(1).name);
+    }
+
+    @Test public void readerParserKeepsEntriesBeforeTransientReadFailure() throws IOException {
+        String prefix = "#EXTINF:-1,已解析频道\\nhttps://a.example/live\\n";
+        Reader failingReader = new Reader() {
+            private int offset;
+            @Override public int read(char[] buffer, int start, int length) throws IOException {
+                if (offset >= prefix.length()) throw new IOException("simulated network interruption");
+                buffer[start] = prefix.charAt(offset++);
+                return 1;
+            }
+            @Override public void close() {}
+        };
+        ArrayList<PlaylistParser.ChannelSource> items = new ArrayList<>();
+        try {
+            PlaylistParser.parseEach(failingReader, 10, items::add);
+            fail("Expected the simulated read failure");
+        } catch (IOException expected) {
+            assertEquals("simulated network interruption", expected.getMessage());
+        }
+        assertEquals(1, items.size());
+        assertEquals("已解析频道", items.get(0).name);
     }
 
     @Test public void usesTvgNameWhenDisplayNameIsMissing() {
