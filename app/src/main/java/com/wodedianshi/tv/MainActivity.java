@@ -532,7 +532,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void restore(){
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    applyPendingSourceUpdateIfSafe(p);
+    // Startup must display the exact last-saved catalogue first. A staged source-update
+    // candidate is intentionally not applied here; maintenance/reconciliation runs later,
+    // after the complete saved list has been rendered and is usable.
     String savedChannelsJson=p.getString("channels","[]");
     lastPersistedChannelsJson=savedChannelsJson;
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
@@ -648,28 +650,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
         restoredChannels.add(channel);
-        // Publish small batches during startup. A large catalogue must not remain
-        // invisible until its final row parses: if a later row is corrupt or the
-        // device runs short of heap, the already decoded channels remain usable.
+        // Move decoded rows into the retained catalogue in bounded batches to limit
+        // temporary memory. Do not expose a partial list: the UI is released only
+        // after every saved row has been parsed and indexes have been rebuilt.
         if(restoredChannels.size()>=64){
           synchronized(channels){channels.addAll(restoredChannels);}
           publishedRestoreChannels+=restoredChannels.size();
           restoredChannels.clear();
           android.util.Log.i("MyTVStartup","restore_batch_published channels="+publishedRestoreChannels);
-          // Reveal the first usable page as soon as a small cache batch is decoded.
-          // The remaining saved catalogue continues restoring on the worker thread.
-          if(!startupDataReady){
-            runOnUiThread(()->{
-              if(isFinishing()||isDestroyed()||startupDataReady)return;
-              startupDataReady=true;
-              if(search!=null)search.setEnabled(true);
-              if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)
-                categoryMenuItems.getChildAt(i).setEnabled(true);
-              if(info!=null)info.setText("频道列表已就绪，正在后台补齐其余频道…");
-              refresh();
-              android.util.Log.i("MyTVStartup","first_channel_page_revealed channels="+channels.size());
-            });
-          }
         }
       }
       reader.endArray();
@@ -678,8 +666,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       logCatalogueMemory("restore_parse_ready",publishedRestoreChannels+restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
       if(skippedCatalogueEntries>0)android.util.Log.w("MyTVStartup","skipped_non_object_catalogue_entries="+skippedCatalogueEntries);
     }catch(Exception invalidCatalogue){
-      // Keep both completed batches and the final partial batch visible. Never
-      // replace the saved JSON; diagnostics retain the original failure details.
+      // Keep all successfully decoded batches and the final partial batch available
+      // for recovery. Never replace the saved JSON; diagnostics retain original details.
       synchronized(channels){channels.addAll(restoredChannels);}
       publishedRestoreChannels+=restoredChannels.size();
       restoredChannels.clear();
