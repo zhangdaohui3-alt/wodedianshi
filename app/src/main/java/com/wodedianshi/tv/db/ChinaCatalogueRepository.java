@@ -56,6 +56,28 @@ public final class ChinaCatalogueRepository {
         return dao.getChannelListPage(categoryId, limit, offset);
     }
 
+    /** Fetch a bounded favorites page without loading source relations. */
+    public List<ChannelListRow> getFavoritePage(int limit, int offset) {
+        if (limit <= 0 || offset < 0 || !isSnapshotReady()) return Collections.emptyList();
+        return dao.getFavoriteChannelListPage(limit, offset);
+    }
+
+    public int getFavoriteCount() {
+        return isSnapshotReady() ? dao.countFavoriteChannels() : -1;
+    }
+
+    /** Search a bounded result page without hydrating every backup URL. */
+    public List<ChannelListRow> getSearchPage(String query, int limit, int offset) {
+        if (query == null || query.trim().isEmpty() || limit <= 0 || offset < 0
+                || !isSnapshotReady()) return Collections.emptyList();
+        return dao.getSearchChannelListPage(query.trim(), limit, offset);
+    }
+
+    public int getSearchCount(String query) {
+        if (query == null || query.trim().isEmpty() || !isSnapshotReady()) return -1;
+        return dao.countSearchChannels(query.trim());
+    }
+
     /** Load playback candidates only after the selected channel is known. */
     public List<BackupSourceEntity> getSourcesForSelectedChannel(String channelId) {
         if (channelId == null || channelId.isEmpty() || !isSnapshotReady()) {
