@@ -498,24 +498,26 @@ public class SourceUpdateWorker extends Worker {
           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
           // AES-128 maps require their explicit IV and must validate after decryption.
           if(resources.initializationUrl!=null){
-            byte[] initialization=fetchSample(resources.initializationUrl,32768,deadline);
+            SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,deadline);
+            byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
             if(initialization==null)continue;
             if(resources.aes128Encrypted){
               byte[] mapIv=HlsAes128Preflight.parseExplicitIv(resources.encryptionIv);
               if(mapIv==null||!HlsAes128Preflight.validatesInitializationSegment(
-                  initialization,aesKey,mapIv,initialization.length<32768))continue;
+                  initialization,aesKey,mapIv,!initializationResponse.truncated))continue;
             }else if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
-          byte[] candidateSample=fetchSample(candidateSegmentUrl,32768,deadline);
+          SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,deadline);
+          byte[] candidateSample=candidateSampleResponse==null?null:candidateSampleResponse.bytes;
           if(candidateSample==null)continue;
           if(resources.aes128Encrypted){
             byte[] segmentIv=resources.encryptionIv!=null
                 ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
                 :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber);
             if(!HlsAes128Preflight.validatesMediaSegment(
-                candidateSample,aesKey,segmentIv,candidateSample.length<32768))continue;
+                candidateSample,aesKey,segmentIv,!candidateSampleResponse.truncated))continue;
           }else if(!looksLikeHlsSegment(candidateSample))continue;
           mediaUrl=candidateManifestUrl;
           bestBandwidth=candidate.bandwidth;
@@ -534,13 +536,14 @@ public class SourceUpdateWorker extends Worker {
         boolean secondSegmentOk=true;
         if(segments.size()>1){
           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
-          byte[] second=fetchSample(secondUrl,8192,deadline);
+          SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,deadline);
+          byte[] second=secondResponse==null?null:secondResponse.bytes;
           if(selectedAes128&&second!=null){
             byte[] secondIv=selectedResources.encryptionIv!=null
                 ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
                 :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
             secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
-                second,selectedAesKey,secondIv,second.length<8192);
+                second,selectedAesKey,secondIv,!secondResponse.truncated);
           }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
         }
         // A playlist exposing a second segment must prove that it is retrievable
@@ -580,7 +583,10 @@ public class SourceUpdateWorker extends Worker {
   private static class SampleResponse{
     final byte[] bytes;
     final String finalUrl;
-    SampleResponse(byte[] data,String url){bytes=data;finalUrl=url;}
+    // True only when the bounded read observed at least one byte beyond its cap.
+    // Reaching the cap alone does not prove that the HTTP resource ended there.
+    final boolean truncated;
+    SampleResponse(byte[] data,String url,boolean wasTruncated){bytes=data;finalUrl=url;truncated=wasTruncated;}
   }
   private boolean probeDeadlineReached(long deadline){
     return android.os.SystemClock.elapsedRealtime()>=deadline;
@@ -606,21 +612,27 @@ public class SourceUpdateWorker extends Worker {
       c.setReadTimeout(readTimeout);
       c.setInstanceFollowRedirects(true);
       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
-      c.setRequestProperty("Range","bytes=0-"+(maxBytes-1));
+      // Read one sentinel byte beyond the retained sample to distinguish an
+      // exact-length resource from a longer segment truncated at the sample cap.
+      c.setRequestProperty("Range","bytes=0-"+maxBytes);
       int code=c.getResponseCode();if(code<200||code>=400)return null;
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[4096];int n,total=0;
-        while(total<maxBytes){
+        while(total<=maxBytes){
           if(probeDeadlineReached(deadline))return null;
           n=in.read(buffer);
           if(n==-1)break;
-          int take=Math.min(n,maxBytes-total);out.write(buffer,0,take);total+=take;
+          int take=Math.min(n,maxBytes+1-total);out.write(buffer,0,take);total+=take;
+          if(total>maxBytes)break;
         }
         if(probeDeadlineReached(deadline))return null;
-        return new SampleResponse(out.toByteArray(),finalUrl);
+        byte[] received=out.toByteArray();
+        boolean truncated=received.length>maxBytes;
+        byte[] bounded=truncated?Arrays.copyOf(received,maxBytes):received;
+        return new SampleResponse(bounded,finalUrl,truncated);
       }
     }finally{if(c!=null)c.disconnect();}
   }
