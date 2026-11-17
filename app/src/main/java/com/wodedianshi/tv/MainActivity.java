@@ -101,12 +101,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean localRegionFilterActive=false;
   private String activeLocalProvince=null;
   private String activeLocalCity=null;
-  private final HashSet<String> favorites = new HashSet<>();
+  // SharedPreferences persistence now runs on a background writer; synchronize
+  // the wrapper so UI favorite toggles cannot race its detached snapshot.
+  private final Set<String> favorites = Collections.synchronizedSet(new HashSet<String>());
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  // Catalogue snapshots and JSON encoding must never run on the UI thread. One
+  // serial writer coalesces bursts of remote-control actions into the newest state.
+  private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
+  private final Object cataloguePersistLock = new Object();
+  private long cataloguePersistRequestedGeneration=0L;
+  private long cataloguePersistCompletedGeneration=0L;
+  private boolean cataloguePersistLastSuccess=true;
+  private boolean cataloguePersistScheduled=false;
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
@@ -484,22 +494,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // when the user's current catalogue still matches the exact snapshot the Worker read.
   // Any intervening channel edit/deletion wins; stale background results are discarded.
   private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs){
-    String base=prefs.getString("source_update_pending_base",null);
-    String candidate=prefs.getString("source_update_pending_channels",null);
-    if(base==null||candidate==null||candidate.isEmpty())return false;
-    String current=prefs.getString("channels","[]");
-    android.content.SharedPreferences.Editor edit=prefs.edit();
-    boolean applied=base.equals(current);
-    if(applied){
-      edit.putString("channels",candidate)
-          .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
-    }else{
-      edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+    // Serialize the compare-and-apply with persistNow's final compare-and-write.
+    // Otherwise a save could pass its stale-cache check just before this method
+    // applies a Worker candidate, then overwrite that candidate milliseconds later.
+    synchronized(cataloguePersistLock){
+      String base=prefs.getString("source_update_pending_base",null);
+      String candidate=prefs.getString("source_update_pending_channels",null);
+      if(base==null||candidate==null||candidate.isEmpty())return false;
+      String current=prefs.getString("channels","[]");
+      android.content.SharedPreferences.Editor edit=prefs.edit();
+      boolean applied=base.equals(current);
+      if(applied){
+        edit.putString("channels",candidate)
+            .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
+      }else{
+        edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+      }
+      edit.remove("source_update_pending_base")
+          .remove("source_update_pending_channels")
+          .apply();
+      return applied;
     }
-    edit.remove("source_update_pending_base")
-        .remove("source_update_pending_channels")
-        .apply();
-    return applied;
   }
 
   private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
@@ -884,7 +899,67 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long used=Math.max(0L,runtime.totalMemory()-runtime.freeMemory());
     android.util.Log.i("MyTVMemory","stage="+stage+" channels="+channelCount+" sources="+sourceCount+" used_mb="+(used/1048576L)+" heap_mb="+(runtime.totalMemory()/1048576L)+" max_mb="+(runtime.maxMemory()/1048576L)+" elapsed_ms="+elapsedMs);
   }
+  /**
+   * Queue catalogue persistence off the UI thread. Multiple rapid requests are
+   * coalesced: the writer always snapshots the latest in-memory catalogue, and
+   * a single worker prevents older snapshots from overwriting newer ones.
+   *
+   * Background callers wait for the requested generation so import flows can
+   * still report a real save failure. UI callers return after the write is queued.
+   */
   private boolean persist(){
+    final long requestedGeneration;
+    synchronized(cataloguePersistLock){
+      // Any save request represents a catalogue mutation or a caller that needs
+      // the latest catalogue durable. In-flight background reloads must not
+      // publish a snapshot captured before this generation.
+      catalogueMutationGeneration++;
+      requestedGeneration=++cataloguePersistRequestedGeneration;
+      if(!cataloguePersistScheduled){
+        cataloguePersistScheduled=true;
+        try{
+          cataloguePersistWorker.execute(()->{
+            while(true){
+              final long generationToWrite;
+              synchronized(cataloguePersistLock){
+                generationToWrite=cataloguePersistRequestedGeneration;
+              }
+              boolean success=persistNow();
+              synchronized(cataloguePersistLock){
+                cataloguePersistCompletedGeneration=generationToWrite;
+                cataloguePersistLastSuccess=success;
+                cataloguePersistLock.notifyAll();
+                if(cataloguePersistRequestedGeneration==generationToWrite){
+                  cataloguePersistScheduled=false;
+                  return;
+                }
+              }
+            }
+          });
+        }catch(RuntimeException rejected){
+          cataloguePersistScheduled=false;
+          cataloguePersistLastSuccess=false;
+          cataloguePersistCompletedGeneration=requestedGeneration;
+          cataloguePersistLock.notifyAll();
+          android.util.Log.e("MyTVCatalogue","catalogue persistence queue rejected",rejected);
+          return false;
+        }
+      }
+      if(Looper.myLooper()==Looper.getMainLooper()){
+        android.util.Log.i("MyTVCatalogue","persist queued generation="+requestedGeneration);
+        return true;
+      }
+      while(cataloguePersistCompletedGeneration<requestedGeneration){
+        try{cataloguePersistLock.wait();}
+        catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();
+          return false;
+        }
+      }
+      return cataloguePersistLastSuccess;
+    }
+  }
+  private boolean persistNow(){
     long persistStarted=android.os.SystemClock.elapsedRealtime();
     int persistedSources=0;
     try {
@@ -915,7 +990,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
       logCatalogueMemory("persist_snapshot_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
-      HashSet<String> favoriteSnapshot=new HashSet<>(favorites);
+      HashSet<String> favoriteSnapshot;
+      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
       StringWriter buffer=new StringWriter(Math.max(1024,snapshot.size()*160));
       try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
         writer.beginArray();
@@ -948,10 +1024,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       String savedJson=buffer.toString();
       logCatalogueMemory("persist_json_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
-      getSharedPreferences("mytv",0).edit()
-          .putString("channels",savedJson)
-          .putStringSet("fav",favoriteSnapshot).apply();
-      lastPersistedChannelsJson=savedJson;
+      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+      synchronized(cataloguePersistLock){
+        // A background Worker result may have been applied while this snapshot was
+        // being encoded. Never let an older in-memory snapshot overwrite that newer
+        // persisted catalogue; the Activity reload path will adopt it before retrying.
+        String expectedPersisted=lastPersistedChannelsJson;
+        String currentPersisted=prefs.getString("channels","[]");
+        if(expectedPersisted!=null&&!java.util.Objects.equals(currentPersisted,expectedPersisted)){
+          android.util.Log.w("MyTVCatalogue","skip stale catalogue save: persisted base changed during snapshot");
+          saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
+          return false;
+        }
+        prefs.edit()
+            .putString("channels",savedJson)
+            .putStringSet("fav",favoriteSnapshot).apply();
+        lastPersistedChannelsJson=savedJson;
+      }
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+snapshot.size()+" channels, json_chars="+savedJson.length());
       logCatalogueMemory("persist_done",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       return true;
@@ -1060,54 +1149,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
         if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
+          runOnUiThread(()->{reloadChannelsAfterBackgroundUpdateIfNeeded();showSourceUpdateStatus();});
         }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
           runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
         }
       }catch(Exception ignored){}
     },worker);
-  }
-  private void reloadChannelsAfterSourceUpdate(){
-    String keepIdentity="";
-    if(selected>=0&&selected<channels.size())keepIdentity=identity(channels.get(selected).name,channels.get(selected).group,channels.get(selected).url);
-    try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
-      ArrayList<Channel> updated=new ArrayList<>();
-      for(int i=0;i<a.length();i++){
-        org.json.JSONObject o=a.getJSONObject(i);
-        Channel c=new Channel(o.getString("name"),o.getString("url"),o.optString("group",""));
-        c.tvgId=o.optString("tvgId","");
-        c.tvgName=o.optString("tvgName","");
-        c.activeSource=o.optInt("activeSource",0);
-        org.json.JSONArray scopes=o.optJSONArray("sourceScopes");
-        if(scopes!=null)for(int j=0;j<scopes.length();j++){
-          String scope=scopes.optString(j,"");
-          if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))c.sourceScopes.add(scope);
-        }
-        // Empty means legacy provenance is unknown, not that the channel is custom.
-        org.json.JSONArray src=o.optJSONArray("sources");
-        if(src!=null){c.backups.clear();for(int j=0;j<src.length();j++){String u=src.optString(j);if(u.startsWith("http://")||u.startsWith("https://"))c.backups.add(u);}if(c.backups.isEmpty())c.backups.add(c.url);}
-        org.json.JSONArray ownership=o.optJSONArray("backupSourceScopes");
-        if(ownership!=null)for(int j=0;j<ownership.length();j++){
-          org.json.JSONObject item=ownership.optJSONObject(j);if(item==null)continue;
-          String source=item.optString("url","");org.json.JSONArray values=item.optJSONArray("scopes");
-          if(values==null||source.isEmpty())continue;
-          HashSet<String> valid=new HashSet<>();
-          for(int k=0;k<values.length();k++){String scope=values.optString(k,"");if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))valid.add(scope);}
-          if(!valid.isEmpty())c.backupSourceScopes.put(source,valid);
-        }
-        c.activeSource=Math.max(0,Math.min(c.activeSource,c.backups.size()-1));
-        updated.add(c);
-      }
-      synchronized(channels){channels.clear();channels.addAll(updated);}
-      favorites.clear();favorites.addAll(p.getStringSet("fav",new HashSet<>()));
-      rebuildChannelIndexes();
-      selected=-1;
-      if(!keepIdentity.isEmpty())for(int i=0;i<channels.size();i++)if(identity(channels.get(i).name,channels.get(i).group,channels.get(i).url).equals(keepIdentity)){selected=i;break;}
-      refresh();
-      if(selected>=0)info.setText("频道源更新完成，当前仍保留原播放画面："+channels.get(selected).name+"。如需使用新备用源，可在卡顿时自动切换或手动切换。");
-    }catch(Exception e){info.setText("更新已完成，但刷新频道列表失败："+e.getMessage());}
   }
   private void showSourceUpdateStatus(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -4042,6 +4089,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         Channel scoped=channelsByUrl.get(line);
         if(scoped!=null)destinationKeys.add(scoped.key());
       }
+      // Playlist ingestion runs on a separate worker and can mutate the live
+      // catalogue before its final persist() call. Invalidate any background
+      // catalogue reload immediately, not only after the import has finished.
+      synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
     }
     return added;
   }
@@ -4073,7 +4124,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
-  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");channels.add(c);rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(channels.indexOf(c));}else toast("请填写频道名称和有效网址");}).show();}
+  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
@@ -5967,9 +6018,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // stopped. On returning, reload its newer cache before any later persist() can
   // serialize an old in-memory list over the updated backup sources.
   private volatile long backgroundCatalogueReloadGeneration=0L;
+  // Incremented for every persistence request; a reload may publish only if no
+  // catalogue edit/save was requested while its background parse was running.
+  private volatile long catalogueMutationGeneration=0L;
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     final long generation=++backgroundCatalogueReloadGeneration;
+    final long expectedMutationGeneration=catalogueMutationGeneration;
     final String expectedPersisted=lastPersistedChannelsJson;
     try{
       worker.execute(()->{
@@ -5977,9 +6032,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Skip queued work that was superseded before it even began.
           if(generation!=backgroundCatalogueReloadGeneration)return;
           android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-          applyPendingSourceUpdateIfSafe(prefs);
+          // Parse a staged Worker candidate without applying it yet. Applying is
+          // deferred until the UI-thread publication check, so user edits made
+          // while parsing cannot be lost to an early SharedPreferences write.
+          String pendingBase=prefs.getString("source_update_pending_base",null);
+          String pendingCandidate=prefs.getString("source_update_pending_channels",null);
+          String persisted=prefs.getString("channels","[]");
+          final boolean hasApplicablePending=pendingBase!=null&&pendingCandidate!=null
+              &&!pendingCandidate.isEmpty()&&pendingBase.equals(persisted);
+          final String raw=hasApplicablePending?pendingCandidate:persisted;
           if(generation!=backgroundCatalogueReloadGeneration)return;
-          String raw=prefs.getString("channels","[]");
           if(raw.equals(expectedPersisted))return;
           final long reloadStarted=android.os.SystemClock.elapsedRealtime();
     ArrayList<Channel> refreshed=new ArrayList<>();
@@ -6071,26 +6133,31 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
     }
           uiHandler.post(()->{
-            if(!activityStarted||isFinishing()||isDestroyed()
-                ||generation!=backgroundCatalogueReloadGeneration
-                ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted)
-                ||!raw.equals(prefs.getString("channels","[]")))return;
-    String selectedIdentity="";
-    String selectedName="";
-    String selectedGroup="";
-    String selectedUrl="";
-    if(selected>=0&&selected<channels.size()){
-      Channel current=channels.get(selected);
-      selectedIdentity=identity(current);
-      selectedName=current.name;
-      selectedGroup=current.group;
-      selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
-          ?current.backups.get(current.activeSource):current.url;
-    }
-    synchronized(channels){
-      channels.clear();
-      channels.addAll(refreshed);
-    }
+            String selectedIdentity="";
+            String selectedName="";
+            String selectedGroup="";
+            String selectedUrl="";
+            // Serialize the final generation/base checks with every live catalogue
+            // mutation. Checking before taking this lock leaves a race: a playlist
+            // worker can append a row after the check but before this replacement.
+            synchronized(channels){
+              if(!activityStarted||isFinishing()||isDestroyed()
+                  ||generation!=backgroundCatalogueReloadGeneration
+                  ||catalogueMutationGeneration!=expectedMutationGeneration
+                  ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
+              if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
+              if(!raw.equals(prefs.getString("channels","[]")))return;
+              if(selected>=0&&selected<channels.size()){
+                Channel current=channels.get(selected);
+                selectedIdentity=identity(current);
+                selectedName=current.name;
+                selectedGroup=current.group;
+                selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
+                    ?current.backups.get(current.activeSource):current.url;
+              }
+              channels.clear();
+              channels.addAll(refreshed);
+            }
     rebuildChannelIndexes();
     int indexedReloadSources=0;
     synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedReloadSources+=restored.backups.size();}
