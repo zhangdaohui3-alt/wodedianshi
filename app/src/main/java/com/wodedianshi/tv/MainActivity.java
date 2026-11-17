@@ -1210,14 +1210,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return false;
     }
   }
-  private String activeCategory="全部";
+  // Cold start must land on the mainland-China directory, never the mixed global list.
+  private String activeCategory="中国";
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
     TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(21);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(64)));
-    // "中国" was an empty duplicate entry; China channels are already grouped by CCTV,
-    // satellite and local areas. Keep one clear "地方" entry.
-    String[] names={"收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
+    // China is the default home directory; CCTV, satellite and local areas remain
+    // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
+    String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
     for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){info.setText("请选择省级地区…");showProvinceDialog();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -3490,6 +3491,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
     for(String province:provinceNames)if(cat.equals(province))return matchesProvinceLocal(c,province);
+    if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("全球频道"))return ChannelCatalogueScopePolicy.matches(c.sourceScopes,"global");
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
