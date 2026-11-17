@@ -191,8 +191,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     void mergeBackupOwnership(Channel other){
       if(other==null)return;
-      sourceScopes.addAll(other.sourceScopes);
+      if(sourceScopes==null)sourceScopes=new HashSet<>();
+      if(backupSourceScopes==null)backupSourceScopes=new HashMap<>();
+      if(other.sourceScopes!=null)sourceScopes.addAll(other.sourceScopes);
+      if(other.backupSourceScopes==null)return;
       for(Map.Entry<String,HashSet<String>> entry:other.backupSourceScopes.entrySet()){
+        if(entry.getKey()==null||entry.getValue()==null)continue;
         HashSet<String> scopes=backupSourceScopes.get(entry.getKey());
         if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(entry.getKey(),scopes);}
         scopes.addAll(entry.getValue());
@@ -210,6 +214,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     recordPreviousProcessExitReason();
     setSourceUpdatePlaybackActive(false); // Clear stale playback state if Android previously killed the process.
     setSourceUpdateActivityActive(true);
+    // Keep the display awake only while the saved catalogue is being restored.
+    // The flag is cleared as soon as the home screen becomes usable.
+    getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
@@ -262,6 +269,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       runOnUiThread(()->{
         if(isFinishing())return;
         startupDataReady=true;
+        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if(search!=null)search.setEnabled(true);
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
         try{
@@ -3421,24 +3429,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           selectedKey=selected>=0&&selected<sources.size()&&sources.get(selected)!=null
               ?sources.get(selected).key():null;
         }
-        ArrayList<Channel> snapshot=new ArrayList<>(sources.size());
-        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,sources.size()*2));
+        // Filter the stable reference snapshot directly. Cloning every Channel here
+        // duplicated 11k+ objects and their display strings on every category/search
+        // refresh, compounding the already large restored catalogue in memory.
+        // Channel edits replace/append under the catalogue lock; playback actions
+        // resolve by stable key, so these references are read-only in this pass.
+        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
+        ArrayList<Channel> visible=new ArrayList<>();
         for(int i=0;i<sources.size();i++){
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
-          Channel source=sources.get(i);
-          if(source==null)continue;
-          Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group,true);
-          copy.tvgId=source.tvgId==null?"":source.tvgId;
-          copy.tvgName=source.tvgName==null?"":source.tvgName;
-          snapshot.add(copy);
-          String key=copy.key();
-          if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
-        }
-        if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-        ArrayList<Channel> visible=new ArrayList<>();
-        int scanned=0;
-        for(Channel c:snapshot){
-          if((++scanned&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
+          Channel c=sources.get(i);
+          if(c==null)continue;
           if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
           if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
           if(regionOnly){
@@ -3453,6 +3454,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(!safeName.toLowerCase(Locale.ROOT).contains(query)&&!safeGroup.toLowerCase(Locale.ROOT).contains(query)
               &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
           visible.add(c);
+          String key=c.key();
+          if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
         }
         if(categorySnapshot.equals("央视")){
           visible.sort((a,b)->{
@@ -3462,7 +3465,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           });
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+snapshot.size()+" matches="+visible.size()+" generation="+generation);
+        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" matches="+visible.size()+" generation="+generation);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
@@ -3740,15 +3743,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // A recent timestamp is not enough: some earlier directory responses contained
     // only a handful of recognized mainland channels. Keep retrying while the local
     // catalogue is visibly incomplete instead of freezing that small result for 12h.
-    final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
     final int minimumUsefulChinaChannels=60;
-    if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
-      info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
-      return;
-    }
-    chinaLoading=true;info.setText("正在轻量补充国内频道源（已有缓存可继续使用）…");
+    // Do not count/classify 11k+ saved channels on the UI thread when the user
+    // opens CCTV/Satellite. The old synchronous scan repeatedly built identities
+    // and could itself block MotionEvent dispatch long enough to trigger an ANR.
+    chinaLoading=true;info.setText("正在检查国内频道缓存（已有频道仍可继续使用）…");
     try{worker.execute(()->{
       try{
+      final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
+      if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
+        runOnUiThread(()->{
+          chinaLoading=false;
+          if(!isFinishing()&&info!=null)info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+        });
+        return;
+      }
       // The same CCTV, provincial and iptv-org China feeds are owned by SourceUpdateWorker.
       // Keep only supplemental feeds here to avoid downloading those URLs twice.
       String[] feeds={
