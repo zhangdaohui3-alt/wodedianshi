@@ -99,26 +99,12 @@ public final class LegacyCatalogueImporter {
 
                     String id = "legacy:" + row++;
                     String legacyKey = item.name + "|" + item.url;
-                    if (item.sources.isEmpty()) item.sources.add(item.url);
-                    // Preserve the selected source by URL, not by its old array index:
-                    // removing duplicate URLs can shift that index during normalization.
-                    String activeSourceUrl = item.activeSource >= 0 && item.activeSource < item.sources.size()
-                            ? item.sources.get(item.activeSource) : item.url;
-                    // The legacy primary URL is independently playable even if an older
-                    // catalogue omitted it from the optional backup list. Keep it in the
-                    // Room source relation without disturbing the selected source index.
-                    if (!item.sources.contains(item.url)) item.sources.add(item.url);
-                    // Keep the legacy unique-source invariant before inserting the composite PK.
-                    ArrayList<String> uniqueSources = new ArrayList<>();
-                    HashSet<String> seenSources = new HashSet<>();
-                    for (String sourceUrl : item.sources) {
-                        if (sourceUrl != null && !sourceUrl.isEmpty() && seenSources.add(sourceUrl)) {
-                            uniqueSources.add(sourceUrl);
-                        }
-                    }
-                    if (uniqueSources.isEmpty()) uniqueSources.add(item.url);
-                    int activeSource = uniqueSources.indexOf(activeSourceUrl);
-                    if (activeSource < 0) activeSource = 0;
+                    // Normalize duplicates and append a missing primary URL while
+                    // preserving the URL selected by the legacy activeSource index.
+                    LegacySourceOrderPolicy.Result sourceOrder = LegacySourceOrderPolicy.normalize(
+                            item.sources, item.url, item.activeSource);
+                    ArrayList<String> uniqueSources = new ArrayList<>(sourceOrder.urls);
+                    int activeSource = sourceOrder.activeIndex;
                     channels.add(new ChannelEntity(id, legacyKey, item.name, item.url,
                             item.group, categoryId, item.tvgId, item.tvgName,
                             toJson(item.channelScopes), activeSource, row - 1));
