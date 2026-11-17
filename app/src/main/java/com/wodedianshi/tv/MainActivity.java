@@ -1149,7 +1149,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
         if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
+          runOnUiThread(()->{reloadChannelsAfterBackgroundUpdateIfNeeded();showSourceUpdateStatus();});
         }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
           runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
         }
