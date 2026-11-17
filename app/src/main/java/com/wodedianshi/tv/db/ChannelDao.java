@@ -48,6 +48,9 @@ public interface ChannelDao {
     @Query("SELECT * FROM catalogue_migrations WHERE migrationKey = :key LIMIT 1")
     CatalogueMigrationEntity getMigration(String key);
 
+    @Query("DELETE FROM catalogue_migrations WHERE migrationKey = :key")
+    void removeMigration(String key);
+
     @Query("DELETE FROM favorites WHERE channelId = :channelId")
     void removeFavorite(String channelId);
 
