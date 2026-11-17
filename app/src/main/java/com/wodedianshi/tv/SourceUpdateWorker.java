@@ -402,6 +402,8 @@ public class SourceUpdateWorker extends Worker {
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
     double score=probeScore+sourceQualityScore(url)*0.01;
+    // Keep a currently failed preflight below unprobed/valid sources even if its old QoE was excellent.
+    if(SourceQualityScorer.isFailedProbeScore(probeScore))return score;
     JSONObject m=qoe.optJSONObject(key);
     if(m==null)m=qoe.optJSONObject(legacyKey);
     if(m!=null&&m.optInt("attempts",0)>=2){
