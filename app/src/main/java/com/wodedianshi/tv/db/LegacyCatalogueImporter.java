@@ -144,6 +144,16 @@ public final class LegacyCatalogueImporter {
                     totals[0], totals[1], totals[2], System.currentTimeMillis(), snapshotFingerprint));
         });
 
+        // Recheck after SQLite commits as well: the preference catalogue is maintained
+        // by a separate worker, so it can change immediately after the in-transaction
+        // check. If it did, invalidate the checkpoint; the next background pass retries.
+        String committedJson = prefs.getString("channels", "[]");
+        Set<String> committedFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
+        if (!snapshotFingerprint.equals(fingerprint(committedJson == null ? "" : committedJson, committedFavorites))) {
+            dao.removeMigration(PREF_MIGRATED);
+            throw new IllegalStateException("legacy catalogue changed immediately after Room import; checkpoint invalidated");
+        }
+
         int actualChannels = dao.countChannels();
         int actualSources = dao.countBackupSources();
         if (dao.countCategories() != totals[3] || actualChannels != totals[0]
