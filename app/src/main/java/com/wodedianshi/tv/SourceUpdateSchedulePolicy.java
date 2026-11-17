@@ -14,6 +14,11 @@ public final class SourceUpdateSchedulePolicy {
         return automaticUpdatesEnabled && lastSuccessfulUpdateMillis <= 0L;
     }
 
+    /** Automatic catalogue work must not compete with foreground TV playback or input. */
+    public static boolean shouldDeferForegroundAutoUpdate(boolean appForeground, boolean manual) {
+        return appForeground && !manual;
+    }
+
     /** At least one newly discovered source must pass the media preflight. */
     public static boolean hasValidatedDiscoverySources(int validatedSourceCount) {
         return validatedSourceCount > 0;
