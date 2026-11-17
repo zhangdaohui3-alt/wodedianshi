@@ -198,7 +198,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         scopes.addAll(entry.getValue());
       }
     }
-    String key(){return name+"|"+url;}
+    String key(){return (name==null?"":name)+"|"+(url==null?"":url);}
     void mergeMetadata(String id,String displayName){
       if((tvgId==null||tvgId.isEmpty())&&id!=null&&!id.isEmpty())tvgId=id;
       if((tvgName==null||tvgName.isEmpty())&&displayName!=null&&!displayName.isEmpty())tvgName=displayName;
@@ -379,7 +379,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         int index=(Integer)child.getTag();
         if(index<0||index>=channels.size())continue;
         Channel channel=channels.get(index);
-        String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channel.name):channel.name;
+        if(channel==null)continue;
+        String channelName=channel.name==null?"":channel.name;
+        String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channelName):channelName;
         String channelGroup=channel.group==null?"":channel.group;
         String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
         ((Button)child).setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
@@ -3408,7 +3410,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
           Channel source=sources.get(i);
           if(source==null)continue;
-          Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group);
+          Channel copy=new Channel(source.name==null?"":source.name,source.url==null?"":source.url,source.group==null?"":source.group,true);
           copy.tvgId=source.tvgId==null?"":source.tvgId;
           copy.tvgName=source.tvgName==null?"":source.tvgName;
           snapshot.add(copy);
@@ -3488,6 +3490,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     int pageStart=livePageIndex*maxRows;
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
       Channel c=visible.get(row);
+      if(c==null)continue;
       final String channelKey=c.key();
       final String channelName=c.name==null?"":c.name;
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
