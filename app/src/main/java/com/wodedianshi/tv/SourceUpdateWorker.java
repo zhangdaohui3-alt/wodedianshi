@@ -292,28 +292,12 @@ public class SourceUpdateWorker extends Worker {
               &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
         }
         String stablePrimaryUrl=channel.optString("url","");
-        if((stablePrimaryUrl.startsWith("http://")||stablePrimaryUrl.startsWith("https://"))
-            &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(stablePrimaryUrl)))ordered.add(stablePrimaryUrl);
-        // Never evict the channel's original primary identity or the user's last
-        // selected source when applying the five-source quality cap. Favorites and
-        // Room legacyKey are based on name|primaryUrl, not on the current rank-1 URL.
-        LinkedHashSet<String> requiredSources=new LinkedHashSet<>();
-        if(previousActiveUrl.startsWith("http://")||previousActiveUrl.startsWith("https://"))
-          requiredSources.add(previousActiveUrl);
-        if(stablePrimaryUrl.startsWith("http://")||stablePrimaryUrl.startsWith("https://"))
-          requiredSources.add(stablePrimaryUrl);
+        // Preserve both the stable channel identity and the user's last selected
+        // source even when the ranked list is trimmed to the five-source cap.
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
-        ArrayList<String> retained=new ArrayList<>();
-        for(String required:requiredSources){
-          if(orderedEndpoints.contains(SourceSelectionPolicy.endpointKey(required))
-              &&!retained.contains(required)&&retained.size()<MAX_SOURCES_PER_CHANNEL)retained.add(required);
-        }
-        for(String candidate:ordered){
-          if(retained.size()>=MAX_SOURCES_PER_CHANNEL)break;
-          if(!retained.contains(candidate))retained.add(candidate);
-        }
-        retained.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
-        ordered=retained;
+        ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
+            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
+        ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
         if(ranked.length()>0){
