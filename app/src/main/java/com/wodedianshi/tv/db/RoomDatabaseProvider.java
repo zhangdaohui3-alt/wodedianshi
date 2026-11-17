@@ -23,6 +23,15 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    // Version 3 records the exact legacy snapshot fingerprint used by the shadow import.
+    private static final Migration MIGRATION_2_3 = new Migration(2, 3) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE catalogue_migrations "
+                    + "ADD COLUMN catalogueFingerprint TEXT NOT NULL DEFAULT ''");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -35,7 +44,7 @@ public final class RoomDatabaseProvider {
                         context.getApplicationContext(),
                         AppDatabase.class,
                         "mytv_catalogue.db"
-                    ).addMigrations(MIGRATION_1_2).build();
+                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build();
                     instance = local;
                 }
             }
