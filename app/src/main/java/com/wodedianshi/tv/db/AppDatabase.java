@@ -1,4 +1,4 @@
-package com.wodedianshi.tv.db;
+package com.wodianshi.tv.db;
 
 import androidx.room.Database;
 import androidx.room.RoomDatabase;
@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase;
     BackupSourceEntity.class,
     FavoriteEntity.class,
     CatalogueMigrationEntity.class
-}, version = 4, exportSchema = true)
+}, version = 5, exportSchema = true)
 public abstract class AppDatabase extends RoomDatabase {
     public abstract ChannelDao channelDao();
 }
