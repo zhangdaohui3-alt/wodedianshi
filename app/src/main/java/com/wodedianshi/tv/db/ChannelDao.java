@@ -100,6 +100,17 @@ public interface ChannelDao {
     @Query("SELECT id FROM channels WHERE legacyKey = :legacyKey")
     List<String> getChannelIdsByLegacyKey(String legacyKey);
 
+    // Scoped catalogue row IDs differ from IDs in the unfiltered master list.
+    @Query("UPDATE channels SET activeSource = (SELECT priority FROM backup_sources "
+            + "WHERE channelId = channels.id AND url = :sourceUrl LIMIT 1) "
+            + "WHERE legacyKey = :legacyKey AND EXISTS (SELECT 1 FROM backup_sources "
+            + "WHERE channelId = channels.id AND url = :sourceUrl)")
+    int setActiveSourceByLegacyKeyAndUrl(String legacyKey, String sourceUrl);
+
+    @Query("UPDATE catalogue_migrations SET favoritesCount = (SELECT COUNT(*) FROM favorites) "
+            + "WHERE migrationKey = :migrationKey")
+    int refreshFavoriteCheckpointCount(String migrationKey);
+
     @Query("DELETE FROM favorites WHERE channelId IN "
             + "(SELECT id FROM channels WHERE legacyKey = :legacyKey)")
     void removeFavoritesForLegacyKey(String legacyKey);
