@@ -32,6 +32,15 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    // Version 4 also stores category count so every imported table is verified.
+    private static final Migration MIGRATION_3_4 = new Migration(3, 4) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE catalogue_migrations "
+                    + "ADD COLUMN categoriesCount INTEGER NOT NULL DEFAULT 0");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -44,7 +53,7 @@ public final class RoomDatabaseProvider {
                         context.getApplicationContext(),
                         AppDatabase.class,
                         "mytv_catalogue.db"
-                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build();
+                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build();
                     instance = local;
                 }
             }
