@@ -389,7 +389,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
     }
-    if(changed)persist();
+    if(changed){persist();queueRoomCatalogueReconcileAfterPersist();}
     if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
   }
   private int sourceQualityScore(String source){
@@ -5794,6 +5794,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     c.backups.clear();c.backups.addAll(ordered);
     int ix=c.backups.indexOf(active);c.activeSource=ix>=0?ix:0;
     persist();
+    // Source order is part of the Room shadow: activeSource is a priority index.
+    // Re-import the committed snapshot so the relation order and index stay aligned.
+    queueRoomCatalogueReconcileAfterPersist();
   }
   private void toggleNetworkSpeed(){
     boolean enabled=!getSharedPreferences("mytv",0).getBoolean("show_network_speed",false);
