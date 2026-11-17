@@ -47,7 +47,20 @@ public final class LegacyCatalogueImporter {
 
         CatalogueMigrationEntity checkpoint = dao.getMigration(PREF_MIGRATED);
         if (checkpoint != null && snapshotFingerprint.equals(checkpoint.catalogueFingerprint)) {
-            return new Result(dao.countChannels(), dao.countBackupSources(), dao.countFavorites());
+            int channels = dao.countChannels();
+            int sources = dao.countBackupSources();
+            int favorites = dao.countFavorites();
+            int categories = dao.countCategories();
+            // A fingerprint alone is not enough: detect a truncated or partially
+            // damaged shadow database before trusting its completion marker.
+            if (channels == checkpoint.channelsCount
+                    && sources == checkpoint.backupSourcesCount
+                    && favorites == checkpoint.favoritesCount
+                    && categories == checkpoint.categoriesCount
+                    && channels > 0) {
+                return new Result(channels, sources, favorites);
+            }
+            dao.removeMigration(PREF_MIGRATED);
         }
 
         // Track category rows as well as channels/sources/favorites. A matching
@@ -141,7 +154,7 @@ public final class LegacyCatalogueImporter {
             // Commit the checkpoint in the same SQLite transaction as the imported
             // rows. A changed legacy snapshot gets a different fingerprint next time.
             dao.insertMigration(new CatalogueMigrationEntity(PREF_MIGRATED,
-                    totals[0], totals[1], totals[2], System.currentTimeMillis(), snapshotFingerprint));
+                    totals[0], totals[1], totals[2], totals[3], System.currentTimeMillis(), snapshotFingerprint));
         });
 
         // Recheck after SQLite commits as well: the preference catalogue is maintained
