@@ -102,10 +102,11 @@ public final class LegacyCatalogueImporter {
                     }
 
                     String legacyKey = item.name + "|" + item.url;
-                    Integer previousOccurrence = identityOccurrences.get(legacyKey);
+                    String identityKey = LegacyChannelIdPolicy.identityKey(item.name, item.url);
+                    Integer previousOccurrence = identityOccurrences.get(identityKey);
                     int occurrence = previousOccurrence == null ? 0 : previousOccurrence;
-                    identityOccurrences.put(legacyKey, occurrence + 1);
-                    String id = LegacyChannelIdPolicy.idFor(legacyKey, occurrence);
+                    identityOccurrences.put(identityKey, occurrence + 1);
+                    String id = LegacyChannelIdPolicy.idFor(item.name, item.url, occurrence);
                     row++;
                     // Normalize duplicates and append a missing primary URL while
                     // preserving the URL selected by the legacy activeSource index.
