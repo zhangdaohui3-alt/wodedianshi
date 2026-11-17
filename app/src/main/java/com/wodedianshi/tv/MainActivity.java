@@ -3440,15 +3440,36 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!explicit.isEmpty())return false;
     return false;
   }
+  // Build the province/city token index once. The former implementation
+  // recreated every province's city array for every channel; filtering 10k+
+  // records therefore allocated hundreds of thousands of short-lived arrays.
+  private static volatile Set<String> localRegionTokenIndex;
+  private Set<String> localRegionTokens(){
+    Set<String> cached=localRegionTokenIndex;
+    if(cached!=null)return cached;
+    synchronized(MainActivity.class){
+      cached=localRegionTokenIndex;
+      if(cached==null){
+        HashSet<String> tokens=new HashSet<>();
+        String[] provinces={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+        for(String province:provinces){
+          tokens.add(province.toLowerCase(Locale.ROOT));
+          for(String city:citiesForProvince(province)){
+            if(city!=null&&!city.isEmpty())tokens.add(city.toLowerCase(Locale.ROOT));
+          }
+        }
+        cached=Collections.unmodifiableSet(tokens);
+        localRegionTokenIndex=cached;
+      }
+    }
+    return cached;
+  }
   private boolean isLocalChannel(Channel c){
     if(c==null||isSatelliteChannel(c))return false;
     String metadata=regionalMetadata(c);
     if(metadata.contains("地方")||metadata.contains("local"))return true;
     if(!explicitProvinceIn(metadata).isEmpty())return true;
-    String[] provinces={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-    for(String province:provinces)for(String city:citiesForProvince(province)){
-      if(hasRegionalToken(metadata,city))return true;
-    }
+    for(String token:localRegionTokens())if(metadata.contains(token))return true;
     return false;
   }
   private boolean matchesProvinceCity(Channel c,String province,String city){
@@ -3712,6 +3733,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     lastFilteredMatchCount=visible.size();
     updateLivePaging(visible.size());
     updateLiveChannelPresentation();
+    // Replace the dialog's transient "正在显示/正在筛选" text only after the
+    // latest background filter has actually rendered its result.
+    if(info!=null){
+      if("央视".equals(activeCategory)||"卫视".equals(activeCategory)){
+        info.setText(activeCategory+"频道已显示 "+visible.size()+" 个");
+      }else if("地方".equals(activeCategory)&&localRegionFilterActive){
+        String region=activeLocalProvince==null?"全部地方台":activeLocalProvince
+            +(activeLocalCity==null?"地方台":(" · "+activeLocalCity));
+        info.setText("已显示："+region+"，共 "+visible.size()+" 个频道");
+      }
+    }
     if(visible.isEmpty()){
       TextView empty=new TextView(this);
       empty.setText(customCategory
