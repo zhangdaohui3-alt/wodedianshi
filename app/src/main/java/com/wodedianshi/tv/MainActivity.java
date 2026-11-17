@@ -4427,21 +4427,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private void queueRoomActiveSourceSync(int channelIndex,String sourceUrl){
-    final String channelId=roomChannelIdAt(channelIndex);
-    if(channelId.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
+    final String legacyKey;
+    synchronized(channels){
+      if(channelIndex<0||channelIndex>=channels.size()||channels.get(channelIndex)==null)return;
+      legacyKey=channels.get(channelIndex).key();
+    }
+    if(legacyKey.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
     try{
       worker.execute(()->{
         try{
           boolean updated=com.wodedianshi.tv.db.RoomShadowSync.setActiveSourceUrl(
-              getApplicationContext(),channelId,sourceUrl);
+              getApplicationContext(),legacyKey,sourceUrl);
           if(!updated)android.util.Log.d("MyTVRoomSync",
-              "active source not mirrored (catalogue row/source not imported yet)");
+              "active source not mirrored (scoped catalogue row/source not imported yet)");
         }catch(Throwable failure){
-          android.util.Log.w("MyTVRoomSync","active source shadow update skipped",failure);
+          android.util.Log.w("MyTVRoomSync","active source scoped sync skipped",failure);
         }
       });
     }catch(RuntimeException rejected){
-      android.util.Log.w("MyTVRoomSync","active source shadow update queue rejected",rejected);
+      android.util.Log.w("MyTVRoomSync","active source sync queue rejected",rejected);
     }
   }
 
