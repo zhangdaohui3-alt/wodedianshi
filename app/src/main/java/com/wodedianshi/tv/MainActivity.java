@@ -101,7 +101,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean localRegionFilterActive=false;
   private String activeLocalProvince=null;
   private String activeLocalCity=null;
-  private final HashSet<String> favorites = new HashSet<>();
+  // SharedPreferences persistence now runs on a background writer; synchronize
+  // the wrapper so UI favorite toggles cannot race its detached snapshot.
+  private final Set<String> favorites = Collections.synchronizedSet(new HashSet<String>());
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
@@ -979,7 +981,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
       logCatalogueMemory("persist_snapshot_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
-      HashSet<String> favoriteSnapshot=new HashSet<>(favorites);
+      HashSet<String> favoriteSnapshot;
+      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
       StringWriter buffer=new StringWriter(Math.max(1024,snapshot.size()*160));
       try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
         writer.beginArray();
