@@ -3716,8 +3716,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       com.wodedianshi.tv.db.LegacyCatalogueImporter.Result all=
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(getApplicationContext(),saved);
       com.wodedianshi.tv.db.LegacyCatalogueImporter.Result china=
-          com.wodianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(getApplicationContext(),saved);
-      com.wodianshi.tv.db.LegacyCatalogueImporter.Result international=
+          com.wodedianshi.tv.db.LegacyCatalogueImporter.importChinaIfNeeded(getApplicationContext(),saved);
+      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result international=
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importInternationalIfNeeded(getApplicationContext(),saved);
       android.util.Log.i("MyTVRoomSync","catalogues reconciled all="+all.channels
           +" china="+china.channels+" international="+international.channels);
