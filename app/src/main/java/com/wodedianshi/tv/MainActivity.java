@@ -3434,7 +3434,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // refresh, compounding the already large restored catalogue in memory.
         // Channel edits replace/append under the catalogue lock; playback actions
         // resolve by stable key, so these references are read-only in this pass.
-        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,sources.size()));
+        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Channel> visible=new ArrayList<>();
         for(int i=0;i<sources.size();i++){
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
