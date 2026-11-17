@@ -4131,6 +4131,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         Channel scoped=channelsByUrl.get(line);
         if(scoped!=null)destinationKeys.add(scoped.key());
       }
+      // Playlist ingestion runs on a separate worker and can mutate the live
+      // catalogue before its final persist() call. Invalidate any background
+      // catalogue reload immediately, not only after the import has finished.
+      synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
     }
     return added;
   }
@@ -4162,7 +4166,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
-  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");channels.add(c);rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(channels.indexOf(c));}else toast("请填写频道名称和有效网址");}).show();}
+  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
