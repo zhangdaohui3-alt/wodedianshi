@@ -93,8 +93,8 @@ public class SourceUpdateWorker extends Worker {
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
         JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
-        knownUrls.add(c.optString("url"));
+        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(SourceSelectionPolicy.endpointKey(src.optString(j)));
+        knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
@@ -121,7 +121,7 @@ public class SourceUpdateWorker extends Worker {
             if(savedPool.size()>=20000)break;
             // A shared URL only needs one network probe, even if several channel
             // entries reference it. Keep the first channel identity for diagnostics.
-            if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
+            if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
           }
         }
       }
@@ -202,7 +202,7 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(!visitedUrls.add(e.url))continue;
+        if(!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url)))continue;
         checked++;
         ProbeResult measured=probe(e.url,probeDeadline);
         if(probeDeadlineReached(probeDeadline)){
@@ -219,7 +219,7 @@ public class SourceUpdateWorker extends Worker {
         String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
         // A known URL may appear in a second directory. Record that provenance
         // without duplicating the backup or probing the same address twice.
-        if(knownUrls.contains(e.url)){
+        if(knownUrls.contains(SourceSelectionPolicy.endpointKey(e.url))){
           if(target!=null)addBackupSourceScope(target,e.url,e.scope);
           continue;
         }
@@ -231,7 +231,8 @@ public class SourceUpdateWorker extends Worker {
         }else{
           JSONArray sources=target.optJSONArray("sources");
           if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
-          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
+          String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
+          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){duplicate=true;break;}
           if(!duplicate){
             if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
             else{
@@ -246,7 +247,7 @@ public class SourceUpdateWorker extends Worker {
             }
           }
         }
-        knownUrls.add(e.url);
+        knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
@@ -266,7 +267,12 @@ public class SourceUpdateWorker extends Worker {
         int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
         String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
         ArrayList<String> ordered=new ArrayList<>();
-        for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
+        HashSet<String> orderedEndpoints=new HashSet<>();
+        for(int j=0;j<sourceArray.length();j++){
+          String u=sourceArray.optString(j,"");
+          if((u.startsWith("http://")||u.startsWith("https://"))
+              &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
+        }
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
