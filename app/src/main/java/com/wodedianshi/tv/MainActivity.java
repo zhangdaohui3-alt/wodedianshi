@@ -3799,15 +3799,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // A directory returning an empty playlist or only non-China entries must not
   // poison the 12-hour cache and hide the next refresh attempt.
   private int countRecognizedChinaChannels(){
+    long started=android.os.SystemClock.elapsedRealtime();
     HashSet<String> identities=new HashSet<>();
+    HashSet<String> cctv=new HashSet<>();
+    HashSet<String> satellites=new HashSet<>();
+    HashSet<String> local=new HashSet<>();
     synchronized(channels){
       for(Channel channel:channels){
         if(channel==null)continue;
-        if(categoryMatch(channel,"央视")||categoryMatch(channel,"卫视")||categoryMatch(channel,"地方")){
-          identities.add(identity(channel));
-        }
+        String key=identity(channel);
+        if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
+        if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
+        if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
       }
     }
+    android.util.Log.i("MyTVDirectory","china_cached_count total="+identities.size()
+        +" cctv="+cctv.size()+" satellite="+satellites.size()+" local="+local.size()
+        +" scanned="+channels.size()+" elapsed_ms="
+        +(android.os.SystemClock.elapsedRealtime()-started));
     return identities.size();
   }
   private void loadChinaChannels(){
