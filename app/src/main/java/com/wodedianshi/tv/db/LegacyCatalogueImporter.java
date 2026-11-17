@@ -151,6 +151,7 @@ public final class LegacyCatalogueImporter {
             }
             // Commit the checkpoint in the same SQLite transaction as the imported
             // rows. A changed legacy snapshot gets a different fingerprint next time.
+            dao.removeMigration("room_catalogue_migration_v1");
             dao.insertMigration(new CatalogueMigrationEntity(PREF_MIGRATED,
                     totals[0], totals[1], totals[2], totals[3], System.currentTimeMillis(), snapshotFingerprint));
         });
