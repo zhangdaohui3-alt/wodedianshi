@@ -6175,28 +6175,31 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
     }
           uiHandler.post(()->{
-            if(!activityStarted||isFinishing()||isDestroyed()
-                ||generation!=backgroundCatalogueReloadGeneration
-                ||catalogueMutationGeneration!=expectedMutationGeneration
-                ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
-            if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
-            if(!raw.equals(prefs.getString("channels","[]")))return;
-    String selectedIdentity="";
-    String selectedName="";
-    String selectedGroup="";
-    String selectedUrl="";
-    if(selected>=0&&selected<channels.size()){
-      Channel current=channels.get(selected);
-      selectedIdentity=identity(current);
-      selectedName=current.name;
-      selectedGroup=current.group;
-      selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
-          ?current.backups.get(current.activeSource):current.url;
-    }
-    synchronized(channels){
-      channels.clear();
-      channels.addAll(refreshed);
-    }
+            String selectedIdentity="";
+            String selectedName="";
+            String selectedGroup="";
+            String selectedUrl="";
+            // Serialize the final generation/base checks with every live catalogue
+            // mutation. Checking before taking this lock leaves a race: a playlist
+            // worker can append a row after the check but before this replacement.
+            synchronized(channels){
+              if(!activityStarted||isFinishing()||isDestroyed()
+                  ||generation!=backgroundCatalogueReloadGeneration
+                  ||catalogueMutationGeneration!=expectedMutationGeneration
+                  ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
+              if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
+              if(!raw.equals(prefs.getString("channels","[]")))return;
+              if(selected>=0&&selected<channels.size()){
+                Channel current=channels.get(selected);
+                selectedIdentity=identity(current);
+                selectedName=current.name;
+                selectedGroup=current.group;
+                selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
+                    ?current.backups.get(current.activeSource):current.url;
+              }
+              channels.clear();
+              channels.addAll(refreshed);
+            }
     rebuildChannelIndexes();
     int indexedReloadSources=0;
     synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedReloadSources+=restored.backups.size();}
