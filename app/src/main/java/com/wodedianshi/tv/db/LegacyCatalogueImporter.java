@@ -41,7 +41,7 @@ public final class LegacyCatalogueImporter {
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
         if (prefs.getBoolean(PREF_MIGRATED, false)) {
-            return new Result(dao.countChannels(), dao.countBackupSources(), 0);
+            return new Result(dao.countChannels(), dao.countBackupSources(), dao.countFavorites());
         }
 
         final String json = prefs.getString("channels", "[]");
@@ -82,6 +82,10 @@ public final class LegacyCatalogueImporter {
                     String id = "legacy:" + row++;
                     String legacyKey = item.name + "|" + item.url;
                     if (item.sources.isEmpty()) item.sources.add(item.url);
+                    // Preserve the selected source by URL, not by its old array index:
+                    // removing duplicate URLs can shift that index during normalization.
+                    String activeSourceUrl = item.activeSource >= 0 && item.activeSource < item.sources.size()
+                            ? item.sources.get(item.activeSource) : item.url;
                     // Keep the legacy unique-source invariant before inserting the composite PK.
                     ArrayList<String> uniqueSources = new ArrayList<>();
                     HashSet<String> seenSources = new HashSet<>();
@@ -91,7 +95,8 @@ public final class LegacyCatalogueImporter {
                         }
                     }
                     if (uniqueSources.isEmpty()) uniqueSources.add(item.url);
-                    int activeSource = Math.max(0, Math.min(item.activeSource, uniqueSources.size() - 1));
+                    int activeSource = uniqueSources.indexOf(activeSourceUrl);
+                    if (activeSource < 0) activeSource = 0;
                     channels.add(new ChannelEntity(id, legacyKey, item.name, item.url,
                             item.group, categoryId, item.tvgId, item.tvgName,
                             toJson(item.channelScopes), activeSource, row - 1));
