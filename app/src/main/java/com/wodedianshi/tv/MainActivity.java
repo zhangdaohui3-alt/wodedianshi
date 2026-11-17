@@ -3630,7 +3630,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{if(j>=0&&j<sourceUrls.size())playChannelSourceByKey(channelKey,sourceUrls.get(j));}).setNegativeButton("关闭",null).show();
           }else{
             synchronized(channels){for(int k=0;k<channels.size();k++){Channel item=channels.get(k);if(item!=null&&channelKey.equals(item.key())){channels.remove(k);break;}}}
-            favorites.remove(channelKey);rebuildChannelIndexes();persist();refresh();
+            favorites.remove(channelKey);rebuildChannelIndexes();persist();queueRoomCatalogueReconcileAfterPersist();refresh();
           }
         }).show();return true;
       });
