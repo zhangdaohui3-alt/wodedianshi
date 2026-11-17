@@ -3736,8 +3736,30 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // as soon as persistence is queued, so using the same serial writer guarantees
   // the importer never races ahead and reads the previous SharedPreferences snapshot.
   private void queueRoomCatalogueReconcileAfterPersist(){
-    try{cataloguePersistWorker.execute(this::syncRoomCataloguesAfterSave);}
-    catch(RuntimeException rejected){
+    final long expectedGeneration;
+    synchronized(cataloguePersistLock){
+      expectedGeneration=cataloguePersistRequestedGeneration;
+    }
+    if(expectedGeneration<=0L)return;
+    try{
+      cataloguePersistWorker.execute(()->{
+        // persist() on the UI thread means "queued", not "durably saved".
+        // Never import a failed/old SharedPreferences snapshot into Room.
+        final boolean durable;
+        synchronized(cataloguePersistLock){
+          durable=cataloguePersistCompletedGeneration>=expectedGeneration
+              &&cataloguePersistLastSuccess;
+        }
+        if(!durable){
+          android.util.Log.w("MyTVRoomSync","skip Room reconcile: legacy save not confirmed generation="+expectedGeneration
+              +" completed="+cataloguePersistCompletedGeneration
+              +" success="+cataloguePersistLastSuccess);
+          saveLiveDiagnostic("ROOM_RECONCILE_SKIPPED_UNSAVED","generation="+expectedGeneration);
+          return;
+        }
+        syncRoomCataloguesAfterSave();
+      });
+    }catch(RuntimeException rejected){
       android.util.Log.e("MyTVRoomSync","Room reconcile queue rejected",rejected);
       saveLiveDiagnostic("ROOM_RECONCILE_QUEUE_ERROR",rejected.getClass().getSimpleName());
     }
