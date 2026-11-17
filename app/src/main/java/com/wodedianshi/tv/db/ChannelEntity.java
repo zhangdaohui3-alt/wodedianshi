@@ -24,7 +24,7 @@ public class ChannelEntity {
     public int activeSource;
     public int sortOrder;
 
-    public ChannelEntity(@NonNull String id, @NonNull String name,
+    public ChannelEntity(@NonNull String id, @NonNull String legacyKey, @NonNull String name,
             @NonNull String primaryUrl, @NonNull String groupName,
             @NonNull String categoryId, @NonNull String tvgId,
             @NonNull String tvgName, @NonNull String channelScopesJson,
