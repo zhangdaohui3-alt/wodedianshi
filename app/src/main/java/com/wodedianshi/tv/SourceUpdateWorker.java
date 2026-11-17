@@ -504,7 +504,7 @@ public class SourceUpdateWorker extends Worker {
             if(resources.aes128Encrypted){
               byte[] mapIv=HlsAes128Preflight.parseExplicitIv(resources.encryptionIv);
               if(mapIv==null||!HlsAes128Preflight.validatesInitializationSegment(
-                  initialization,aesKey,mapIv,!initializationResponse.truncated))continue;
+                  initialization,aesKey,mapIv,HlsProbeValidationPolicy.isCompleteSample(initializationResponse.truncated)))continue;
             }else if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
           }
           String candidateSegmentUrl=candidateSegments.get(0);
@@ -517,7 +517,7 @@ public class SourceUpdateWorker extends Worker {
                 ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
                 :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber);
             if(!HlsAes128Preflight.validatesMediaSegment(
-                candidateSample,aesKey,segmentIv,!candidateSampleResponse.truncated))continue;
+                candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
           }else if(!looksLikeHlsSegment(candidateSample))continue;
           mediaUrl=candidateManifestUrl;
           bestBandwidth=candidate.bandwidth;
@@ -543,7 +543,7 @@ public class SourceUpdateWorker extends Worker {
                 ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
                 :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
             secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
-                second,selectedAesKey,secondIv,!secondResponse.truncated);
+                second,selectedAesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
           }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
         }
         // A playlist exposing a second segment must prove that it is retrievable
