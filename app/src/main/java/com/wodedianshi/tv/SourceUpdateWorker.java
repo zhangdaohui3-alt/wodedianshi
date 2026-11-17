@@ -630,7 +630,7 @@ public class SourceUpdateWorker extends Worker {
         }
         if(probeDeadlineReached(deadline))return null;
         byte[] received=out.toByteArray();
-        boolean truncated=received.length>maxBytes;
+        boolean truncated=HlsProbeValidationPolicy.isTruncatedSample(received.length,maxBytes);
         byte[] bounded=truncated?Arrays.copyOf(received,maxBytes):received;
         return new SampleResponse(bounded,finalUrl,truncated);
       }
