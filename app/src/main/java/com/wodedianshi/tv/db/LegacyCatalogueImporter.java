@@ -40,16 +40,19 @@ public final class LegacyCatalogueImporter {
         if (context == null || prefs == null) throw new IllegalArgumentException("context/prefs is null");
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
-        CatalogueMigrationEntity checkpoint = dao.getMigration(PREF_MIGRATED);
-        if (checkpoint != null) {
-            return new Result(dao.countChannels(), dao.countBackupSources(), dao.countFavorites());
-        }
-
         final String json = prefs.getString("channels", "[]");
         final Set<String> legacyFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
         if (json == null || json.trim().isEmpty()) throw new IllegalStateException("legacy catalogue is empty");
+        final String snapshotFingerprint = fingerprint(json, legacyFavorites);
 
-        final int[] totals = new int[3];
+        CatalogueMigrationEntity checkpoint = dao.getMigration(PREF_MIGRATED);
+        if (checkpoint != null && snapshotFingerprint.equals(checkpoint.catalogueFingerprint)) {
+            return new Result(dao.countChannels(), dao.countBackupSources(), dao.countFavorites());
+        }
+
+        // Track category rows as well as channels/sources/favorites. A matching
+        // channel count alone cannot detect an incomplete category index.
+        final int[] totals = new int[4];
         db.runInTransaction(() -> {
             // A previous process may have died before the import transaction
             // committed. Rebuilding is safe because the transaction is atomic.
@@ -78,6 +81,7 @@ public final class LegacyCatalogueImporter {
                     if (categoryIds.add(categoryId)) {
                         categories.add(new CategoryEntity(categoryId,
                                 item.group.isEmpty() ? "未分类" : item.group, categoryIds.size() - 1));
+                        totals[3]++;
                     }
 
                     String id = "legacy:" + row++;
@@ -123,24 +127,56 @@ public final class LegacyCatalogueImporter {
                 throw new IllegalStateException("legacy catalogue parse failed; transaction rolled back", malformed);
             }
             flush(dao, categories, channels, sources, favorites);
-            if (dao.countChannels() != totals[0] || dao.countBackupSources() != totals[1] || dao.countFavorites() != totals[2]) {
+            if (dao.countCategories() != totals[3] || dao.countChannels() != totals[0]
+                    || dao.countBackupSources() != totals[1] || dao.countFavorites() != totals[2]) {
                 throw new IllegalStateException("Room import count validation failed");
             }
+            // If the background source updater or a user action changed the legacy
+            // snapshot while it was being copied, roll back instead of blessing stale data.
+            String latestJson = prefs.getString("channels", "[]");
+            Set<String> latestFavorites = new HashSet<>(prefs.getStringSet("fav", new HashSet<String>()));
+            if (!snapshotFingerprint.equals(fingerprint(latestJson == null ? "" : latestJson, latestFavorites))) {
+                throw new IllegalStateException("legacy catalogue changed during Room import; retry required");
+            }
             // Commit the checkpoint in the same SQLite transaction as the imported
-            // rows. This avoids rewriting the legacy 17 MB SharedPreferences XML just
-            // to store a one-bit migration flag, and prevents partial-import markers.
+            // rows. A changed legacy snapshot gets a different fingerprint next time.
             dao.insertMigration(new CatalogueMigrationEntity(PREF_MIGRATED,
-                    totals[0], totals[1], totals[2], System.currentTimeMillis()));
+                    totals[0], totals[1], totals[2], System.currentTimeMillis(), snapshotFingerprint));
         });
 
         int actualChannels = dao.countChannels();
         int actualSources = dao.countBackupSources();
-        if (actualChannels != totals[0] || actualSources != totals[1] || dao.countFavorites() != totals[2] || actualChannels == 0) {
+        if (dao.countCategories() != totals[3] || actualChannels != totals[0]
+                || actualSources != totals[1] || dao.countFavorites() != totals[2] || actualChannels == 0) {
             throw new IllegalStateException("Room import validation mismatch");
         }
         // Legacy channels/favorites remain intact for rollback and future diagnosis.
         // The durable checkpoint was committed atomically with the catalogue rows.
         return new Result(actualChannels, actualSources, totals[2]);
+    }
+
+    private static String fingerprint(String json, Set<String> favorites) {
+        // 64-bit FNV-1a over UTF-16 code units avoids allocating a second 17 MB
+        // UTF-8 byte array merely to identify the legacy snapshot.
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < json.length(); i++) {
+            hash ^= json.charAt(i);
+            hash *= 0x100000001b3L;
+        }
+        ArrayList<String> sortedFavorites = new ArrayList<>(favorites);
+        java.util.Collections.sort(sortedFavorites);
+        hash ^= sortedFavorites.size();
+        hash *= 0x100000001b3L;
+        for (String favorite : sortedFavorites) {
+            if (favorite == null) continue;
+            for (int i = 0; i < favorite.length(); i++) {
+                hash ^= favorite.charAt(i);
+                hash *= 0x100000001b3L;
+            }
+            hash ^= 0xff;
+            hash *= 0x100000001b3L;
+        }
+        return json.length() + ":" + Long.toHexString(hash);
     }
 
     private static void flush(ChannelDao dao, ArrayList<CategoryEntity> categories,
