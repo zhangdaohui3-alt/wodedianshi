@@ -83,6 +83,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView info;
   private EditText search;
   private int livePageIndex=0;
+  // A deliberate page-button action must not be overridden by the selected channel's page.
+  private boolean preserveRequestedLivePageOnce=false;
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
@@ -1185,8 +1187,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     liveNextPageButton=new Button(this);liveNextPageButton.setText("下一页");liveNextPageButton.setAllCaps(false);liveNextPageButton.setTextSize(12);liveNextPageButton.setMinHeight(0);liveNextPageButton.setMinimumHeight(0);liveNextPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(liveNextPageButton,Color.rgb(35,55,78));
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
-    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -3573,7 +3575,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
-          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
+          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,
+              preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
         });
       }catch(Throwable failure){
         android.util.Log.e("MyTVCatalogue","background catalogue filter failed category="+categorySnapshot+" scanned="+scanned+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt),failure);
@@ -3590,8 +3593,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     });
   }
   private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
-      boolean customCategory,int requestedPage,int previousFocusedIndex,String previousFocusedKey,
-      HashMap<String,Integer> sourceIndexByKey){
+      boolean customCategory,int requestedPage,boolean preserveRequestedPage,
+      int previousFocusedIndex,String previousFocusedKey,HashMap<String,Integer> sourceIndexByKey){
     final long renderStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","render_start category="+activeCategory+" visible="+visible.size()+" page="+requestedPage);
     list.removeAllViews();
@@ -3612,8 +3615,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int maxRows=LIVE_PAGE_SIZE;
     int selectedPosition=-1;
     if(selectedKey!=null)for(int i=0;i<visible.size();i++){Channel candidate=visible.get(i);if(candidate!=null&&selectedKey.equals(candidate.key())){selectedPosition=i;break;}}
-    livePageIndex=selectedPosition>=0?selectedPosition/maxRows:Math.max(0,requestedPage);
-    int pageCount=Math.max(1,(visible.size()+maxRows-1)/maxRows);
+    livePageIndex=LivePagePolicy.choosePage(
+        requestedPage,selectedPosition,maxRows,preserveRequestedPage);
+    if(preserveRequestedPage)preserveRequestedLivePageOnce=false;
+    int pageCount=LivePagePolicy.pageCount(visible.size(),maxRows);
     if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
     int pageStart=livePageIndex*maxRows;
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){

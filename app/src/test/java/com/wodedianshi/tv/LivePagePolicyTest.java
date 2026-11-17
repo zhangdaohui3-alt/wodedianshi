@@ -25,4 +25,14 @@ public class LivePagePolicyTest {
         assertEquals(1, LivePagePolicy.pageCount(20, 0));
         assertFalse(LivePagePolicy.canAdvance(0, 0, 48));
     }
+
+    @Test public void manualPageNavigationIsNotOverriddenBySelectedChannel() {
+        assertEquals(1, LivePagePolicy.choosePage(1, 5, 48, true));
+        assertEquals(2, LivePagePolicy.choosePage(2, 5, 48, true));
+    }
+
+    @Test public void ordinaryRefreshKeepsSelectedChannelVisible() {
+        assertEquals(1, LivePagePolicy.choosePage(0, 50, 48, false));
+        assertEquals(0, LivePagePolicy.choosePage(2, 5, 48, false));
+    }
 }

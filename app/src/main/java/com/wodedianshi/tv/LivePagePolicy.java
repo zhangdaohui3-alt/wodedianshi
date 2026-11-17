@@ -12,4 +12,16 @@ public final class LivePagePolicy {
     public static boolean canAdvance(int currentPage, int itemCount, int pageSize) {
         return currentPage >= 0 && currentPage + 1 < pageCount(itemCount, pageSize);
     }
+
+    /**
+     * Normally keep the currently selected channel visible after a refresh.
+     * Explicit page-button navigation takes precedence until that page renders.
+     */
+    public static int choosePage(int requestedPage, int selectedItemPosition,
+                                 int pageSize, boolean preserveRequestedPage) {
+        if (!preserveRequestedPage && selectedItemPosition >= 0 && pageSize > 0) {
+            return selectedItemPosition / pageSize;
+        }
+        return Math.max(0, requestedPage);
+    }
 }
