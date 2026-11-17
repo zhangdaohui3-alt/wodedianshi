@@ -31,7 +31,7 @@ public final class HlsProbeValidationPolicy {
     public static boolean isIncompleteContentRange(String contentRange, int maxBytes) {
         if (contentRange == null || maxBytes <= 0) return true;
         java.util.regex.Matcher match = java.util.regex.Pattern
-                .compile("(?i)^bytes\\\\s+(\\\\d+)-(\\\\d+)/(\\\\d+|\\\\*)$")
+                .compile("(?i)^bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)$")
                 .matcher(contentRange.trim());
         if (!match.matches()) return true;
         try {
