@@ -23,14 +23,20 @@ public class SourceUpdateWorker extends Worker {
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
-    if(!getInputData().getBoolean("manual",false)&&!prefs.getBoolean("auto_source_update",true))return Result.success();
+    final boolean manual=getInputData().getBoolean("manual",false);
+    if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     if(prefs.getBoolean("source_update_playback_active",false)){
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
       return Result.retry();
     }
-    // Do not postpone the first useful catalogue refresh just because the TV UI is open.
-    // While foregrounded, process China/HK/MO/TW first; global feeds remain deferred.
     final boolean foregroundAtStart=isActivityActive(prefs);
+    // Automatic discovery parses the saved catalogue and builds sizeable indexes.
+    // Defer that work while the TV app is active so it cannot compete with playback,
+    // channel rendering, or remote-control input. Explicit manual updates remain available.
+    if(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(foregroundAtStart,manual)){
+      saveStatus(prefs,"应用正在前台使用，自动频道更新已延后；退出应用后会在后台继续",0);
+      return Result.retry();
+    }
     int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
      String[] feeds={
