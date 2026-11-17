@@ -39,8 +39,8 @@ public interface ChannelDao {
     @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name")
     List<ChannelWithSources> searchChannels(String query);
 
-    @Query("INSERT OR REPLACE INTO favorites(channelId, addedAt) VALUES(:channelId, :addedAt)")
-    void addFavorite(String channelId, long addedAt);
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void addFavorite(FavoriteEntity favorite);
 
     @Query("DELETE FROM favorites WHERE channelId = :channelId")
     void removeFavorite(String channelId);
@@ -65,4 +65,7 @@ public interface ChannelDao {
 
     @Query("SELECT COUNT(*) FROM backup_sources")
     int countBackupSources();
+
+    @Query("SELECT COUNT(*) FROM favorites")
+    int countFavorites();
 }
