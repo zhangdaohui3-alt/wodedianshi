@@ -770,18 +770,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // itself was valid (for example, an intentionally empty first-run catalogue).
     catalogueSnapshotTrusted=true;
     if(!p.getBoolean("defaults_loaded",false)){
-      if(channels.isEmpty()){
+      boolean defaultsReady=!channels.isEmpty();
+      if(!defaultsReady){
         try(InputStream in=getAssets().open("default_channels.m3u")){
           String bundled=read(in);
           parse(bundled);
-          persist();
-          // The first-run bundled catalogue is a real catalogue snapshot too.
-          // Queue Room import after the durable legacy write so the master and
-          // scoped shadow stores are not left empty until a later user edit.
-          queueRoomCatalogueReconcileAfterPersist();
-        } catch(Exception ignored) {}
+          // Do not mark defaults loaded unless the complete bundled snapshot
+          // reached durable legacy storage. A failed save must remain retryable.
+          defaultsReady=!channels.isEmpty()&&persist();
+          if(defaultsReady)queueRoomCatalogueReconcileAfterPersist();
+        } catch(Exception failure){
+          android.util.Log.w("MyTVCatalogue","bundled channel initialization will retry",failure);
+        }
       }
-      p.edit().putBoolean("defaults_loaded",true).apply();
+      if(defaultsReady)p.edit().putBoolean("defaults_loaded",true).apply();
     }
   }
   private void rebuildChannelIndexes(){
