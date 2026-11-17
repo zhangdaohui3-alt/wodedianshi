@@ -8,6 +8,7 @@ package com.wodedianshi.tv.db;
  */
 public final class ChannelListRow {
     public String id;
+    public String legacyKey;
     public String name;
     public String primaryUrl;
     public String groupName;
@@ -17,9 +18,10 @@ public final class ChannelListRow {
     public int activeSource;
     public int sortOrder;
 
-    public ChannelListRow(String id, String name, String primaryUrl, String groupName,
+    public ChannelListRow(String id, String legacyKey, String name, String primaryUrl, String groupName,
             String categoryId, String tvgId, String tvgName, int activeSource, int sortOrder) {
         this.id = id;
+        this.legacyKey = legacyKey;
         this.name = name;
         this.primaryUrl = primaryUrl;
         this.groupName = groupName;
