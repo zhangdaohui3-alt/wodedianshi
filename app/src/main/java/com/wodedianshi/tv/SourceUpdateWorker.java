@@ -135,21 +135,37 @@ public class SourceUpdateWorker extends Worker {
           return Result.retry();
         }
         HttpURLConnection c=null;
+        ArrayList<Entry> feedCandidates=new ArrayList<>();
+        boolean feedCandidatesAdded=false;
         try{
           c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
           c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
           int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\uFEFF","").trim();
-          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
-          ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates,scopeForFeed(feed));
+          // Parse directly from the network stream. The parser stops at this feed's
+          // quota, avoiding a full 15 MiB String allocation for large global indexes.
+          try(InputStream in=c.getInputStream();
+              BufferedReader reader=new BufferedReader(
+                  new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8),8192)){
+            String header=reader.readLine();
+            if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
+              throw new IOException("目录格式无效");
+            parsePlaylist(reader,feedCandidates,scopeForFeed(feed));
+          }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          feedCandidatesAdded=true;
           feedsOk++;
-        }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();}
+        }catch(Exception e){
+          // Keep complete entries parsed before a transient stream read failure;
+          // an incomplete feed is still reported as failed and will be retried later.
+          if(!feedCandidatesAdded){
+            int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+            for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+            if(!feedCandidates.isEmpty())feedsWithEntries++;
+          }
+          feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
+        }finally{if(c!=null)c.disconnect();}
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -317,11 +333,11 @@ public class SourceUpdateWorker extends Worker {
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
-  private void parsePlaylist(String data,List<Entry> out,String sourceScope){
-    for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
+  private void parsePlaylist(Reader reader,List<Entry> out,String sourceScope)throws IOException{
+    PlaylistParser.parseEach(reader,MAX_DISCOVERY_PER_FEED,source->{
       String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
       out.add(new Entry(source.name,source.url,source.group,false,scope));
-    }
+    });
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
