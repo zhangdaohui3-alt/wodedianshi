@@ -775,6 +775,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String bundled=read(in);
           parse(bundled);
           persist();
+          // The first-run bundled catalogue is a real catalogue snapshot too.
+          // Queue Room import after the durable legacy write so the master and
+          // scoped shadow stores are not left empty until a later user edit.
+          queueRoomCatalogueReconcileAfterPersist();
         } catch(Exception ignored) {}
       }
       p.edit().putBoolean("defaults_loaded",true).apply();
