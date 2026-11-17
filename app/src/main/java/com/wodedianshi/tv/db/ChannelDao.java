@@ -42,6 +42,12 @@ public interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void addFavorite(FavoriteEntity favorite);
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void insertMigration(CatalogueMigrationEntity migration);
+
+    @Query("SELECT * FROM catalogue_migrations WHERE migrationKey = :key LIMIT 1")
+    CatalogueMigrationEntity getMigration(String key);
+
     @Query("DELETE FROM favorites WHERE channelId = :channelId")
     void removeFavorite(String channelId);
 
