@@ -10,8 +10,8 @@ android {
         applicationId 'com.wodedianshi.tv'
         minSdk 23
         targetSdk 28
-        versionCode 158
-        versionName '2.74.2'
+        versionCode 159
+        versionName '2.74.3'
         // Android TV boxes use ARM; retain both 32-bit and 64-bit ARM for older Dangbei models.
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
     }
