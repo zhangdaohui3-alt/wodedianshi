@@ -28,15 +28,29 @@ public interface ChannelDao {
     List<CategoryEntity> getCategories();
 
     @Transaction
-    @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name")
+    @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
     List<ChannelWithSources> getChannelsByCategory(String categoryId);
+
+    // Bounded reads for TV lists: avoid materializing every channel and every
+    // backup-source relation merely to render the first screen of a category.
+    @Transaction
+    @Query("SELECT * FROM channels WHERE categoryId = :categoryId "
+            + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+    List<ChannelWithSources> getChannelsPage(String categoryId, int limit, int offset);
+
+    @Transaction
+    @Query("SELECT * FROM channels ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+    List<ChannelWithSources> getAllChannelsPage(int limit, int offset);
+
+    @Query("SELECT COUNT(*) FROM channels WHERE categoryId = :categoryId")
+    int countChannelsInCategory(String categoryId);
 
     @Transaction
     @Query("SELECT c.* FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
     List<ChannelWithSources> getFavoriteChannels();
 
     @Transaction
-    @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name")
+    @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name, id")
     List<ChannelWithSources> searchChannels(String query);
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
