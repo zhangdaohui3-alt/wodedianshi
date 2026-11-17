@@ -27,4 +27,23 @@ public class ChannelCatalogueScopePolicyTest {
         assertFalse(ChannelCatalogueScopePolicy.matches(
                 Collections.singleton("china"), null));
     }
+
+    @Test public void droppingLastRegionalBackupDropsItsChannelScope() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("china-url", new HashSet<>(Collections.singletonList("china")));
+        ownership.put("global-url", new HashSet<>(Collections.singletonList("global")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Collections.singletonList("china-url")));
+        assertTrue(scopes.contains("china"));
+        assertFalse(scopes.contains("global"));
+    }
+
+    @Test public void oneRetainedUrlCanPreserveMultipleScopes() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("shared-url", new HashSet<>(Arrays.asList("china", "global")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Collections.singletonList("shared-url")));
+        assertTrue(scopes.contains("china"));
+        assertTrue(scopes.contains("global"));
+    }
 }
