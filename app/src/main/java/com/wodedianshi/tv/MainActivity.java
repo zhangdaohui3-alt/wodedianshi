@@ -15,7 +15,6 @@ import android.view.*;
 import android.widget.*;
 import androidx.media3.common.*;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.source.LoadEventInfo;
 import androidx.media3.exoplayer.source.MediaLoadData;
@@ -5403,7 +5402,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
-          // Metadata callbacks alone are not proof that the TV output displayed a frame.
           sourceFirstFrameRecorded=true;
           lastVideoPipelineActivityAt=android.os.SystemClock.elapsedRealtime();
           String renderedUrl=currentSourceUrl();
@@ -5415,6 +5413,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 SourceMemoryStore.channelIdentityKey(identity(renderedChannel)),
                 renderedUrl);
           }
+        }
+        @Override public void onVideoFrameProcessingOffset(AnalyticsListener.EventTime eventTime,
+            long totalProcessingOffsetUs,int frameCount){
+          if(listenerOwner!=MainActivity.this.player||frameCount<=0
+              ||!isCurrentLiveAnalyticsEvent(eventTime))return;
+          lastVideoPipelineActivityAt=android.os.SystemClock.elapsedRealtime();
         }
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
@@ -5433,15 +5437,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
-      // Decoder frame metadata indicates pipeline activity, not confirmed display output.
-      // The startup deadline is therefore gated by AnalyticsListener.onRenderedFirstFrame.
-      player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
-        // This is decoder-pipeline activity, not proof that a frame reached the TV surface.
-        // Media3 invokes it on ExoPlayer:Playback; do not call player APIs here.
-        if(listenerOwner!=MainActivity.this.player)return;
-        long frameAt=android.os.SystemClock.elapsedRealtime();
-        lastVideoPipelineActivityAt=frameAt;
-      });
+      // Track sustained renderer output, not decoder metadata. Metadata callbacks can
+      // continue while frames are dropped or never reach the output surface, which
+      // previously let an audio-only/black-screen stream evade the video watchdog.
+      // Media3 reports the accumulated processing offset for frames handled by the
+      // video renderer; accept only current-item events with at least one frame.
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
           if(listenerOwner!=MainActivity.this.player)return;
