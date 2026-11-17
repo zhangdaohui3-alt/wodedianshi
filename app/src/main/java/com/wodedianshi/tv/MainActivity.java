@@ -651,11 +651,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Publish small batches during startup. A large catalogue must not remain
         // invisible until its final row parses: if a later row is corrupt or the
         // device runs short of heap, the already decoded channels remain usable.
-        if(restoredChannels.size()>=128){
+        if(restoredChannels.size()>=64){
           synchronized(channels){channels.addAll(restoredChannels);}
           publishedRestoreChannels+=restoredChannels.size();
           restoredChannels.clear();
           android.util.Log.i("MyTVStartup","restore_batch_published channels="+publishedRestoreChannels);
+          // Reveal the first usable page as soon as a small cache batch is decoded.
+          // The remaining saved catalogue continues restoring on the worker thread.
+          if(!startupDataReady){
+            runOnUiThread(()->{
+              if(isFinishing()||isDestroyed()||startupDataReady)return;
+              startupDataReady=true;
+              if(search!=null)search.setEnabled(true);
+              if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)
+                categoryMenuItems.getChildAt(i).setEnabled(true);
+              if(info!=null)info.setText("频道列表已就绪，正在后台补齐其余频道…");
+              refresh();
+              android.util.Log.i("MyTVStartup","first_channel_page_revealed channels="+channels.size());
+            });
+          }
         }
       }
       reader.endArray();
@@ -696,6 +710,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
+      // If the user starts playback from the first progressively revealed page,
+      // retain that selection when final de-duplication compacts the catalogue.
+      String selectedIdentity=selected>=0&&selected<channels.size()
+          ?identity(channels.get(selected)):null;
       // Preserve display order while using hash indexes for both channel identity
       // and backup-source de-duplication. ArrayList.contains() here made restoring
       // large catalogues quadratic when thousands of rows shared the same channel.
@@ -732,6 +750,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
         channelsByIdentity.put(identity(c),c);
+      }
+      if(selectedIdentity!=null){
+        selected=-1;
+        for(int i=0;i<channels.size();i++){
+          if(selectedIdentity.equals(identity(channels.get(i)))){selected=i;break;}
+        }
       }
     }
   }
