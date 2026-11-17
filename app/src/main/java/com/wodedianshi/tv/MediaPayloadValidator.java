@@ -17,15 +17,9 @@ public final class MediaPayloadValidator {
                 return true;
             }
         }
-        return hasIsoBmffBox(data);
+        return hasIsoBmffMediaFragment(data);
     }
 
-    /**
-     * Walks top-level ISO-BMFF box headers rather than accepting the words
-     * "moof"/"mdat" anywhere in arbitrary bytes (for example, an HTML error
-     * page). Sample data may be range-truncated, so a valid declared box may
-     * extend beyond the sample; its header must still be structurally valid.
-     */
     private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
         if (data == null || offset < 0 || offset + 188 > data.length
                 || (data[offset] & 0xFF) != 0x47) return false;
@@ -40,6 +34,11 @@ public final class MediaPayloadValidator {
         return true;
     }
 
+    /**
+     * Generic ISO-BMFF signature check for on-demand payloads. This intentionally
+     * accepts file-type and index boxes; HLS media segments use the stricter
+     * hasIsoBmffMediaFragment check below.
+     */
     public static boolean hasIsoBmffBox(byte[] data) {
         if (data == null || data.length < 8) return false;
         int offset = 0;
@@ -56,7 +55,7 @@ public final class MediaPayloadValidator {
                 size = data.length - offset;
             }
             if (size < headerSize) return false;
-            if (isMediaBox(type)) return true;
+            if (isGenericIsoBmffBox(type)) return true;
             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
             offset += (int) size;
         }
@@ -64,9 +63,43 @@ public final class MediaPayloadValidator {
     }
 
     /**
-     * An HLS fMP4 initialization section must contain the file-type and movie
-     * metadata boxes. A media fragment containing only moof/mdat is not an init map.
-     * The moov payload may exceed the bounded sample, so validate its header only.
+     * A fragmented MP4 HLS media segment must contain a top-level moof followed
+     * by a top-level mdat. The mdat body may extend beyond the bounded HTTP sample,
+     * but its complete box header must be present and structurally valid.
+     */
+    public static boolean hasIsoBmffMediaFragment(byte[] data) {
+        if (data == null || data.length < 16) return false;
+        int offset = 0;
+        boolean hasMovieFragment = false;
+        int examined = 0;
+        while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+            long size = uint32(data, offset);
+            String type = fourCc(data, offset + 4);
+            int headerSize = 8;
+            if (size == 1L) {
+                if (offset + 16 > data.length) return false;
+                size = uint64(data, offset + 8);
+                headerSize = 16;
+            } else if (size == 0L) {
+                size = data.length - offset;
+            }
+            if (size < headerSize) return false;
+            if ("moof".equals(type)) {
+                if (size > data.length - offset) return false;
+                hasMovieFragment = true;
+            } else if ("mdat".equals(type)) {
+                return hasMovieFragment;
+            }
+            if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+            offset += (int) size;
+        }
+        return false;
+    }
+
+    /**
+     * An HLS fMP4 initialization section must contain file-type and movie
+     * metadata boxes. The moov payload may exceed the bounded sample, so validate
+     * its header but do not require the full box body to have been downloaded.
      */
     public static boolean hasIsoBmffInitializationSegment(byte[] data) {
         if (data == null || data.length < 16) return false;
@@ -96,24 +129,21 @@ public final class MediaPayloadValidator {
     }
 
     public static boolean looksLikeMediaPayload(byte[] data) {
-        // ADTS without CRC has a 7-byte fixed header; other validators enforce
-        // their own larger minimum lengths before reading container fields.
         if (data == null || data.length < 7) return false;
         if (looksLikeHlsSegment(data)) return true;
+        if (hasIsoBmffBox(data)) return true;
         if (isValidFlvHeader(data)) return true;
         return isValidAdtsHeader(data);
     }
 
     /**
-     * Validates the sampled bytes even when the URL has a familiar media suffix.
-     * The address is accepted for call-site clarity/diagnostics only: a .ts or
-     * .mp4 extension must never turn an HTML/error payload into a valid source.
+     * A familiar URL suffix must never turn an HTML/error payload into a valid source.
      */
     public static boolean looksLikeMediaPayload(byte[] data, String address) {
         return looksLikeMediaPayload(data);
     }
 
-    private static boolean isMediaBox(String type) {
+    private static boolean isGenericIsoBmffBox(String type) {
         return "ftyp".equals(type) || "styp".equals(type)
                 || "moof".equals(type) || "mdat".equals(type)
                 || "sidx".equals(type);
@@ -125,7 +155,6 @@ public final class MediaPayloadValidator {
                 || ((data[1] & 0xF0) != 0xF0)
                 || ((data[1] & 0x06) != 0)) return false;
         int samplingFrequencyIndex = (data[2] & 0x3C) >>> 2;
-        // ADTS indices 13–15 are reserved or forbidden.
         if (samplingFrequencyIndex > 12) return false;
         boolean protectionAbsent = (data[1] & 0x01) != 0;
         int headerLength = protectionAbsent ? 7 : 9;
@@ -140,7 +169,6 @@ public final class MediaPayloadValidator {
         if (data == null || data.length < 9
                 || data[0] != 'F' || data[1] != 'L' || data[2] != 'V'
                 || (data[3] & 0xFF) != 1) return false;
-        // Only audio (bit 2) and video (bit 0) flags are defined.
         if (((data[4] & 0xFF) & 0xFA) != 0) return false;
         long dataOffset = uint32(data, 5);
         return dataOffset >= 9L && dataOffset <= data.length;

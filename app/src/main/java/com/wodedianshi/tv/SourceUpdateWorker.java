@@ -93,8 +93,8 @@ public class SourceUpdateWorker extends Worker {
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
         JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
-        knownUrls.add(c.optString("url"));
+        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(SourceSelectionPolicy.endpointKey(src.optString(j)));
+        knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
@@ -121,7 +121,7 @@ public class SourceUpdateWorker extends Worker {
             if(savedPool.size()>=20000)break;
             // A shared URL only needs one network probe, even if several channel
             // entries reference it. Keep the first channel identity for diagnostics.
-            if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
+            if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
           }
         }
       }
@@ -135,21 +135,37 @@ public class SourceUpdateWorker extends Worker {
           return Result.retry();
         }
         HttpURLConnection c=null;
+        ArrayList<Entry> feedCandidates=new ArrayList<>();
+        boolean feedCandidatesAdded=false;
         try{
           c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
           c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
           int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\uFEFF","").trim();
-          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
-          ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates,scopeForFeed(feed));
+          // Parse directly from the network stream. The parser stops at this feed's
+          // quota, avoiding a full 15 MiB String allocation for large global indexes.
+          try(InputStream in=c.getInputStream();
+              BufferedReader reader=new BufferedReader(
+                  new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8),8192)){
+            String header=reader.readLine();
+            if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
+              throw new IOException("目录格式无效");
+            parsePlaylist(reader,feedCandidates,scopeForFeed(feed));
+          }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          feedCandidatesAdded=true;
           feedsOk++;
-        }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();}
+        }catch(Exception e){
+          // Keep complete entries parsed before a transient stream read failure;
+          // an incomplete feed is still reported as failed and will be retried later.
+          if(!feedCandidatesAdded){
+            int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+            for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+            if(!feedCandidates.isEmpty())feedsWithEntries++;
+          }
+          feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
+        }finally{if(c!=null)c.disconnect();}
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -186,7 +202,7 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(!visitedUrls.add(e.url))continue;
+        if(!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url)))continue;
         checked++;
         ProbeResult measured=probe(e.url,probeDeadline);
         if(probeDeadlineReached(probeDeadline)){
@@ -203,7 +219,7 @@ public class SourceUpdateWorker extends Worker {
         String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
         // A known URL may appear in a second directory. Record that provenance
         // without duplicating the backup or probing the same address twice.
-        if(knownUrls.contains(e.url)){
+        if(knownUrls.contains(SourceSelectionPolicy.endpointKey(e.url))){
           if(target!=null)addBackupSourceScope(target,e.url,e.scope);
           continue;
         }
@@ -215,7 +231,8 @@ public class SourceUpdateWorker extends Worker {
         }else{
           JSONArray sources=target.optJSONArray("sources");
           if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
-          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(e.url.equals(sources.optString(i))){duplicate=true;break;}
+          String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
+          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){duplicate=true;break;}
           if(!duplicate){
             if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
             else{
@@ -230,7 +247,7 @@ public class SourceUpdateWorker extends Worker {
             }
           }
         }
-        knownUrls.add(e.url);
+        knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
@@ -250,7 +267,12 @@ public class SourceUpdateWorker extends Worker {
         int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
         String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
         ArrayList<String> ordered=new ArrayList<>();
-        for(int j=0;j<sourceArray.length();j++){String u=sourceArray.optString(j,"");if((u.startsWith("http://")||u.startsWith("https://"))&&!ordered.contains(u))ordered.add(u);}
+        HashSet<String> orderedEndpoints=new HashSet<>();
+        for(int j=0;j<sourceArray.length();j++){
+          String u=sourceArray.optString(j,"");
+          if((u.startsWith("http://")||u.startsWith("https://"))
+              &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
+        }
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         while(ordered.size()>MAX_SOURCES_PER_CHANNEL)ordered.remove(ordered.size()-1);
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
@@ -317,11 +339,11 @@ public class SourceUpdateWorker extends Worker {
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
-  private void parsePlaylist(String data,List<Entry> out,String sourceScope){
-    for(PlaylistParser.ChannelSource source:PlaylistParser.parse(data,MAX_DISCOVERY_PER_FEED)){
+  private void parsePlaylist(Reader reader,List<Entry> out,String sourceScope)throws IOException{
+    PlaylistParser.parseEach(reader,MAX_DISCOVERY_PER_FEED,source->{
       String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
       out.add(new Entry(source.name,source.url,source.group,false,scope));
-    }
+    });
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
@@ -398,18 +420,12 @@ public class SourceUpdateWorker extends Worker {
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
-  // Match MainActivity's QoE aging so background ranking and playback ranking
-  // do not disagree about the same source history.
-  private double sourceHistoryWeight(long updatedAt){
-    if(updatedAt<=0L)return 0.12d;
-    long ageMs=Math.max(0L,System.currentTimeMillis()-updatedAt);
-    double halfLifeMs=30.0d*24.0d*60.0d*60.0d*1000.0d;
-    return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
-  }
   private double combinedScore(String url,JSONObject probes,JSONObject qoe){
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
     double score=probeScore+sourceQualityScore(url)*0.01;
+    // Keep a currently failed preflight below unprobed/valid sources even if its old QoE was excellent.
+    if(SourceQualityScorer.isFailedProbeScore(probeScore))return score;
     JSONObject m=qoe.optJSONObject(key);
     if(m==null)m=qoe.optJSONObject(legacyKey);
     if(m!=null&&m.optInt("attempts",0)>=2){
@@ -420,7 +436,10 @@ public class SourceUpdateWorker extends Worker {
           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
           codecWarnings);
-      score+=qoeAdjustment*sourceHistoryWeight(m.optLong("updated",0L));
+      long now=System.currentTimeMillis();
+      score+=qoeAdjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
+      score+=SourceQoeScoringPolicy.recentSuccessBonus(
+          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
     }
     return score;
   }

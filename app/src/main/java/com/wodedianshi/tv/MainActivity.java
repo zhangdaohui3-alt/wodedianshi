@@ -4694,9 +4694,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long watchdogLastPosition=-1L;
   private long watchdogLastAdvanceAt=0L;
   // Updated from the decoder playback thread whenever a video frame is about to render.
-  private volatile long lastVideoFrameAt=0L;
-  private volatile boolean videoFrameMonitoringActive=false;
-  private volatile boolean hasReceivedVideoFrame=false;
+  private volatile long lastVideoPipelineActivityAt=0L;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   // A stale HLS live-window position gets one in-place recovery before source failover.
@@ -4711,6 +4709,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile boolean sourceFirstFrameRecorded=false;
   private volatile boolean sourceFirstLoadCompleted=false;
   private boolean sourceFailureRecorded=false;
+  // Per-attempt cooldown chosen from the final Media3 error; non-error failovers use the conservative default.
+  private long sourceFailureCooldownMs=120000L;
   private boolean sourceWasBuffering=false;
   private boolean audioTrackPresent=false;
   private boolean audioTrackSupported=false;
@@ -4773,22 +4773,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         recoverFromSilentFreeze("播放时间轴连续 45 秒没有推进");
         return;
       }
-      // A live source can leave ExoPlayer in READY while its audio/video output has
-      // silently stopped. Monitor actual video-frame callbacks, not only position.
-      // Monitor as soon as a video track is selected. Requiring
-      // videoFrameMonitoringActive here would make the first-frame timeout
-      // unreachable, because that flag is set only by the first frame callback.
-      if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,hasReceivedVideoFrame,
-          videoTrackSelectedAt,lastVideoFrameAt,now,20000L)){
-        recoverFromSilentFreeze(hasReceivedVideoFrame
+      // A live source can leave ExoPlayer in READY while its video pipeline stalls.
+      // Startup success is gated by the rendered-first-frame analytics event; after
+      // that, decoder metadata activity is used as a lightweight stall signal.
+      // Start monitoring as soon as a supported video track is selected.
+      if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,sourceFirstFrameRecorded,
+          videoTrackSelectedAt,lastVideoPipelineActivityAt,now,20000L)){
+        recoverFromSilentFreeze(sourceFirstFrameRecorded
             ?"检测到视频帧连续 20 秒没有输出"
-            :"播放器已连接，但 20 秒内没有输出视频画面");
+            :"播放器已连接，但 20 秒内没有渲染出首帧画面");
         return;
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
       // A source that was healthy for a long time should not consume the startup retry budget forever.
-      if(!sourceStableRecorded&&sourceReadyAt>0L&&now-sourceReadyAt>=30000L
-          &&now-watchdogLastAdvanceAt<15000L){
+      boolean confirmedOutput=SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+          videoTrackPresent,sourceFirstFrameRecorded,audioTrackSelected,audioPositionAdvancing);
+      if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
+          &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L){
         sourceStableRecorded=true;
         recordSourceMetric(currentSourceUrl(),"stable",0L);
       }
@@ -5038,14 +5039,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
     sourceReadyAt=0L;
-    lastVideoFrameAt=0L;
-    hasReceivedVideoFrame=false;
-    videoFrameMonitoringActive=false;
+    lastVideoPipelineActivityAt=0L;
     sourceReadyRecorded=false;
     sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
+    sourceFailureCooldownMs=120000L;
     liveWindowRecoveryAttempted=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
@@ -5096,8 +5096,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
-          // Frame-metadata callbacks are retained separately for the stall watchdog.
+          // Metadata callbacks alone are not proof that the TV output displayed a frame.
           sourceFirstFrameRecorded=true;
+          lastVideoPipelineActivityAt=android.os.SystemClock.elapsedRealtime();
           String renderedUrl=currentSourceUrl();
           recordSourceMetric(renderedUrl,"firstFrame",
               android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
@@ -5125,16 +5126,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
-      // Real decoded-frame callbacks: the old watchdog fields existed but were never
-      // activated, so READY could be mistaken for visible video on silent/black streams.
+      // Decoder frame metadata indicates pipeline activity, not confirmed display output.
+      // The startup deadline is therefore gated by AnalyticsListener.onRenderedFirstFrame.
       player.setVideoFrameMetadataListener((presentationTimeUs,releaseTimeNs,format,mediaFormat)->{
-        // Media3 invokes this callback on ExoPlayer:Playback, not the UI thread.
-        // Do not call getCurrentMediaItem() or any other player API here.
+        // This is decoder-pipeline activity, not proof that a frame reached the TV surface.
+        // Media3 invokes it on ExoPlayer:Playback; do not call player APIs here.
         if(listenerOwner!=MainActivity.this.player)return;
         long frameAt=android.os.SystemClock.elapsedRealtime();
-        lastVideoFrameAt=frameAt;
-        hasReceivedVideoFrame=true;
-        videoFrameMonitoringActive=true;
+        lastVideoPipelineActivityAt=frameAt;
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
@@ -5164,7 +5163,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }else if(!videoSelected)videoTrackSelectedAt=0L;
           // Start first-frame monitoring as soon as a video track is selected,
           // not only after the first frame arrives; this catches black/no-frame streams.
-          videoFrameMonitoringActive=videoSelected;
         }
         private boolean isCurrent(){
           if(listenerOwner!=MainActivity.this.player)return false;
@@ -5189,6 +5187,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
           String errorName=e.getErrorCodeName();
+          int httpStatus=extractHttpStatusCode(e.getCause());
+          sourceFailureCooldownMs=PlaybackErrorPolicy.cooldownMs(errorName,httpStatus);
           if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName)){
             // A failed connection/timeout is endpoint availability, not a codec
             // compatibility problem. Trying the same URL through a second engine
@@ -5212,7 +5212,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             sourceWasBuffering=true;
             if(firstBuffering)showChannelZapMessage(sourceReadyRecorded?"网络波动，正在缓冲…":"正在连接播放源…");
             // Do not charge network buffering time against the decoder's first-frame deadline.
-            if(!hasReceivedVideoFrame)videoTrackSelectedAt=0L;
+            if(!sourceFirstFrameRecorded)videoTrackSelectedAt=0L;
             scheduleBufferingFallback();
           }else if(st==Player.STATE_READY){
             sourceWasBuffering=false;
@@ -5228,9 +5228,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
             // Begin the first-frame deadline only after READY; earlier BUFFERING time is excluded.
-            if(videoTrackSelected&&!hasReceivedVideoFrame)videoTrackSelectedAt=watchdogLastAdvanceAt;
+            if(videoTrackSelected&&!sourceFirstFrameRecorded)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
-            lastVideoFrameAt=watchdogLastAdvanceAt;
+            lastVideoPipelineActivityAt=watchdogLastAdvanceAt;
             schedulePlaybackWatchdog();
             // Run the audio-track/output check only after READY; buffering can
             // legitimately pause audio advancement and must not trigger a false failover.
@@ -5454,13 +5454,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   // Persistent playback observations. READY latency is not the same as a rendered first frame;
   // buffering/error events come from the actual ExoPlayer session, not a URL probe.
+  private int extractHttpStatusCode(Throwable error){
+    Throwable current=error;
+    for(int depth=0;current!=null&&depth<12;depth++,current=current.getCause()){
+      if(current instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException){
+        return ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)current).responseCode;
+      }
+    }
+    return 0;
+  }
   private void recordCurrentSourceFailure(){
     if(sourceFailureRecorded)return;
     sourceFailureRecorded=true;
     String failedUrl=currentSourceUrl();
     recordSourceMetric(failedUrl,"failure",0L);
     // Temporarily cool down a failed endpoint to prevent repeated dead-source loops.
-    SourceMemoryStore.coolDown(this,failedUrl,120000L);
+    SourceMemoryStore.coolDown(this,failedUrl,sourceFailureCooldownMs);
   }
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
@@ -5519,6 +5528,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
       org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
+      // A current failed preflight must not be rescued by stale positive playback history.
+      if(SourceQualityScorer.isFailedProbeScore(probeScore))return probeScore+label*0.01;
       org.json.JSONObject allQoe=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}"));
       org.json.JSONObject m=allQoe.optJSONObject(key);
       if(m==null)m=allQoe.optJSONObject(legacyKey);
@@ -5526,29 +5537,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      long lastVerifiedSuccessAt=SourceSuccessTimestampPolicy.latestVerifiedSuccess(
-           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L));
-      double recentSuccessBonus=0.0;
-      if(lastVerifiedSuccessAt>0L){
-        double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastVerifiedSuccessAt)/3600000.0);
-        recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
-      }
+      long now=System.currentTimeMillis();
+      double recentSuccessBonus=SourceQoeScoringPolicy.recentSuccessBonus(
+          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
       // Keep foreground and background rankings on the same attempt-normalized policy.
       double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
           codecWarnings);
-      double historyWeight=sourceHistoryWeight(m.optLong("updated",0L));
+      double historyWeight=SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
       return probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
-  }
-  // 30-day half-life with a 12% floor: old evidence fades gradually,
-  // but a source with sparse history never becomes completely unmeasured.
-  private double sourceHistoryWeight(long updatedAt){
-    if(updatedAt<=0L)return 0.12d;
-    long ageMs=Math.max(0L,System.currentTimeMillis()-updatedAt);
-    double halfLifeMs=30.0d*24.0d*60.0d*60.0d*1000.0d;
-    return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
   }
   private void sortSourcesByObservedQuality(Channel c){
     if(c==null||c.backups==null||c.backups.size()<2)return;

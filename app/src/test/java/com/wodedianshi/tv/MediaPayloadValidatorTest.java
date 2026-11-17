@@ -41,9 +41,30 @@ public class MediaPayloadValidatorTest {
     }
 
     @Test public void acceptsStructurallyValidFragmentedMp4Boxes() {
-        byte[] moof = new byte[] {0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0};
-        assertTrue(MediaPayloadValidator.hasIsoBmffBox(moof));
-        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(moof));
+        byte[] fragment = new byte[] {
+                0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0,
+                0,0,0,16,'m','d','a','t',0,0,0,0,0,0,0,0
+        };
+        assertTrue(MediaPayloadValidator.hasIsoBmffBox(fragment));
+        assertTrue(MediaPayloadValidator.hasIsoBmffMediaFragment(fragment));
+        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(fragment));
+    }
+
+    @Test public void hlsMediaFragmentRequiresMoofFollowedByMdat() {
+        byte[] moofOnly = new byte[] {0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0};
+        byte[] mdatOnly = new byte[] {0,0,0,16,'m','d','a','t',0,0,0,0,0,0,0,0};
+        byte[] initOnly = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
+        assertFalse(MediaPayloadValidator.hasIsoBmffMediaFragment(moofOnly));
+        assertFalse(MediaPayloadValidator.hasIsoBmffMediaFragment(mdatOnly));
+        assertFalse(MediaPayloadValidator.looksLikeHlsSegment(initOnly));
+    }
+
+    @Test public void acceptsBoundedMdatBodyWhenItsHeaderFollowsMoof() {
+        byte[] sample = new byte[] {
+                0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0,
+                0,0,16,0,'m','d','a','t'
+        };
+        assertTrue(MediaPayloadValidator.hasIsoBmffMediaFragment(sample));
     }
 
     @Test public void initializationMapRequiresFileTypeAndMovieBoxes() {
