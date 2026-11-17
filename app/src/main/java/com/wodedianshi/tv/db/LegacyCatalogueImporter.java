@@ -104,6 +104,10 @@ public final class LegacyCatalogueImporter {
                     // removing duplicate URLs can shift that index during normalization.
                     String activeSourceUrl = item.activeSource >= 0 && item.activeSource < item.sources.size()
                             ? item.sources.get(item.activeSource) : item.url;
+                    // The legacy primary URL is independently playable even if an older
+                    // catalogue omitted it from the optional backup list. Keep it in the
+                    // Room source relation without disturbing the selected source index.
+                    if (!item.sources.contains(item.url)) item.sources.add(item.url);
                     // Keep the legacy unique-source invariant before inserting the composite PK.
                     ArrayList<String> uniqueSources = new ArrayList<>();
                     HashSet<String> seenSources = new HashSet<>();
