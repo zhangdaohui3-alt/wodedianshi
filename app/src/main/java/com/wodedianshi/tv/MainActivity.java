@@ -910,6 +910,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean persist(){
     final long requestedGeneration;
     synchronized(cataloguePersistLock){
+      // Any save request represents a catalogue mutation or a caller that needs
+      // the latest catalogue durable. In-flight background reloads must not
+      // publish a snapshot captured before this generation.
+      catalogueMutationGeneration++;
       requestedGeneration=++cataloguePersistRequestedGeneration;
       if(!cataloguePersistScheduled){
         cataloguePersistScheduled=true;
@@ -6052,9 +6056,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // stopped. On returning, reload its newer cache before any later persist() can
   // serialize an old in-memory list over the updated backup sources.
   private volatile long backgroundCatalogueReloadGeneration=0L;
+  // Incremented for every persistence request; a reload may publish only if no
+  // catalogue edit/save was requested while its background parse was running.
+  private volatile long catalogueMutationGeneration=0L;
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     final long generation=++backgroundCatalogueReloadGeneration;
+    final long expectedMutationGeneration=catalogueMutationGeneration;
     final String expectedPersisted=lastPersistedChannelsJson;
     try{
       worker.execute(()->{
@@ -6062,9 +6070,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Skip queued work that was superseded before it even began.
           if(generation!=backgroundCatalogueReloadGeneration)return;
           android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-          applyPendingSourceUpdateIfSafe(prefs);
+          // Parse a staged Worker candidate without applying it yet. Applying is
+          // deferred until the UI-thread publication check, so user edits made
+          // while parsing cannot be lost to an early SharedPreferences write.
+          String pendingBase=prefs.getString("source_update_pending_base",null);
+          String pendingCandidate=prefs.getString("source_update_pending_channels",null);
+          String persisted=prefs.getString("channels","[]");
+          final boolean hasApplicablePending=pendingBase!=null&&pendingCandidate!=null
+              &&!pendingCandidate.isEmpty()&&pendingBase.equals(persisted);
+          final String raw=hasApplicablePending?pendingCandidate:persisted;
           if(generation!=backgroundCatalogueReloadGeneration)return;
-          String raw=prefs.getString("channels","[]");
           if(raw.equals(expectedPersisted))return;
           final long reloadStarted=android.os.SystemClock.elapsedRealtime();
     ArrayList<Channel> refreshed=new ArrayList<>();
@@ -6158,8 +6173,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           uiHandler.post(()->{
             if(!activityStarted||isFinishing()||isDestroyed()
                 ||generation!=backgroundCatalogueReloadGeneration
-                ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted)
-                ||!raw.equals(prefs.getString("channels","[]")))return;
+                ||catalogueMutationGeneration!=expectedMutationGeneration
+                ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
+            if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
+            if(!raw.equals(prefs.getString("channels","[]")))return;
     String selectedIdentity="";
     String selectedName="";
     String selectedGroup="";
