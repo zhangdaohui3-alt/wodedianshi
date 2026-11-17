@@ -20,7 +20,10 @@ import java.util.Set;
  * one SQLite transaction. The old preferences are deliberately never deleted.
  */
 public final class LegacyCatalogueImporter {
-    private static final String PREF_MIGRATED = "room_catalogue_migration_v1";
+    // v2 switches row-number primary keys to stable content identities. The
+    // first v2 import rebuilds the shadow catalogue once; the legacy preferences
+    // remain untouched and authoritative throughout.
+    private static final String PREF_MIGRATED = "room_catalogue_migration_v2";
     private static final int BATCH_SIZE = 96;
 
     private LegacyCatalogueImporter() {}
@@ -79,6 +82,7 @@ public final class LegacyCatalogueImporter {
             ArrayList<BackupSourceEntity> sources = new ArrayList<>();
             ArrayList<FavoriteEntity> favorites = new ArrayList<>();
             HashSet<String> categoryIds = new HashSet<>();
+            HashMap<String, Integer> identityOccurrences = new HashMap<>();
             int row = 0;
             try (JsonReader reader = new JsonReader(new StringReader(json))) {
                 reader.beginArray();
@@ -97,8 +101,12 @@ public final class LegacyCatalogueImporter {
                         totals[3]++;
                     }
 
-                    String id = "legacy:" + row++;
                     String legacyKey = item.name + "|" + item.url;
+                    Integer previousOccurrence = identityOccurrences.get(legacyKey);
+                    int occurrence = previousOccurrence == null ? 0 : previousOccurrence;
+                    identityOccurrences.put(legacyKey, occurrence + 1);
+                    String id = LegacyChannelIdPolicy.idFor(legacyKey, occurrence);
+                    row++;
                     // Normalize duplicates and append a missing primary URL while
                     // preserving the URL selected by the legacy activeSource index.
                     LegacySourceOrderPolicy.Result sourceOrder = LegacySourceOrderPolicy.normalize(
