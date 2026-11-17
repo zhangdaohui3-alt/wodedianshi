@@ -17,9 +17,11 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
-  // Give every configured directory its own quota so an early large playlist
-  // cannot consume the entire discovery budget and starve later regions/categories.
-  private static final int MAX_DISCOVERY_PER_FEED = 1200;
+  // Keep each feed's candidate slice small: only 12 discovery URLs are probed
+  // per run, so a 1,200-entry first playlist would starve provincial and HK/MO/TW
+  // feeds for many runs. Small equal quotas let every China-first feed reach probing
+  // promptly while the independent rotating cursor continues covering later entries.
+  private static final int MAX_DISCOVERY_PER_FEED = 24;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
