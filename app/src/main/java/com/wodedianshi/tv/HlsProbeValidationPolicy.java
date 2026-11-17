@@ -17,4 +17,9 @@ public final class HlsProbeValidationPolicy {
     public static boolean isCompleteSample(boolean truncated) {
         return !truncated;
     }
+
+    /** The extra sentinel byte is the proof that the original resource exceeded the retained cap. */
+    public static boolean isTruncatedSample(int receivedBytes, int maxBytes) {
+        return maxBytes > 0 && receivedBytes > maxBytes;
+    }
 }
