@@ -494,22 +494,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // when the user's current catalogue still matches the exact snapshot the Worker read.
   // Any intervening channel edit/deletion wins; stale background results are discarded.
   private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs){
-    String base=prefs.getString("source_update_pending_base",null);
-    String candidate=prefs.getString("source_update_pending_channels",null);
-    if(base==null||candidate==null||candidate.isEmpty())return false;
-    String current=prefs.getString("channels","[]");
-    android.content.SharedPreferences.Editor edit=prefs.edit();
-    boolean applied=base.equals(current);
-    if(applied){
-      edit.putString("channels",candidate)
-          .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
-    }else{
-      edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+    // Serialize the compare-and-apply with persistNow's final compare-and-write.
+    // Otherwise a save could pass its stale-cache check just before this method
+    // applies a Worker candidate, then overwrite that candidate milliseconds later.
+    synchronized(cataloguePersistLock){
+      String base=prefs.getString("source_update_pending_base",null);
+      String candidate=prefs.getString("source_update_pending_channels",null);
+      if(base==null||candidate==null||candidate.isEmpty())return false;
+      String current=prefs.getString("channels","[]");
+      android.content.SharedPreferences.Editor edit=prefs.edit();
+      boolean applied=base.equals(current);
+      if(applied){
+        edit.putString("channels",candidate)
+            .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
+      }else{
+        edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
+      }
+      edit.remove("source_update_pending_base")
+          .remove("source_update_pending_channels")
+          .apply();
+      return applied;
     }
-    edit.remove("source_update_pending_base")
-        .remove("source_update_pending_channels")
-        .apply();
-    return applied;
   }
 
   private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
@@ -1015,10 +1020,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       String savedJson=buffer.toString();
       logCatalogueMemory("persist_json_ready",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
-      getSharedPreferences("mytv",0).edit()
-          .putString("channels",savedJson)
-          .putStringSet("fav",favoriteSnapshot).apply();
-      lastPersistedChannelsJson=savedJson;
+      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+      synchronized(cataloguePersistLock){
+        // A background Worker result may have been applied while this snapshot was
+        // being encoded. Never let an older in-memory snapshot overwrite that newer
+        // persisted catalogue; the Activity reload path will adopt it before retrying.
+        String expectedPersisted=lastPersistedChannelsJson;
+        String currentPersisted=prefs.getString("channels","[]");
+        if(expectedPersisted!=null&&!java.util.Objects.equals(currentPersisted,expectedPersisted)){
+          android.util.Log.w("MyTVCatalogue","skip stale catalogue save: persisted base changed during snapshot");
+          saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
+          return false;
+        }
+        prefs.edit()
+            .putString("channels",savedJson)
+            .putStringSet("fav",favoriteSnapshot).apply();
+        lastPersistedChannelsJson=savedJson;
+      }
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+snapshot.size()+" channels, json_chars="+savedJson.length());
       logCatalogueMemory("persist_done",snapshot.size(),persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       return true;
