@@ -563,7 +563,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels")
           .apply();
-      if(applied)PendingCatalogueStore.delete(getApplicationContext());
+      // Metadata is removed in either outcome, so discard the now-unreferenced
+      // candidate file whether it was applied or rejected as stale.
+      PendingCatalogueStore.delete(getApplicationContext());
       return applied;
     }
   }
