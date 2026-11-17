@@ -42,7 +42,7 @@ public class PlaybackRecoveryPolicyTest {
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 50000L, 20000L));
     }
 
-    @Test public void receivedVideoFramesUseLastRenderedFrameTime() {
+    @Test public void renderedFirstFrameThenUsesVideoPipelineActivityTime() {
         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 44999L, 20000L));
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 45000L, 20000L));
     }
