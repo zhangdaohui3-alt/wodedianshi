@@ -31,6 +31,22 @@ public interface ChannelDao {
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
     List<ChannelWithSources> getChannelsByCategory(String categoryId);
 
+    // Lightweight paged projection for startup/category rendering. Unlike
+    // ChannelWithSources, this query does not load backup_sources relations.
+    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+            + "activeSource, sortOrder FROM channels WHERE categoryId = :categoryId "
+            + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+    List<ChannelListRow> getChannelListPage(String categoryId, int limit, int offset);
+
+    @Query("SELECT id, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+            + "activeSource, sortOrder FROM channels ORDER BY sortOrder, name, id "
+            + "LIMIT :limit OFFSET :offset")
+    List<ChannelListRow> getAllChannelListPage(int limit, int offset);
+
+    // Load source URLs only after a user selects a channel.
+    @Query("SELECT * FROM backup_sources WHERE channelId = :channelId ORDER BY priority, url")
+    List<BackupSourceEntity> getBackupSourcesForChannel(String channelId);
+
     // Bounded reads for TV lists: avoid materializing every channel and every
     // backup-source relation merely to render the first screen of a category.
     @Transaction
