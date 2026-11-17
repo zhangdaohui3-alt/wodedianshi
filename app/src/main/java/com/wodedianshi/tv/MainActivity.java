@@ -1146,9 +1146,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
           return false;
         }
-        prefs.edit()
+        // This method runs only on cataloguePersistWorker, never on the UI thread.
+        // apply() updates the in-memory preference immediately but does not confirm the
+        // file reached disk. Room shadow reconciliation is queued behind this writer,
+        // so require commit() to succeed before publishing the new saved-snapshot marker.
+        boolean committed=prefs.edit()
             .putString("channels",savedJson)
-            .putStringSet("fav",favoriteSnapshot).apply();
+            .putStringSet("fav",favoriteSnapshot)
+            .commit();
+        if(!committed){
+          android.util.Log.e("MyTVCatalogue","SharedPreferences commit returned false; previous saved snapshot remains authoritative");
+          saveLiveDiagnostic("CATALOGUE_PERSIST_COMMIT_FAILED",
+              "SharedPreferences commit returned false; Room reconcile must not use this snapshot");
+          return false;
+        }
         lastPersistedChannelsJson=savedJson;
       }
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+persistedChannels+" channels, json_chars="+savedJson.length());
