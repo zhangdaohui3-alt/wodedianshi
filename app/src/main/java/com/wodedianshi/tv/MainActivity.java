@@ -1084,6 +1084,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           writer.endArray();
         }
+        // StringWriter.toString() allocates a second full-size character array.
+        // Estimate the additional contiguous allocation before making that copy.
+        // If headroom is insufficient, keep the last durable catalogue untouched
+        // rather than risking a process-wide OOM during a remote-control action.
+        Runtime runtime=Runtime.getRuntime();
+        long availableHeap=runtime.freeMemory()+Math.max(0L,runtime.maxMemory()-runtime.totalMemory());
+        long requiredHeap=buffer.getBuffer().length()*2L+(32L*1024L*1024L);
+        if(availableHeap<requiredHeap){
+          android.util.Log.w("MyTVCatalogue","save deferred: insufficient heap headroom; available="
+              +availableHeap+" required="+requiredHeap+" channels="+persistedChannels);
+          saveLiveDiagnostic("CATALOGUE_PERSIST_DEFERRED",
+              "insufficient heap headroom; available="+availableHeap+" required="+requiredHeap);
+          return false;
+        }
         savedJson=buffer.toString();
       }
       logCatalogueMemory("persist_json_ready",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
@@ -1107,6 +1121,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+persistedChannels+" channels, json_chars="+savedJson.length());
       logCatalogueMemory("persist_done",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
       return true;
+    } catch(OutOfMemoryError memoryFailure) {
+      // Last-resort containment: never overwrite the previous durable catalogue
+      // with a partial value. The preflight above should normally defer first.
+      android.util.Log.e("MyTVCatalogue","catalogue save aborted after memory pressure; previous saved data retained",
+          memoryFailure);
+      return false;
     } catch(Exception failure) {
       android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
       saveLiveDiagnostic("CATALOGUE_PERSIST_ERROR",failure.getClass().getSimpleName()+": "+failure.getMessage());
