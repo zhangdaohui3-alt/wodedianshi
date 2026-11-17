@@ -8,14 +8,16 @@ import androidx.room.PrimaryKey;
 @Entity(tableName = "catalogue_migrations")
 public class CatalogueMigrationEntity {
     @PrimaryKey @NonNull public String migrationKey;
+    @NonNull public String catalogueFingerprint;
     public int channelsCount;
     public int backupSourcesCount;
     public int favoritesCount;
     public long completedAt;
 
     public CatalogueMigrationEntity(@NonNull String migrationKey, int channelsCount,
-            int backupSourcesCount, int favoritesCount, long completedAt) {
+            int backupSourcesCount, int favoritesCount, long completedAt, @NonNull String catalogueFingerprint) {
         this.migrationKey = migrationKey;
+        this.catalogueFingerprint = catalogueFingerprint;
         this.channelsCount = channelsCount;
         this.backupSourcesCount = backupSourcesCount;
         this.favoritesCount = favoritesCount;
