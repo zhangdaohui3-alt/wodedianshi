@@ -5528,6 +5528,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
       org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
+      // A current failed preflight must not be rescued by stale positive playback history.
+      if(SourceQualityScorer.isFailedProbeScore(probeScore))return probeScore+label*0.01;
       org.json.JSONObject allQoe=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}"));
       org.json.JSONObject m=allQoe.optJSONObject(key);
       if(m==null)m=allQoe.optJSONObject(legacyKey);
