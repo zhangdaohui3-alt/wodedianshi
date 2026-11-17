@@ -4709,6 +4709,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile boolean sourceFirstFrameRecorded=false;
   private volatile boolean sourceFirstLoadCompleted=false;
   private boolean sourceFailureRecorded=false;
+  // Per-attempt cooldown chosen from the final Media3 error; non-error failovers use the conservative default.
+  private long sourceFailureCooldownMs=120000L;
   private boolean sourceWasBuffering=false;
   private boolean audioTrackPresent=false;
   private boolean audioTrackSupported=false;
@@ -5041,6 +5043,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     sourceFirstFrameRecorded=false;
     sourceFirstLoadCompleted=false;
     sourceFailureRecorded=false;
+    sourceFailureCooldownMs=120000L;
     liveWindowRecoveryAttempted=false;
     sourceWasBuffering=false;
     recordSourceMetric(c.backups.get(c.activeSource),"attempt",0L);
@@ -5182,6 +5185,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
           String errorName=e.getErrorCodeName();
+          int httpStatus=extractHttpStatusCode(e.getCause());
+          sourceFailureCooldownMs=PlaybackErrorPolicy.cooldownMs(errorName,httpStatus);
           if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName)){
             // A failed connection/timeout is endpoint availability, not a codec
             // compatibility problem. Trying the same URL through a second engine
@@ -5447,13 +5452,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   // Persistent playback observations. READY latency is not the same as a rendered first frame;
   // buffering/error events come from the actual ExoPlayer session, not a URL probe.
+  private int extractHttpStatusCode(Throwable error){
+    Throwable current=error;
+    for(int depth=0;current!=null&&depth<12;depth++,current=current.getCause()){
+      if(current instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException){
+        return ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)current).responseCode;
+      }
+    }
+    return 0;
+  }
   private void recordCurrentSourceFailure(){
     if(sourceFailureRecorded)return;
     sourceFailureRecorded=true;
     String failedUrl=currentSourceUrl();
     recordSourceMetric(failedUrl,"failure",0L);
     // Temporarily cool down a failed endpoint to prevent repeated dead-source loops.
-    SourceMemoryStore.coolDown(this,failedUrl,120000L);
+    SourceMemoryStore.coolDown(this,failedUrl,sourceFailureCooldownMs);
   }
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
