@@ -2,6 +2,7 @@ package com.wodedianshi.tv;
 
 import org.junit.Test;
 import java.io.IOException;
+import java.io.BufferedReader;
 import java.io.StringReader;
 import java.io.Reader;
 import java.util.ArrayList;
@@ -61,15 +62,13 @@ public class PlaylistParserTest {
     }
 
     @Test public void readerParserKeepsEntriesBeforeTransientReadFailure() throws IOException {
-        String prefix = "#EXTINF:-1,已解析频道\nhttps://a.example/live\n";
-        Reader failingReader = new Reader() {
-            private int offset;
-            @Override public int read(char[] buffer, int start, int length) throws IOException {
-                if (offset >= prefix.length()) throw new IOException("simulated network interruption");
-                buffer[start] = prefix.charAt(offset++);
-                return 1;
+        BufferedReader failingReader = new BufferedReader(new StringReader("")) {
+            private int line;
+            @Override public String readLine() throws IOException {
+                if (line++ == 0) return "#EXTINF:-1,已解析频道";
+                if (line == 2) return "https://a.example/live";
+                throw new IOException("simulated network interruption");
             }
-            @Override public void close() {}
         };
         ArrayList<PlaylistParser.ChannelSource> items = new ArrayList<>();
         try {
