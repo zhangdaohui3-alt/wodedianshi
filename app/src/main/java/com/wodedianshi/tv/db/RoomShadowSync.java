@@ -14,9 +14,9 @@ public final class RoomShadowSync {
         if (context == null || legacyKey == null || legacyKey.isEmpty()) return;
         Context app = context.getApplicationContext();
         syncFavorite(RoomDatabaseProvider.getChina(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_china", legacyKey, favorite);
+                LegacyCatalogueImporter.MIGRATION_KEY + "_china_partition_v2", legacyKey, favorite);
         syncFavorite(RoomDatabaseProvider.getInternational(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_international", legacyKey, favorite);
+                LegacyCatalogueImporter.MIGRATION_KEY + "_international_partition_v2", legacyKey, favorite);
         syncFavorite(RoomDatabaseProvider.get(app).channelDao(),
                 LegacyCatalogueImporter.MIGRATION_KEY, legacyKey, favorite);
     }
@@ -40,9 +40,9 @@ public final class RoomShadowSync {
         Context app = context.getApplicationContext();
         boolean updated = false;
         updated |= syncActiveSource(RoomDatabaseProvider.getChina(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_china", legacyKey, sourceUrl);
+                LegacyCatalogueImporter.MIGRATION_KEY + "_china_partition_v2", legacyKey, sourceUrl);
         updated |= syncActiveSource(RoomDatabaseProvider.getInternational(app).channelDao(),
-                LegacyCatalogueImporter.MIGRATION_KEY + "_international", legacyKey, sourceUrl);
+                LegacyCatalogueImporter.MIGRATION_KEY + "_international_partition_v2", legacyKey, sourceUrl);
         updated |= syncActiveSource(RoomDatabaseProvider.get(app).channelDao(),
                 LegacyCatalogueImporter.MIGRATION_KEY, legacyKey, sourceUrl);
         return updated;

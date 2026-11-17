@@ -46,12 +46,12 @@ public final class LegacyCatalogueImporter {
 
     /** Imports only records explicitly tagged as China into the dedicated China database. */
     public static Result importChinaIfNeeded(Context context, SharedPreferences prefs) throws Exception {
-        return importInto(context, prefs, RoomDatabaseProvider.getChina(context), MIGRATION_KEY + "_china", "china");
+        return importInto(context, prefs, RoomDatabaseProvider.getChina(context), MIGRATION_KEY + "_china_partition_v2", "china");
     }
 
     /** Imports only records explicitly tagged as global into the independent international database. */
     public static Result importInternationalIfNeeded(Context context, SharedPreferences prefs) throws Exception {
-        return importInto(context, prefs, RoomDatabaseProvider.getInternational(context), MIGRATION_KEY + "_international", "global");
+        return importInto(context, prefs, RoomDatabaseProvider.getInternational(context), MIGRATION_KEY + "_international_partition_v2", "global");
     }
 
     private static Result importInto(Context context, SharedPreferences prefs, AppDatabase db,

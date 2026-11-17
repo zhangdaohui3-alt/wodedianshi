@@ -89,7 +89,7 @@ public final class LegacySourceScopePolicy {
 
         ArrayList<String> result = new ArrayList<>(selected);
         int selectedActiveIndex = activeUrl == null ? -1 : result.indexOf(activeUrl);
-        if (selectedActiveIndex < 0) selectedActiveIndex = result.isEmpty() ? 0 : 0;
+        if (selectedActiveIndex < 0) selectedActiveIndex = 0;
         return new Selection(result, selectedActiveIndex, selectedScopes, requestedScope);
     }
 
