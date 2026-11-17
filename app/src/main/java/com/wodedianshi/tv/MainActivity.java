@@ -6037,6 +6037,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Incremented for every persistence request; a reload may publish only if no
   // catalogue edit/save was requested while its background parse was running.
   private volatile long catalogueMutationGeneration=0L;
+  // A staged refresh is additive maintenance, never permission to discard the last-saved
+  // directory. Match every cached channel through at least one of its original source
+  // identities; the Worker may reorder/promote a backup, but it must retain an old route.
+  private boolean backgroundRefreshPreservesCachedChannels(List<Channel> refreshed){
+    synchronized(channels){
+      if(channels.isEmpty())return true;
+      if(refreshed==null||refreshed.isEmpty())return false;
+      HashSet<String> refreshedSourceIdentities=new HashSet<>();
+      for(Channel candidate:refreshed){
+        if(candidate==null)continue;
+        if(candidate.url!=null&&!candidate.url.isEmpty())
+          refreshedSourceIdentities.add(identity(candidate.name,candidate.group,candidate.url));
+        if(candidate.backups!=null)for(String source:candidate.backups){
+          if(source!=null&&!source.isEmpty())
+            refreshedSourceIdentities.add(identity(candidate.name,candidate.group,source));
+        }
+      }
+      for(Channel cached:channels){
+        if(cached==null)continue;
+        boolean retained=cached.url!=null&&!cached.url.isEmpty()
+            &&refreshedSourceIdentities.contains(identity(cached.name,cached.group,cached.url));
+        if(!retained&&cached.backups!=null)for(String source:cached.backups){
+          if(source!=null&&!source.isEmpty()
+              &&refreshedSourceIdentities.contains(identity(cached.name,cached.group,source))){
+            retained=true;break;
+          }
+        }
+        if(!retained){
+          android.util.Log.w("MyTVStartup","background refresh rejected: cached channel would be lost name="
+              +String.valueOf(cached.name)+" group="+String.valueOf(cached.group));
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     final long generation=++backgroundCatalogueReloadGeneration;
@@ -6161,6 +6198,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   ||generation!=backgroundCatalogueReloadGeneration
                   ||catalogueMutationGeneration!=expectedMutationGeneration
                   ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
+              // Validate the complete candidate against the still-live old catalogue
+              // immediately before publication. A malformed or incomplete refresh is
+              // left staged for diagnosis/retry; the old visible and persisted cache wins.
+              if(!backgroundRefreshPreservesCachedChannels(refreshed)){
+                saveLiveDiagnostic("BACKGROUND_CATALOGUE_REJECTED",
+                    "staged refresh omitted one or more cached channel/source identities; old catalogue retained");
+                return;
+              }
               if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs))return;
               if(!raw.equals(prefs.getString("channels","[]")))return;
               if(selected>=0&&selected<channels.size()){
