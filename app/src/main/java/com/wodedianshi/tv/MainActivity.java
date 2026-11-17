@@ -5535,29 +5535,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int attempts=Math.max(1,m.optInt("attempts",0));
       int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      long lastVerifiedSuccessAt=SourceSuccessTimestampPolicy.latestVerifiedSuccess(
-           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L));
-      double recentSuccessBonus=0.0;
-      if(lastVerifiedSuccessAt>0L){
-        double ageHours=Math.max(0.0,(System.currentTimeMillis()-lastVerifiedSuccessAt)/3600000.0);
-        recentSuccessBonus=Math.max(0.0,100.0-ageHours*4.0);
-      }
+      long now=System.currentTimeMillis();
+      double recentSuccessBonus=SourceQoeScoringPolicy.recentSuccessBonus(
+          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
       // Keep foreground and background rankings on the same attempt-normalized policy.
       double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
           codecWarnings);
-      double historyWeight=sourceHistoryWeight(m.optLong("updated",0L));
+      double historyWeight=SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
       return probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01;
     }catch(Exception ignored){return label*0.01;}
-  }
-  // 30-day half-life with a 12% floor: old evidence fades gradually,
-  // but a source with sparse history never becomes completely unmeasured.
-  private double sourceHistoryWeight(long updatedAt){
-    if(updatedAt<=0L)return 0.12d;
-    long ageMs=Math.max(0L,System.currentTimeMillis()-updatedAt);
-    double halfLifeMs=30.0d*24.0d*60.0d*60.0d*1000.0d;
-    return Math.max(0.12d,Math.pow(0.5d,ageMs/halfLifeMs));
   }
   private void sortSourcesByObservedQuality(Channel c){
     if(c==null||c.backups==null||c.backups.size()<2)return;
