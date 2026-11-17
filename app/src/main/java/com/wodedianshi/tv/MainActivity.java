@@ -3912,7 +3912,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Keep the previous cache if no new entries were merged. Only advance the
       // refresh timestamp after the resulting catalogue contains a minimally
       // useful set of recognized mainland channels; HTTP 200 alone is not success.
-      if(total>0){persist();syncRoomCataloguesAfterSave();}
+      if(total>0&&persist())syncRoomCataloguesAfterSave();
       final boolean usefulChinaDirectory=recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
@@ -4062,7 +4062,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int recognizedGlobalCount=countChannelsForScope("global");
           // Persist away from the UI thread. A failed/empty directory refresh must
           // not advance the success timestamp or replace the last saved catalogue.
-          if(total>0){persist();syncRoomCataloguesAfterSave();}
+          if(total>0&&persist())syncRoomCataloguesAfterSave();
           final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
           if(usefulGlobalDirectory){
             cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
@@ -4102,8 +4102,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Hong Kong, Macau and Taiwan belong to the China catalogue; retain their child categories.
       added=fetchAndMergePlaylists(feeds,22000,errors,"china");
       final int total=added;final String err=errors.toString();
-      persist();
-      syncRoomCataloguesAfterSave();
+      if(persist())syncRoomCataloguesAfterSave();
       runOnUiThread(()->{refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
@@ -4137,8 +4136,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
          added+=parse(data,null,"global");
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
-      persist();
-      syncRoomCataloguesAfterSave();
+      if(persist())syncRoomCataloguesAfterSave();
       runOnUiThread(()->{refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
