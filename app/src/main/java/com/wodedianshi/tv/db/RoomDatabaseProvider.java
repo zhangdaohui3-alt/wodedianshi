@@ -41,6 +41,21 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    // Version 5 replaces the single-column category index with indexes matching
+    // the paged catalogue sort order. No channel, source, or favorite rows are removed.
+    private static final Migration MIGRATION_4_5 = new Migration(4, 5) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("DROP INDEX IF EXISTS index_channels_categoryId");
+            database.execSQL("CREATE INDEX IF NOT EXISTS "
+                    + "index_channels_categoryId_sortOrder_name_id "
+                    + "ON channels(categoryId, sortOrder, name, id)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS "
+                    + "index_channels_sortOrder_name_id "
+                    + "ON channels(sortOrder, name, id)");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -53,7 +68,9 @@ public final class RoomDatabaseProvider {
                         context.getApplicationContext(),
                         AppDatabase.class,
                         "mytv_catalogue.db"
-                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build();
+                    ).addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
+                    ).build();
                     instance = local;
                 }
             }
