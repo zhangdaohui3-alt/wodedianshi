@@ -4,6 +4,18 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void defersAutomaticUpdatesWhileAppIsForegrounded() {
+        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(true, false));
+    }
+
+    @Test public void allowsAutomaticUpdatesWhenAppIsInBackground() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(false, false));
+    }
+
+    @Test public void explicitManualUpdateIsNotDeferredByForegroundPolicy() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(true, true));
+    }
+
     @Test public void schedulesDiscoveryForNewInstall() {
         assertTrue(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, 0L));
     }
