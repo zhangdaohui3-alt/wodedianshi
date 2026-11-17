@@ -150,7 +150,7 @@ public final class LegacyCatalogueImporter {
                         favorites.add(new FavoriteEntity(id, System.currentTimeMillis()));
                     }
                     totals[0]++;
-                    totals[1] += uniqueSources.size();
+                    totals[1] += scopedSources.urls.size();
                     if (legacyFavorites.contains(legacyKey)) totals[2]++;
 
                     if (channels.size() >= BATCH_SIZE) {
