@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -109,6 +110,16 @@ public final class LegacyCatalogueImporter {
                     if (requiredScope != null && !item.channelScopes.contains(requiredScope)) continue;
                     if (item.name.isEmpty() || item.url.isEmpty()) continue;
 
+                    // Normalize duplicates first so activeSource can still be resolved by URL,
+                    // then partition the actual playback URLs as well as the channel row.
+                    LegacySourceOrderPolicy.Result sourceOrder = LegacySourceOrderPolicy.normalize(
+                            item.sources, item.url, item.activeSource);
+                    LegacySourceScopePolicy.Selection scopedSources = LegacySourceScopePolicy.select(
+                            sourceOrder.urls, sourceOrder.activeIndex, item.backupScopes, requiredScope);
+                    // A channel-level scope tag alone is not enough to import a row into
+                    // a partition: it must retain at least one URL owned by that scope.
+                    if (scopedSources.urls.isEmpty()) continue;
+
                     String categoryId = item.group.isEmpty() ? "__ungrouped__" : item.group;
                     if (categoryIds.add(categoryId)) {
                         categories.add(new CategoryEntity(categoryId,
@@ -123,20 +134,17 @@ public final class LegacyCatalogueImporter {
                     identityOccurrences.put(identityKey, occurrence + 1);
                     String id = LegacyChannelIdPolicy.idFor(item.name, item.url, occurrence);
                     row++;
-                    // Normalize duplicates and append a missing primary URL while
-                    // preserving the URL selected by the legacy activeSource index.
-                    LegacySourceOrderPolicy.Result sourceOrder = LegacySourceOrderPolicy.normalize(
-                            item.sources, item.url, item.activeSource);
-                    ArrayList<String> uniqueSources = new ArrayList<>(sourceOrder.urls);
-                    int activeSource = sourceOrder.activeIndex;
-                    channels.add(new ChannelEntity(id, legacyKey, item.name, item.url,
+                    // Keep the legacy identity in legacyKey/ID for write-through,
+                    // while exposing only this partition's first playable URL as primary.
+                    String scopedPrimaryUrl = scopedSources.urls.get(0);
+                    channels.add(new ChannelEntity(id, legacyKey, item.name, scopedPrimaryUrl,
                             item.group, categoryId, item.tvgId, item.tvgName,
-                            toJson(item.channelScopes), activeSource, row - 1));
+                            scopedSources.channelScopesJson(item.channelScopes), scopedSources.activeIndex, row - 1));
 
-                    for (int i = 0; i < uniqueSources.size(); i++) {
-                        String sourceUrl = uniqueSources.get(i);
+                    for (int i = 0; i < scopedSources.urls.size(); i++) {
+                        String sourceUrl = scopedSources.urls.get(i);
                         sources.add(new BackupSourceEntity(id, sourceUrl, i,
-                                toJson(item.backupScopes.get(sourceUrl))));
+                                scopedSources.sourceScopesJson(sourceUrl, item.backupScopes)));
                     }
                     if (legacyFavorites.contains(legacyKey)) {
                         favorites.add(new FavoriteEntity(id, System.currentTimeMillis()));
