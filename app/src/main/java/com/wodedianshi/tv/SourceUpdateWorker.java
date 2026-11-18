@@ -91,9 +91,7 @@ public class SourceUpdateWorker extends Worker {
         saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
         return Result.retry();
       }
-      String channelsSnapshot=roomSnapshotToArray(roomSnapshot).toString();
-      String savedChannelsJson=channelsSnapshot;
-      JSONArray saved=new JSONArray(savedChannelsJson);
+      // Keep the Room-derived catalogue as JSON objects directly. Serializing the\n      // entire 7k+ channel directory to one String and immediately parsing it back\n      // creates a large short-lived UTF-16 allocation plus a second object graph.\n      // The worker is already off the UI thread; avoid that unnecessary full copy.\n      JSONArray saved=roomSnapshotToArray(roomSnapshot);
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
