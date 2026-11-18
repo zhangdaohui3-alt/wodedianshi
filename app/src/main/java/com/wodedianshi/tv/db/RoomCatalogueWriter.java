@@ -30,8 +30,9 @@ public final class RoomCatalogueWriter {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
-        CatalogueMigrationEntity checkpoint = dao.getMigration(LegacyCatalogueImporter.MIGRATION_KEY);
-        if (checkpoint == null) throw new IllegalStateException("Room catalogue seed is not ready");
+        // A missing checkpoint means a genuinely fresh database. Seed it directly
+        // from the bundled/current catalogue; no legacy JSON import is required.
+        CatalogueMigrationEntity checkpoint = dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
         final int[] written = {0};
         db.runInTransaction(() -> {
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
@@ -131,9 +132,9 @@ public final class RoomCatalogueWriter {
             }
 
             dao.insertMigration(new CatalogueMigrationEntity(
-                    checkpoint.migrationKey, dao.countChannels(), dao.countBackupSources(),
+                    MasterCatalogueRepository.MIGRATION_KEY, dao.countChannels(), dao.countBackupSources(),
                     dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
-                    checkpoint.catalogueFingerprint));
+                    checkpoint == null ? "room_native_seed_v1" : checkpoint.catalogueFingerprint));
         });
         return written[0];
     }
