@@ -27,6 +27,18 @@ public class ChannelDirectorySnapshotCodecTest {
         assertEquals(favorites,decoded.favorites);
     }
 
+    @Test public void streamingEncoderMatchesByteArrayEncoder() throws Exception {
+        RoomCatalogueWriter.ChannelSnapshot row = new RoomCatalogueWriter.ChannelSnapshot();
+        row.name="CCTV-1"; row.url="https://one.example/live.m3u8"; row.group="央视";
+        row.sources.add(row.url);
+        ArrayList<RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>(); rows.add(row);
+        HashSet<String> favorites=new HashSet<>(); favorites.add("CCTV-1");
+        java.io.ByteArrayOutputStream streamed=new java.io.ByteArrayOutputStream();
+        ChannelDirectorySnapshotCodec.writeCompressed(streamed,rows,favorites);
+        assertArrayEquals(ChannelDirectorySnapshotCodec.encode(rows,favorites),streamed.toByteArray());
+        assertEquals(favorites,ChannelDirectorySnapshotCodec.decode(streamed.toByteArray()).favorites);
+    }
+
     @Test public void rejectsInvalidActiveSourceIndex() throws Exception {
         RoomCatalogueWriter.ChannelSnapshot row = new RoomCatalogueWriter.ChannelSnapshot();
         row.name="CCTV-1"; row.url="https://one.example/live.m3u8"; row.activeSource=2;
