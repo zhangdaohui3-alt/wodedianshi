@@ -10,9 +10,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Writes a complete in-memory catalogue snapshot into the single Room store.
- * Used by the source updater while its legacy snapshot hand-off is being
- * retired; SharedPreferences is not read or written by this class.
+ * Reconciles complete catalogue snapshots into Room in one transaction.
+ * Existing rows are updated in place so foreign-key children are not lost.
  */
 public final class RoomCatalogueWriter {
     private RoomCatalogueWriter() {}
@@ -25,7 +24,7 @@ public final class RoomCatalogueWriter {
         public final HashMap<String, HashSet<String>> backupSourceScopes = new HashMap<>();
     }
 
-    /** Full authoritative replacement used by normal catalogue persistence. */
+    /** Apply an exact snapshot without dropping and recreating the whole database. */
     public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
@@ -35,90 +34,21 @@ public final class RoomCatalogueWriter {
         if (checkpoint == null) throw new IllegalStateException("Room catalogue seed is not ready");
         final int[] written = {0};
         db.runInTransaction(() -> {
-            dao.clearFavorites();
-            dao.clearBackupSources();
-            dao.clearChannels();
-            dao.clearCategories();
+            HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
+            HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
+            HashSet<String> previousFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
+            HashSet<String> presentChannelIds = new HashSet<>();
+            HashSet<String> presentCategoryIds = new HashSet<>();
+            HashSet<String> desiredFavoriteIds = new HashSet<>();
             HashMap<String, Integer> occurrences = new HashMap<>();
             HashMap<String, Integer> categoryOrders = new HashMap<>();
-            ArrayList<CategoryEntity> categories = new ArrayList<>();
-            ArrayList<ChannelEntity> channels = new ArrayList<>();
-            ArrayList<BackupSourceEntity> sources = new ArrayList<>();
-            ArrayList<FavoriteEntity> favorites = new ArrayList<>();
+
             for (int row = 0; row < snapshot.size(); row++) {
                 ChannelSnapshot item = snapshot.get(row);
                 if (item == null || item.name == null || item.name.trim().isEmpty()
                         || item.url == null || item.url.trim().isEmpty()) continue;
                 String name = item.name.trim(), primary = item.url.trim();
                 String group = item.group == null ? "" : item.group;
-                String categoryId = group.isEmpty() ? "__ungrouped__" : group;
-                if (!categoryOrders.containsKey(categoryId)) {
-                    int order = categoryOrders.size();
-                    categoryOrders.put(categoryId, order);
-                    categories.add(new CategoryEntity(categoryId,
-                            group.isEmpty() ? "未分类" : group, order));
-                }
-                String identity = LegacyChannelIdPolicy.identityKey(name, primary);
-                int occurrence = occurrences.containsKey(identity) ? occurrences.get(identity) : 0;
-                occurrences.put(identity, occurrence + 1);
-                String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
-                ArrayList<String> urls = new ArrayList<>();
-                if (item.sources != null) for (String value : item.sources) {
-                    if (value != null && !value.trim().isEmpty() && !urls.contains(value.trim())) urls.add(value.trim());
-                }
-                if (urls.isEmpty()) urls.add(primary);
-                int active = Math.max(0, Math.min(item.activeSource, urls.size() - 1));
-                JSONArray channelScopes = new JSONArray();
-                for (String scope : item.sourceScopes) channelScopes.put(scope);
-                channels.add(new ChannelEntity(id, name + "|" + primary, name,
-                        urls.get(0), group, categoryId,
-                        item.tvgId == null ? "" : item.tvgId,
-                        item.tvgName == null ? "" : item.tvgName,
-                        channelScopes.toString(), active, row));
-                for (int i = 0; i < urls.size(); i++) {
-                    String url = urls.get(i);
-                    JSONArray scopes = new JSONArray();
-                    HashSet<String> owned = item.backupSourceScopes.get(url);
-                    if (owned != null) for (String scope : owned) scopes.put(scope);
-                    sources.add(new BackupSourceEntity(id, url, i, scopes.toString()));
-                }
-                if (favoriteKeys != null && favoriteKeys.contains(name + "|" + primary)) {
-                    favorites.add(new FavoriteEntity(id, System.currentTimeMillis()));
-                }
-                written[0]++;
-            }
-            if (!categories.isEmpty()) dao.insertCategories(categories);
-            if (!channels.isEmpty()) dao.insertChannels(channels);
-            if (!sources.isEmpty()) dao.insertBackupSources(sources);
-            if (!favorites.isEmpty()) dao.insertFavorites(favorites);
-            dao.insertMigration(new CatalogueMigrationEntity(
-                    checkpoint.migrationKey, dao.countChannels(), dao.countBackupSources(),
-                    dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
-                    checkpoint.catalogueFingerprint));
-        });
-        return written[0];
-    }
-
-    public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
-        if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
-        AppDatabase db = RoomDatabaseProvider.get(context);
-        ChannelDao dao = db.channelDao();
-        CatalogueMigrationEntity checkpoint = dao.getMigration(LegacyCatalogueImporter.MIGRATION_KEY);
-        // Do not race the one-time legacy seed. Until it has completed, the worker
-        // must retry rather than write a partial Room catalogue that a later import
-        // would replace with an older snapshot.
-        if (checkpoint == null) throw new IllegalStateException("Room catalogue seed is not ready");
-        final int[] written = {0};
-        db.runInTransaction(() -> {
-            HashMap<String, Integer> occurrences = new HashMap<>();
-            HashMap<String, Integer> categoryOrders = new HashMap<>();
-            for (int row = 0; row < snapshot.length(); row++) {
-                JSONObject item = snapshot.optJSONObject(row);
-                if (item == null) continue;
-                String name = item.optString("name", "").trim();
-                String primary = item.optString("url", "").trim();
-                if (name.isEmpty() || primary.isEmpty()) continue;
-                String group = item.optString("group", "");
                 String categoryId = group.isEmpty() ? "__ungrouped__" : group;
                 Integer categoryOrder = categoryOrders.get(categoryId);
                 if (categoryOrder == null) {
@@ -127,55 +57,114 @@ public final class RoomCatalogueWriter {
                 }
                 CategoryEntity category = new CategoryEntity(categoryId,
                         group.isEmpty() ? "未分类" : group, categoryOrder);
-
-                ArrayList<String> rawUrls = new ArrayList<>();
-                JSONArray rawSources = item.optJSONArray("sources");
-                if (rawSources != null) {
-                    for (int i = 0; i < rawSources.length(); i++) {
-                        String url = rawSources.optString(i, "").trim();
-                        if (!url.isEmpty()) rawUrls.add(url);
-                    }
-                }
-                LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
-                        rawUrls, primary, item.optInt("activeSource", 0));
-                if (ordered.urls.isEmpty()) continue;
+                dao.insertCategoryIfAbsent(category);
+                dao.updateCategoryFields(categoryId, category.name, categoryOrder);
+                presentCategoryIds.add(categoryId);
 
                 String identity = LegacyChannelIdPolicy.identityKey(name, primary);
                 int occurrence = occurrences.containsKey(identity) ? occurrences.get(identity) : 0;
                 occurrences.put(identity, occurrence + 1);
                 String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
                 String legacyKey = name + "|" + primary;
-                JSONArray channelScopes = item.optJSONArray("sourceScopes");
-                String scopesJson = channelScopes == null ? "[]" : channelScopes.toString();
 
+                LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
+                        item.sources, primary, item.activeSource);
+                if (ordered.urls.isEmpty()) continue;
+                int active = Math.max(0, Math.min(ordered.activeIndex, ordered.urls.size() - 1));
+                JSONArray channelScopes = new JSONArray();
+                if (item.sourceScopes != null) for (String scope : item.sourceScopes) channelScopes.put(scope);
                 ChannelEntity channel = new ChannelEntity(id, legacyKey, name,
                         ordered.urls.get(0), group, categoryId,
-                        item.optString("tvgId", ""), item.optString("tvgName", ""),
-                        scopesJson, ordered.activeIndex, row);
-                Map<String, HashSet<String>> ownership = readOwnership(item.optJSONArray("backupSourceScopes"));
+                        item.tvgId == null ? "" : item.tvgId,
+                        item.tvgName == null ? "" : item.tvgName,
+                        channelScopes.toString(), active, row);
+
                 ArrayList<BackupSourceEntity> sourceRows = new ArrayList<>();
                 for (int i = 0; i < ordered.urls.size(); i++) {
                     String url = ordered.urls.get(i);
-                    HashSet<String> sourceScopes = ownership.get(url);
-                    JSONArray sourceScopeArray = new JSONArray();
-                    if (sourceScopes != null) for (String scope : sourceScopes) sourceScopeArray.put(scope);
-                    sourceRows.add(new BackupSourceEntity(id, url, i, sourceScopeArray.toString()));
+                    JSONArray scopes = new JSONArray();
+                    HashSet<String> owned = item.backupSourceScopes.get(url);
+                    if (owned != null) for (String scope : owned) scopes.put(scope);
+                    sourceRows.add(new BackupSourceEntity(id, url, i, scopes.toString()));
                 }
                 dao.replaceChannelWithSources(category, channel, sourceRows);
+                presentChannelIds.add(id);
+                if (favoriteKeys != null && favoriteKeys.contains(legacyKey)) {
+                    desiredFavoriteIds.add(id);
+                }
                 written[0]++;
             }
-            if (snapshot.length() > 0 && written[0] == 0) {
-                throw new IllegalStateException("Room catalogue update produced no channel rows");
+
+            if (!snapshot.isEmpty() && written[0] == 0) {
+                throw new IllegalStateException("Room catalogue update produced no valid channel rows");
             }
-            // Keep the seed checkpoint consistent with intentional Room writes.
-            // Otherwise the next legacy reconcile sees changed row counts and
-            // rebuilds the entire DB from stale SharedPreferences, erasing new feeds.
+
+            // Remove only rows absent from the complete snapshot. FK cascades then
+            // clean up the removed channel's own sources/favorite, never its peers.
+            previousChannelIds.removeAll(presentChannelIds);
+            for (String staleId : previousChannelIds) dao.deleteChannelById(staleId);
+
+            // Preserve existing favorite timestamps; only apply actual additions/removals.
+            HashSet<String> currentFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
+            for (String favoriteId : currentFavoriteIds) {
+                if (!desiredFavoriteIds.contains(favoriteId)) dao.removeFavorite(favoriteId);
+            }
+            currentFavoriteIds.retainAll(desiredFavoriteIds);
+            for (String favoriteId : desiredFavoriteIds) {
+                if (!currentFavoriteIds.contains(favoriteId)) {
+                    dao.addFavorite(new FavoriteEntity(favoriteId, System.currentTimeMillis()));
+                }
+            }
+
+            previousCategoryIds.removeAll(presentCategoryIds);
+            for (String staleCategoryId : previousCategoryIds) {
+                // Category rows are RESTRICT parents; deleting only after stale
+                // channels are gone keeps the FK invariant intact.
+                dao.deleteCategoryById(staleCategoryId);
+            }
+
             dao.insertMigration(new CatalogueMigrationEntity(
                     checkpoint.migrationKey, dao.countChannels(), dao.countBackupSources(),
                     dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
                     checkpoint.catalogueFingerprint));
         });
         return written[0];
+    }
+
+    /** Source updater snapshots are complete Room-derived catalogues too. */
+    public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
+        if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
+        ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
+        HashSet<String> favoriteKeys = new HashSet<>(dao.getFavoriteLegacyKeys());
+        ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
+        for (int row = 0; row < snapshot.length(); row++) {
+            JSONObject item = snapshot.optJSONObject(row);
+            if (item == null) continue;
+            ChannelSnapshot channel = new ChannelSnapshot();
+            channel.name = item.optString("name", "").trim();
+            channel.url = item.optString("url", "").trim();
+            channel.group = item.optString("group", "");
+            channel.tvgId = item.optString("tvgId", "");
+            channel.tvgName = item.optString("tvgName", "");
+            channel.activeSource = item.optInt("activeSource", 0);
+            JSONArray rawSources = item.optJSONArray("sources");
+            if (rawSources != null) {
+                for (int i = 0; i < rawSources.length(); i++) {
+                    String value = rawSources.optString(i, "").trim();
+                    if (!value.isEmpty()) channel.sources.add(value);
+                }
+            }
+            JSONArray rawScopes = item.optJSONArray("sourceScopes");
+            if (rawScopes != null) {
+                for (int i = 0; i < rawScopes.length(); i++) {
+                    String scope = rawScopes.optString(i, "");
+                    if (!scope.isEmpty()) channel.sourceScopes.add(scope);
+                }
+            }
+            channel.backupSourceScopes.putAll(readOwnership(item.optJSONArray("backupSourceScopes")));
+            rows.add(channel);
+        }
+        return writeRecords(context, rows, favoriteKeys);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
