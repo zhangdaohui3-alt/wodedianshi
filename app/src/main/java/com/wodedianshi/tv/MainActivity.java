@@ -92,7 +92,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ArrayList<Channel> channels = new ArrayList<>();
   // Snapshot of the last catalogue JSON this Activity restored or persisted.
   // It lets onStart detect safe background-worker updates while this Activity was stopped.
-  private volatile String lastPersistedChannelsJson=null;
   // A partially restored catalogue is browseable for recovery, but it must never
   // be serialized over the original SharedPreferences snapshot. This remains
   // false until the complete saved JSON has parsed and indexes have rebuilt.
@@ -124,7 +123,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final Object cataloguePersistLock = new Object();
   // Serializes disk commits with background-candidate preference publication.
   // UI persistence requests use cataloguePersistLock only, never this I/O lock.
-  private final Object cataloguePreferenceWriteLock = new Object();
   private long cataloguePersistRequestedGeneration=0L;
   private long cataloguePersistCompletedGeneration=0L;
   private boolean cataloguePersistLastSuccess=true;
@@ -350,28 +348,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
-        // Transitional single-store audit: the complete catalogue already includes
-        // China, international and custom rows with per-source scope metadata.
-        // Import it once into the master Room database; do not build duplicate
-        // regional databases from the same large SharedPreferences snapshot.
-        if(restoreSucceeded&&!channels.isEmpty()
-            &&!new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
-          worker.execute(()->{
-            try{
-              android.content.SharedPreferences legacy=getSharedPreferences("mytv",0);
-              com.wodedianshi.tv.db.LegacyCatalogueImporter.Result result=
-                  com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(
-                      getApplicationContext(),legacy);
-              android.util.Log.i("MyTVRoomMigration","single_store validated channels="+result.channels
-                  +" backup_sources="+result.sources+" favorites="+result.favorites);
-            }catch(Throwable migrationFailure){
-              android.util.Log.e("MyTVRoomMigration",
-                  "background import failed; SharedPreferences remains temporarily authoritative",
-                  migrationFailure);
-              saveLiveDiagnostic("ROOM_IMPORT_ERROR",
-                  migrationFailure.getClass().getSimpleName()+": "+String.valueOf(migrationFailure.getMessage()));
-            }
-          });
+      });
         }
       });
 
@@ -408,7 +385,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
     }
-    if(changed){persist();queueRoomCatalogueReconcileAfterPersist();}
+    if(changed){persist();}
     if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
   }
   private int sourceQualityScore(String source){
@@ -3518,7 +3495,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{if(j>=0&&j<sourceUrls.size())playChannelSourceByKey(channelKey,sourceUrls.get(j));}).setNegativeButton("关闭",null).show();
           }else{
             synchronized(channels){for(int k=0;k<channels.size();k++){Channel item=channels.get(k);if(item!=null&&channelKey.equals(item.key())){channels.remove(k);break;}}}
-            favorites.remove(channelKey);rebuildChannelIndexes();persist();queueRoomCatalogueReconcileAfterPersist();refresh();
+            favorites.remove(channelKey);rebuildChannelIndexes();persist();refresh();
           }
         }).show();return true;
       });
@@ -3608,63 +3585,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
   // Transitional single-store reconciliation. China/international are scope
   // filters over the complete catalogue, not independent databases.
-  private void syncRoomCataloguesAfterSave(){
-    // Room is authoritative after the first successful seed. Never replay the
-    // legacy preference snapshot over a newer database catalogue.
-    try{
-      if(new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
-        android.util.Log.d("MyTVRoomSync","legacy reconcile skipped: Room is authoritative");
-        return;
-      }
-      android.content.SharedPreferences saved=getSharedPreferences("mytv",0);
-      com.wodedianshi.tv.db.LegacyCatalogueImporter.Result all=
-          com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(getApplicationContext(),saved);
-      boolean masterReady=new com.wodedianshi.tv.db.MasterCatalogueRepository(
-          getApplicationContext()).isSnapshotReady();
-      if(!masterReady)throw new IllegalStateException("single Room catalogue snapshot is not ready");
-      android.util.Log.i("MyTVRoomSync","single catalogue reconciled channels="+all.channels
-          +" backup_sources="+all.sources+" favorites="+all.favorites);
-    }catch(Throwable failure){
-      android.util.Log.e("MyTVRoomSync","single catalogue reconcile failed",failure);
-      saveLiveDiagnostic("ROOM_RECONCILE_ERROR",
-          failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
-    }
-  }
-  // Queue Room reconciliation behind the durable legacy save. UI callers may return
-  // as soon as persistence is queued, so using the same serial writer guarantees
-  // the importer never races ahead and reads the previous SharedPreferences snapshot.
-  private void queueRoomCatalogueReconcileAfterPersist(){
-    final long expectedGeneration;
-    synchronized(cataloguePersistLock){
-      expectedGeneration=cataloguePersistRequestedGeneration;
-    }
-    if(expectedGeneration<=0L)return;
-    try{
-      cataloguePersistWorker.execute(()->{
-        // persist() on the UI thread means "queued", not "durably saved".
-        // Never import a failed/old SharedPreferences snapshot into Room.
-        final boolean durable;
-        final long completedGeneration;
-        final boolean lastSaveSuccess;
-        synchronized(cataloguePersistLock){
-          completedGeneration=cataloguePersistCompletedGeneration;
-          lastSaveSuccess=cataloguePersistLastSuccess;
-          durable=completedGeneration>=expectedGeneration&&lastSaveSuccess;
-        }
-        if(!durable){
-          android.util.Log.w("MyTVRoomSync","skip Room reconcile: legacy save not confirmed generation="+expectedGeneration
-              +" completed="+completedGeneration
-              +" success="+lastSaveSuccess);
-          saveLiveDiagnostic("ROOM_RECONCILE_SKIPPED_UNSAVED","generation="+expectedGeneration);
-          return;
-        }
-        syncRoomCataloguesAfterSave();
-      });
-    }catch(RuntimeException rejected){
-      android.util.Log.e("MyTVRoomSync","Room reconcile queue rejected",rejected);
-      saveLiveDiagnostic("ROOM_RECONCILE_QUEUE_ERROR",rejected.getClass().getSimpleName());
-    }
-  }
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
     return fetchAndMergePlaylists(feeds,timeoutMs,errors,sourceScope,null);
   }
@@ -3835,7 +3755,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Keep the previous cache if no new entries were merged. Only advance the
       // refresh timestamp after the resulting catalogue contains a minimally
       // useful set of recognized mainland channels; HTTP 200 alone is not success.
-      if(total>0&&persist())syncRoomCataloguesAfterSave();
+      if(total>0)persist();
       final boolean usefulChinaDirectory=recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
         cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
@@ -3934,7 +3854,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final int matched=destinationKeys.size();
       runOnUiThread(()->{
         activeGeoChannelKeys=new HashSet<>(destinationKeys);
-        activeCategory="全部";favoriteMode=false;persist();queueRoomCatalogueReconcileAfterPersist();refresh();
+        activeCategory="全部";favoriteMode=false;persist();refresh();
         info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
@@ -3985,7 +3905,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int recognizedGlobalCount=countChannelsForScope("global");
           // Persist away from the UI thread. A failed/empty directory refresh must
           // not advance the success timestamp or replace the last saved catalogue.
-          if(total>0&&persist())syncRoomCataloguesAfterSave();
+          if(total>0)persist();
           final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
           if(usefulGlobalDirectory){
             cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
@@ -4025,7 +3945,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Hong Kong, Macau and Taiwan belong to the China catalogue; retain their child categories.
       added=fetchAndMergePlaylists(feeds,22000,errors,"china");
       final int total=added;final String err=errors.toString();
-      if(persist())syncRoomCataloguesAfterSave();
+      persist();
       runOnUiThread(()->{refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
@@ -4059,7 +3979,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
          added+=parse(data,null,"global");
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
-      if(persist())syncRoomCataloguesAfterSave();
+      persist();
       runOnUiThread(()->{refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
     });
   }
@@ -4078,7 +3998,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         int added=parse(data);
         if(!persist())throw new IllegalStateException("频道配置保存失败");
-        queueRoomCatalogueReconcileAfterPersist();
+        
         runOnUiThread(()->{
           if(isFinishing())return;
           refresh();
@@ -4216,7 +4136,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
-  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();queueRoomCatalogueReconcileAfterPersist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
+  private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
@@ -5720,7 +5640,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     persist();
     // Source order is part of the Room shadow: activeSource is a priority index.
     // Re-import the committed snapshot so the relation order and index stay aligned.
-    queueRoomCatalogueReconcileAfterPersist();
+    
   }
   private void toggleNetworkSpeed(){
     boolean enabled=!getSharedPreferences("mytv",0).getBoolean("show_network_speed",false);
