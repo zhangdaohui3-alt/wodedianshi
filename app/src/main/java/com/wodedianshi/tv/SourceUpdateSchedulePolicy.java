@@ -19,6 +19,12 @@ public final class SourceUpdateSchedulePolicy {
         return appForeground && !manual;
     }
 
+    /** A first-run scan is complete only after every candidate and feed was covered. */
+    public static boolean isInitialDiscoveryComplete(int candidateCount, int scannedCount,
+                                                      int failedFeedCount) {
+        return candidateCount > 0 && scannedCount >= candidateCount && failedFeedCount == 0;
+    }
+
     /** At least one newly discovered source must pass the media preflight. */
     public static boolean hasValidatedDiscoverySources(int validatedSourceCount) {
         return validatedSourceCount > 0;
