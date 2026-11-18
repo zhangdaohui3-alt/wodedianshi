@@ -6,6 +6,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.FilterInputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,6 +24,7 @@ public final class ChannelDirectorySnapshotCodec {
     private static final int MAX_CHANNELS = 250000;
     private static final int MAX_SOURCES_PER_CHANNEL = 64;
     private static final int MAX_STRING_BYTES = 1024 * 1024;
+    private static final long MAX_DECODED_BYTES = 64L * 1024L * 1024L;
 
     public static final class Snapshot {
         public final ArrayList<RoomCatalogueWriter.ChannelSnapshot> channels;
@@ -67,7 +70,7 @@ public final class ChannelDirectorySnapshotCodec {
     public static Snapshot decode(byte[] payload) throws IOException {
         if (payload == null || payload.length == 0 || payload.length > 64 * 1024 * 1024)
             throw new IOException("invalid snapshot payload size");
-        DataInputStream in = new DataInputStream(new GZIPInputStream(new ByteArrayInputStream(payload)));
+        DataInputStream in = new DataInputStream(new BoundedInputStream(new GZIPInputStream(new ByteArrayInputStream(payload)), MAX_DECODED_BYTES));
         try {
             if (in.readInt() != MAGIC || in.readInt() != VERSION) throw new IOException("unknown snapshot format");
             int count = in.readInt();
@@ -87,12 +90,46 @@ public final class ChannelDirectorySnapshotCodec {
                 for (int n = 0; n < scopeMaps; n++) row.backupSourceScopes.put(readString(in), readSet(in));
                 if (row.name.trim().isEmpty() || row.url.trim().isEmpty() || row.sources.isEmpty())
                     throw new IOException("invalid channel entry");
+                if (row.activeSource < 0 || row.activeSource >= row.sources.size())
+                    throw new IOException("invalid active source index");
                 channels.add(row);
             }
             HashSet<String> favorites = readSet(in);
             if (in.read() != -1) throw new IOException("trailing snapshot data");
             return new Snapshot(channels, favorites);
         } finally { in.close(); }
+    }
+
+
+    /** Limits decompressed bytes, not merely the compressed cache-file size. */
+    private static final class BoundedInputStream extends FilterInputStream {
+        private final long limit;
+        private long consumed;
+        BoundedInputStream(InputStream input, long limit) {
+            super(input);
+            this.limit = limit;
+        }
+        @Override public int read() throws IOException {
+            if (consumed >= limit) {
+                int extra = in.read();
+                if (extra < 0) return -1;
+                throw new IOException("decoded snapshot exceeds size limit");
+            }
+            int value = in.read();
+            if (value >= 0) consumed++;
+            return value;
+        }
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (length == 0) return 0;
+            if (consumed >= limit) {
+                int extra = read();
+                return extra < 0 ? -1 : extra;
+            }
+            int allowed = (int) Math.min((long) length, limit - consumed);
+            int count = in.read(buffer, offset, allowed);
+            if (count > 0) consumed += count;
+            return count;
+        }
     }
 
     private static void writeSet(DataOutputStream out, Set<String> values) throws IOException {
