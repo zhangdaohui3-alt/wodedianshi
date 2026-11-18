@@ -625,40 +625,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Startup must display the exact last-saved catalogue first. A staged source-update
     // candidate is intentionally not applied here; maintenance/reconciliation runs later,
     // after the complete saved list has been rendered and is usable.
-    // Room is the normal startup authority. SharedPreferences is consulted only
-    // when this installation has not completed its one-time legacy seed yet.
+    // Room is the normal startup authority. Read in bounded pages and
+    // convert each page immediately so a second full catalogue copy is avoided.
     try{
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
-      if(roomSnapshot!=null){
-        synchronized(channels){
-          channels.clear();
-          for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:roomSnapshot.channels){
-            Channel channel=new Channel(row.name,row.url,row.group);
-            channel.tvgId=row.tvgId;
-            channel.tvgName=row.tvgName;
-            channel.backups.clear();
-            channel.backups.addAll(row.sources);
-            channel.sourceScopes.addAll(row.sourceScopes);
-            for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-              channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(), page -> {
+            synchronized(channels){
+              for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+                Channel channel=new Channel(row.name,row.url,row.group);
+                channel.tvgId=row.tvgId;
+                channel.tvgName=row.tvgName;
+                channel.backups.clear();
+                channel.backups.addAll(row.sources);
+                channel.sourceScopes.addAll(row.sourceScopes);
+                for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+                  channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+                }
+                channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+                channels.add(channel);
+              }
             }
-            channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-            channels.add(channel);
-          }
-        }
+          });
+      if(roomSnapshot!=null){
         synchronized(favorites){
           favorites.clear();
           favorites.addAll(roomSnapshot.favorites);
         }
         rebuildChannelIndexes();
         catalogueSnapshotTrusted=true;
-        logCatalogueMemory("room_restore_ready",channels.size(),roomSnapshot.channels.size(),android.os.SystemClock.elapsedRealtime()-restoreStarted);
+        int sourceCount=0;
+        synchronized(channels){for(Channel channel:channels)sourceCount+=channel.backups.size();}
+        logCatalogueMemory("room_restore_ready",channels.size(),sourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
         android.util.Log.i("MyTVRoom","authoritative Room restore complete channels="
-            +roomSnapshot.channels.size()+" favorites="+roomSnapshot.favorites.size());
+            +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
         return;
       }
     }catch(Throwable roomReadFailure){
+      synchronized(channels){channels.clear();}
       android.util.Log.e("MyTVRoom","Room read failed; attempting one-time legacy recovery",roomReadFailure);
       saveLiveDiagnostic("ROOM_READ_ERROR",roomReadFailure.getClass().getSimpleName()+": "+String.valueOf(roomReadFailure.getMessage()));
     }
