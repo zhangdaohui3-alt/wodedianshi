@@ -14,14 +14,12 @@ import org.json.*;
 public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
-  private static final int MAX_SOURCES_PER_CHANNEL = 5;
+  private static final int MAX_SOURCES_PER_CHANNEL = 8;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
-  // Keep each feed's candidate slice small: only 12 discovery URLs are probed
-  // per run, so a 1,200-entry first playlist would starve provincial and HK/MO/TW
-  // feeds for many runs. Small equal quotas let every China-first feed reach probing
-  // promptly while the independent rotating cursor continues covering later entries.
-  private static final int MAX_DISCOVERY_PER_FEED = 24;
+  // Four rotating entries per feed let all six China/HMT feeds fit one 24-probe
+  // first-run batch. The cursor advances only after the whole batch has been probed.
+  private static final int MAX_DISCOVERY_PER_FEED = 4;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -88,7 +86,8 @@ public class SourceUpdateWorker extends Worker {
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
       JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
+        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
+            c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
         JSONArray src=c.optJSONArray("sources");
         if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(SourceSelectionPolicy.endpointKey(src.optString(j)));
         knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
@@ -102,7 +101,7 @@ public class SourceUpdateWorker extends Worker {
       // A foreground China-first pass validates newly discovered domestic candidates only.
       // Avoid allocating up to 20,000 additional saved-source Entry objects while the
       // TV UI is open; the full rotating health-check pool is retained for background runs.
-      if(!foregroundAtStart){
+      if(!foregroundAtStart&&!initialDiscoveryChain){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
           String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
@@ -118,14 +117,20 @@ public class SourceUpdateWorker extends Worker {
             if(savedPool.size()>=20000)break;
             // A shared URL only needs one network probe, even if several channel
             // entries reference it. Keep the first channel identity for diagnostics.
-            if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(channelName,u,channelGroup,true,""));
+            if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(
+                channelName,u,channelGroup,true,"",channel.optString("tvgId",""),channel.optString("tvgName","")));
           }
         }
       }
+      ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
-        if(foregroundAtStart&&feedIndex>=6)break;
+        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=6)break;
         if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
+        if(initialDiscoveryChain&&prefs.getBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
+        int feedCursor=prefs.getInt(feedCursorKey(feedIndex),0);
+        int[] parsedCount={0};
+        boolean feedReadSucceeded=false;
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
@@ -146,12 +151,14 @@ public class SourceUpdateWorker extends Worker {
             String header=reader.readLine();
             if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
               throw new IOException("目录格式无效");
-            parsePlaylist(reader,feedCandidates,scopeForFeed(feed));
+            parsedCount[0]=parsePlaylist(reader,feedCandidates,scopeForFeed(feed),
+                feedCursor,MAX_DISCOVERY_PER_FEED);
           }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
           feedCandidatesAdded=true;
+          feedReadSucceeded=true;
           feedsOk++;
         }catch(Exception e){
           // Keep complete entries parsed before a transient stream read failure;
@@ -162,7 +169,10 @@ public class SourceUpdateWorker extends Worker {
             if(!feedCandidates.isEmpty())feedsWithEntries++;
           }
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
-        }finally{if(c!=null)c.disconnect();}
+        }finally{
+          if(c!=null)c.disconnect();
+          feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],feedReadSucceeded));
+        }
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -173,9 +183,9 @@ public class SourceUpdateWorker extends Worker {
       int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       String discoveryFingerprint=discoveryFingerprint(candidates);
-      String previousDiscoveryFingerprint=prefs.getString("source_initial_discovery_fingerprint","");
+      String previousDiscoveryFingerprint=prefs.getString("source_feed_batch_fingerprint","");
       int initialDiscoveryScanned=discoveryFingerprint.equals(previousDiscoveryFingerprint)
-          ?prefs.getInt("source_initial_discovery_scanned",0):0;
+          ?prefs.getInt("source_feed_batch_scanned",0):0;
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -217,7 +227,7 @@ public class SourceUpdateWorker extends Worker {
         measuredScores.remove(legacyScoreKey(e.url));
         if(!measured.valid)continue;
         if(!e.savedSource)discoveryProbesValid++;
-        String key=identity(e.name,e.group,e.url);JSONObject target=byIdentity.get(key);
+        String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
         // A known URL may appear in a second directory. Record that provenance
         // without duplicating the backup or probing the same address twice.
         if(knownUrls.contains(SourceSelectionPolicy.endpointKey(e.url))){
@@ -226,7 +236,8 @@ public class SourceUpdateWorker extends Worker {
         }
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
-          target.put("name",e.name);target.put("url",e.url);target.put("group",e.group);target.put("sources",sources);
+          target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
+          target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
           addBackupSourceScope(target,e.url,e.scope);
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
@@ -313,10 +324,10 @@ public class SourceUpdateWorker extends Worker {
         throw new IllegalStateException("Room catalogue update produced no channel rows");
       }
       // No JSON hand-off: the validated directory is committed directly to Room.
-      int nextInitialDiscoveryScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
-      boolean initialDiscoveryComplete=initialDiscoveryChain
-          &&SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(
-              candidates.size(),nextInitialDiscoveryScanned,feedsFailed);
+      int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
+      boolean feedBatchComplete=nextBatchScanned>=candidates.size();
+      boolean initialDiscoveryComplete=initialDiscoveryChain&&feedBatchComplete
+          &&areInitialChinaFeedsComplete(prefs,feedBatches);
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -326,26 +337,42 @@ public class SourceUpdateWorker extends Worker {
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?"已解析频道条目，但候选线路均未通过媒体预检，本次不计为首次发现成功；":"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
-      // Do not mark initial discovery complete for an HTTP-200 but empty playlist,
-      // or when every discovered candidate fails media preflight. A later app launch
-      // can retry after the catalogue or network recovers.
-      if(initialDiscoveryChain){
-        if(initialDiscoveryComplete){
-          update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned");
-          if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
-            update.putLong("source_update_last_success_at",System.currentTimeMillis());
-        }else if(candidates.size()>0){
-          update.putString("source_initial_discovery_fingerprint",discoveryFingerprint)
-              .putInt("source_initial_discovery_scanned",nextInitialDiscoveryScanned);
+      // Advance a feed only after every candidate in the current multi-feed batch
+      // has had its probe turn. This prevents losing the tail when the probe deadline
+      // interrupts a run, and ensures later playlist pages are eventually discovered.
+      if(feedBatchComplete){
+        for(FeedBatch batch:feedBatches){
+          if(!batch.success)continue;
+          if(initialDiscoveryChain&&batch.parsed<MAX_DISCOVERY_PER_FEED){
+            update.putBoolean(initialFeedDoneKey(batch.index),true)
+                .remove(feedCursorKey(batch.index));
+          }else if(batch.parsed>0){
+            update.putInt(feedCursorKey(batch.index),batch.cursor+batch.parsed);
+          }else if(initialDiscoveryChain){
+            update.putBoolean(initialFeedDoneKey(batch.index),true)
+                .remove(feedCursorKey(batch.index));
+          }else{
+            update.remove(feedCursorKey(batch.index));
+          }
         }
-      }else if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
+        update.remove("source_feed_batch_fingerprint").remove("source_feed_batch_scanned");
+      }else if(candidates.size()>0){
+        update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
+            .putInt("source_feed_batch_scanned",nextBatchScanned);
+      }
+      if(initialDiscoveryChain&&initialDiscoveryComplete){
+        update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned");
+        if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
+          update.putLong("source_update_last_success_at",System.currentTimeMillis());
+      }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
-      if(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.size()>0){
+      if(initialDiscoveryChain&&!initialDiscoveryComplete
+          &&(candidates.size()>0||feedsFailed>0)){
         androidx.work.OneTimeWorkRequest continuation=
             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
                 .setConstraints(new androidx.work.Constraints.Builder()
@@ -356,9 +383,22 @@ public class SourceUpdateWorker extends Worker {
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
             "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
       }
-      return discoveryUnavailable&&!(initialDiscoveryChain&&candidates.size()>0)
+      return (discoveryUnavailable&&!(initialDiscoveryChain&&candidates.size()>0))
+          ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty()&&feedsFailed>0)
           ?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private boolean areInitialChinaFeedsComplete(SharedPreferences prefs,List<FeedBatch> batches){
+    for(int i=0;i<6;i++){
+      boolean done=prefs.getBoolean(initialFeedDoneKey(i),false);
+      if(!done){
+        for(FeedBatch batch:batches){
+          if(batch.index==i&&batch.success&&batch.parsed<MAX_DISCOVERY_PER_FEED){done=true;break;}
+        }
+      }
+      if(!done)return false;
+    }
+    return true;
   }
   private String discoveryFingerprint(List<Entry> entries){
     StringBuilder value=new StringBuilder(entries.size()*48);
@@ -400,22 +440,39 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
   }
   private static class Entry{
-    String name,url,group,scope;boolean savedSource;
+    String name,url,group,scope,tvgId,tvgName;boolean savedSource;
     // Unscoped saved URLs have unknown provenance; only discovered feeds carry an explicit scope.
-    Entry(String n,String u,String g){this(n,u,g,false,"");}
-    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"");}
+    Entry(String n,String u,String g){this(n,u,g,false,"","","");}
+    Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"","","");}
     Entry(String n,String u,String g,boolean saved,String sourceScope){
-      name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
+      this(n,u,g,saved,sourceScope,"","");
     }
+    Entry(String n,String u,String g,boolean saved,String sourceScope,String id,String guideName){
+      name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
+      tvgId=id==null?"":id;tvgName=guideName==null?"":guideName;
+    }
+  }
+  private static class FeedBatch{
+    final int index,cursor,parsed;final boolean success;
+    FeedBatch(int i,int c,int p,boolean ok){index=i;cursor=c;parsed=p;success=ok;}
   }
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
-  private void parsePlaylist(Reader reader,List<Entry> out,String sourceScope)throws IOException{
-    PlaylistParser.parseEach(reader,MAX_DISCOVERY_PER_FEED,source->{
+  private int parsePlaylist(Reader reader,List<Entry> out,String sourceScope,
+                            int skipEntries,int maxEntries)throws IOException{
+    return PlaylistParser.parseEach(reader,skipEntries,maxEntries,source->{
       String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
-      out.add(new Entry(source.name,source.url,source.group,false,scope));
+      out.add(new Entry(source.name,source.url,source.group,false,scope,
+          source.tvgId,source.tvgName));
     });
+  }
+  private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
+  private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+  private String canonicalDisplayName(Entry entry){
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+        entry.name,entry.tvgName,entry.tvgId,entry.group);
+    return broadcaster.isEmpty()?entry.name:broadcaster;
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
@@ -751,13 +808,17 @@ public class SourceUpdateWorker extends Worker {
     if(v.endsWith("广东台"))return "广东卫视";
     return v;
   }
-  private String identity(String name,String group,String url){
-    String v=canonicalName(name);
-    if(v.startsWith("CCTV-"))return v.toLowerCase(Locale.ROOT)+"|cctv";
-    if(v.contains("卫视"))return v.toLowerCase(Locale.ROOT)+"|satellite";
+  private String identity(String name,String group,String url,String tvgId,String tvgName){
+    String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
+    String v=broadcaster.isEmpty()?canonicalName(name):broadcaster;
     String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
-    try{java.net.URI u=java.net.URI.create(url==null?"":url);String host=u.getHost();if(host!=null&&!host.isEmpty())return base+"|host:"+host.toLowerCase(Locale.ROOT);}catch(Exception ignored){}
-    return base+"|url:"+(url==null?"":url.trim());
+    String fallback=base;
+    try{
+      java.net.URI u=java.net.URI.create(url==null?"":url);
+      String host=u.getHost();
+      if(host!=null&&!host.isEmpty())fallback=base+"|host:"+host.toLowerCase(Locale.ROOT);
+    }catch(Exception ignored){fallback=base+"|url:"+(url==null?"":url.trim());}
+    return ChannelIdentityPolicy.identity(v,tvgId,fallback);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
   private void saveStatus(SharedPreferences p,String result,int added){p.edit().putString("source_update_time",now()).putString("source_update_result",result).apply();}
