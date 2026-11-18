@@ -7,6 +7,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.FilterInputStream;
+import java.io.FilterOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -56,7 +57,12 @@ public final class ChannelDirectorySnapshotCodec {
         if (destination == null) throw new IllegalArgumentException("destination is null");
         if (channels == null || channels.isEmpty() || channels.size() > MAX_CHANNELS)
             throw new IOException("invalid channel count");
-        GZIPOutputStream gzip = new GZIPOutputStream(destination);
+        // The caller owns the destination and may need to sync it after compression.
+        // Closing the gzip wrapper must release the deflater without closing that file stream.
+        OutputStream nonClosing = new FilterOutputStream(destination) {
+            @Override public void close() throws IOException { flush(); }
+        };
+        GZIPOutputStream gzip = new GZIPOutputStream(nonClosing);
         DataOutputStream out = new DataOutputStream(gzip);
         try {
             out.writeInt(MAGIC); out.writeInt(VERSION); out.writeInt(channels.size());
