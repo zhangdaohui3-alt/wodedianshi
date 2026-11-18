@@ -1130,7 +1130,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
           getApplicationContext(),rows,favoriteSnapshot);
       if(written<=0)throw new IllegalStateException("Room wrote zero channel rows");
-      writeLocalDirectorySnapshotFromRows(rows,favoriteSnapshot,"room_persist");
+      // Room is authoritative. Re-encoding the entire directory cache after every\n      // mutation duplicates thousands of channel/source objects and a compressed byte\n      // array while the Room snapshot is still live. Keep the previous verified cache\n      // as a fast bootstrap; startup reconciliation reads the committed Room pages and\n      // refreshes the disposable cache once, off the UI thread.\n      android.util.Log.i("MyTVCache","cache rebuild deferred after Room commit channels="\n          +written+"; Room remains authoritative and startup reconciliation will refresh it");
       saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM",
           "saved "+written+" channels, "+sourceCount+" source routes and "+favoriteSnapshot.size()+" favorites");
       logCatalogueMemory("room_persist_done",written,sourceCount,
