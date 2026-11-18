@@ -612,7 +612,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               channels.add(channel);
             }
           }
-          scheduleStartupPartialDirectoryRender();
         });
       }
       if(roomSnapshot==null||roomSnapshot.channelCount<=0){
