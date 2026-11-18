@@ -3534,10 +3534,15 @@ public class MainActivity extends Activity {
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
   private Runnable audioTrackCheck;
+  // True only after the current READY period's 12-second health check has run.
+  private boolean audioTrackCheckCompleted=false;
   private void cancelAudioTrackCheck(){
     if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
   }
-  private void scheduleAudioTrackCheck(){scheduleAudioTrackCheck(12000L);}
+  private void scheduleAudioTrackCheck(){
+    audioTrackCheckCompleted=false;
+    scheduleAudioTrackCheck(12000L);
+  }
   // A sink error can arrive after the initial READY health check has already run.
   // Recheck shortly after that event instead of leaving a late startup failure undetected.
   private void scheduleAudioTrackCheck(long delayMs){
@@ -3549,6 +3554,7 @@ public class MainActivity extends Activity {
       audioTrackCheck=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
           ||player.getPlaybackState()!=Player.STATE_READY)return;
+      audioTrackCheckCompleted=true;
       // A missing/unsupported/unselected audio track is different from a selected
       // audio track that has not advanced yet (for example, a silent programme).
       boolean missingAudioTrack=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected;
@@ -3752,7 +3758,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;audioTrackCheckCompleted=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3848,7 +3854,10 @@ public class MainActivity extends Activity {
             // source transition: verify this same generation after a short grace period.
             final String sinkErrorMediaId=currentMediaId;
             uiHandler.post(()->{
-              if(sinkErrorMediaId.equals(currentMediaId))scheduleAudioTrackCheck(3000L);
+              if(sinkErrorMediaId.equals(currentMediaId)
+                  &&AudioTrackCheckSchedulePolicy.shouldScheduleLateSinkRecheck(audioTrackCheckCompleted)){
+                scheduleAudioTrackCheck(3000L);
+              }
             });
           }
         }
