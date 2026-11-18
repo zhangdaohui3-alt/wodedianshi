@@ -958,168 +958,49 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean persistNow(){
     if(!catalogueSnapshotTrusted){
-      android.util.Log.e("MyTVCatalogue",
-          "save blocked: last restore was incomplete; original saved catalogue is being preserved");
-      saveLiveDiagnostic("CATALOGUE_PERSIST_BLOCKED",
-          "incomplete restore; temporary/partial in-memory channels were not written over saved catalogue");
+      android.util.Log.e("MyTVCatalogue","Room save blocked because startup catalogue is not trusted");
+      saveLiveDiagnostic("CATALOGUE_PERSIST_BLOCKED","Room startup restore/seed is incomplete");
       return false;
     }
-    long persistStarted=android.os.SystemClock.elapsedRealtime();
-    int persistedSources=0;
-    int persistedChannels=0;
-    try {
-      int startingChannelCount;
-      synchronized(channels){startingChannelCount=channels.size();}
-      logCatalogueMemory("persist_begin",startingChannelCount,0,0);
+    long started=android.os.SystemClock.elapsedRealtime();
+    int sourceCount=0;
+    try{
+      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
+          new ArrayList<>();
+      synchronized(channels){
+        for(Channel channel:channels){
+          if(channel==null||channel.name==null||channel.name.trim().isEmpty()
+              ||channel.url==null||channel.url.trim().isEmpty())continue;
+          com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+              new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+          row.name=channel.name;row.url=channel.url;row.group=channel.group;
+          row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
+          row.activeSource=channel.activeSource;
+          if(channel.backups!=null){row.sources.addAll(channel.backups);sourceCount+=channel.backups.size();}
+          if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+          if(channel.backupSourceScopes!=null){
+            for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
+              row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+            }
+          }
+          rows.add(row);
+        }
+      }
+      if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
-
-      // Once the Room seed is valid, persist the live catalogue directly to the
-      // single database. No full-catalogue JSON string or SharedPreferences write
-      // is created on the normal path.
-      if(new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
-        ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> roomRows=new ArrayList<>();
-        synchronized(channels){
-          persistedChannels=channels.size();
-          for(Channel channel:channels){
-            if(channel==null)continue;
-            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-            row.name=channel.name;row.url=channel.url;row.group=channel.group;
-            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
-            row.activeSource=channel.activeSource;
-            if(channel.backups!=null){row.sources.addAll(channel.backups);persistedSources+=channel.backups.size();}
-            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-            if(channel.backupSourceScopes!=null){
-              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
-                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-              }
-            }
-            roomRows.add(row);
-          }
-        }
-        int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
-            getApplicationContext(),roomRows,favoriteSnapshot);
-        if(written==0&&!roomRows.isEmpty())throw new IllegalStateException("Room wrote zero catalogue rows");
-        saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM","saved "+written+" channels and "+favoriteSnapshot.size()+" favorites directly to Room");
-        android.util.Log.i("MyTVRoom","authoritative Room write complete channels="+written
-            +" sources="+persistedSources+" favorites="+favoriteSnapshot.size());
-        return true;
-      }
-
-      // First install/upgrade only: before the Room seed exists, preserve the
-      // legacy snapshot long enough for the one-time importer to populate Room.
-      // Do not deep-copy 11k+ Channel objects before encoding. The previous
-      // implementation retained both that detached object graph and the complete
-      // StringWriter buffer, then toString() allocated another full-size char array.
-      // That peak caused OOM on TV boxes with a 256 MB app heap.
-      //
-      // Serialize the live catalogue while holding its lock. This trades a longer
-      // background critical section for a much lower memory peak; all UI work stays
-      // off this worker and mutations wait until the durable snapshot is complete.
-      String savedJson;
-      synchronized(channels){
-        persistedChannels=channels.size();
-        StringWriter buffer=new StringWriter(Math.max(1024,Math.min(1024*1024,persistedChannels*64)));
-        try(android.util.JsonWriter writer=new android.util.JsonWriter(buffer)){
-          writer.beginArray();
-          for(Channel channel:channels){
-            if(channel==null)continue;
-            writer.beginObject();
-            writer.name("name").value(channel.name);
-            writer.name("url").value(channel.url);
-            writer.name("group").value(channel.group);
-            writer.name("tvgId").value(channel.tvgId);
-            writer.name("tvgName").value(channel.tvgName);
-            writer.name("activeSource").value(channel.activeSource);
-            writer.name("sources").beginArray();
-            if(channel.backups!=null){
-              for(String source:channel.backups){
-                writer.value(source);
-                persistedSources++;
-              }
-            }
-            writer.endArray();
-            writer.name("sourceScopes").beginArray();
-            if(channel.sourceScopes!=null)for(String scope:channel.sourceScopes)writer.value(scope);
-            writer.endArray();
-            writer.name("backupSourceScopes").beginArray();
-            if(channel.backups!=null&&channel.backupSourceScopes!=null){
-              for(String source:channel.backups){
-                HashSet<String> scopes=channel.backupSourceScopes.get(source);
-                if(scopes==null||scopes.isEmpty())continue;
-                writer.beginObject().name("url").value(source).name("scopes").beginArray();
-                for(String scope:scopes)writer.value(scope);
-                writer.endArray().endObject();
-              }
-            }
-            writer.endArray();
-            writer.endObject();
-          }
-          writer.endArray();
-        }
-        // StringWriter.toString() allocates a second full-size character array.
-        // Estimate the additional contiguous allocation before making that copy.
-        // If headroom is insufficient, keep the last durable catalogue untouched
-        // rather than risking a process-wide OOM during a remote-control action.
-        Runtime runtime=Runtime.getRuntime();
-        long availableHeap=runtime.freeMemory()+Math.max(0L,runtime.maxMemory()-runtime.totalMemory());
-        long requiredHeap=buffer.getBuffer().length()*2L+(32L*1024L*1024L);
-        if(availableHeap<requiredHeap){
-          android.util.Log.w("MyTVCatalogue","save deferred: insufficient heap headroom; available="
-              +availableHeap+" required="+requiredHeap+" channels="+persistedChannels);
-          saveLiveDiagnostic("CATALOGUE_PERSIST_DEFERRED",
-              "insufficient heap headroom; available="+availableHeap+" required="+requiredHeap);
-          return false;
-        }
-        savedJson=buffer.toString();
-      }
-      logCatalogueMemory("persist_json_ready",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
-      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-      synchronized(cataloguePreferenceWriteLock){
-        final String expectedPersisted;
-        // Read/check the base under the lightweight state lock, but do not hold it
-        // during disk I/O. UI persist() calls must remain able to enqueue a new
-        // generation while this 20+ MB preference file is being committed.
-        synchronized(cataloguePersistLock){
-          expectedPersisted=lastPersistedChannelsJson;
-          String currentPersisted=prefs.getString("channels","[]");
-          if(expectedPersisted!=null&&!java.util.Objects.equals(currentPersisted,expectedPersisted)){
-            android.util.Log.w("MyTVCatalogue","skip stale catalogue save: persisted base changed during snapshot");
-            saveLiveDiagnostic("CATALOGUE_PERSIST_CONFLICT","persisted catalogue changed while save snapshot was being encoded; stale write skipped");
-            return false;
-          }
-        }
-        // This method runs only on cataloguePersistWorker, never on the UI thread.
-        // commit() confirms the file reached disk before Room can treat this
-        // snapshot as saved. cataloguePreferenceWriteLock also excludes candidate
-        // publication, while cataloguePersistLock stays free for UI enqueue calls.
-        boolean committed=prefs.edit()
-            .putString("channels",savedJson)
-            .putStringSet("fav",favoriteSnapshot)
-            .commit();
-        if(!committed){
-          android.util.Log.e("MyTVCatalogue","SharedPreferences commit returned false; previous saved snapshot remains authoritative");
-          saveLiveDiagnostic("CATALOGUE_PERSIST_COMMIT_FAILED",
-              "SharedPreferences commit returned false; Room reconcile must not use this snapshot");
-          return false;
-        }
-        synchronized(cataloguePersistLock){
-          lastPersistedChannelsJson=savedJson;
-        }
-      }
-      saveLiveDiagnostic("CATALOGUE_PERSIST","saved "+persistedChannels+" channels, json_chars="+savedJson.length());
-      logCatalogueMemory("persist_done",persistedChannels,persistedSources,android.os.SystemClock.elapsedRealtime()-persistStarted);
+      int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
+          getApplicationContext(),rows,favoriteSnapshot);
+      if(written<=0)throw new IllegalStateException("Room wrote zero channel rows");
+      saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM",
+          "saved "+written+" channels, "+sourceCount+" source routes and "+favoriteSnapshot.size()+" favorites");
+      logCatalogueMemory("room_persist_done",written,sourceCount,
+          android.os.SystemClock.elapsedRealtime()-started);
       return true;
-    } catch(OutOfMemoryError memoryFailure) {
-      // Last-resort containment: never overwrite the previous durable catalogue
-      // with a partial value. The preflight above should normally defer first.
-      android.util.Log.e("MyTVCatalogue","catalogue save aborted after memory pressure; previous saved data retained",
-          memoryFailure);
-      return false;
-    } catch(Exception failure) {
-      android.util.Log.e("MyTVCatalogue","streaming catalogue save failed",failure);
-      saveLiveDiagnostic("CATALOGUE_PERSIST_ERROR",failure.getClass().getSimpleName()+": "+failure.getMessage());
+    }catch(Throwable failure){
+      android.util.Log.e("MyTVCatalogue","Room catalogue transaction failed",failure);
+      saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM_ERROR",
+          failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
       return false;
     }
   }
