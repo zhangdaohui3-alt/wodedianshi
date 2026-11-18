@@ -131,6 +131,99 @@ public final class DirectoryCacheStore {
     }
 
     /**
+     * Saves a payload already streamed to a temporary file. The envelope is
+     * copied with a fixed-size buffer, avoiding a second full-payload byte[].
+     */
+    public synchronized void saveFromFile(Directory which, String sourceFingerprint,
+                                          File payloadFile, long savedAtMillis) throws IOException {
+        if (which == null) throw new IllegalArgumentException("directory is null");
+        if (payloadFile == null || !payloadFile.isFile())
+            throw new IOException("directory snapshot payload file is missing");
+        long payloadLength = payloadFile.length();
+        if (payloadLength <= 0L || payloadLength > MAX_PAYLOAD_BYTES)
+            throw new IOException("directory snapshot exceeds size limit");
+        if (sourceFingerprint == null) sourceFingerprint = "";
+        if (!directory.exists() && !directory.mkdirs() && !directory.isDirectory())
+            throw new IOException("cannot create directory cache folder");
+
+        byte[] digest = sha256(payloadFile);
+        File target = fileFor(which);
+        File temp = new File(directory, target.getName() + ".tmp");
+        File backup = new File(directory, target.getName() + ".bak");
+        if (backup.isFile()) {
+            Snapshot backupSnapshot = readSnapshotFile(which, backup, null);
+            Snapshot targetSnapshot = target.isFile() ? readSnapshotFile(which, target, null) : null;
+            if (targetSnapshot == null && backupSnapshot != null) {
+                if (target.exists() && !target.delete())
+                    throw new IOException("cannot replace invalid directory cache");
+                if (!backup.renameTo(target))
+                    throw new IOException("cannot recover previous directory snapshot");
+            } else if (targetSnapshot != null && !backup.delete()) {
+                throw new IOException("cannot clear obsolete cache backup");
+            }
+        }
+        if (temp.exists() && !temp.delete())
+            throw new IOException("cannot clear stale temporary cache");
+
+        try {
+            FileOutputStream fileOut = new FileOutputStream(temp);
+            try {
+                DataOutputStream out = new DataOutputStream(new BufferedOutputStream(fileOut));
+                out.writeInt(MAGIC);
+                out.writeInt(SCHEMA_VERSION);
+                out.writeLong(savedAtMillis);
+                out.writeUTF(sourceFingerprint);
+                out.writeInt((int) payloadLength);
+                out.writeInt(digest.length);
+                out.write(digest);
+                FileInputStream payloadIn = new FileInputStream(payloadFile);
+                try {
+                    byte[] buffer = new byte[16 * 1024];
+                    int count;
+                    while ((count = payloadIn.read(buffer)) != -1) out.write(buffer, 0, count);
+                } finally {
+                    payloadIn.close();
+                }
+                out.flush();
+                fileOut.getFD().sync();
+                out.close();
+            } finally {
+                try { fileOut.close(); } catch (IOException ignored) {}
+            }
+
+            if (backup.exists() && !backup.delete())
+                throw new IOException("cannot clear stale cache backup");
+            if (target.exists() && !target.renameTo(backup))
+                throw new IOException("cannot preserve previous directory snapshot");
+            if (!temp.renameTo(target)) {
+                if (backup.exists()) backup.renameTo(target);
+                throw new IOException("cannot commit new directory snapshot");
+            }
+            if (backup.exists()) backup.delete();
+        } catch (IOException failure) {
+            if (temp.exists()) temp.delete();
+            if (!target.exists() && backup.exists()) backup.renameTo(target);
+            throw failure;
+        }
+    }
+
+    private static byte[] sha256(File file) throws IOException {
+        FileInputStream in = new FileInputStream(file);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[16 * 1024];
+            int count;
+            while ((count = in.read(buffer)) != -1) digest.update(buffer, 0, count);
+            return digest.digest();
+        } catch (Exception unavailable) {
+            if (unavailable instanceof IOException) throw (IOException) unavailable;
+            throw new IOException("SHA-256 unavailable", unavailable);
+        } finally {
+            in.close();
+        }
+    }
+
+    /**
      * Loads a validated snapshot. Pass null expectedFingerprint to accept the
      * last known cache while offline; pass a value to reject stale feed layouts.
      */
