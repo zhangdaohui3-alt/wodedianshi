@@ -26,7 +26,7 @@ public final class RoomCatalogueReader {
         ChannelRecord(ChannelEntity channel, List<BackupSourceEntity> sourceRows) {
             name = channel.name == null ? "" : channel.name;
             String legacyKey = channel.legacyKey == null ? "" : channel.legacyKey;
-            int separator = legacyKey.indexOf('|');
+            int separator = legacyKey.lastIndexOf('|');
             url = separator >= 0 ? legacyKey.substring(separator + 1)
                     : (channel.primaryUrl == null ? "" : channel.primaryUrl);
             group = channel.groupName == null ? "" : channel.groupName;
