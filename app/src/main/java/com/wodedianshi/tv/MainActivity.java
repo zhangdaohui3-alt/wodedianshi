@@ -3528,7 +3528,7 @@ public class MainActivity extends Activity {
   private boolean audioTrackPresent=false;
   private boolean audioTrackSupported=false;
   private boolean audioTrackSelected=false;
-  private boolean audioPositionAdvancing=false;
+  private volatile boolean audioPositionAdvancing=false;
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3545,17 +3545,22 @@ public class MainActivity extends Activity {
       audioTrackCheck=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
           ||player.getPlaybackState()!=Player.STATE_READY)return;
-      boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
+      // A missing/unsupported/unselected audio track is different from a selected
+      // audio track that has not advanced yet (for example, a silent programme).
+      boolean missingAudioTrack=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected;
+      boolean audioNotAdvancing=!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
-      if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
+      if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudioTrack,missingVideo)){
         recordCurrentSourceFailure();
-        String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
+        String reason=missingVideo
+            ?(missingAudioTrack?"音视频轨道均不可用":"没有可用视频轨道")
+            :"没有可用音轨";
         advanceToNextSourceAutomatically("检测到当前源"+reason);
-      }else if(missingAudio){
-        // Audio-only failure must not discard a source whose video is rendering.
-        // Keep the warning for diagnosis, but let the viewer continue watching.
-        saveLiveDiagnostic("AUDIO_TRACK_WARNING",
-            "video output is available; audio track/output is missing or not advancing");
+      }else if(audioNotAdvancing){
+        // A selected audio track with no advancement is diagnostic only: do not
+        // switch away during a legitimately silent segment or slow audio startup.
+        saveLiveDiagnostic("AUDIO_OUTPUT_WARNING",
+            "audio track is selected but audio position has not advanced by the 12-second health check");
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
