@@ -6077,6 +6077,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startLibVlcFrameProbe(String expectedMediaId,int expectedChannel,
       LibVlcPlaybackEngine expectedEngine){
+    // Repeated Vout notifications for the same player must not reset a running
+    // black-frame streak or allocate another sample bitmap.
+    if(libVlcFrameVerified||libVlcFrameProbe!=null)return;
     cancelLibVlcFrameProbe();
     if(android.os.Build.VERSION.SDK_INT<24){
       saveLiveDiagnostic("VLC_FRAME_PROBE_UNAVAILABLE","PixelCopy requires Android API 24 or newer");
