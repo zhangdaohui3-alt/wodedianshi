@@ -6057,35 +6057,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       livePersistenceWorker.execute(()->{
         try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
-      String key=StableKey.url(url);
-      String legacyKey=StableKey.legacyUrl(url);
-      org.json.JSONObject m=all.optJSONObject(key);
-      if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
-      if(m==null)m=new org.json.JSONObject();
-      if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
-      else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
-      else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
-      else if("audioCodecError".equals(event))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
-      else if("audioSinkError".equals(event))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
-      else if("videoCodecError".equals(event))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
-      else if("ready".equals(event)){
-        int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
-        m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastReady",System.currentTimeMillis());
-      }else if("firstFrame".equals(event)){
-        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
-        m.put("firstFrames",count+1);
-        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastFirstFrame",System.currentTimeMillis());
-      }else if("stable".equals(event)){
-        m.put("stablePlays",m.optInt("stablePlays",0)+1);
-        m.put("lastStable",System.currentTimeMillis());
-      }
-      m.put("updated",System.currentTimeMillis());all.put(key,m);
-      p.edit().putString("source_qoe_v1",all.toString()).apply();
-    }catch(Exception ignored){}
+          android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+          org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
+          String key=StableKey.url(metricUrl);
+          String legacyKey=StableKey.legacyUrl(metricUrl);
+          org.json.JSONObject m=all.optJSONObject(key);
+          if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
+          if(m==null)m=new org.json.JSONObject();
+          if("attempt".equals(metricEvent))m.put("attempts",m.optInt("attempts",0)+1);
+          else if("failure".equals(metricEvent))m.put("failures",m.optInt("failures",0)+1);
+          else if("buffer".equals(metricEvent))m.put("buffers",m.optInt("buffers",0)+1);
+          else if("audioCodecError".equals(metricEvent))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
+          else if("audioSinkError".equals(metricEvent))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
+          else if("videoCodecError".equals(metricEvent))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
+          else if("ready".equals(metricEvent)){
+            int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
+            m.put("ready",count+1);m.put("avgReadyMs",count==0?metricReadyMs:((avg*count)+metricReadyMs)/(count+1));
+            m.put("lastReady",System.currentTimeMillis());
+          }else if("firstFrame".equals(metricEvent)){
+            int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
+            m.put("firstFrames",count+1);
+            m.put("avgFirstFrameMs",count==0?metricReadyMs:((avg*count)+metricReadyMs)/(count+1));
+            m.put("lastFirstFrame",System.currentTimeMillis());
+          }else if("stable".equals(metricEvent)){
+            m.put("stablePlays",m.optInt("stablePlays",0)+1);
+            m.put("lastStable",System.currentTimeMillis());
+          }
+          m.put("updated",System.currentTimeMillis());all.put(key,m);
+          p.edit().putString("source_qoe_v1",all.toString()).apply();
         }catch(Exception ignored){}
       });
     }catch(RuntimeException ignored){}
