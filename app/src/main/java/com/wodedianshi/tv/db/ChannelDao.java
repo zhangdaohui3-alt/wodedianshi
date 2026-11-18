@@ -209,4 +209,7 @@ public interface ChannelDao {
 
     @Query("SELECT COUNT(*) FROM favorites")
     int countFavorites();
+
+    @Query("SELECT c.legacyKey FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
+    List<String> getFavoriteLegacyKeys();
 }
