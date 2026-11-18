@@ -6514,151 +6514,52 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     if(!catalogueSnapshotTrusted){
-      android.util.Log.w("MyTVStartup",
-          "background candidate publication skipped: saved catalogue restore was incomplete");
+      android.util.Log.w("MyTVStartup","Room reload skipped: startup catalogue restore was incomplete");
       saveLiveDiagnostic("BACKGROUND_CATALOGUE_PUBLISH_BLOCKED",
-          "saved catalogue restore was incomplete; staged candidate was left untouched");
+          "startup restore incomplete; existing in-memory catalogue retained");
       return;
     }
     final long generation=++backgroundCatalogueReloadGeneration;
     final long expectedMutationGeneration=catalogueMutationGeneration;
-    final String expectedPersisted=lastPersistedChannelsJson;
     try{
       worker.execute(()->{
         try{
-          // Skip queued work that was superseded before it even began.
-          if(generation!=backgroundCatalogueReloadGeneration)return;
-          android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-          // Parse a staged Worker candidate without applying it yet. Applying is
-          // deferred until the UI-thread publication check, so user edits made
-          // while parsing cannot be lost to an early SharedPreferences write.
-          String pendingBase=prefs.getString("source_update_pending_base",null);
-          String legacyPendingCandidate=prefs.getString("source_update_pending_channels",null);
-          String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
-          String persisted=prefs.getString("channels","[]");
-          String pendingCandidate=PendingCatalogueStore.read(getApplicationContext());
-          if(pendingCandidate==null)pendingCandidate=legacyPendingCandidate;
-          boolean fingerprintMatches=pendingFingerprint!=null&&pendingCandidate!=null
-              &&!pendingCandidate.isEmpty()
-              &&pendingFingerprint.equals(CatalogueFingerprint.sha256(persisted));
-          boolean legacyMatches=pendingBase!=null&&pendingCandidate!=null
-              &&!pendingCandidate.isEmpty()&&pendingBase.equals(persisted);
-          final boolean hasApplicablePending=fingerprintMatches||legacyMatches;
-          final String raw=hasApplicablePending?pendingCandidate:persisted;
-          if(generation!=backgroundCatalogueReloadGeneration)return;
-          if(raw.equals(expectedPersisted))return;
-          final long reloadStarted=android.os.SystemClock.elapsedRealtime();
-    ArrayList<Channel> refreshed=new ArrayList<>();
-    // Keep this return-from-background path aligned with startup restore: streaming
-    // avoids constructing a second full JSONArray/JSONObject tree beside the
-    // large SharedPreferences string. Publish only after the complete array parses.
-    try(android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(raw))){
-      reader.beginArray();
-      while(reader.hasNext()){
-        // Stop parsing promptly if this Activity stopped or a newer reload superseded us.
-        if(generation!=backgroundCatalogueReloadGeneration)return;
-        String name="",url="",group="",tvgId="",tvgName="";
-        int activeSource=0;
-        ArrayList<String> sources=null;
-        HashSet<String> scopes=null;
-        HashMap<String,HashSet<String>> ownership=null;
-        reader.beginObject();
-        while(reader.hasNext()){
-          String field=reader.nextName();
-          switch(field){
-            case "name":name=readCatalogueJsonString(reader,"");break;
-            case "url":url=readCatalogueJsonString(reader,"");break;
-            case "group":group=readCatalogueJsonString(reader,"");break;
-            case "tvgId":tvgId=readCatalogueJsonString(reader,"");break;
-            case "tvgName":tvgName=readCatalogueJsonString(reader,"");break;
-            case "activeSource":
-              String savedIndex=readCatalogueJsonString(reader,"0");
-              try{activeSource=Integer.parseInt(savedIndex);}catch(NumberFormatException ignored){activeSource=0;}
-              break;
-            case "sources":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
-              sources=new ArrayList<>();reader.beginArray();
-              while(reader.hasNext()){
-                String source=readCatalogueJsonString(reader,"");
-                if(source.startsWith("http://")||source.startsWith("https://"))sources.add(source);
-              }
-              reader.endArray();break;
-            case "sourceScopes":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
-              scopes=new HashSet<>();reader.beginArray();
-              while(reader.hasNext()){
-                String scope=readCatalogueJsonString(reader,"");
-                if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))scopes.add(scope);
-              }
-              reader.endArray();break;
-            case "backupSourceScopes":
-              if(reader.peek()==android.util.JsonToken.NULL){reader.nextNull();break;}
-              ownership=new HashMap<>();reader.beginArray();
-              while(reader.hasNext()){
-                String source="";HashSet<String> sourceScopes=new HashSet<>();reader.beginObject();
-                while(reader.hasNext()){
-                  String key=reader.nextName();
-                  if("url".equals(key))source=readCatalogueJsonString(reader,"");
-                  else if("scopes".equals(key)){
-                    reader.beginArray();
-                    while(reader.hasNext()){
-                      String scope=readCatalogueJsonString(reader,"");
-                      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))sourceScopes.add(scope);
-                    }
-                    reader.endArray();
-                  }else reader.skipValue();
+          ArrayList<Channel> refreshed=new ArrayList<>();
+          com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
+              com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+                for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+                  Channel channel=new Channel(row.name,row.url,row.group);
+                  channel.tvgId=row.tvgId;
+                  channel.tvgName=row.tvgName;
+                  channel.backups.clear();
+                  channel.backups.addAll(row.sources);
+                  channel.sourceScopes.addAll(row.sourceScopes);
+                  for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+                    channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+                  }
+                  channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+                  refreshed.add(channel);
                 }
-                reader.endObject();
-                if(!source.isEmpty()&&!sourceScopes.isEmpty())ownership.put(source,sourceScopes);
-              }
-              reader.endArray();break;
-            default:reader.skipValue();break;
+              });
+          if(roomSnapshot==null){
+            android.util.Log.d("MyTVStartup","Room reload skipped: one-time seed is not ready");
+            return;
           }
-        }
-        reader.endObject();
-        if(name.isEmpty()||url.isEmpty())continue;
-        Channel channel=new Channel(name,url,group);
-        channel.tvgId=tvgId;channel.tvgName=tvgName;
-        if(scopes!=null)channel.sourceScopes.addAll(scopes);
-        // Empty means legacy provenance is unknown, not that the channel is custom.
-        if(sources!=null){
-          channel.backups.clear();channel.backups.addAll(sources);
-          if(channel.backups.isEmpty())channel.backups.add(channel.url);
-        }
-        if(ownership!=null)channel.backupSourceScopes.putAll(ownership);
-        channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
-        refreshed.add(channel);
-      }
-      reader.endArray();
-      int reloadedSourceCount=0;
-      for(Channel restored:refreshed)if(restored!=null&&restored.backups!=null)reloadedSourceCount+=restored.backups.size();
-      logCatalogueMemory("background_reload_parse_ready",refreshed.size(),reloadedSourceCount,android.os.SystemClock.elapsedRealtime()-reloadStarted);
-    }catch(Exception invalidCatalogue){
-      throw new IllegalStateException("saved channels JSON is not valid",invalidCatalogue);
-    }
+          if(generation!=backgroundCatalogueReloadGeneration)return;
+          if(!backgroundRefreshPreservesCachedChannels(refreshed)){
+            saveLiveDiagnostic("BACKGROUND_CATALOGUE_REJECTED",
+                "Room snapshot omitted a previously cached channel/source identity; current list retained");
+            return;
+          }
           uiHandler.post(()->{
             String selectedIdentity="";
             String selectedName="";
             String selectedGroup="";
             String selectedUrl="";
-            // Serialize the final generation/base checks with every live catalogue
-            // mutation. Checking before taking this lock leaves a race: a playlist
-            // worker can append a row after the check but before this replacement.
             synchronized(channels){
               if(!activityStarted||isFinishing()||isDestroyed()
                   ||generation!=backgroundCatalogueReloadGeneration
-                  ||catalogueMutationGeneration!=expectedMutationGeneration
-                  ||!java.util.Objects.equals(lastPersistedChannelsJson,expectedPersisted))return;
-              // Validate the complete candidate against the still-live old catalogue
-              // immediately before publication. A malformed or incomplete refresh is
-              // left staged for diagnosis/retry; the old visible and persisted cache wins.
-              if(!backgroundRefreshPreservesCachedChannels(refreshed)){
-                saveLiveDiagnostic("BACKGROUND_CATALOGUE_REJECTED",
-                    "staged refresh omitted one or more cached channel/source identities; old catalogue retained");
-                return;
-              }
-              if(hasApplicablePending&&!applyPendingSourceUpdateIfSafe(prefs,persisted,raw))return;
-              if(!raw.equals(prefs.getString("channels","[]")))return;
+                  ||catalogueMutationGeneration!=expectedMutationGeneration)return;
               if(selected>=0&&selected<channels.size()){
                 Channel current=channels.get(selected);
                 selectedIdentity=identity(current);
@@ -6670,50 +6571,45 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               channels.clear();
               channels.addAll(refreshed);
             }
-    rebuildChannelIndexes();
-    int indexedReloadSources=0;
-    synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedReloadSources+=restored.backups.size();}
-    logCatalogueMemory("background_reload_indexes_ready",channels.size(),indexedReloadSources,android.os.SystemClock.elapsedRealtime()-reloadStarted);
-    if(!selectedIdentity.isEmpty()){
-      int found=-1;
-      for(int i=0;i<channels.size();i++){
-        Channel candidate=channels.get(i);
-        if(identity(candidate).equals(selectedIdentity)){found=i;break;}
-      }
-      // Generic-channel identity includes its original host. A worker can promote a
-      // better backup to the primary URL, so fall back to stable name/group matching.
-      if(found<0){
-        for(int i=0;i<channels.size();i++){
-          Channel candidate=channels.get(i);
-          if(candidate.name.equals(selectedName)&&java.util.Objects.equals(candidate.group,selectedGroup)){found=i;break;}
-        }
-      }
-      selected=found;
-      if(found>=0&&!selectedUrl.isEmpty()){
-        Channel candidate=channels.get(found);
-        for(int i=0;i<candidate.backups.size();i++){
-          if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
-        }
-      }
-    }
-    lastPersistedChannelsJson=raw;
-    if(hasApplicablePending){
-      // The UI publication above uses apply() to stay non-blocking. Queue a normal
-      // background persist/commit before Room import so the staged candidate is
-      // confirmed on disk and any edits queued after publication remain ordered.
-      persist();
-      queueRoomCatalogueReconcileAfterPersist();
-    }
-    refresh();
-    android.util.Log.i("MyTVStartup","reloaded_background_catalogue channels="+channels.size());
+            synchronized(favorites){
+              favorites.clear();
+              favorites.addAll(roomSnapshot.favorites);
+            }
+            rebuildChannelIndexes();
+            if(!selectedIdentity.isEmpty()){
+              int found=-1;
+              for(int i=0;i<channels.size();i++){
+                Channel candidate=channels.get(i);
+                if(identity(candidate).equals(selectedIdentity)){found=i;break;}
+              }
+              if(found<0){
+                for(int i=0;i<channels.size();i++){
+                  Channel candidate=channels.get(i);
+                  if(candidate.name.equals(selectedName)
+                      &&java.util.Objects.equals(candidate.group,selectedGroup)){found=i;break;}
+                }
+              }
+              selected=found;
+              if(found>=0&&!selectedUrl.isEmpty()){
+                Channel candidate=channels.get(found);
+                for(int i=0;i<candidate.backups.size();i++){
+                  if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
+                }
+              }
+            }
+            catalogueSnapshotTrusted=true;
+            refresh();
+            android.util.Log.i("MyTVStartup","reloaded Room catalogue channels="
+                +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
           });
-        }catch(RuntimeException reloadFailure){
-          android.util.Log.e("MyTVStartup","background catalogue reload failed",reloadFailure);
-          saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",reloadFailure.getClass().getSimpleName()+": "+reloadFailure.getMessage());
+        }catch(Throwable reloadFailure){
+          android.util.Log.e("MyTVStartup","Room catalogue reload failed",reloadFailure);
+          saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",
+              reloadFailure.getClass().getSimpleName()+": "+String.valueOf(reloadFailure.getMessage()));
         }
       });
     }catch(RuntimeException rejected){
-      android.util.Log.e("MyTVStartup","background catalogue reload was rejected",rejected);
+      android.util.Log.e("MyTVStartup","Room catalogue reload was rejected",rejected);
     }
   }
 
