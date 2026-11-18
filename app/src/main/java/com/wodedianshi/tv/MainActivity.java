@@ -70,6 +70,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable hideFullscreenControls;
   private boolean fullscreenControlsVisible=false;
   private Runnable revealVodControlsAction;
+  private Runnable backVodToCatalogueAction;
   private TextView channelZapOverlay;
   private TextView channelNameOverlay;
   private TextView networkSpeedOverlay;
@@ -3020,7 +3021,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Do not resume live playback here: the VOD catalogue dialog is still
       // visible. Its own dismiss handler restores the channel after the whole
       // nested VOD session has closed.
-      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
+      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;});
     try{
       recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
@@ -4555,7 +4556,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           else if("aspect".equals(id)){if(vodMode)toast("画面比例设置请在直播菜单中调整");else showAspectRatioDialog(video,"live_aspect_mode");}
           else if("decoder".equals(id))decoderSettingsDialog();
           else if("refresh".equals(id))startManualSourceUpdate();
-          else if("vod_catalogue".equals(id))vodDialog();
+          else if("vod_catalogue".equals(id)){if(vodMode&&backVodToCatalogueAction!=null)backVodToCatalogueAction.run();else vodDialog();}
           else if("vod_controls".equals(id)){if(revealVodControlsAction!=null)revealVodControlsAction.run();else toast("点播控制暂不可用");}
           else toast("此快捷项目尚未绑定操作："+item.title);
         });
