@@ -481,7 +481,9 @@ public class SourceUpdateWorker extends Worker {
   private String canonicalDisplayName(Entry entry){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         entry.name,entry.tvgName,entry.tvgId,entry.group);
-    return broadcaster.isEmpty()?entry.name:broadcaster;
+    if(!broadcaster.isEmpty())return broadcaster;
+    String canonical=canonicalName(entry.name);
+    return canonical.startsWith("CCTV-")||canonical.endsWith("卫视")?canonical:entry.name;
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
