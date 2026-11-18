@@ -3021,7 +3021,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Do not resume live playback here: the VOD catalogue dialog is still
       // visible. Its own dismiss handler restores the channel after the whole
       // nested VOD session has closed.
-      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;});
+      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;if(revealVodControlsAction!=null)revealVodControlsAction=null;});
     try{
       recordDecoderInventoryOnce();
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
