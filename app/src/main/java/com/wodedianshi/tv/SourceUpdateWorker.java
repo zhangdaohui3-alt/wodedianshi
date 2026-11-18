@@ -192,6 +192,57 @@ public class SourceUpdateWorker extends Worker {
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],feedReadSucceeded));
         }
       }
+      // Catalogue visibility is independent of media preflight. Retain every
+      // parsed candidate (including unprobed or temporarily unreachable URLs)
+      // before the bounded probe window runs. Probe scores only affect ranking;
+      // they must never decide whether the channel name appears in the directory.
+      for(Entry e:candidates){
+        if(e==null||e.name==null||e.name.trim().isEmpty()
+            ||e.url==null||(!e.url.startsWith("http://")&&!e.url.startsWith("https://")))continue;
+        String endpoint=SourceSelectionPolicy.endpointKey(e.url);
+        String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);
+        JSONObject target=byIdentity.get(key);
+        if(target==null){
+          target=new JSONObject();
+          JSONArray sources=new JSONArray();sources.put(e.url);
+          target.put("name",canonicalDisplayName(e));target.put("url",e.url);
+          target.put("group",e.group);target.put("tvgId",e.tvgId);
+          target.put("tvgName",e.tvgName);target.put("sources",sources);
+          addBackupSourceScope(target,e.url,e.scope);
+          saved.put(target);byIdentity.put(key,target);added++;
+          knownUrls.add(endpoint);
+          continue;
+        }
+        String canonical=ChannelNamePolicy.canonicalBroadcasterName(
+            e.name,e.tvgName,e.tvgId,e.group);
+        if(!canonical.isEmpty())target.put("name",canonical);
+        if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
+        if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
+        JSONArray sources=target.optJSONArray("sources");
+        if(sources==null){
+          sources=new JSONArray();
+          String primary=target.optString("url","");
+          if(!primary.isEmpty())sources.put(primary);
+          target.put("sources",sources);
+        }
+        boolean alreadyPresent=false;
+        for(int i=0;i<sources.length();i++){
+          if(endpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){
+            alreadyPresent=true;break;
+          }
+        }
+        if(alreadyPresent){
+          addBackupSourceScope(target,e.url,e.scope);
+          knownUrls.add(endpoint);
+        }else if(sources.length()<MAX_SOURCES_PER_CHANNEL){
+          sources.put(e.url);
+          addBackupSourceScope(target,e.url,e.scope);
+          knownUrls.add(endpoint);
+          added++;
+        }
+        // If a channel is already at its source cap, leave this candidate
+        // eligible for the normal post-probe quality-based replacement path.
+      }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
