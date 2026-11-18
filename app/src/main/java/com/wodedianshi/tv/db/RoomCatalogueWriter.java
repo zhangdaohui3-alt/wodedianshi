@@ -52,6 +52,7 @@ public final class RoomCatalogueWriter {
             HashSet<String> desiredFavoriteIds = new HashSet<>();
             HashMap<String, Integer> occurrences = new HashMap<>();
             HashMap<String, Integer> categoryOrders = new HashMap<>();
+            HashMap<String, Integer> sourceOccurrences = new HashMap<>();
 
             // This writer is only used for complete, validated snapshots. Clear
             // once, then repopulate sources in the same transaction so no reader
@@ -124,7 +125,6 @@ public final class RoomCatalogueWriter {
                 // Flush at a fixed route count so a few channels with unusually
                 // many backup URLs cannot create an unbounded temporary list.
                 ArrayList<BackupSourceEntity> sourceBatch = new ArrayList<>(256);
-                HashMap<String, Integer> sourceOccurrences = new HashMap<>();
                 for (int row = offset; row < limit; row++) {
                     ChannelSnapshot item = snapshot.get(row);
                     if (item == null || item.name == null || item.name.trim().isEmpty()
