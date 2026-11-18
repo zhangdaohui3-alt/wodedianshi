@@ -118,7 +118,7 @@ public class MainActivity extends Activity {
   private boolean remoteLockUiActive=false;
   private boolean remoteLockTaskActive=false;
   private long playbackGeneration = 0;
-  private String currentMediaId = "";
+  private volatile String currentMediaId = "";
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
   // per source so no ExoPlayer getter is ever called from that callback thread.
   private static class Channel {
@@ -3772,8 +3772,23 @@ public class MainActivity extends Activity {
       // watchdog below monitors the player timeline without touching codec callbacks.
       final ExoPlayer listenerOwner=player;
       player.addAnalyticsListener(new AnalyticsListener(){
+        // Analytics callbacks can arrive after a source change while the same ExoPlayer
+        // instance is reused. Match the event's own timeline window to the active item.
+        private boolean isCurrentEvent(AnalyticsListener.EventTime eventTime){
+          if(listenerOwner!=MainActivity.this.player||eventTime==null)return false;
+          androidx.media3.common.Timeline eventTimeline=eventTime.timeline;
+          int eventWindowIndex=eventTime.windowIndex;
+          if(eventTimeline==null||eventTimeline.isEmpty()||eventWindowIndex<0||eventWindowIndex>=eventTimeline.getWindowCount()){
+            eventTimeline=eventTime.currentTimeline;
+            eventWindowIndex=eventTime.currentWindowIndex;
+          }
+          if(eventTimeline==null||eventTimeline.isEmpty()||eventWindowIndex<0||eventWindowIndex>=eventTimeline.getWindowCount())return false;
+          androidx.media3.common.Timeline.Window window=new androidx.media3.common.Timeline.Window();
+          eventTimeline.getWindow(eventWindowIndex,window);
+          return currentMediaId.equals(window.mediaItem.mediaId);
+        }
         @Override public void onLoadError(AnalyticsListener.EventTime eventTime,LoadEventInfo loadEventInfo,MediaLoadData mediaLoadData,IOException error,boolean wasCanceled){
-          if(listenerOwner!=MainActivity.this.player)return;
+          if(!isCurrentEvent(eventTime))return;
           String detail="uriHost="+(loadEventInfo==null||loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))
               +" bytes="+(loadEventInfo==null?0:loadEventInfo.bytesLoaded)
               +" canceled="+wasCanceled+" exception="+error.getClass().getSimpleName()+": "+error.getMessage();
@@ -3784,18 +3799,16 @@ public class MainActivity extends Activity {
           saveLiveDiagnostic("LOAD_ERROR",detail);
         }
         @Override public void onLoadCompleted(AnalyticsListener.EventTime eventTime,LoadEventInfo loadEventInfo,MediaLoadData mediaLoadData){
-          if(listenerOwner==MainActivity.this.player&&loadEventInfo!=null&&!sourceFirstLoadCompleted){
+          if(isCurrentEvent(eventTime)&&loadEventInfo!=null&&!sourceFirstLoadCompleted){
             sourceFirstLoadCompleted=true;
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
-          if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
+          if(isCurrentEvent(eventTime))audioPositionAdvancing=true;
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
-          if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;
-          MediaItem renderedItem=listenerOwner.getCurrentMediaItem();
-          if(renderedItem==null||!currentMediaId.equals(renderedItem.mediaId))return;
+          if(!isCurrentEvent(eventTime)||sourceFirstFrameRecorded)return;
           // Only count a frame after Media3 confirms it was rendered to the output.
           // Frame-metadata callbacks are retained separately for the stall watchdog.
           sourceFirstFrameRecorded=true;
@@ -3812,17 +3825,17 @@ public class MainActivity extends Activity {
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
           // and the sustained-output watchdog decide whether the source actually failed.
-          if(listenerOwner==MainActivity.this.player)
+          if(isCurrentEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"audioCodecError",0L);
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
           // A single sink warning is not proof of a dead stream; avoid premature failover.
-          if(listenerOwner==MainActivity.this.player)
+          if(isCurrentEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
-          if(listenerOwner==MainActivity.this.player)
+          if(isCurrentEvent(eventTime))
             recordSourceMetric(currentSourceUrl(),"videoCodecError",0L);
         }
       });
