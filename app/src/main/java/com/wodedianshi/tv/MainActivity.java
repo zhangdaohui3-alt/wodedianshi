@@ -147,6 +147,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ExecutorService playlistWorker = Executors.newFixedThreadPool(6);
   // Domestic catalogue supplementation must not queue behind the legacy restore/Room import worker.
   private final ExecutorService chinaCatalogueWorker = Executors.newSingleThreadExecutor();
+  // Serialize LibVLC JNI startup/teardown away from the UI thread.
+  private final ExecutorService libVlcWorker = Executors.newSingleThreadExecutor();
   private volatile Future<?> activeChinaCatalogueTask=null;
   private volatile Future<?> activeVodCatalogueTask;
   // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
@@ -5458,23 +5460,39 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           advanceToNextSourceAutomatically("VLC 播放源已结束，正在尝试备用源");
         });}
       });
-      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize begin");
-      engine.initialize();
-      saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize completed");
-      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play begin");
-      engine.play(url);
-      saveCriticalEngineStage("ENGINE_STAGE","LibVLC play returned");
+      // Arm the deadline BEFORE native initialization. A blocked JNI call must never
+      // leave the viewer indefinitely on the "switching VLC" screen.
       cancelLibVlcStartTimeout();
       libVlcStartTimeout=()->{
         libVlcStartTimeout=null;
-        if(selected==expectedChannel&&expectedMediaId.equals(currentMediaId)&&!libVlcVideoOutputReady&&libVlcAttemptedForSource){
-          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC did not create a video output within 18 seconds");
+        if(libVlcEngine==engine&&selected==expectedChannel
+            &&expectedMediaId.equals(currentMediaId)&&!libVlcVideoOutputReady&&libVlcAttemptedForSource){
+          saveLiveDiagnostic("ENGINE_TIMEOUT","LibVLC produced no video output within 18 seconds (startup ran off UI thread)");
           releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-          // Keep failure scoring centralized to avoid counting one URL twice.
-          advanceToNextSourceAutomatically("VLC 连接超时");
+          advanceToNextSourceAutomatically("VLC 连接超时，已释放播放器并尝试备用源");
         }
       };
       uiHandler.postDelayed(libVlcStartTimeout,18000L);
+      libVlcWorker.execute(()->{
+        try{
+          saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize begin (worker)");
+          engine.initialize();
+          saveCriticalEngineStage("ENGINE_STAGE","LibVLC initialize completed (worker)");
+          saveCriticalEngineStage("ENGINE_STAGE","LibVLC play begin (worker)");
+          engine.play(url);
+          saveCriticalEngineStage("ENGINE_STAGE","LibVLC play returned (worker)");
+        }catch(LinkageError|RuntimeException failure){
+          uiHandler.post(()->{
+            if(libVlcEngine!=engine||selected!=expectedChannel
+                ||!expectedMediaId.equals(currentMediaId))return;
+            cancelLibVlcStartTimeout();
+            saveLiveDiagnostic("ENGINE_INIT_ERROR",
+                failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
+            releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+            advanceToNextSourceAutomatically("VLC 初始化失败，正在尝试备用源");
+          });
+        }
+      });
       return true;
     }catch(LinkageError ex){
       // Missing/incompatible native ABI libraries must not terminate the TV app.
@@ -5536,7 +5554,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseLibVlcEngine(){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
-    if(old!=null)try{old.release();}catch(RuntimeException ignored){}
+    if(old!=null){
+      try{libVlcWorker.execute(()->{try{old.release();}catch(Throwable failure){
+        saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
+      }});}catch(RuntimeException rejected){saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());}
+    }
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
   }
   private String currentSourceUrl(){
