@@ -4532,9 +4532,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     close.setOnClickListener(v->dialog.dismiss());
     shell.addView(close,new LinearLayout.LayoutParams(-1,dp(42)));
     final int[] selectedCategory={0};
+    final ArrayList<Button> leftCategoryButtons=new ArrayList<>();
+    final ArrayList<Button> rightActionButtons=new ArrayList<>();
     Runnable[] renderRight=new Runnable[1];
     renderRight[0]=()->{
-      right.removeAllViews();
+      right.removeAllViews();rightActionButtons.clear();
       List<FullscreenMenuConfig.Category> categories=new ArrayList<>();
       for(FullscreenMenuConfig.Category candidate:config.getCategories())
         if(!vodMode||candidate.id.equals("vod"))categories.add(candidate);
@@ -4548,6 +4550,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         Button action=new Button(this);action.setText(item.title);action.setAllCaps(false);
         action.setTextColor(Color.WHITE);action.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
         action.setPadding(dp(12),0,dp(8),0);styleTvButton(action,Color.rgb(20,34,54));
+        action.setOnKeyListener((view,keyCode,event)->{
+          if(event.getAction()==KeyEvent.ACTION_DOWN&&keyCode==KeyEvent.KEYCODE_DPAD_LEFT){
+            int leftIndex=Math.max(0,Math.min(selectedCategory[0],leftCategoryButtons.size()-1));
+            if(leftIndex<leftCategoryButtons.size())leftCategoryButtons.get(leftIndex).requestFocus();
+            return true;
+          }
+          return false;
+        });
+        rightActionButtons.add(action);
         action.setOnClickListener(v->{
           String id=item.id;dialog.dismiss();
           if("favorite".equals(id)){if(vodMode)toast("收藏频道请返回直播后操作");else toggleCurrentLiveFavorite();}
@@ -4576,6 +4587,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       button.setTextColor(Color.WHITE);button.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
       button.setPadding(dp(8),0,dp(4),0);
       styleTvButton(button,i==0?Color.rgb(35,91,145):Color.rgb(18,27,43));
+      button.setOnKeyListener((view,keyCode,event)->{
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&keyCode==KeyEvent.KEYCODE_DPAD_RIGHT){
+          if(!rightActionButtons.isEmpty())rightActionButtons.get(0).requestFocus();
+          return true;
+        }
+        return false;
+      });
+      leftCategoryButtons.add(button);
       button.setOnClickListener(v->{
         selectedCategory[0]=index;
         for(int n=0;n<left.getChildCount();n++){
