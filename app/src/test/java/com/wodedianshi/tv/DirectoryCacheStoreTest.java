@@ -48,6 +48,23 @@ public class DirectoryCacheStoreTest {
         assertEquals(456L, loaded.savedAtMillis);
     }
 
+    @Test public void missingStreamedPayloadDoesNotReplacePreviousSnapshot() throws Exception {
+        DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
+        byte[] stable = new byte[] {41, 42, 43, 44};
+        store.save(DirectoryCacheStore.Directory.CHINA, "stable-feed", stable, 77L);
+        File missing = new File(temporaryFolder.getRoot(), "missing-payload.tmp");
+        try {
+            store.saveFromFile(DirectoryCacheStore.Directory.CHINA, "new-feed", missing, 88L);
+            fail("missing payload must fail");
+        } catch (java.io.IOException expected) {
+            // The previous committed cache must remain readable.
+        }
+        DirectoryCacheStore.Snapshot recovered =
+                store.load(DirectoryCacheStore.Directory.CHINA, "stable-feed");
+        assertNotNull(recovered);
+        assertArrayEquals(stable, recovered.payload);
+        assertEquals(77L, recovered.savedAtMillis);
+    }
     @Test public void offlineLoadAcceptsLastKnownFingerprint() throws Exception {
         DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
         byte[] payload = new byte[] {4, 5, 6};
