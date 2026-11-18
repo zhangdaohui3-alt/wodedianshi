@@ -8,6 +8,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.FilterInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,33 +39,54 @@ public final class ChannelDirectorySnapshotCodec {
 
     public static byte[] encode(List<RoomCatalogueWriter.ChannelSnapshot> channels,
                                 Set<String> favorites) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(
+                Math.min(1024 * 1024, channels == null ? 1024 : channels.size() * 96));
+        writeCompressed(bytes, channels, favorites);
+        return bytes.toByteArray();
+    }
+
+    /**
+     * Streams the compressed snapshot to its destination. Production persistence
+     * uses a file stream so a complete compressed directory is never duplicated
+     * in a large in-memory byte array.
+     */
+    public static void writeCompressed(OutputStream destination,
+                                       List<RoomCatalogueWriter.ChannelSnapshot> channels,
+                                       Set<String> favorites) throws IOException {
+        if (destination == null) throw new IllegalArgumentException("destination is null");
         if (channels == null || channels.isEmpty() || channels.size() > MAX_CHANNELS)
             throw new IOException("invalid channel count");
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(Math.min(1024 * 1024, channels.size() * 96));
-        GZIPOutputStream gzip = new GZIPOutputStream(bytes);
+        GZIPOutputStream gzip = new GZIPOutputStream(destination);
         DataOutputStream out = new DataOutputStream(gzip);
-        out.writeInt(MAGIC); out.writeInt(VERSION); out.writeInt(channels.size());
-        for (RoomCatalogueWriter.ChannelSnapshot row : channels) {
-            if (row == null) throw new IOException("null channel row");
-            writeString(out, row.name); writeString(out, row.url); writeString(out, row.group);
-            writeString(out, row.tvgId); writeString(out, row.tvgName);
-            out.writeInt(row.activeSource);
-            int sourceCount = row.sources == null ? 0 : row.sources.size();
-            if (sourceCount < 0 || sourceCount > MAX_SOURCES_PER_CHANNEL)
-                throw new IOException("invalid source count");
-            out.writeInt(sourceCount);
-            if (row.sources != null) for (String source : row.sources) writeString(out, source);
-            writeSet(out, row.sourceScopes);
-            int mapCount = row.backupSourceScopes == null ? 0 : row.backupSourceScopes.size();
-            if (mapCount > MAX_SOURCES_PER_CHANNEL) throw new IOException("invalid source scope count");
-            out.writeInt(mapCount);
-            if (row.backupSourceScopes != null) for (Map.Entry<String, HashSet<String>> entry : row.backupSourceScopes.entrySet()) {
-                writeString(out, entry.getKey()); writeSet(out, entry.getValue());
+        try {
+            out.writeInt(MAGIC); out.writeInt(VERSION); out.writeInt(channels.size());
+            for (RoomCatalogueWriter.ChannelSnapshot row : channels) {
+                if (row == null) throw new IOException("null channel row");
+                writeString(out, row.name); writeString(out, row.url); writeString(out, row.group);
+                writeString(out, row.tvgId); writeString(out, row.tvgName);
+                out.writeInt(row.activeSource);
+                int sourceCount = row.sources == null ? 0 : row.sources.size();
+                if (sourceCount < 0 || sourceCount > MAX_SOURCES_PER_CHANNEL)
+                    throw new IOException("invalid source count");
+                out.writeInt(sourceCount);
+                if (row.sources != null) for (String source : row.sources) writeString(out, source);
+                writeSet(out, row.sourceScopes);
+                int mapCount = row.backupSourceScopes == null ? 0 : row.backupSourceScopes.size();
+                if (mapCount > MAX_SOURCES_PER_CHANNEL)
+                    throw new IOException("invalid source scope count");
+                out.writeInt(mapCount);
+                if (row.backupSourceScopes != null) {
+                    for (Map.Entry<String, HashSet<String>> entry : row.backupSourceScopes.entrySet()) {
+                        writeString(out, entry.getKey()); writeSet(out, entry.getValue());
+                    }
+                }
             }
+            writeSet(out, favorites);
+            out.finish();
+            out.flush();
+        } finally {
+            out.close();
         }
-        writeSet(out, favorites);
-        out.flush(); gzip.finish(); out.close();
-        return bytes.toByteArray();
     }
 
     public static Snapshot decode(byte[] payload) throws IOException {
