@@ -33,9 +33,28 @@ public class MediaPayloadValidatorTest {
     }
 
     @Test public void acceptsFlvAndAdtsPayloadSignatures() {
-        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
+        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9,0};
         byte[] adts = new byte[] {(byte)0xFF,(byte)0xF1,0,0,0,0,0,0};
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(flv));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(adts));
+        assertTrue(MediaPayloadValidator.looksLikePayloadForAddress(flv, "https://cdn.test/live.flv"));
+        assertTrue(MediaPayloadValidator.looksLikePayloadForAddress(adts, "https://cdn.test/audio.aac"));
+    }
+
+    @Test public void validatesContainerSignaturesInsteadOfTrustingExtensions() {
+        byte[] html = "<html>not a stream</html>".getBytes();
+        byte[] ebml = new byte[] {0x1A,0x45,(byte)0xDF,(byte)0xA3,0,0,0,0};
+        byte[] mp4 = new byte[] {0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0};
+        assertFalse(MediaPayloadValidator.looksLikePayloadForAddress(html, "https://cdn.test/channel.ts"));
+        assertFalse(MediaPayloadValidator.looksLikePayloadForAddress(html, "https://cdn.test/movie.mp4"));
+        assertTrue(MediaPayloadValidator.looksLikePayloadForAddress(ebml, "https://cdn.test/movie.mkv"));
+        assertTrue(MediaPayloadValidator.looksLikePayloadForAddress(ebml, "https://cdn.test/movie.webm"));
+        assertTrue(MediaPayloadValidator.looksLikePayloadForAddress(mp4, "https://cdn.test/movie.mp4?token=abc"));
+    }
+
+    @Test public void rejectsWrongContainerForKnownExtension() {
+        byte[] flv = new byte[] {'F','L','V',1,0,0,0,9};
+        assertFalse(MediaPayloadValidator.looksLikePayloadForAddress(flv, "https://cdn.test/movie.mp4"));
+        assertFalse(MediaPayloadValidator.looksLikePayloadForAddress(flv, "https://cdn.test/movie.mkv"));
     }
 }
