@@ -4526,7 +4526,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       right.removeAllViews();
       List<FullscreenMenuConfig.Category> categories=new ArrayList<>();
       for(FullscreenMenuConfig.Category candidate:config.getCategories())
-        if(!vodMode||candidate.id.equals("vod")||candidate.id.equals("picture"))categories.add(candidate);
+        if(!vodMode||candidate.id.equals("vod"))categories.add(candidate);
       if(categories.isEmpty())return;
       int index=Math.max(0,Math.min(selectedCategory[0],categories.size()-1));
       FullscreenMenuConfig.Category category=categories.get(index);
@@ -4542,7 +4542,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if("favorite".equals(id)){if(vodMode)toast("收藏频道请返回直播后操作");else toggleCurrentLiveFavorite();}
           else if("sources".equals(id)){if(vodMode)toast("备用直播源请返回直播后操作");else showSourcePicker();}
           else if("channel_list".equals(id)||"category".equals(id)){if(vodMode)vodDialog();else showFullscreenChannelMenu();}
-          else if("aspect".equals(id))showAspectRatioDialog(video,"live_aspect_mode");
+          else if("aspect".equals(id)){if(vodMode)toast("画面比例设置请在直播菜单中调整");else showAspectRatioDialog(video,"live_aspect_mode");}
           else if("decoder".equals(id))decoderSettingsDialog();
           else if("refresh".equals(id))startManualSourceUpdate();
           else if("vod_catalogue".equals(id))vodDialog();
@@ -4558,7 +4558,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     };
     List<FullscreenMenuConfig.Category> visibleCategories=new ArrayList<>();
     for(FullscreenMenuConfig.Category candidate:config.getCategories())
-      if(!vodMode||candidate.id.equals("vod")||candidate.id.equals("picture"))visibleCategories.add(candidate);
+      if(!vodMode||candidate.id.equals("vod"))visibleCategories.add(candidate);
     for(int i=0;i<visibleCategories.size();i++){
       final int index=i;FullscreenMenuConfig.Category category=visibleCategories.get(i);
       Button button=new Button(this);button.setText(category.title);button.setAllCaps(false);
