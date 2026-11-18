@@ -1024,9 +1024,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    // Run the one-time China-first discovery only until at least one configured
-    // feed has been read successfully. Later launches use the 24-hour periodic
-    // worker instead of repeating the same foreground catalogue download.
+    // Run the one-time China-first discovery through the complete first candidate
+    // pass. Later launches use the 24-hour periodic worker instead of repeating it.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
         enabled,prefs.getLong("source_update_last_success_at",0L))){
       // The first discovery is part of first-run setup, not a routine background
