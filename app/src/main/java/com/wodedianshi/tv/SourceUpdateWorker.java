@@ -71,29 +71,33 @@ public class SourceUpdateWorker extends Worker {
       // Snapshot the user's current catalogue before discovery/probing. The Activity
       // may save favorites, edits, imports or playback state while this worker runs.
       // Never let a stale worker snapshot overwrite those newer user changes.
-      String channelsSnapshot=prefs.getString("channels","[]");
+      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
+          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
+      final boolean roomAuthoritative=roomSnapshot!=null;
+      String channelsSnapshot=roomAuthoritative
+          ?roomSnapshotToJson(roomSnapshot):prefs.getString("channels","[]");
       String savedChannelsJson=channelsSnapshot;
-      String pendingBase=prefs.getString("source_update_pending_base",null);
-      String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
-      String legacyPendingChannels=prefs.getString("source_update_pending_channels",null);
-      String pendingChannels=PendingCatalogueStore.read(getApplicationContext());
-      if(pendingChannels==null)pendingChannels=legacyPendingChannels;
-      boolean hasPending=pendingFingerprint!=null||pendingBase!=null||legacyPendingChannels!=null;
-      boolean fingerprintMatches=pendingFingerprint!=null&&pendingChannels!=null
-          &&!pendingChannels.isEmpty()
-          &&pendingFingerprint.equals(CatalogueFingerprint.sha256(channelsSnapshot));
-      boolean legacyMatches=pendingBase!=null&&pendingChannels!=null
-          &&!pendingChannels.isEmpty()&&channelsSnapshot.equals(pendingBase);
-      if(hasPending){
-        if(fingerprintMatches||legacyMatches){
-          // Carry forward a still-current atomic candidate; the live catalogue
-          // remains authoritative until MainActivity publishes it after parsing.
-          savedChannelsJson=pendingChannels;
-        }else{
-          PendingCatalogueStore.delete(getApplicationContext());
-          prefs.edit().remove("source_update_pending_base_fingerprint")
-              .remove("source_update_pending_base")
-              .remove("source_update_pending_channels").apply();
+      if(!roomAuthoritative){
+        String pendingBase=prefs.getString("source_update_pending_base",null);
+        String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
+        String legacyPendingChannels=prefs.getString("source_update_pending_channels",null);
+        String pendingChannels=PendingCatalogueStore.read(getApplicationContext());
+        if(pendingChannels==null)pendingChannels=legacyPendingChannels;
+        boolean hasPending=pendingFingerprint!=null||pendingBase!=null||legacyPendingChannels!=null;
+        boolean fingerprintMatches=pendingFingerprint!=null&&pendingChannels!=null
+            &&!pendingChannels.isEmpty()
+            &&pendingFingerprint.equals(CatalogueFingerprint.sha256(channelsSnapshot));
+        boolean legacyMatches=pendingBase!=null&&pendingChannels!=null
+            &&!pendingChannels.isEmpty()&&channelsSnapshot.equals(pendingBase);
+        if(hasPending){
+          if(fingerprintMatches||legacyMatches){
+            savedChannelsJson=pendingChannels;
+          }else{
+            PendingCatalogueStore.delete(getApplicationContext());
+            prefs.edit().remove("source_update_pending_base_fingerprint")
+                .remove("source_update_pending_base")
+                .remove("source_update_pending_channels").apply();
+          }
         }
       }
       JSONArray saved;
@@ -314,7 +318,7 @@ public class SourceUpdateWorker extends Worker {
       // a preflight score, not a guarantee of audio/video playback.
       trimProbeScores(measuredScores,savedPool,probeCandidates);
       String latestChannels=prefs.getString("channels","[]");
-      if(!channelsSnapshot.equals(latestChannels)){
+      if(!roomAuthoritative&&!channelsSnapshot.equals(latestChannels)){
         saveStatus(prefs,"频道列表在后台检测期间发生变化，已保留最新用户数据并安排重试",0);
         return Result.retry();
       }
@@ -337,7 +341,7 @@ public class SourceUpdateWorker extends Worker {
       // Keep the existing hand-off temporarily until MainActivity has completed
       // its Room read/write cutover. It is compatibility staging, not the durable
       // destination for the source updater.
-      PendingCatalogueStore.write(getApplicationContext(),saved.toString());
+      if(!roomAuthoritative)PendingCatalogueStore.write(getApplicationContext(),saved.toString());
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -345,9 +349,6 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
-          .putString("source_update_pending_base_fingerprint",CatalogueFingerprint.sha256(channelsSnapshot))
-          .remove("source_update_pending_base")
-          .remove("source_update_pending_channels")
           .putString("source_update_time",now())
           .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?"已解析频道条目，但候选线路均未通过媒体预检，本次不计为首次发现成功；":"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       // Do not mark initial discovery complete for an HTTP-200 but empty playlist,
@@ -355,10 +356,46 @@ public class SourceUpdateWorker extends Worker {
       // can retry after the catalogue or network recovers.
       if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
+      if(roomAuthoritative){
+        update.remove("source_update_pending_base_fingerprint")
+            .remove("source_update_pending_base")
+            .remove("source_update_pending_channels");
+      }else{
+        update.putString("source_update_pending_base_fingerprint",CatalogueFingerprint.sha256(channelsSnapshot))
+            .remove("source_update_pending_base")
+            .remove("source_update_pending_channels");
+      }
       update.apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
+  private String roomSnapshotToJson(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
+      throws JSONException {
+    JSONArray result=new JSONArray();
+    for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+      JSONObject channel=new JSONObject();
+      channel.put("name",row.name);channel.put("url",row.url);channel.put("group",row.group);
+      channel.put("tvgId",row.tvgId);channel.put("tvgName",row.tvgName);
+      channel.put("activeSource",row.activeSource);
+      JSONArray sources=new JSONArray();
+      for(String source:row.sources)sources.put(source);
+      channel.put("sources",sources);
+      JSONArray channelScopes=new JSONArray();
+      for(String scope:row.sourceScopes)channelScopes.put(scope);
+      channel.put("sourceScopes",channelScopes);
+      JSONArray ownership=new JSONArray();
+      for(java.util.Map.Entry<String,java.util.HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+        JSONObject item=new JSONObject();item.put("url",entry.getKey());
+        JSONArray scopes=new JSONArray();
+        for(String scope:entry.getValue())scopes.put(scope);
+        item.put("scopes",scopes);ownership.put(item);
+      }
+      channel.put("backupSourceScopes",ownership);
+      result.put(channel);
+    }
+    return result.toString();
+  }
+
   private boolean isActivityActive(SharedPreferences prefs){
     boolean active=prefs.getBoolean("source_update_activity_active",false);
     long heartbeat=prefs.getLong("source_update_activity_heartbeat",0L);
