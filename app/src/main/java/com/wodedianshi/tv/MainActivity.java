@@ -3846,7 +3846,10 @@ public class MainActivity extends Activity {
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
             // If the 12-second READY check already ran, don't wait for another
             // source transition: verify this same generation after a short grace period.
-            scheduleAudioTrackCheck(3000L);
+            final String sinkErrorMediaId=currentMediaId;
+            uiHandler.post(()->{
+              if(sinkErrorMediaId.equals(currentMediaId))scheduleAudioTrackCheck(3000L);
+            });
           }
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
