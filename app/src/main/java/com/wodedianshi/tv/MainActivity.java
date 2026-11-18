@@ -576,28 +576,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return DecoderPolicy.isDecoderFallbackEnabled(
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
-  private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
-    android.util.JsonToken token=reader.peek();
-    if(token==android.util.JsonToken.NULL){reader.nextNull();return fallback;}
-    // nextString accepts STRING and NUMBER only. A malformed legacy field may
-    // contain an object, array, or boolean; skip that complete value so the
-    // reader remains aligned and later channel records can still be restored.
-    if(token==android.util.JsonToken.STRING||token==android.util.JsonToken.NUMBER)return reader.nextString();
-    reader.skipValue();
-    return fallback;
-  }
+  /**
+   * Room is the only runtime catalogue. A fresh installation seeds it directly
+   * from the bundled playlist; previous SharedPreferences channel snapshots are
+   * intentionally ignored. First boot may take longer while the seed is built.
+   */
   private void restore(){
     catalogueSnapshotTrusted=false;
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    // Startup must display the exact last-saved catalogue first. A staged source-update
-    // candidate is intentionally not applied here; maintenance/reconciliation runs later,
-    // after the complete saved list has been rendered and is usable.
-    // Room is the normal startup authority. Read in bounded pages and
-    // convert each page immediately so a second full catalogue copy is avoided.
+    synchronized(channels){channels.clear();}
+    synchronized(favorites){favorites.clear();}
     try{
-      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(), page -> {
+      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
+          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
             synchronized(channels){
               for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
                 Channel channel=new Channel(row.name,row.url,row.group);
@@ -614,209 +605,78 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               }
             }
           });
-      if(roomSnapshot!=null){
-        synchronized(favorites){
-          favorites.clear();
-          favorites.addAll(roomSnapshot.favorites);
-        }
-        rebuildChannelIndexes();
-        catalogueSnapshotTrusted=true;
-        int sourceCount=0;
-        synchronized(channels){for(Channel channel:channels)sourceCount+=channel.backups.size();}
-        logCatalogueMemory("room_restore_ready",channels.size(),sourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
-        android.util.Log.i("MyTVRoom","authoritative Room restore complete channels="
-            +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
-        return;
-      }
-    }catch(Throwable roomReadFailure){
-      synchronized(channels){channels.clear();}
-      android.util.Log.e("MyTVRoom","Room read failed; attempting one-time legacy recovery",roomReadFailure);
-      saveLiveDiagnostic("ROOM_READ_ERROR",roomReadFailure.getClass().getSimpleName()+": "+String.valueOf(roomReadFailure.getMessage()));
-    }
-    String savedChannelsJson=p.getString("channels","[]");
-    lastPersistedChannelsJson=savedChannelsJson;
-    favorites.addAll(p.getStringSet("fav",new HashSet<>()));
-    // Parse the large saved catalogue as a stream. JSONArray/JSONObject builds a
-    // second complete object tree beside the original SharedPreferences String;
-    // on phones/TV boxes this peak heap can kill the process around 10k-20k rows.
-    // Decode in bounded batches. Completed batches are retained if a later
-    // record is malformed; the original saved JSON is never overwritten here.
-    // The UI is rendered after restore finishes, so batch publication bounds the
-    // temporary list but is not described as visible progressive rendering.
-    ArrayList<Channel> restoredChannels=new ArrayList<>(128);
-    int publishedRestoreChannels=0;
-    int skippedCatalogueEntries=0;
-    try(android.util.JsonReader reader=new android.util.JsonReader(
-        new java.io.StringReader(savedChannelsJson))){
-      reader.beginArray();
-      while(reader.hasNext()){
-        // Ignore a non-object array member without losing alignment with the
-        // following valid channel objects.
-        if(reader.peek()!=android.util.JsonToken.BEGIN_OBJECT){
-          reader.skipValue();
-          skippedCatalogueEntries++;
-          continue;
-        }
-        String name="";
-        String url="";
-        String group="";
-        String tvgId="";
-        String tvgName="";
-        int activeSource=0;
-        ArrayList<String> sources=null;
-        HashSet<String> sourceScopes=null;
-        HashMap<String,HashSet<String>> backupScopes=null;
-        reader.beginObject();
-        while(reader.hasNext()){
-          String field=reader.nextName();
-          switch(field){
-            case "name": name=readCatalogueJsonString(reader,"");break;
-            case "url": url=readCatalogueJsonString(reader,"");break;
-            case "group": group=readCatalogueJsonString(reader,"");break;
-            case "tvgId": tvgId=readCatalogueJsonString(reader,"");break;
-            case "tvgName": tvgName=readCatalogueJsonString(reader,"");break;
-            case "activeSource":
-              String savedIndex=readCatalogueJsonString(reader,"0");
-              try{activeSource=Integer.parseInt(savedIndex);}catch(NumberFormatException ignoredIndex){activeSource=0;}
-              break;
-            case "sources":
-              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
-              sources=new ArrayList<>();
-              reader.beginArray();
-              while(reader.hasNext()){
-                String source=readCatalogueJsonString(reader,"");
-                if(source.startsWith("http://")||source.startsWith("https://"))sources.add(source);
-              }
-              reader.endArray();
-              break;
-            case "sourceScopes":
-              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
-              sourceScopes=new HashSet<>();
-              reader.beginArray();
-              while(reader.hasNext()){
-                String scope=readCatalogueJsonString(reader,"");
-                if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))sourceScopes.add(scope);
-              }
-              reader.endArray();
-              break;
-            case "backupSourceScopes":
-              if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();break;}
-              backupScopes=new HashMap<>();
-              reader.beginArray();
-              while(reader.hasNext()){
-                if(reader.peek()!=android.util.JsonToken.BEGIN_OBJECT){reader.skipValue();continue;}
-                String source="";HashSet<String> scopes=new HashSet<>();
-                reader.beginObject();
-                while(reader.hasNext()){
-                  String ownershipField=reader.nextName();
-                  if("url".equals(ownershipField))source=readCatalogueJsonString(reader,"");
-                  else if("scopes".equals(ownershipField)){
-                    if(reader.peek()!=android.util.JsonToken.BEGIN_ARRAY){reader.skipValue();continue;}
-                    reader.beginArray();
-                    while(reader.hasNext()){
-                      String scope=readCatalogueJsonString(reader,"");
-                      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope))scopes.add(scope);
-                    }
-                    reader.endArray();
-                  }else reader.skipValue();
-                }
-                reader.endObject();
-                if(!source.isEmpty()&&!scopes.isEmpty())backupScopes.put(source,scopes);
-              }
-              reader.endArray();
-              break;
-            default: reader.skipValue();break;
-          }
-        }
-        reader.endObject();
-        if(name.isEmpty()||url.isEmpty())continue;
-        Channel channel=new Channel(name,url,group);
-        channel.tvgId=tvgId;
-        channel.tvgName=tvgName;
-        if(sourceScopes!=null)channel.sourceScopes.addAll(sourceScopes);
-        // Older saved catalogues have unknown provenance. Preserve that uncertainty;
-        // do not silently relabel legacy URLs as user-created sources.
-        
-        if(sources!=null){
-          channel.backups.clear();
-          channel.backups.addAll(sources);
-          if(channel.backups.isEmpty())channel.backups.add(channel.url);
-        }
-        if(backupScopes!=null)for(Map.Entry<String,HashSet<String>> entry:backupScopes.entrySet()){
-          HashSet<String> valid=new HashSet<>(entry.getValue());
-          if(!valid.isEmpty())channel.backupSourceScopes.put(entry.getKey(),valid);
-        }
-        channel.activeSource=Math.max(0,Math.min(activeSource,channel.backups.size()-1));
-        restoredChannels.add(channel);
-        // Move decoded rows into the retained catalogue in bounded batches to limit
-        // temporary memory. Do not expose a partial list: the UI is released only
-        // after every saved row has been parsed and indexes have been rebuilt.
-        if(restoredChannels.size()>=64){
-          synchronized(channels){channels.addAll(restoredChannels);}
-          publishedRestoreChannels+=restoredChannels.size();
-          restoredChannels.clear();
-          android.util.Log.i("MyTVStartup","restore_batch_published channels="+publishedRestoreChannels);
-        }
-      }
-      reader.endArray();
-      int restoredSourceCount=0;
-      for(Channel restored:restoredChannels)if(restored!=null&&restored.backups!=null)restoredSourceCount+=restored.backups.size();
-      logCatalogueMemory("restore_parse_ready",publishedRestoreChannels+restoredChannels.size(),restoredSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
-      if(skippedCatalogueEntries>0)android.util.Log.w("MyTVStartup","skipped_non_object_catalogue_entries="+skippedCatalogueEntries);
-    }catch(Exception invalidCatalogue){
-      // Keep all successfully decoded batches and the final partial batch available
-      // for recovery. Never replace the saved JSON; diagnostics retain original details.
-      synchronized(channels){channels.addAll(restoredChannels);}
-      publishedRestoreChannels+=restoredChannels.size();
-      restoredChannels.clear();
-      try{rebuildChannelIndexes();}catch(Throwable indexFailure){
-        android.util.Log.e("MyTVStartup","partial restore index rebuild failed",indexFailure);
-      }
-      android.util.Log.e("MyTVStartup","saved catalogue JSON parse failed; partial channels retained="
-          +publishedRestoreChannels,invalidCatalogue);
-      throw new IllegalStateException("本地频道数据格式异常，已保留成功恢复的频道",invalidCatalogue);
-    }
-    synchronized(channels){
-      channels.addAll(restoredChannels);
-    }
-    rebuildChannelIndexes();
-    int indexedSourceCount=0;
-    synchronized(channels){for(Channel restored:channels)if(restored!=null&&restored.backups!=null)indexedSourceCount+=restored.backups.size();}
-    logCatalogueMemory("restore_indexes_ready",channels.size(),indexedSourceCount,android.os.SystemClock.elapsedRealtime()-restoreStarted);
-    // Only a complete parse plus index rebuild makes this snapshot eligible for
-    // future writes. The bundled fallback below is safe only when the saved JSON
-    // itself was valid (for example, an intentionally empty first-run catalogue).
-    catalogueSnapshotTrusted=true;
-    boolean roomReconcileQueued=false;
-    if(!p.getBoolean("defaults_loaded",false)){
-      boolean defaultsReady=!channels.isEmpty();
-      if(!defaultsReady){
+
+      if(roomSnapshot==null){
+        android.util.Log.i("MyTVRoom","fresh Room catalogue detected; building native seed");
         try(InputStream in=getAssets().open("default_channels.m3u")){
           String bundled=read(in);
           parse(bundled);
-          // Do not mark defaults loaded unless the complete bundled snapshot
-          // reached durable legacy storage. A failed save must remain retryable.
-          defaultsReady=!channels.isEmpty()&&persist();
-          if(defaultsReady){
-            queueRoomCatalogueReconcileAfterPersist();
-            roomReconcileQueued=true;
-          }
-        } catch(Exception failure){
-          android.util.Log.w("MyTVCatalogue","bundled channel initialization will retry",failure);
         }
+        rebuildChannelIndexes();
+        ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> seed=
+            new ArrayList<>(channels.size());
+        synchronized(channels){
+          for(Channel channel:channels){
+            if(channel==null)continue;
+            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+            row.name=channel.name;row.url=channel.url;row.group=channel.group;
+            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
+            row.activeSource=channel.activeSource;
+            if(channel.backups!=null)row.sources.addAll(channel.backups);
+            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+            if(channel.backupSourceScopes!=null){
+              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
+                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+              }
+            }
+            seed.add(row);
+          }
+        }
+        int seeded=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
+            getApplicationContext(),seed,new HashSet<>());
+        if(seeded<=0)throw new IllegalStateException("Bundled channel seed contains no usable channels");
+        android.util.Log.i("MyTVRoom","native first-run seed committed channels="+seeded);
+        synchronized(channels){channels.clear();}
+        roomSnapshot=com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+          synchronized(channels){
+            for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+              Channel channel=new Channel(row.name,row.url,row.group);
+              channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
+              channel.backups.clear();channel.backups.addAll(row.sources);
+              channel.sourceScopes.addAll(row.sourceScopes);
+              for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+                channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+              }
+              channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+              channels.add(channel);
+            }
+          }
+        });
       }
-      if(defaultsReady)p.edit().putBoolean("defaults_loaded",true).apply();
-    }
-    // A process can be killed after the legacy SharedPreferences commit but
-    // before its queued Room shadow import. Reconcile the already-restored
-    // durable snapshot on every normal startup so a stale checkpoint is never
-    // mistaken for the latest catalogue when the eventual Room read cutover begins.
-    if(!roomReconcileQueued&&p.getBoolean("defaults_loaded",false)){
-      try{
-        cataloguePersistWorker.execute(this::syncRoomCataloguesAfterSave);
-      }catch(RuntimeException rejected){
-        android.util.Log.w("MyTVRoomSync","startup Room reconciliation queue rejected",rejected);
+      if(roomSnapshot==null||roomSnapshot.channelCount<=0){
+        throw new IllegalStateException("Room catalogue initialization did not produce a valid snapshot");
       }
+      synchronized(favorites){
+        favorites.clear();
+        favorites.addAll(roomSnapshot.favorites);
+      }
+      rebuildChannelIndexes();
+      catalogueSnapshotTrusted=true;
+      int sourceCount=0;
+      synchronized(channels){for(Channel channel:channels)sourceCount+=channel.backups.size();}
+      logCatalogueMemory("room_restore_ready",channels.size(),sourceCount,
+          android.os.SystemClock.elapsedRealtime()-restoreStarted);
+      android.util.Log.i("MyTVRoom","Room-only restore complete channels="
+          +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
+    }catch(Throwable failure){
+      synchronized(channels){channels.clear();}
+      synchronized(favorites){favorites.clear();}
+      catalogueSnapshotTrusted=false;
+      android.util.Log.e("MyTVRoom","Room-only startup initialization failed",failure);
+      saveLiveDiagnostic("ROOM_STARTUP_ERROR",
+          failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
+      throw new IllegalStateException("频道目录初始化失败，请检查网络和内置频道目录后重试",failure);
     }
   }
   private void rebuildChannelIndexes(){
