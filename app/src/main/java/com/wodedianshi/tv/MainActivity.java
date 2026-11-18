@@ -1105,7 +1105,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
           new ArrayList<>();
+      long snapshotLockRequestedAt=android.os.SystemClock.elapsedRealtime();
+      long snapshotLockAcquiredAt=snapshotLockRequestedAt;
+      long snapshotLockReleasedAt=snapshotLockRequestedAt;
       synchronized(channels){
+        snapshotLockAcquiredAt=android.os.SystemClock.elapsedRealtime();
         for(Channel channel:channels){
           if(channel==null||channel.name==null||channel.name.trim().isEmpty()
               ||channel.url==null||channel.url.trim().isEmpty())continue;
@@ -1123,7 +1127,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           rows.add(row);
         }
+        snapshotLockReleasedAt=android.os.SystemClock.elapsedRealtime();
       }
+      Runtime snapshotRuntime=Runtime.getRuntime();
+      long snapshotHeapUsed=Math.max(0L,snapshotRuntime.totalMemory()-snapshotRuntime.freeMemory());
+      android.util.Log.i("MyTVCatalogue", "snapshot channels="+rows.size()
+          +" source_routes="+sourceCount
+          +" lock_wait_ms="+(snapshotLockAcquiredAt-snapshotLockRequestedAt)
+          +" lock_hold_ms="+(snapshotLockReleasedAt-snapshotLockAcquiredAt)
+          +" snapshot_ms="+(snapshotLockReleasedAt-snapshotLockRequestedAt)
+          +" heap_used_mb="+(snapshotHeapUsed/1048576L));
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
