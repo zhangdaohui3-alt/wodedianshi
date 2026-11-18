@@ -147,6 +147,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ExecutorService playlistWorker = Executors.newFixedThreadPool(6);
   // Domestic catalogue supplementation must not queue behind the legacy restore/Room import worker.
   private final ExecutorService chinaCatalogueWorker = Executors.newSingleThreadExecutor();
+  private volatile Future<?> activeChinaCatalogueTask=null;
   private volatile Future<?> activeVodCatalogueTask;
   // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
   // capped independently of large heaps so image browsing cannot crowd playback.
@@ -3721,7 +3722,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(info!=null)info.setText(channels.isEmpty()?"首次整理国内频道目录…":"已显示本地国内频道，后台检查更新中…");
     refresh();
     android.util.Log.i("MyTVDirectory","china_catalogue_task_start cached_channels="+channels.size()+" last_success="+last);
-    try{chinaCatalogueWorker.execute(()->{
+    try{activeChinaCatalogueTask=chinaCatalogueWorker.submit(()->{
       try{
       final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
       if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels
