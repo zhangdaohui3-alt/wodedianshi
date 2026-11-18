@@ -551,7 +551,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // loaded before Room reconciliation and never depends on network availability.
     try{
       DirectoryCacheStore.Snapshot cached=new DirectoryCacheStore(getFilesDir())
-          .load(DirectoryCacheStore.Directory.CHINA,null);
+          .load(DirectoryCacheStore.Directory.ALL,null);
       if(cached!=null){
         ChannelDirectorySnapshotCodec.Snapshot decoded=
             ChannelDirectorySnapshotCodec.decode(cached.payload);
@@ -705,7 +705,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       Set<String> favoriteSnapshot,String reason){
     try{
       byte[] payload=ChannelDirectorySnapshotCodec.encode(rows,favoriteSnapshot);
-      new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.CHINA,
+      new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.ALL,
           "room-catalogue-v1",payload,System.currentTimeMillis());
       android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
           +" channels="+rows.size()+" bytes="+payload.length);
