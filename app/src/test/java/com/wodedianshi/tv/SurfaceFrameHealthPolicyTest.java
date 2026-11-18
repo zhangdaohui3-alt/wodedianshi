@@ -27,9 +27,10 @@ public class SurfaceFrameHealthPolicyTest {
         assertTrue(SurfaceFrameHealthPolicy.isNearBlack(pixels));
     }
 
-    @Test public void requiresThreeConsecutiveSamplesBeforeFailover() {
-        assertFalse(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(2));
-        assertTrue(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(3));
+    @Test public void requiresFiveConsecutiveSamplesBeforeFailover() {
+        assertFalse(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(3));
+        assertFalse(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(4));
+        assertTrue(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(5));
         assertTrue(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(6));
     }
 }
