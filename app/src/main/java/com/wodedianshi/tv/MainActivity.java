@@ -77,8 +77,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean manualSourceSwitch = false;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
-  private final java.util.concurrent.atomic.AtomicBoolean startupPartialRefreshPending =
-      new java.util.concurrent.atomic.AtomicBoolean(false);
   // Remember the most recent category tap while the saved catalogue is being restored.
   // Replay it once the directory is ready instead of silently discarding the tap.
   private volatile String pendingStartupCategory=null;
@@ -538,16 +536,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return DecoderPolicy.isDecoderFallbackEnabled(
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
-  // Render the first locally restored Room page while later pages are still
-  // being read. This makes the saved channel list appear progressively instead
-  // of leaving the home screen empty until the entire catalogue has finished.
-  private void scheduleStartupPartialDirectoryRender(){
-    if(startupDataReady||!startupPartialRefreshPending.compareAndSet(false,true))return;
-    uiHandler.postDelayed(()->{
-      startupPartialRefreshPending.set(false);
-      if(!startupDataReady&&!isFinishing()&&!isDestroyed()&&!channels.isEmpty())refresh();
-    },120L);
-  }
   /**
    * Room is the only runtime catalogue. A fresh installation seeds it directly
    * from the bundled playlist; previous SharedPreferences channel snapshots are
@@ -576,7 +564,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 channels.add(channel);
               }
             }
-            scheduleStartupPartialDirectoryRender();
           });
 
       if(roomSnapshot==null){
