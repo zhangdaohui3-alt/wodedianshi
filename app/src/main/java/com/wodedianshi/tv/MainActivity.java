@@ -69,6 +69,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Button fullscreenAspectMenuItem;
   private Runnable hideFullscreenControls;
   private boolean fullscreenControlsVisible=false;
+  private Runnable revealVodControlsAction;
   private TextView channelZapOverlay;
   private TextView channelNameOverlay;
   private TextView networkSpeedOverlay;
@@ -2840,13 +2841,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(event.getKeyCode()==KeyEvent.KEYCODE_MENU||event.getKeyCode()==KeyEvent.KEYCODE_SETTINGS){
           if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
-            boolean visible=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()==View.VISIBLE;
-            if(visible){
-              if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
-              if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
-              if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
-              for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
-            }else revealVodSeekBar();
+            revealVodControlsAction=()->revealVodSeekBar();
+            showVodPlaybackActions();
           }
           return true;
         }
@@ -4500,13 +4496,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit()
         .putString("fullscreen_menu_config_v1",config.encode()).apply();
   }
-  private void showLivePlaybackActions(){
-    if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
+  private void showLivePlaybackActions(){showFullscreenRemoteMenu(false);}
+  private void showVodPlaybackActions(){showFullscreenRemoteMenu(true);}
+  private void showFullscreenRemoteMenu(boolean vodMode){
+    if(!vodMode&&(selected<0||selected>=channels.size())){toast("请先选择频道");return;}
     final FullscreenMenuConfig config=loadFullscreenMenuConfig();
     final Dialog dialog=new Dialog(this);
     LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);
     shell.setPadding(dp(12),dp(10),dp(12),dp(10));shell.setBackgroundColor(Color.rgb(8,13,24));
-    TextView heading=new TextView(this);heading.setText("全屏快捷菜单");heading.setTextColor(Color.WHITE);
+    TextView heading=new TextView(this);heading.setText(vodMode?"点播全屏菜单":"直播全屏菜单");heading.setTextColor(Color.WHITE);
     heading.setTextSize(19);heading.setPadding(dp(8),dp(4),dp(8),dp(10));shell.addView(heading);
     LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
     LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
@@ -4526,7 +4524,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Runnable[] renderRight=new Runnable[1];
     renderRight[0]=()->{
       right.removeAllViews();
-      List<FullscreenMenuConfig.Category> categories=config.getCategories();
+      List<FullscreenMenuConfig.Category> categories=new ArrayList<>();
+      for(FullscreenMenuConfig.Category candidate:config.getCategories())
+        if(!vodMode||candidate.id.equals("vod")||candidate.id.equals("picture"))categories.add(candidate);
       if(categories.isEmpty())return;
       int index=Math.max(0,Math.min(selectedCategory[0],categories.size()-1));
       FullscreenMenuConfig.Category category=categories.get(index);
@@ -4539,14 +4539,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         action.setPadding(dp(12),0,dp(8),0);styleTvButton(action,Color.rgb(20,34,54));
         action.setOnClickListener(v->{
           String id=item.id;dialog.dismiss();
-          if("favorite".equals(id))toggleCurrentLiveFavorite();
-          else if("sources".equals(id))showSourcePicker();
-          else if("channel_list".equals(id)||"category".equals(id))showFullscreenChannelMenu();
+          if("favorite".equals(id)){if(vodMode)toast("收藏频道请返回直播后操作");else toggleCurrentLiveFavorite();}
+          else if("sources".equals(id)){if(vodMode)toast("备用直播源请返回直播后操作");else showSourcePicker();}
+          else if("channel_list".equals(id)||"category".equals(id)){if(vodMode)vodDialog();else showFullscreenChannelMenu();}
           else if("aspect".equals(id))showAspectRatioDialog(video,"live_aspect_mode");
           else if("decoder".equals(id))decoderSettingsDialog();
           else if("refresh".equals(id))startManualSourceUpdate();
           else if("vod_catalogue".equals(id))vodDialog();
-          else if("vod_controls".equals(id))toast("请在点播全屏画面按菜单键显示播放控制");
+          else if("vod_controls".equals(id)){if(revealVodControlsAction!=null)revealVodControlsAction.run();else toast("点播控制暂不可用");}
           else toast("此快捷项目尚未绑定操作："+item.title);
         });
         right.addView(action,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -4556,8 +4556,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         empty.setTextColor(Color.LTGRAY);empty.setPadding(dp(10),dp(12),dp(6),dp(12));right.addView(empty);
       }
     };
-    for(int i=0;i<config.getCategories().size();i++){
-      final int index=i;FullscreenMenuConfig.Category category=config.getCategories().get(i);
+    List<FullscreenMenuConfig.Category> visibleCategories=new ArrayList<>();
+    for(FullscreenMenuConfig.Category candidate:config.getCategories())
+      if(!vodMode||candidate.id.equals("vod")||candidate.id.equals("picture"))visibleCategories.add(candidate);
+    for(int i=0;i<visibleCategories.size();i++){
+      final int index=i;FullscreenMenuConfig.Category category=visibleCategories.get(i);
       Button button=new Button(this);button.setText(category.title);button.setAllCaps(false);
       button.setTextColor(Color.WHITE);button.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
       button.setPadding(dp(8),0,dp(4),0);
