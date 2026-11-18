@@ -62,7 +62,13 @@ public final class PlaylistParser {
      */
     public static int parseEach(Reader source, int maxEntries, EntryConsumer consumer)
             throws IOException {
-        if (source == null || maxEntries <= 0 || consumer == null) return 0;
+        return parseEach(source, 0, maxEntries, consumer);
+    }
+
+    /** Stream a bounded page from a playlist; skipEntries counts valid HTTP entries. */
+    public static int parseEach(Reader source, int skipEntries, int maxEntries,
+                                EntryConsumer consumer) throws IOException {
+        if (source == null || skipEntries < 0 || maxEntries <= 0 || consumer == null) return 0;
         BufferedReader reader = source instanceof BufferedReader
                 ? (BufferedReader) source : new BufferedReader(source, 8192);
         String name = null;
@@ -72,6 +78,7 @@ public final class PlaylistParser {
         String tvgId = "";
         String tvgName = "";
         int emitted = 0;
+        int skipped = 0;
         String rawLine;
         while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
             String line = rawLine.replace("\uFEFF", "").trim();
@@ -108,8 +115,12 @@ public final class PlaylistParser {
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
                 if (name != null && !name.trim().isEmpty()) {
-                    consumer.accept(new ChannelSource(name, line, group, tvgId, tvgName));
-                    emitted++;
+                    if (skipped < skipEntries) {
+                        skipped++;
+                    } else {
+                        consumer.accept(new ChannelSource(name, line, group, tvgId, tvgName));
+                        emitted++;
+                    }
                 }
                 name = null;
                 group = "";
