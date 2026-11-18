@@ -17,7 +17,7 @@ public final class RoomCatalogueMutations {
             if (favorite) dao.addFavorite(new FavoriteEntity(id, addedAt));
             else dao.removeFavorite(id);
         }
-        String migrationKey = LegacyCatalogueImporter.MIGRATION_KEY;
+        String migrationKey = MasterCatalogueRepository.MIGRATION_KEY;
         if (dao.getMigration(migrationKey) != null) {
             dao.refreshFavoriteCheckpointCount(migrationKey);
         }
