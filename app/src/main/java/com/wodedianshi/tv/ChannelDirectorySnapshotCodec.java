@@ -82,8 +82,8 @@ public final class ChannelDirectorySnapshotCodec {
                 }
             }
             writeSet(out, favorites);
-            out.finish();
             out.flush();
+            gzip.finish();
         } finally {
             out.close();
         }
