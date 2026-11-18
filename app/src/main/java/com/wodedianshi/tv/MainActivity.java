@@ -120,6 +120,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Catalogue snapshots and JSON encoding must never run on the UI thread. One
   // serial writer coalesces bursts of remote-control actions into the newest state.
   private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
+  private final ExecutorService catalogueReconcileWorker = Executors.newSingleThreadExecutor();
   private final Object cataloguePersistLock = new Object();
   // Serializes disk commits with background-candidate preference publication.
   // UI persistence requests use cataloguePersistLock only, never this I/O lock.
@@ -543,6 +544,36 @@ public class MainActivity extends androidx.activity.ComponentActivity {
    */
   private void restore(){
     catalogueSnapshotTrusted=false;
+    // A verified local directory is the first startup source. It is deliberately
+    // loaded before Room reconciliation and never depends on network availability.
+    try{
+      DirectoryCacheStore.Snapshot cached=new DirectoryCacheStore(getFilesDir())
+          .load(DirectoryCacheStore.Directory.CHINA,null);
+      if(cached!=null){
+        ChannelDirectorySnapshotCodec.Snapshot decoded=
+            ChannelDirectorySnapshotCodec.decode(cached.payload);
+        synchronized(channels){channels.clear();for(com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row:decoded.channels){
+          Channel channel=new Channel(row.name,row.url,row.group);
+          channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
+          channel.backups.clear();channel.backups.addAll(row.sources);
+          channel.sourceScopes.addAll(row.sourceScopes);
+          for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet())
+            channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+          channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+          channels.add(channel);
+        }}
+        synchronized(favorites){favorites.clear();favorites.addAll(decoded.favorites);}
+        rebuildChannelIndexes();
+        catalogueSnapshotTrusted=true;
+        logCatalogueMemory("local_cache_ready",channels.size(),countChannelSources(),
+            android.os.SystemClock.elapsedRealtime()-restoreStarted);
+        android.util.Log.i("MyTVCache","offline directory snapshot restored channels="+channels.size());
+        scheduleRoomCatalogueReconciliation();
+        return;
+      }
+    }catch(Throwable cacheFailure){
+      android.util.Log.w("MyTVCache","local directory cache rejected; falling back to Room",cacheFailure);
+    }
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     synchronized(channels){channels.clear();}
     synchronized(favorites){favorites.clear();}
@@ -623,6 +654,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       rebuildChannelIndexes();
       catalogueSnapshotTrusted=true;
+      writeLocalDirectorySnapshot("room_restore");
       int sourceCount=0;
       synchronized(channels){for(Channel channel:channels)sourceCount+=channel.backups.size();}
       logCatalogueMemory("room_restore_ready",channels.size(),sourceCount,
@@ -637,6 +669,92 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       saveLiveDiagnostic("ROOM_STARTUP_ERROR",
           failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
       throw new IllegalStateException("频道目录初始化失败，请检查网络和内置频道目录后重试",failure);
+    }
+  }
+  private int countChannelSources(){
+    int count=0;synchronized(channels){for(Channel channel:channels)
+      if(channel!=null&&channel.backups!=null)count+=channel.backups.size();}
+    return count;
+  }
+  private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> snapshotChannelRows(){
+    ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>();
+    synchronized(channels){for(Channel channel:channels){
+      if(channel==null||channel.name==null||channel.name.trim().isEmpty()
+          ||channel.url==null||channel.url.trim().isEmpty())continue;
+      com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+          new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+      row.name=channel.name;row.url=channel.url;row.group=channel.group;
+      row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;row.activeSource=channel.activeSource;
+      if(channel.backups!=null)row.sources.addAll(channel.backups);
+      if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+      if(channel.backupSourceScopes!=null)for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet())
+        row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+      rows.add(row);
+    }}
+    return rows;
+  }
+  private void writeLocalDirectorySnapshot(String reason){
+    ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
+    HashSet<String> favoriteSnapshot;synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+    writeLocalDirectorySnapshotFromRows(rows,favoriteSnapshot,reason);
+  }
+  private void writeLocalDirectorySnapshotFromRows(
+      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows,
+      Set<String> favoriteSnapshot,String reason){
+    try{
+      byte[] payload=ChannelDirectorySnapshotCodec.encode(rows,favoriteSnapshot);
+      new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.CHINA,
+          "room-catalogue-v1",payload,System.currentTimeMillis());
+      android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
+          +" channels="+rows.size()+" bytes="+payload.length);
+    }catch(Throwable cacheFailure){
+      // Room remains authoritative; a cache write failure must not roll back a
+      // successful database transaction or publish a partial local snapshot.
+      android.util.Log.e("MyTVCache","local snapshot write failed reason="+reason,cacheFailure);
+    }
+  }
+  private void scheduleRoomCatalogueReconciliation(){
+    final long generationAtStart=catalogueMutationGeneration;
+    try{catalogueReconcileWorker.execute(()->{
+      final ArrayList<Channel> restored=new ArrayList<>();
+      try{
+        com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot room=
+            com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+              for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+                Channel channel=new Channel(row.name,row.url,row.group);
+                channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
+                channel.backups.clear();channel.backups.addAll(row.sources);
+                channel.sourceScopes.addAll(row.sourceScopes);
+                for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet())
+                  channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+                channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+                restored.add(channel);
+              }
+            });
+        if(room==null||room.channelCount<=0)throw new IllegalStateException("Room reconciliation returned no complete catalogue");
+        synchronized(cataloguePersistLock){
+          if(catalogueMutationGeneration!=generationAtStart){
+            android.util.Log.i("MyTVCache","Room reconciliation skipped after newer user mutation");
+            return;
+          }
+        }
+        synchronized(channels){channels.clear();channels.addAll(restored);}
+        synchronized(favorites){favorites.clear();favorites.addAll(room.favorites);}
+        rebuildChannelIndexes();
+        writeLocalDirectorySnapshot("room_reconcile");
+        runOnUiThread(()->{
+          if(isFinishing()||isDestroyed())return;
+          refresh();
+          if(info!=null)info.setText("已载入 "+channels.size()+" 个已保存频道");
+        });
+        android.util.Log.i("MyTVCache","Room reconciliation complete channels="+room.channelCount);
+      }catch(Throwable failure){
+        // Keep the already displayed verified local cache. Never clear it because
+        // the database is temporarily unavailable or its read was incomplete.
+        android.util.Log.w("MyTVCache","Room reconciliation failed; keeping local cache",failure);
+      }
+    });}catch(RuntimeException rejected){
+      android.util.Log.w("MyTVCache","Room reconciliation queue rejected",rejected);
     }
   }
   private void rebuildChannelIndexes(){
@@ -952,6 +1070,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
           getApplicationContext(),rows,favoriteSnapshot);
       if(written<=0)throw new IllegalStateException("Room wrote zero channel rows");
+      writeLocalDirectorySnapshotFromRows(rows,favoriteSnapshot,"room_persist");
       saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM",
           "saved "+written+" channels, "+sourceCount+" source routes and "+favoriteSnapshot.size()+" favorites");
       logCatalogueMemory("room_persist_done",written,sourceCount,
@@ -6435,5 +6554,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
