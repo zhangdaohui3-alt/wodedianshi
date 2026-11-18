@@ -3756,6 +3756,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope,Runnable onFirstEntries){
     ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(playlistWorker);
     ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
+    PlaylistMergeStats mergeStats=new PlaylistMergeStats();
     for(String address:feeds){
       tasks.add(completion.submit(()->{
         HttpURLConnection connection=null;
@@ -3769,7 +3770,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // alongside the growing in-memory channel catalogue.
           try(InputStream in=new PlaylistByteLimitInputStream(connection.getInputStream(),MAX_PLAYLIST_FEED_BYTES);
               Reader reader=new BufferedReader(new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8))){
-            parse(reader,null,sourceScope,parsedAdded);
+            parse(reader,null,sourceScope,parsedAdded,mergeStats);
           }
           return new PlaylistFetchResult(address,parsedAdded[0],null);
         }catch(Exception e){
@@ -3807,6 +3808,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
     for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
+    final int catalogueCount;
+    synchronized(channels){catalogueCount=channels.size();}
+    android.util.Log.i("MyTVDirectory","playlist_merge_summary scope="+sourceScope
+        +" feeds="+feeds.length+" completed_feeds="+(tasks.size()-remaining)
+        +" new_channels="+mergeStats.newChannels
+        +" new_backup_routes="+mergeStats.newBackupRoutes
+        +" duplicate_url_entries="+mergeStats.duplicateUrlEntries
+        +" catalogue_channels="+catalogueCount+" parsed_added="+added);
     return added;
   }
   private static final class PlaylistByteLimitInputStream extends java.io.FilterInputStream{
@@ -3835,6 +3844,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(count>0)bytesRead+=count;
       return count;
     }
+  }
+  // Updated only while holding the channel-catalogue lock in mergePlaylistEntry.
+  // Separates genuinely new channel identities from new backup URLs and repeated URLs.
+  private static final class PlaylistMergeStats{
+    int newChannels=0,newBackupRoutes=0,duplicateUrlEntries=0;
   }
   private static class PlaylistFetchResult{
     final String address,error;
@@ -4258,9 +4272,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // after each successful row so useful rows are not lost from the progress report if
   // the remote stream later fails or exceeds the configured byte cap.
   private int parse(Reader reader,Set<String> destinationKeys,String sourceScope,int[] partialAdded)throws IOException{
+    return parse(reader,destinationKeys,sourceScope,partialAdded,null);
+  }
+  private int parse(Reader reader,Set<String> destinationKeys,String sourceScope,int[] partialAdded,
+      PlaylistMergeStats mergeStats)throws IOException{
     final int[] added={0};
     PlaylistParser.parseEach(reader,Integer.MAX_VALUE,entry->{
-      if(mergePlaylistEntry(entry,destinationKeys,sourceScope)){
+      if(mergePlaylistEntry(entry,destinationKeys,sourceScope,mergeStats)){
         added[0]++;
         if(partialAdded!=null)partialAdded[0]++;
       }
@@ -4268,6 +4286,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return added[0];
   }
   private boolean mergePlaylistEntry(PlaylistParser.ChannelSource entry,Set<String> destinationKeys,String sourceScope){
+    return mergePlaylistEntry(entry,destinationKeys,sourceScope,null);
+  }
+  private boolean mergePlaylistEntry(PlaylistParser.ChannelSource entry,Set<String> destinationKeys,
+      String sourceScope,PlaylistMergeStats mergeStats){
     String name=entry.name==null?"":entry.name.trim();
     String line=entry.url;
     boolean added=false;
@@ -4282,6 +4304,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         String key=identity(name,entry.group,line,entry.tvgName,entry.tvgId);
         Channel same=channelsByIdentity.get(key);
         if(same!=null){
+          if(mergeStats!=null)mergeStats.newBackupRoutes++;
           same.mergeMetadata(entry.tvgId,entry.tvgName);
           normalizeBroadcasterLabel(same);
           // channelsByUrl.containsKey(line) was false above, so this URL cannot
@@ -4290,6 +4313,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           channelsByUrl.put(line,same);
           added=true;
         }else{
+          if(mergeStats!=null)mergeStats.newChannels++;
           Channel fresh=new Channel(name,line,entry.group);
           fresh.mergeMetadata(entry.tvgId,entry.tvgName);
           fresh.addBackupSource(line,channelScope);
@@ -4300,6 +4324,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           added=true;
         }
       }else{
+        if(mergeStats!=null)mergeStats.duplicateUrlEntries++;
         Channel existing=channelsByUrl.get(line);
         if(existing!=null){
           existing.mergeMetadata(entry.tvgId,entry.tvgName);
