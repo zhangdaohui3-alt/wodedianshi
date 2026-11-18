@@ -69,6 +69,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Button fullscreenAspectMenuItem;
   private Runnable hideFullscreenControls;
   private boolean fullscreenControlsVisible=false;
+  private long lastChannelZapKeyAt=0L;
   private Runnable revealVodControlsAction;
   private Runnable backVodToCatalogueAction;
   private TextView channelZapOverlay;
@@ -4733,12 +4734,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean direction=key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_DPAD_DOWN
           ||key==KeyEvent.KEYCODE_DPAD_LEFT||key==KeyEvent.KEYCODE_DPAD_RIGHT;
       if(ok||direction||channelUp||channelDown){
-        if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
-          if(ok)showFullscreenChannelMenu();
-          else if(key==KeyEvent.KEYCODE_DPAD_UP||channelUp)stepChannel(-1);
-          else if(key==KeyEvent.KEYCODE_DPAD_DOWN||channelDown)stepChannel(1);
-          else if(key==KeyEvent.KEYCODE_DPAD_LEFT)stepSource(-1);
-          else if(key==KeyEvent.KEYCODE_DPAD_RIGHT)stepSource(1);
+        if(event.getAction()==KeyEvent.ACTION_DOWN){
+          boolean zapKey=key==KeyEvent.KEYCODE_DPAD_UP||key==KeyEvent.KEYCODE_DPAD_DOWN
+              ||channelUp||channelDown;
+          long now=android.os.SystemClock.elapsedRealtime();
+          // Android TV remotes send ACTION_DOWN repeats while a key is held.
+          // Accept them at a controlled cadence instead of silently ignoring
+          // every repeat, which made press-and-hold look like a dead remote.
+          boolean acceptRepeat=zapKey&&event.getRepeatCount()>0
+              &&now-lastChannelZapKeyAt>=300L;
+          if(event.getRepeatCount()==0||acceptRepeat){
+            if(ok)showFullscreenChannelMenu();
+            else if(key==KeyEvent.KEYCODE_DPAD_UP||channelUp){
+              lastChannelZapKeyAt=now;stepChannel(-1);
+            }else if(key==KeyEvent.KEYCODE_DPAD_DOWN||channelDown){
+              lastChannelZapKeyAt=now;stepChannel(1);
+            }else if(event.getRepeatCount()==0&&key==KeyEvent.KEYCODE_DPAD_LEFT)stepSource(-1);
+            else if(event.getRepeatCount()==0&&key==KeyEvent.KEYCODE_DPAD_RIGHT)stepSource(1);
+          }
         }
         return true;
       }
