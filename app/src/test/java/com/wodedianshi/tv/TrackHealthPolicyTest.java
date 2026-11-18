@@ -19,4 +19,20 @@ public class TrackHealthPolicyTest {
     @Test public void healthyTracksDoNotFailover() {
         assertFalse(TrackHealthPolicy.shouldFailoverForTrackHealth(false, false));
     }
+
+    @Test public void missingAudioTrackFailsEvenWithoutSinkError() {
+        assertTrue(TrackHealthPolicy.shouldFailoverForAudioOutput(true, true, false));
+    }
+
+    @Test public void stalledAudioWithSinkErrorFailsOver() {
+        assertTrue(TrackHealthPolicy.shouldFailoverForAudioOutput(false, true, true));
+    }
+
+    @Test public void silentProgramWithoutSinkErrorDoesNotFailOver() {
+        assertFalse(TrackHealthPolicy.shouldFailoverForAudioOutput(false, true, false));
+    }
+
+    @Test public void advancingAudioDoesNotFailOverForHistoricalSinkWarning() {
+        assertFalse(TrackHealthPolicy.shouldFailoverForAudioOutput(false, false, true));
+    }
 }
