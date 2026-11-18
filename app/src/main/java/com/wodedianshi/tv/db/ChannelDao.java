@@ -24,6 +24,38 @@ public interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertFavorites(List<FavoriteEntity> favorites);
 
+    // Write-through primitives: update an existing channel row in place rather
+    // than REPLACE it. SQLite REPLACE deletes the old row first and would cascade
+    // delete its favorites and backup sources through the declared foreign keys.
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    void insertCategoryIfAbsent(CategoryEntity category);
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    void insertChannelIfAbsent(ChannelEntity channel);
+
+    @Query("UPDATE channels SET legacyKey = :legacyKey, name = :name, "
+            + "primaryUrl = :primaryUrl, groupName = :groupName, categoryId = :categoryId, "
+            + "tvgId = :tvgId, tvgName = :tvgName, channelScopesJson = :scopesJson, "
+            + "activeSource = :activeSource, sortOrder = :sortOrder WHERE id = :id")
+    void updateChannelFields(String id, String legacyKey, String name, String primaryUrl,
+            String groupName, String categoryId, String tvgId, String tvgName,
+            String scopesJson, int activeSource, int sortOrder);
+
+    @Query("DELETE FROM backup_sources WHERE channelId = :channelId")
+    void clearBackupSourcesForChannel(String channelId);
+
+    @Transaction
+    default void writeChannelWithSources(CategoryEntity category, ChannelEntity channel,
+            List<BackupSourceEntity> sources) {
+        insertCategoryIfAbsent(category);
+        insertChannelIfAbsent(channel);
+        updateChannelFields(channel.id, channel.legacyKey, channel.name, channel.primaryUrl,
+                channel.groupName, channel.categoryId, channel.tvgId, channel.tvgName,
+                channel.channelScopesJson, channel.activeSource, channel.sortOrder);
+        clearBackupSourcesForChannel(channel.id);
+        if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
+    }
+
     @Query("SELECT * FROM categories ORDER BY sortOrder, name")
     List<CategoryEntity> getCategories();
 
