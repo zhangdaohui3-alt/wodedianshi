@@ -3537,7 +3537,10 @@ public class MainActivity extends Activity {
   private void cancelAudioTrackCheck(){
     if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
   }
-  private void scheduleAudioTrackCheck(){
+  private void scheduleAudioTrackCheck(){scheduleAudioTrackCheck(12000L);}
+  // A sink error can arrive after the initial READY health check has already run.
+  // Recheck shortly after that event instead of leaving a late startup failure undetected.
+  private void scheduleAudioTrackCheck(long delayMs){
     cancelAudioTrackCheck();
     if(player==null||player.getPlaybackState()!=Player.STATE_READY)return;
     final String expectedMediaId=currentMediaId;
@@ -3566,7 +3569,7 @@ public class MainActivity extends Activity {
             "audio track is selected but audio position has not advanced by the 12-second health check");
       }
     };
-    uiHandler.postDelayed(audioTrackCheck,12000L);
+    uiHandler.postDelayed(audioTrackCheck,Math.max(1000L,delayMs));
   }
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
@@ -3841,6 +3844,9 @@ public class MainActivity extends Activity {
           if(isCurrentEvent(eventTime)){
             audioSinkErrorObserved=true;
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
+            // If the 12-second READY check already ran, don't wait for another
+            // source transition: verify this same generation after a short grace period.
+            scheduleAudioTrackCheck(3000L);
           }
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
