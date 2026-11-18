@@ -228,10 +228,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       else{backups=new ArrayList<>();if(!url.isEmpty())backups.add(url);sourceScopes=new HashSet<>();backupSourceScopes=new HashMap<>();}
     }
     void addBackupSource(String source,String scope){
+      addBackupSourceInternal(source,scope,false);
+    }
+    // The caller may skip the linear ArrayList.contains() check only after the
+    // global channelsByUrl index has proved this URL is not already in the
+    // catalogue. This avoids O(routes-per-channel) work for every new backup.
+    void addBackupSourceKnownUnique(String source,String scope){
+      addBackupSourceInternal(source,scope,true);
+    }
+    private void addBackupSourceInternal(String source,String scope,boolean knownUnique){
       if(source==null||source.isEmpty())return;
       if(backups==null)backups=new ArrayList<>();
-      if(!backups.contains(source))backups.add(source);
+      if(knownUnique||!backups.contains(source))backups.add(source);
       if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope)){
+        if(backupSourceScopes==null)backupSourceScopes=new HashMap<>();
+        if(sourceScopes==null)sourceScopes=new HashSet<>();
         HashSet<String> scopes=backupSourceScopes.get(source);
         if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(source,scopes);}
         scopes.add(scope);sourceScopes.add(scope);
@@ -4309,7 +4320,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           normalizeBroadcasterLabel(same);
           // channelsByUrl.containsKey(line) was false above, so this URL cannot
           // already be present in the channel's backup list.
-          same.addBackupSource(line,channelScope);
+          // channelsByUrl was checked above under the same catalogue lock;
+          // this is a globally new URL, so skip a redundant per-channel linear scan.
+          same.addBackupSourceKnownUnique(line,channelScope);
           channelsByUrl.put(line,same);
           added=true;
         }else{
