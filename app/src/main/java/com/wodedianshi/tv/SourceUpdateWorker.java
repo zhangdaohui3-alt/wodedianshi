@@ -326,9 +326,17 @@ public class SourceUpdateWorker extends Worker {
         return Result.retry();
       }
       if(isStopped())return Result.retry();
-      // Write the large candidate atomically to private app storage first. Only
-      // its short base fingerprint remains in SharedPreferences, avoiding another
-      // multi-megabyte XML rewrite and making interrupted writes recoverable.
+      // Write the validated snapshot directly to the single Room catalogue.
+      // The JSON object above is only this worker's in-memory discovery model;
+      // Room receives normalized channel/source rows and remains the durable store.
+      int roomRowsWritten = com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
+          getApplicationContext(), saved);
+      if (saved.length() > 0 && roomRowsWritten == 0) {
+        throw new IllegalStateException("Room catalogue update produced no channel rows");
+      }
+      // Keep the existing hand-off temporarily until MainActivity has completed
+      // its Room read/write cutover. It is compatibility staging, not the durable
+      // destination for the source updater.
       PendingCatalogueStore.write(getApplicationContext(),saved.toString());
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
