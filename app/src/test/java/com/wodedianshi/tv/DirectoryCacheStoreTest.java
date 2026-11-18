@@ -34,6 +34,20 @@ public class DirectoryCacheStoreTest {
                 store.load(DirectoryCacheStore.Directory.ALL, "all-v1").payload));
     }
 
+    @Test public void streamedPayloadIsSavedAndValidatedWithoutByteArrayInput() throws Exception {
+        DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
+        File payloadFile = new File(temporaryFolder.getRoot(), "payload.tmp");
+        byte[] payload = new byte[] {9, 8, 7, 6, 5, 4};
+        java.io.FileOutputStream out = new java.io.FileOutputStream(payloadFile);
+        try { out.write(payload); } finally { out.close(); }
+        store.saveFromFile(DirectoryCacheStore.Directory.ALL, "streamed-v1", payloadFile, 456L);
+        DirectoryCacheStore.Snapshot loaded =
+                store.load(DirectoryCacheStore.Directory.ALL, "streamed-v1");
+        assertNotNull(loaded);
+        assertArrayEquals(payload, loaded.payload);
+        assertEquals(456L, loaded.savedAtMillis);
+    }
+
     @Test public void offlineLoadAcceptsLastKnownFingerprint() throws Exception {
         DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
         byte[] payload = new byte[] {4, 5, 6};
