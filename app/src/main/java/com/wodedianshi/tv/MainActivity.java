@@ -138,6 +138,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // and resorted on every remote-control key press.
   private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
+  // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
+  // instead of rebuilding/sorting the entire directory on the Android UI thread.
+  private int pendingRemoteZapSteps=0;
+  private long pendingRemoteZapGeneration=-1L;
   // Parsed source-quality JSON is reused until a playback metric actually updates
   // the backing preference strings; channel zapping must not reparse a large map.
   private final Object sourceScoreCacheLock = new Object();
@@ -4813,8 +4817,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
       if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
-          &&currentCount==count&&favorites.hashCode()==favoritesHash)
+          &&currentCount==count&&favorites.hashCode()==favoritesHash){
         cachedRemoteChannelOrder=ready;
+        uiHandler.post(()->{
+          if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
+              ||!fullScreenPlayback)return;
+          int queuedSteps=pendingRemoteZapSteps;
+          pendingRemoteZapSteps=0;
+          pendingRemoteZapGeneration=-1L;
+          RemoteChannelOrder current=currentRemoteChannelOrder();
+          if(current!=null)applyChannelZap(current,queuedSteps);
+        });
+      }
     });}catch(RuntimeException ignored){}
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
@@ -4824,21 +4838,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String key=remoteChannelOrderKey(category,query,favoriteMode,
         catalogueFilterGeneration,count,favorites.hashCode());
     RemoteChannelOrder cached=cachedRemoteChannelOrder;
-    if(cached!=null&&key.equals(cached.key))return cached;
-    RemoteChannelOrder built=buildRemoteChannelOrder(key,category,query,favoriteMode);
-    cachedRemoteChannelOrder=built;
-    return built;
+    return cached!=null&&key.equals(cached.key)?cached:null;
   }
-  private void stepChannel(int delta){
-    long started=android.os.SystemClock.elapsedRealtime();
-    RemoteChannelOrder order=currentRemoteChannelOrder();
-    if(order.indexes.isEmpty()){toast("当前栏目没有可切换的频道");return;}
+  private void applyChannelZap(RemoteChannelOrder order,int delta){
+    if(order==null||order.indexes.isEmpty()){toast("当前栏目没有可切换的频道");return;}
     Integer current=order.positions.get(selected);
     int currentPosition=current==null?-1:current;
     int nextPosition=currentPosition<0?(delta>0?0:order.indexes.size()-1)
         :SourceSelectionPolicy.wrapIndex(currentPosition+delta,order.indexes.size());
     play(order.indexes.get(nextPosition));
     showChannelZapOverlay();
+  }
+  private void stepChannel(int delta){
+    long started=android.os.SystemClock.elapsedRealtime();
+    RemoteChannelOrder order=currentRemoteChannelOrder();
+    if(order==null){
+      long generation=catalogueFilterGeneration;
+      if(pendingRemoteZapGeneration!=generation){
+        pendingRemoteZapSteps=0;
+        pendingRemoteZapGeneration=generation;
+      }
+      pendingRemoteZapSteps=Math.max(-12,Math.min(12,pendingRemoteZapSteps+delta));
+      prewarmRemoteChannelOrder();
+      android.util.Log.i("MyTVZap","channel_order_cache_miss_async total_ms="
+          +(android.os.SystemClock.elapsedRealtime()-started));
+      return;
+    }
+    pendingRemoteZapSteps=0;
+    pendingRemoteZapGeneration=-1L;
+    applyChannelZap(order,delta);
     android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
         +(android.os.SystemClock.elapsedRealtime()-started)+" total="+order.indexes.size());
   }
