@@ -3,6 +3,12 @@ package com.wodedianshi.tv;
 import android.content.Context;
 import android.net.Uri;
 import android.view.View;
+import android.os.Handler;
+import android.os.Looper;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
@@ -41,6 +47,33 @@ public final class LibVlcPlaybackEngine {
         videoLayout = layout;
     }
 
+    private static void runViewOperationOnMain(Runnable operation) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            operation.run();
+            return;
+        }
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                operation.run();
+            } catch (RuntimeException error) {
+                failure.set(error);
+            } finally {
+                completed.countDown();
+            }
+        });
+        try {
+            if (!completed.await(8, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for VLC video surface on UI thread");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while attaching VLC video surface", interrupted);
+        }
+        if (failure.get() != null) throw failure.get();
+    }
+
     public boolean isInitialized() {
         return !released && libVlc != null && mediaPlayer != null;
     }
@@ -63,7 +96,7 @@ public final class LibVlcPlaybackEngine {
             // release() hides the layout while tearing down any previous native session.
             // Make it visible before attaching VLC's native video surfaces.
             recordNativeStage("VLC_LAYOUT_VISIBLE_BEGIN");
-            videoLayout.setVisibility(View.VISIBLE);
+            runViewOperationOnMain(() -> videoLayout.setVisibility(View.VISIBLE));
             ArrayList<String> options = new ArrayList<>();
             options.add("--no-video-title-show");
             options.add("--network-caching=1500");
@@ -105,7 +138,7 @@ public final class LibVlcPlaybackEngine {
                 }
             });
             recordNativeStage("VLC_ATTACH_VIEWS_BEGIN");
-            mediaPlayer.attachViews(videoLayout, null, false, false);
+            runViewOperationOnMain(() -> mediaPlayer.attachViews(videoLayout, null, false, false));
             recordNativeStage("VLC_ATTACH_VIEWS_RETURNED");
             released = false;
             recordNativeStage("VLC_INIT_COMPLETED");
@@ -237,16 +270,18 @@ public final class LibVlcPlaybackEngine {
         if (isInitialized() && mediaPlayer.getVLCVout().areViewsAttached()) {
             mediaPlayer.detachViews();
         }
-        videoLayout.setVisibility(View.GONE);
+        runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
     }
 
     /** Reattach only after the VLC layout is attached to the visible window. */
     public void attachViews() {
         if (!isInitialized()) return;
-        videoLayout.setVisibility(View.VISIBLE);
-        if (!mediaPlayer.getVLCVout().areViewsAttached()) {
-            mediaPlayer.attachViews(videoLayout, null, false, false);
-        }
+        runViewOperationOnMain(() -> {
+            videoLayout.setVisibility(View.VISIBLE);
+            if (!mediaPlayer.getVLCVout().areViewsAttached()) {
+                mediaPlayer.attachViews(videoLayout, null, false, false);
+            }
+        });
     }
 
     public void release() {
@@ -301,7 +336,7 @@ public final class LibVlcPlaybackEngine {
             }
         }
         try {
-            if (videoLayout != null) videoLayout.setVisibility(View.GONE);
+            if (videoLayout != null) runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
         } catch (RuntimeException ignored) { }
         recordNativeStage("VLC_RELEASE_COMPLETED");
     }
