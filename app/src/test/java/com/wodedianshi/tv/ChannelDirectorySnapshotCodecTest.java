@@ -27,6 +27,16 @@ public class ChannelDirectorySnapshotCodecTest {
         assertEquals(favorites,decoded.favorites);
     }
 
+    @Test public void rejectsInvalidActiveSourceIndex() throws Exception {
+        RoomCatalogueWriter.ChannelSnapshot row = new RoomCatalogueWriter.ChannelSnapshot();
+        row.name="CCTV-1"; row.url="https://one.example/live.m3u8"; row.activeSource=2;
+        row.sources.add(row.url);
+        ArrayList<RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>(); rows.add(row);
+        byte[] encoded=ChannelDirectorySnapshotCodec.encode(rows,new HashSet<>());
+        try { ChannelDirectorySnapshotCodec.decode(encoded); fail("invalid active source should be rejected"); }
+        catch (java.io.IOException expected) {}
+    }
+
     @Test public void rejectsEmptyAndCorruptSnapshots() throws Exception {
         try { ChannelDirectorySnapshotCodec.encode(new ArrayList<>(),new HashSet<>()); fail(); }
         catch (java.io.IOException expected) {}
