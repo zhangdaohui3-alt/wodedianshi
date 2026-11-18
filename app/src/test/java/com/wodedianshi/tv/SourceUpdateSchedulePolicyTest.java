@@ -43,6 +43,13 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(-1));
     }
 
+    @Test public void initialDiscoveryRequiresEveryCandidateAndEveryFeed() {
+        assertFalse(SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(144, 24, 0));
+        assertFalse(SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(144, 144, 1));
+        assertFalse(SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(0, 0, 0));
+        assertTrue(SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(144, 144, 0));
+    }
+
     @Test public void validatedDiscoverySourceCountsAsSuccessful() {
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(1));
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(24));
