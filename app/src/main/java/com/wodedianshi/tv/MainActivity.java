@@ -133,6 +133,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
+  // Fullscreen zap order is built once per catalogue/filter state, not rescanned
+  // and resorted on every remote-control key press.
+  private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
+  private volatile RemoteChannelOrder cachedRemoteChannelOrder;
+
   private volatile long catalogueFilterGeneration=0L;
   private volatile int lastFilteredMatchCount=0;
   private volatile java.util.concurrent.Future<?> pendingCatalogueFilter=null;
@@ -180,6 +185,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private String currentMediaId = "";
   // Video-frame metadata callbacks run on the playback thread. Gate one UI handoff
   // per source so no ExoPlayer getter is ever called from that callback thread.
+  private static final class RemoteChannelOrder {
+    final String key;
+    final ArrayList<Integer> indexes;
+    final HashMap<Integer,Integer> positions;
+    RemoteChannelOrder(String key,ArrayList<Integer> indexes) {
+      this.key=key;this.indexes=indexes;
+      this.positions=new HashMap<>(Math.max(16,indexes.size()*2));
+      for(int i=0;i<indexes.size();i++)positions.put(indexes.get(i),i);
+    }
+  }
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
     // Catalogue filter snapshots never use playback/source ownership. Keep these
@@ -4336,6 +4351,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     fullscreenFavoriteButton.setVisibility(View.GONE);
     fullscreenControlsVisible=false;
     updateLiveChannelPresentation();
+    prewarmRemoteChannelOrder();
     if(isTouchDevice())showFullscreenControls();
     getWindow().getDecorView().setSystemUiVisibility(
       View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
@@ -4730,19 +4746,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         &&video!=null&&video.dispatchKeyEvent(event))return true;
     return super.dispatchKeyEvent(event);
   }
-  private ArrayList<Integer> currentRemoteChannelOrder(){
+  private String remoteChannelOrderKey(String category,String query,boolean favoritesOnly,
+      long filterGeneration,int channelCount,int favoritesHash){
+    return filterGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
+        +(category==null?"全部":category)+"|"+(query==null?"":query);
+  }
+  private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
+      boolean favoritesOnly){
     ArrayList<Integer> order=new ArrayList<>();
-    String q=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!(c.group==null?"":c.group).toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+        if(c==null)continue;
+        if(favoritesOnly&&!favorites.contains(c.key()))continue;
+        if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
+        String name=c.name==null?"":c.name;
+        String group=c.group==null?"":c.group;
+        if(!name.toLowerCase(Locale.ROOT).contains(query)
+            &&!group.toLowerCase(Locale.ROOT).contains(query)
+            &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
         order.add(i);
       }
-      if(activeCategory.equals("央视")){
+      if("央视".equals(category)){
         order.sort((x,y)->{
           Channel cx=channels.get(x),cy=channels.get(y);
           int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
@@ -4751,15 +4776,49 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });
       }
     }
-    return order;
+    return new RemoteChannelOrder(key,order);
+  }
+  private void prewarmRemoteChannelOrder(){
+    final String category=activeCategory==null?"全部":activeCategory;
+    final String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    final boolean favoritesOnly=favoriteMode;
+    final long filterGeneration=catalogueFilterGeneration;
+    final int count; synchronized(channels){count=channels.size();}
+    final int favoritesHash=favorites.hashCode();
+    final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
+    try{remoteChannelOrderWorker.execute(()->{
+      RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
+      int currentCount; synchronized(channels){currentCount=channels.size();}
+      String currentQuery=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+      String currentKey=remoteChannelOrderKey(activeCategory,currentQuery,favoriteMode,
+          catalogueFilterGeneration,currentCount,favorites.hashCode());
+      if(key.equals(currentKey))cachedRemoteChannelOrder=ready;
+    });}catch(RuntimeException ignored){}
+  }
+  private RemoteChannelOrder currentRemoteChannelOrder(){
+    String category=activeCategory==null?"全部":activeCategory;
+    String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    int count; synchronized(channels){count=channels.size();}
+    String key=remoteChannelOrderKey(category,query,favoriteMode,
+        catalogueFilterGeneration,count,favorites.hashCode());
+    RemoteChannelOrder cached=cachedRemoteChannelOrder;
+    if(cached!=null&&key.equals(cached.key))return cached;
+    RemoteChannelOrder built=buildRemoteChannelOrder(key,category,query,favoriteMode);
+    cachedRemoteChannelOrder=built;
+    return built;
   }
   private void stepChannel(int delta){
-    ArrayList<Integer> order=currentRemoteChannelOrder();
-    if(order.isEmpty()){toast("当前栏目没有可切换的频道");return;}
-    int current=order.indexOf(selected);
-    int nextPosition=current<0?(delta>0?0:order.size()-1):SourceSelectionPolicy.wrapIndex(current+delta,order.size());
-    play(order.get(nextPosition));
+    long started=android.os.SystemClock.elapsedRealtime();
+    RemoteChannelOrder order=currentRemoteChannelOrder();
+    if(order.indexes.isEmpty()){toast("当前栏目没有可切换的频道");return;}
+    Integer current=order.positions.get(selected);
+    int currentPosition=current==null?-1:current;
+    int nextPosition=currentPosition<0?(delta>0?0:order.indexes.size()-1)
+        :SourceSelectionPolicy.wrapIndex(currentPosition+delta,order.indexes.size());
+    play(order.indexes.get(nextPosition));
     showChannelZapOverlay();
+    android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
+        +(android.os.SystemClock.elapsedRealtime()-started)+" total="+order.indexes.size());
   }
   private void showChannelZapOverlay(){
     if(selected<0||selected>=channels.size())return;
@@ -5654,11 +5713,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     // Explicitly drain the previous live item before assigning another source. This
     // prevents stale audio/renderers from surviving rapid channel/source changes.
-    saveCriticalEngineStage("TUNE_STAGE","previous Media3 item stop begin");
-    player.stop();
-    player.clearMediaItems();
+    saveCriticalEngineStage("TUNE_STAGE","previous Media3 item replace begin");
     MediaItem item=PlaybackPlayerFactory.buildMediaItem(c.backups.get(c.activeSource),currentMediaId);
     saveCriticalEngineStage("TUNE_STAGE","media item assignment begin");
+    // setMediaItem replaces the previous playlist atomically; a separate stop()+
+    // clearMediaItems() adds two redundant synchronous player-thread round trips.
     player.setMediaItem(item);
     saveCriticalEngineStage("TUNE_STAGE","media item assigned");
     saveCriticalEngineStage("TUNE_STAGE","Media3 prepare begin");
@@ -6587,5 +6646,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
