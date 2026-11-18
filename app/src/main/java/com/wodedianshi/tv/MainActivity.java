@@ -56,6 +56,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
   private Runnable libVlcBufferingTimeout;
+  // PixelCopy-based visual confirmation for LibVLC; Vout alone is not a rendered frame.
+  private Runnable libVlcFrameProbe;
+  private android.view.SurfaceView libVlcFrameProbeSurface;
+  private Bitmap libVlcFrameProbeBitmap;
+  private int libVlcBlackFrameSamples=0;
+  private boolean libVlcFrameVerified=false;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -5905,10 +5911,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             sourceReadyAt=android.os.SystemClock.elapsedRealtime();
             info.setText("检测到 VLC 视频输出："+channels.get(selected).name+"（画面尚待确认）");
             showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
-            saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
+            saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); starting visual surface verification");
+            startLibVlcFrameProbe(expectedMediaId,expectedChannel,engine);
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
+            cancelLibVlcFrameProbe();
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
           }
         });}
@@ -6025,10 +6033,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       libVlcStableChecks++;
       if(!libVlcStableRecorded&&libVlcStableChecks>=2){
         libVlcStableRecorded=true;
-        saveLiveDiagnostic("VLC_ENGINE_HEALTHY_UNVERIFIED",
-            "LibVLC maintained Vout and playing state across two watchdog checks; "
-            +"actual rendered-frame visibility is unverified, so this source was not "
-            +"promoted to last-known-good and no stable-play success was recorded");
+        saveLiveDiagnostic(libVlcFrameVerified?"VLC_ENGINE_HEALTHY_FRAME_VERIFIED":"VLC_ENGINE_HEALTHY_UNVERIFIED",
+            libVlcFrameVerified
+                ?"LibVLC maintained Vout/playing state and PixelCopy confirmed non-black video-surface pixels"
+                :"LibVLC maintained Vout and playing state, but rendered-frame visibility remains unverified");
       }
       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
     };
@@ -6049,8 +6057,110 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void cancelLibVlcBufferingTimeout(){if(libVlcBufferingTimeout!=null){uiHandler.removeCallbacks(libVlcBufferingTimeout);libVlcBufferingTimeout=null;}}
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
+  private void cancelLibVlcFrameProbe(){
+    if(libVlcFrameProbe!=null){uiHandler.removeCallbacks(libVlcFrameProbe);libVlcFrameProbe=null;}
+    libVlcFrameProbeSurface=null;
+    libVlcFrameProbeBitmap=null;
+    libVlcBlackFrameSamples=0;
+    libVlcFrameVerified=false;
+  }
+  private android.view.SurfaceView findVlcSurfaceView(android.view.View view){
+    if(view instanceof android.view.SurfaceView)return (android.view.SurfaceView)view;
+    if(view instanceof android.view.ViewGroup){
+      android.view.ViewGroup group=(android.view.ViewGroup)view;
+      for(int i=0;i<group.getChildCount();i++){
+        android.view.SurfaceView found=findVlcSurfaceView(group.getChildAt(i));
+        if(found!=null)return found;
+      }
+    }
+    return null;
+  }
+  private void startLibVlcFrameProbe(String expectedMediaId,int expectedChannel,
+      LibVlcPlaybackEngine expectedEngine){
+    cancelLibVlcFrameProbe();
+    if(android.os.Build.VERSION.SDK_INT<24){
+      saveLiveDiagnostic("VLC_FRAME_PROBE_UNAVAILABLE","PixelCopy requires Android API 24 or newer");
+      return;
+    }
+    final android.view.SurfaceView surface=findVlcSurfaceView(vlcVideoLayout);
+    if(surface==null){
+      saveLiveDiagnostic("VLC_FRAME_PROBE_UNAVAILABLE","No VLC SurfaceView found; Vout remains unverified");
+      return;
+    }
+    final Bitmap sample;
+    try{sample=Bitmap.createBitmap(32,18,Bitmap.Config.ARGB_8888);}
+    catch(RuntimeException allocationFailure){
+      saveLiveDiagnostic("VLC_FRAME_PROBE_UNAVAILABLE","sample bitmap allocation failed: "+allocationFailure.getClass().getSimpleName());
+      return;
+    }
+    libVlcFrameProbeSurface=surface;
+    libVlcFrameProbeBitmap=sample;
+    libVlcBlackFrameSamples=0;
+    libVlcFrameVerified=false;
+    final Runnable[] task=new Runnable[1];
+    task[0]=()->{
+      if(libVlcEngine!=expectedEngine||selected!=expectedChannel
+          ||!expectedMediaId.equals(currentMediaId)||!usingLibVlc
+          ||libVlcFrameVerified||libVlcFrameProbeSurface!=surface)return;
+      if(!surface.isShown()||surface.getWidth()<=0||surface.getHeight()<=0){
+        uiHandler.postDelayed(task[0],1000L);
+        return;
+      }
+      try{
+        android.view.PixelCopy.request(surface,sample,result->{
+          if(libVlcEngine!=expectedEngine||selected!=expectedChannel
+              ||!expectedMediaId.equals(currentMediaId)||!usingLibVlc
+              ||libVlcFrameProbeSurface!=surface)return;
+          if(result==android.view.PixelCopy.SUCCESS){
+            int[] pixels=new int[32*18];
+            sample.getPixels(pixels,0,32,0,0,32,18);
+            if(SurfaceFrameHealthPolicy.isNearBlack(pixels)){
+              libVlcBlackFrameSamples++;
+              saveLiveDiagnostic("VLC_FRAME_SAMPLE","near_black=true consecutive="+libVlcBlackFrameSamples);
+              if(libVlcBlackFrameSamples>=SurfaceFrameHealthPolicy.BLACK_SAMPLE_FAILOVER_COUNT
+                  &&libVlcVideoOutputReady&&expectedEngine.isPlaying()){
+                saveLiveDiagnostic("VLC_BLACK_SCREEN_FAILOVER",
+                    "Vout/Playing were active but "+libVlcBlackFrameSamples
+                    +" consecutive PixelCopy samples contained only near-black pixels");
+                releaseLibVlcEngine();
+                if(video!=null)video.setVisibility(View.VISIBLE);
+                advanceToNextSourceAutomatically("VLC 有视频输出信号但画面持续黑屏，正在尝试备用源");
+                return;
+              }
+            }else{
+              libVlcFrameVerified=true;
+              long firstFrameMs=Math.max(0L,android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+              android.util.Log.i("MyTVZap","vlc_source_first_frame_ms="+firstFrameMs
+                  +" channel="+(selected>=0&&selected<channels.size()?channels.get(selected).name:"?"));
+              saveLiveDiagnostic("VLC_FIRST_FRAME_VERIFIED",
+                  "PixelCopy confirmed non-black VLC surface pixels after "+firstFrameMs+"ms");
+              String renderedUrl=currentSourceUrl();
+              recordSourceMetric(renderedUrl,"firstFrame",firstFrameMs);
+              if(selected>=0&&selected<channels.size()){
+                Channel renderedChannel=channels.get(selected);
+                SourceMemoryStore.saveLastGood(MainActivity.this,
+                    SourceMemoryStore.channelIdentityKey(identity(renderedChannel)),renderedUrl);
+              }
+              libVlcFrameProbe=null;
+              libVlcFrameProbeSurface=null;
+              libVlcFrameProbeBitmap=null;
+              return;
+            }
+          }else if(result!=android.view.PixelCopy.ERROR_SOURCE_NO_DATA){
+            saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
+          }
+          if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],2500L);
+        },uiHandler);
+      }catch(RuntimeException copyFailure){
+        saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR",copyFailure.getClass().getSimpleName());
+        uiHandler.postDelayed(task[0],2500L);
+      }
+    };
+    libVlcFrameProbe=task[0];
+    uiHandler.postDelayed(task[0],1500L);
+  }
   private void releaseLibVlcEngine(){
-    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();cancelLibVlcFrameProbe();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(old!=null){
       try{libVlcWorker.execute(()->{try{old.release();}catch(Throwable failure){
