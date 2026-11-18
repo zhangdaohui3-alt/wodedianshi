@@ -143,6 +143,14 @@ public final class RoomCatalogueWriter {
     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
+        // SourceUpdateWorker only enriches a Room-derived snapshot; it must never
+        // replace the authoritative directory with a truncated/partial feed result.
+        AppDatabase database = RoomDatabaseProvider.get(context);
+        int existingChannels = database.channelDao().countChannels();
+        if (existingChannels > 0 && snapshot.length() < existingChannels) {
+            throw new IllegalStateException("Refusing incomplete background catalogue snapshot: "
+                    + snapshot.length() + " rows for " + existingChannels + " saved channels");
+        }
         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
         for (int row = 0; row < snapshot.length(); row++) {
             JSONObject item = snapshot.optJSONObject(row);
