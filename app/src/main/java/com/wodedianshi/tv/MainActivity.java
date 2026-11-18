@@ -1034,7 +1034,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // protection inside the Worker still pauses it if the user starts watching.
       OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
           .setConstraints(constraints)
-          .setInputData(new Data.Builder().putBoolean("manual",true).build())
+          .setInputData(new Data.Builder().putBoolean("manual",true).putBoolean("initial_discovery_chain",true).build())
           .build();
       wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
     }
