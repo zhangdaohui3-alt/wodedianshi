@@ -147,7 +147,7 @@ public final class RoomCatalogueWriter {
         // replace the authoritative directory with a truncated/partial feed result.
         AppDatabase database = RoomDatabaseProvider.get(context);
         int existingChannels = database.channelDao().countChannels();
-        if (existingChannels > 0 && snapshot.length() < existingChannels) {
+        if (!BackgroundSnapshotPolicy.isComplete(existingChannels, snapshot.length())) {
             throw new IllegalStateException("Refusing incomplete background catalogue snapshot: "
                     + snapshot.length() + " rows for " + existingChannels + " saved channels");
         }
