@@ -1029,8 +1029,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // worker instead of repeating the same foreground catalogue download.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
         enabled,prefs.getLong("source_update_last_success_at",0L))){
+      // The first discovery is part of first-run setup, not a routine background
+      // refresh. Let it run while the catalogue screen is open; playback-active
+      // protection inside the Worker still pauses it if the user starts watching.
       OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
-          .setConstraints(constraints).build();
+          .setConstraints(constraints)
+          .setInputData(new Data.Builder().putBoolean("manual",true).build())
+          .build();
       wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
     }
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
