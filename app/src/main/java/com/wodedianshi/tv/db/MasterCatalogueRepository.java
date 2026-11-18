@@ -6,12 +6,9 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Read-only access to the complete legacy catalogue shadow, including custom
- * channels and entries not assigned to the China/international partitions.
- *
+ * Authoritative read access to the single Room catalogue, including custom
+ * channels and entries outside the China/international display filters.
  * All calls are blocking Room operations and must run on a background executor.
- * This repository deliberately does not switch MainActivity to Room: callers
- * must first validate parity and keep the SharedPreferences rollback snapshot.
  */
 public final class MasterCatalogueRepository {
     public static final String MIGRATION_KEY = "room_native_catalogue_v1";
