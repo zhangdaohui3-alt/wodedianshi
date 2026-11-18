@@ -3529,6 +3529,7 @@ public class MainActivity extends Activity {
   private boolean audioTrackSupported=false;
   private boolean audioTrackSelected=false;
   private volatile boolean audioPositionAdvancing=false;
+  private volatile boolean audioSinkErrorObserved=false;
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3550,11 +3551,13 @@ public class MainActivity extends Activity {
       boolean missingAudioTrack=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected;
       boolean audioNotAdvancing=!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
-      if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudioTrack,missingVideo)){
+      boolean audioOutputFailed=TrackHealthPolicy.shouldFailoverForAudioOutput(
+          missingAudioTrack,audioNotAdvancing,audioSinkErrorObserved);
+      if(audioOutputFailed||missingVideo){
         recordCurrentSourceFailure();
         String reason=missingVideo
             ?(missingAudioTrack?"音视频轨道均不可用":"没有可用视频轨道")
-            :"没有可用音轨";
+            :(missingAudioTrack?"没有可用音轨":"音频输出异常");
         advanceToNextSourceAutomatically("检测到当前源"+reason);
       }else if(audioNotAdvancing){
         // A selected audio track with no advancement is diagnostic only: do not
@@ -3746,7 +3749,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3835,8 +3838,10 @@ public class MainActivity extends Activity {
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
           // A single sink warning is not proof of a dead stream; avoid premature failover.
-          if(isCurrentEvent(eventTime))
+          if(isCurrentEvent(eventTime)){
+            audioSinkErrorObserved=true;
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
+          }
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
