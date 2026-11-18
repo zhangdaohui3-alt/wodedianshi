@@ -225,9 +225,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     installCrashDiagnosticsHandler();
     getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-    // IMPORTANT: SharedPreferences is backed by a single XML file. The legacy
-    // catalogue is about 17 MB, and the first getSharedPreferences() can wait for
-    // that file to load. Warm it on the worker thread before any UI code reads it.
+    // Warm lightweight user settings on a worker before UI setup. The channel
+    // directory itself is now initialized directly in Room, not SharedPreferences.
     // Show a tiny native loading surface immediately so the main thread stays free.
     TextView startup = new TextView(this);
     startup.setText("我的电视\\n正在安全恢复频道数据…");
@@ -327,8 +326,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
-      });
-        }
       });
 
         });
