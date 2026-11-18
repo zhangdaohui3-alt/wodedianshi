@@ -25,7 +25,7 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(false, 1_700_000_000_000L));
     }
 
-    @Test public void doesNotRepeatDiscoveryAfterAnySuccessfulFeedRead() {
+    @Test public void doesNotRepeatDiscoveryAfterAValidatedInitialDiscovery() {
         assertFalse(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, 1_700_000_000_000L));
     }
 
