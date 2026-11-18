@@ -228,6 +228,13 @@ public class SourceUpdateWorker extends Worker {
         if(!measured.valid)continue;
         if(!e.savedSource)discoveryProbesValid++;
         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
+        if(target!=null){
+          String canonical=ChannelNamePolicy.canonicalBroadcasterName(
+              e.name,e.tvgName,e.tvgId,e.group);
+          if(!canonical.isEmpty())target.put("name",canonical);
+          if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
+          if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
+        }
         // A known URL may appear in a second directory. Record that provenance
         // without duplicating the backup or probing the same address twice.
         if(knownUrls.contains(SourceSelectionPolicy.endpointKey(e.url))){
@@ -266,7 +273,7 @@ public class SourceUpdateWorker extends Worker {
       // health checks while public catalogue services are down; retry discovery
       // separately after persisting these local probe results.
       boolean discoveryUnavailable=feedsOk==0;
-      // Keep each channel's best few distinct sources together, ranked by measured
+      // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
       for(int i=0;i<saved.length();i++){
@@ -515,7 +522,7 @@ public class SourceUpdateWorker extends Worker {
     }
     channel.put("backupSourceScopes",filtered);
     // Channel-level tags are a derived union of the URLs that survived the
-    // five-source retention cap. Do not leave stale China/global membership.
+    // eight-source retention cap. Do not leave stale China/global membership.
     java.util.TreeSet<String> sortedScopes=new java.util.TreeSet<>(
         ChannelCatalogueScopePolicy.retainedScopes(ownershipByUrl,retainedUrls));
     JSONArray channelScopes=new JSONArray();
