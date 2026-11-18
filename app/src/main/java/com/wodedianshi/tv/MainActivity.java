@@ -735,15 +735,30 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void writeLocalDirectorySnapshotFromRows(
       ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows,
       Set<String> favoriteSnapshot,String reason){
+    // Room is the durable source of truth. The compressed local snapshot is only
+    // a convenience cache; never let it consume the final heap headroom needed
+    // by playback/UI on low-memory TV boxes after a large Room transaction.
+    Runtime runtime=Runtime.getRuntime();
+    long used=Math.max(0L,runtime.totalMemory()-runtime.freeMemory());
+    long headroom=Math.max(0L,runtime.maxMemory()-used);
+    if(headroom<64L*1024L*1024L){
+      android.util.Log.w("MyTVCache","local snapshot skipped for memory safety reason="+reason
+          +" channels="+(rows==null?0:rows.size())+" heap_headroom_mb="+(headroom/1048576L)
+          +"; Room remains authoritative");
+      return;
+    }
     try{
       byte[] payload=ChannelDirectorySnapshotCodec.encode(rows,favoriteSnapshot);
       new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.ALL,
           "room-catalogue-v1",payload,System.currentTimeMillis());
       android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
-          +" channels="+rows.size()+" bytes="+payload.length);
+          +" channels="+rows.size()+" bytes="+payload.length+" heap_headroom_mb="+(headroom/1048576L));
+    }catch(OutOfMemoryError memoryFailure){
+      // A cache is disposable. Do not turn a successful Room save into a process
+      // crash just because encoding the optional compressed copy ran out of heap.
+      android.util.Log.e("MyTVCache","local snapshot skipped after memory pressure reason="+reason
+          +" channels="+(rows==null?0:rows.size()),memoryFailure);
     }catch(Throwable cacheFailure){
-      // Room remains authoritative; a cache write failure must not roll back a
-      // successful database transaction or publish a partial local snapshot.
       android.util.Log.e("MyTVCache","local snapshot write failed reason="+reason,cacheFailure);
     }
   }
@@ -4097,7 +4112,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadRegionChannels(){
     if(regionLoading){info.setText("港澳台频道正在载入，请稍候…");return;}
-    regionLoading=true;info.setText("正在载入港澳台公开频道目录…");
+    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
+    final long now=System.currentTimeMillis();
+    final long last=cachePrefs.getLong("region_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    if(last>0L&&now-last<refreshInterval){
+      info.setText("已使用已保存的港澳台频道目录（"+cachePrefs.getInt("region_supplement_cached_count",0)
+          +" 个新增条目）· 后台每 12 小时检查更新");
+      android.util.Log.i("MyTVDirectory","region_cache_hit age_ms="+(now-last));
+      return;
+    }
+    regionLoading=true;info.setText("正在检查港澳台公开频道目录（已有频道仍可使用）…");
     worker.execute(()->{
       int added=0;StringBuilder errors=new StringBuilder();
       String[] feeds={
@@ -4105,16 +4130,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
         "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
       };
-      // Hong Kong, Macau and Taiwan belong to the China catalogue; retain their child categories.
       added=fetchAndMergePlaylists(feeds,22000,errors,"china");
       final int total=added;final String err=errors.toString();
-      persist();
-      runOnUiThread(()->{refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
+      final boolean saved=total<=0||persist();
+      if(saved&&(total>0||err.isEmpty())){
+        cachePrefs.edit().putLong("region_supplement_last_success",System.currentTimeMillis())
+            .putInt("region_supplement_cached_count",total).apply();
+      }
+      runOnUiThread(()->{
+        refresh();regionLoading=false;
+        info.setText("港澳台目录检查完成：新增 "+total+" 个条目。"
+            +(saved?"目录缓存已保留。":"本轮保存未成功，保留原有目录。")
+            +(err.isEmpty()?"":"部分来源不可用："+err));
+      });
     });
   }
   private void loadEntertainmentChannels(){
     if(entertainmentLoading){info.setText("全球娱乐频道列表正在载入，请稍候…");return;}
-    entertainmentLoading=true;info.setText("正在载入全球娱乐频道（电影、音乐、动画、儿童、喜剧及生活）…");
+    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
+    final long now=System.currentTimeMillis();
+    final long last=cachePrefs.getLong("entertainment_supplement_last_success",0L);
+    final long refreshInterval=12L*60L*60L*1000L;
+    if(last>0L&&now-last<refreshInterval){
+      info.setText("已使用已保存的娱乐频道目录（"+cachePrefs.getInt("entertainment_supplement_cached_count",0)
+          +" 个新增条目）· 后台每 12 小时检查更新");
+      android.util.Log.i("MyTVDirectory","entertainment_cache_hit age_ms="+(now-last));
+      return;
+    }
+    entertainmentLoading=true;info.setText("正在检查全球娱乐频道（已有频道仍可使用）…");
     worker.execute(()->{
       int added=0;StringBuilder errors=new StringBuilder();
       String[] feeds={
@@ -4137,13 +4180,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
         int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
         String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        // parse() performs bounded per-entry synchronization; avoid locking the
-         // entire channel catalogue while parsing a potentially large feed.
-         added+=parse(data,null,"global");
+        added+=parse(data,null,"global");
       }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
       final int total=added;final String err=errors.toString();
-      persist();
-      runOnUiThread(()->{refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
+      final boolean saved=total<=0||persist();
+      if(saved&&(total>0||err.isEmpty())){
+        cachePrefs.edit().putLong("entertainment_supplement_last_success",System.currentTimeMillis())
+            .putInt("entertainment_supplement_cached_count",total).apply();
+      }
+      runOnUiThread(()->{
+        refresh();entertainmentLoading=false;
+        info.setText("娱乐频道目录检查完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧及生活。"
+            +(saved?"目录缓存已保留。":"本轮保存未成功，保留原有目录。")
+            +(err.isEmpty()?"":"部分来源不可用："+err));
+      });
     });
   }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);e.setHint("https://网站或 /playlist.m3u");e.setText(getSharedPreferences("mytv",0).getString("last_playlist_url",""));e.setSelection(e.getText().length());new AlertDialog.Builder(this).setTitle("输入网站 / 播放列表入口").setMessage("支持可直接访问的 M3U/M3U8 播放列表网址；普通网页需提供实际播放列表或视频地址。").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->{String url=e.getText().toString().trim();getSharedPreferences("mytv",0).edit().putString("last_playlist_url",url).apply();download(url);}).show();}
