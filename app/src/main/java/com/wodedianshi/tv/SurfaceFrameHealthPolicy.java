@@ -2,7 +2,9 @@ package com.wodedianshi.tv;
 
 /** Conservative visual-surface health checks for the LibVLC fallback renderer. */
 final class SurfaceFrameHealthPolicy {
-    static final int BLACK_SAMPLE_FAILOVER_COUNT = 3;
+    // Match the documented conservative threshold: five successful black samples
+    // at the 1.5s probe cadence before automatic failover (about 7.5s).
+    static final int BLACK_SAMPLE_FAILOVER_COUNT = 5;
     private static final int NEAR_BLACK_LUMA = 8;
     private static final long MAX_AVERAGE_LUMA = 4L;
 
