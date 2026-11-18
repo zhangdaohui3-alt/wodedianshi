@@ -7,8 +7,6 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 public final class RoomDatabaseProvider {
     private static volatile AppDatabase instance;
-    private static volatile AppDatabase chinaInstance;
-    private static volatile AppDatabase internationalInstance;
 
     // Version 1 was the initial catalogue schema. Version 2 adds only the
     // migration checkpoint table; preserve all existing rows during upgrade.
@@ -75,40 +73,18 @@ public final class RoomDatabaseProvider {
     }
 
     /**
-     * Dedicated China catalogue database. It is separate from the legacy
-     * shadow database so China-first migration can be validated without
-     * modifying the existing catalogue or its rollback data.
+     * Compatibility alias: regional catalogues are scope-filtered views of the
+     * one authoritative catalogue database. Never create a second SQLite store.
      */
+    @Deprecated
     public static AppDatabase getChina(Context context) {
-        AppDatabase local = chinaInstance;
-        if (local == null) {
-            synchronized (RoomDatabaseProvider.class) {
-                local = chinaInstance;
-                if (local == null) {
-                    local = build(context, "mytv_china_catalogue.db");
-                    chinaInstance = local;
-                }
-            }
-        }
-        return local;
+        return get(context);
     }
 
-    /**
-     * Dedicated international catalogue database. Independent storage keeps
-     * later international imports and refreshes isolated from the China store.
-     */
+    /** Compatibility alias for the single authoritative catalogue database. */
+    @Deprecated
     public static AppDatabase getInternational(Context context) {
-        AppDatabase local = internationalInstance;
-        if (local == null) {
-            synchronized (RoomDatabaseProvider.class) {
-                local = internationalInstance;
-                if (local == null) {
-                    local = build(context, "mytv_international_catalogue.db");
-                    internationalInstance = local;
-                }
-            }
-        }
-        return local;
+        return get(context);
     }
 
     private static AppDatabase build(Context context, String databaseName) {
