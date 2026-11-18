@@ -4250,7 +4250,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
   // Room receives these user mutations directly. Resolve exactly the same
-  // stable identity scheme used by LegacyCatalogueImporter, including duplicate
+  // stable content identity scheme, including duplicate
   // rows, before queuing a small Room update off the UI thread.
   private String roomChannelIdAt(int channelIndex){
     synchronized(channels){
