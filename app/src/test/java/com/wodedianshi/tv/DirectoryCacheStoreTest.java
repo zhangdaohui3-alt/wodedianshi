@@ -17,8 +17,10 @@ public class DirectoryCacheStoreTest {
         DirectoryCacheStore store = new DirectoryCacheStore(temporaryFolder.getRoot());
         byte[] china = new byte[] {1, 2, 3};
         byte[] global = new byte[] {7, 8, 9, 10};
+        byte[] all = new byte[] {11, 12, 13, 14, 15};
         store.save(DirectoryCacheStore.Directory.CHINA, "cn-v1", china, 100L);
         store.save(DirectoryCacheStore.Directory.GLOBAL, "world-v2", global, 200L);
+        store.save(DirectoryCacheStore.Directory.ALL, "all-v1", all, 300L);
 
         assertNotEquals(store.fileFor(DirectoryCacheStore.Directory.CHINA),
                 store.fileFor(DirectoryCacheStore.Directory.GLOBAL));
@@ -26,6 +28,10 @@ public class DirectoryCacheStoreTest {
                 store.load(DirectoryCacheStore.Directory.CHINA, "cn-v1").payload));
         assertTrue(Arrays.equals(global,
                 store.load(DirectoryCacheStore.Directory.GLOBAL, "world-v2").payload));
+        assertNotEquals(store.fileFor(DirectoryCacheStore.Directory.ALL),
+                store.fileFor(DirectoryCacheStore.Directory.CHINA));
+        assertTrue(Arrays.equals(all,
+                store.load(DirectoryCacheStore.Directory.ALL, "all-v1").payload));
     }
 
     @Test public void offlineLoadAcceptsLastKnownFingerprint() throws Exception {
