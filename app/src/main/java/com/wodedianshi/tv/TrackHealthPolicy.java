@@ -1,14 +1,15 @@
 package com.wodedianshi.tv;
 
-/** Separates missing video output from audio-only warnings during live playback. */
+/** Distinguishes unusable live tracks from a temporarily silent audio output. */
 public final class TrackHealthPolicy {
     private TrackHealthPolicy() {}
 
     /**
-     * A missing video track means the channel cannot be viewed. Missing audio
-     * alone is diagnosed but does not force a source switch.
+     * A live source without a usable video or audio track is incomplete and
+     * should fail over. A selected audio track that has not advanced is handled
+     * separately as a warning because the programme may temporarily be silent.
      */
-    public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
-        return missingVideo;
+    public static boolean shouldFailoverForTrackHealth(boolean missingAudioTrack, boolean missingVideo) {
+        return missingAudioTrack || missingVideo;
     }
 }
