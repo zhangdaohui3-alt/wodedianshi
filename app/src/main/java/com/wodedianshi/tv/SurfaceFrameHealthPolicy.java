@@ -2,7 +2,7 @@ package com.wodedianshi.tv;
 
 /** Conservative visual-surface health checks for the LibVLC fallback renderer. */
 final class SurfaceFrameHealthPolicy {
-    static final int BLACK_SAMPLE_FAILOVER_COUNT = 5;
+    static final int BLACK_SAMPLE_FAILOVER_COUNT = 3;
     private static final int NEAR_BLACK_LUMA = 8;
     private static final long MAX_AVERAGE_LUMA = 4L;
 
