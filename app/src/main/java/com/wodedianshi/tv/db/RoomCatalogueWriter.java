@@ -36,7 +36,6 @@ public final class RoomCatalogueWriter {
         db.runInTransaction(() -> {
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
-            HashSet<String> previousFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
             HashSet<String> presentChannelIds = new HashSet<>();
             HashSet<String> presentCategoryIds = new HashSet<>();
             HashSet<String> desiredFavoriteIds = new HashSet<>();
@@ -99,6 +98,14 @@ public final class RoomCatalogueWriter {
                 throw new IllegalStateException("Room catalogue update produced no valid channel rows");
             }
 
+            // A worker refresh preserves the latest favorites from inside this same
+            // transaction. This avoids racing a user favorite toggle between a
+            // pre-transaction read and the catalogue commit.
+            if (favoriteKeys == null) {
+                desiredFavoriteIds.addAll(dao.getFavoriteChannelIds());
+                desiredFavoriteIds.retainAll(presentChannelIds);
+            }
+
             // Remove only rows absent from the complete snapshot. FK cascades then
             // clean up the removed channel's own sources/favorite, never its peers.
             previousChannelIds.removeAll(presentChannelIds);
@@ -134,8 +141,7 @@ public final class RoomCatalogueWriter {
     /** Source updater snapshots are complete Room-derived catalogues too. */
     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
-        ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
-        HashSet<String> favoriteKeys = new HashSet<>(dao.getFavoriteLegacyKeys());
+        HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
         for (int row = 0; row < snapshot.length(); row++) {
             JSONObject item = snapshot.optJSONObject(row);
