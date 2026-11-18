@@ -337,7 +337,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
 
         });
-      });
     });
   }
   // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
