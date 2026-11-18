@@ -13,7 +13,7 @@ import java.util.List;
  */
 public final class InternationalCatalogueRepository {
     private static final String MIGRATION_KEY =
-            LegacyCatalogueImporter.MIGRATION_KEY + "_international_partition_v2";
+            "legacy_international_partition_v2";
 
     private final ChannelDao dao;
 
