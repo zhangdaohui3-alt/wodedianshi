@@ -61,7 +61,7 @@ public final class DeviceCodecCapabilityInspector {
                     String name = codec.getName();
                     if (name == null) name = "unnamed";
                     name = name.replaceAll("[^A-Za-z0-9_.-]", "_");
-                    names.add(name + "(" + kind + ")");
+                    names.add(name + "(" + kind + ";" + describeCapabilities(codec, mime) + ")");
                     if (names.size() >= 3) break;
                 } catch (RuntimeException ignored) {
                     // One malformed vendor codec must not hide the rest.
@@ -71,6 +71,53 @@ public final class DeviceCodecCapabilityInspector {
             else report.add(mime + "=" + join(names));
         }
         return report;
+    }
+
+    private static String describeCapabilities(MediaCodecInfo codec, String mime) {
+        StringBuilder out = new StringBuilder();
+        try {
+            MediaCodecInfo.CodecCapabilities capabilities = codec.getCapabilitiesForType(mime);
+            MediaCodecInfo.CodecProfileLevel[] profileLevels = capabilities.profileLevels;
+            if (profileLevels != null && profileLevels.length > 0) {
+                out.append("profiles=");
+                int count = Math.min(profileLevels.length, 8);
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) out.append(',');
+                    MediaCodecInfo.CodecProfileLevel profileLevel = profileLevels[i];
+                    out.append("0x").append(Integer.toHexString(profileLevel.profile))
+                            .append("/0x").append(Integer.toHexString(profileLevel.level));
+                }
+                if (profileLevels.length > count) out.append(",+").append(profileLevels.length - count);
+                out.append(';');
+            }
+
+            MediaCodecInfo.VideoCapabilities video = capabilities.getVideoCapabilities();
+            if (video != null) {
+                android.util.Range<Integer> widths = video.getSupportedWidths();
+                android.util.Range<Integer> heights = video.getSupportedHeights();
+                android.util.Range<Integer> frameRates = video.getSupportedFrameRates();
+                android.util.Range<Integer> bitrates = video.getBitrateRange();
+                out.append("size=").append(widths.getLower()).append('-').append(widths.getUpper())
+                        .append('x').append(heights.getLower()).append('-').append(heights.getUpper())
+                        .append(";fps=").append(frameRates.getLower()).append('-')
+                        .append(frameRates.getUpper())
+                        .append(";align=").append(video.getWidthAlignment()).append('x')
+                        .append(video.getHeightAlignment())
+                        .append(";bitrate=").append(bitrates.getLower()).append('-')
+                        .append(bitrates.getUpper()).append(';');
+            }
+            out.append("maxInstances=").append(capabilities.getMaxSupportedInstances())
+                    .append(";adaptive=")
+                    .append(capabilities.isFeatureSupported(
+                            MediaCodecInfo.CodecCapabilities.FEATURE_AdaptivePlayback))
+                    .append(";tunneled=")
+                    .append(capabilities.isFeatureSupported(
+                            MediaCodecInfo.CodecCapabilities.FEATURE_TunneledPlayback));
+        } catch (RuntimeException error) {
+            out.append("capabilities-unavailable=")
+                    .append(error.getClass().getSimpleName());
+        }
+        return out.toString();
     }
 
     private static String join(List<String> values) {
