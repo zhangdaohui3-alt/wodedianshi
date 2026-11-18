@@ -378,8 +378,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(c.backups==null||c.backups.size()<2)continue;
         String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
         ArrayList<String> ordered=new ArrayList<>(c.backups);
-        // Stable sort: known HD/bitrate sources first; unknown sources keep their relative order.
-        ordered.sort((a,b)->Double.compare(observedSourceScore(b),observedSourceScore(a)));
+        // Score each endpoint once. Parsing the same SharedPreferences JSON from
+        // inside the comparator multiplied disk/string/JSON work by O(n log n).
+        HashMap<String,Double> scores=observedSourceScores(ordered);
+        ordered.sort((a,b)->Double.compare(scores.get(b),scores.get(a)));
         if(!ordered.equals(c.backups)){
           c.backups.clear();c.backups.addAll(ordered);
           int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;
@@ -6015,40 +6017,56 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       p.edit().putString("source_qoe_v1",all.toString()).apply();
     }catch(Exception ignored){}
   }
-  private double observedSourceScore(String url){
-    int label=sourceQualityScore(url);
+  private HashMap<String,Double> observedSourceScores(List<String> urls){
+    HashMap<String,Double> scores=new HashMap<>();
+    if(urls==null||urls.isEmpty())return scores;
     try{
-      String key=StableKey.url(url);
-      String legacyKey=StableKey.legacyUrl(url);
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+      // Read and parse both persisted score maps once per ranking operation.
       org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
-      // A current failed preflight must not be rescued by stale positive playback history.
-      if(SourceQualityScorer.isFailedProbeScore(probeScore))return probeScore+label*0.01;
       org.json.JSONObject allQoe=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}"));
-      org.json.JSONObject m=allQoe.optJSONObject(key);
-      if(m==null)m=allQoe.optJSONObject(legacyKey);
-      if(m==null||m.optInt("attempts",0)<2)return probeScore+label*0.01;
-      int attempts=Math.max(1,m.optInt("attempts",0));
-      int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-      int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
       long now=System.currentTimeMillis();
-      double recentSuccessBonus=SourceQoeScoringPolicy.recentSuccessBonus(
-          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
-      // Keep foreground and background rankings on the same attempt-normalized policy.
-      double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
-          attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
-          fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
-          codecWarnings);
-      double historyWeight=SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
-      return probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01;
-    }catch(Exception ignored){return label*0.01;}
+      for(String url:urls){
+        int label=sourceQualityScore(url);
+        try{
+          String key=StableKey.url(url),legacyKey=StableKey.legacyUrl(url);
+          double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
+          if(SourceQualityScorer.isFailedProbeScore(probeScore)){
+            scores.put(url,probeScore+label*0.01);continue;
+          }
+          org.json.JSONObject m=allQoe.optJSONObject(key);
+          if(m==null)m=allQoe.optJSONObject(legacyKey);
+          if(m==null||m.optInt("attempts",0)<2){
+            scores.put(url,probeScore+label*0.01);continue;
+          }
+          int attempts=Math.max(1,m.optInt("attempts",0));
+          int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
+          int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
+          double recentSuccessBonus=SourceQoeScoringPolicy.recentSuccessBonus(
+              m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
+          double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
+              attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
+              fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
+              codecWarnings);
+          double historyWeight=SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
+          scores.put(url,probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01);
+        }catch(Exception malformedUrl){scores.put(url,label*0.01);}
+      }
+    }catch(Exception malformedStore){
+      for(String url:urls)scores.put(url,sourceQualityScore(url)*0.01);
+    }
+    return scores;
+  }
+  private double observedSourceScore(String url){
+    Double score=observedSourceScores(java.util.Collections.singletonList(url)).get(url);
+    return score==null?sourceQualityScore(url)*0.01:score;
   }
   private void sortSourcesByObservedQuality(Channel c){
     if(c==null||c.backups==null||c.backups.size()<2)return;
     String active=c.activeSource>=0&&c.activeSource<c.backups.size()?c.backups.get(c.activeSource):c.url;
     ArrayList<String> ordered=new ArrayList<>(c.backups);
-    ordered.sort((a,b)->Double.compare(observedSourceScore(b),observedSourceScore(a)));
+    HashMap<String,Double> scores=observedSourceScores(ordered);
+    ordered.sort((a,b)->Double.compare(scores.get(b),scores.get(a)));
     if(ordered.equals(c.backups))return;
     c.backups.clear();c.backups.addAll(ordered);
     int ix=c.backups.indexOf(active);c.activeSource=ix>=0?ix:0;
