@@ -3706,10 +3706,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long now=System.currentTimeMillis();
     final long last=cachePrefs.getLong("china_supplement_last_success",0L);
     final long refreshInterval=12L*60L*60L*1000L;
-    // A recent timestamp is not enough: some earlier directory responses contained
-    // only a handful of recognized mainland channels. Keep retrying while the local
-    // catalogue is visibly incomplete instead of freezing that small result for 12h.
-    final int minimumUsefulChinaChannels=60;
+    // Cache readiness is deliberately separate from catalogue completeness.
+    // Once at least the twelve core CCTV identities are in Room, reuse them on
+    // every visit and let scheduled/background discovery keep expanding the list.
+    // A 60-channel threshold caused the app to re-download and "organize" forever
+    // on networks where provincial/local feeds were intermittently unavailable.
+    final int minimumUsefulChinaChannels=12;
     // Do not count/classify 11k+ saved channels on the UI thread when the user
     // opens CCTV/Satellite. The old synchronous scan repeatedly built identities
     // and could itself block MotionEvent dispatch long enough to trigger an ANR.
@@ -3722,10 +3724,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{chinaCatalogueWorker.execute(()->{
       try{
       final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
-      if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels){
+      if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels
+          &&cachePrefs.getBoolean("china_directory_room_committed",false)){
         runOnUiThread(()->{
           chinaLoading=false;
-          if(!isFinishing()&&info!=null)info.setText("已使用本地频道缓存（"+cachedRecognizedChinaCount+" 个国内频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+          if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("已使用已保存的国内频道（"+cachedRecognizedChinaCount+" 个），后台按计划补充；约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后再次检查。");
         });
         return;
       }
@@ -3753,14 +3756,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Keep the previous cache if no new entries were merged. Only advance the
       // refresh timestamp after the resulting catalogue contains a minimally
       // useful set of recognized mainland channels; HTTP 200 alone is not success.
-      if(total>0)persist();
-      final boolean usefulChinaDirectory=recognizedChinaCount>=minimumUsefulChinaChannels;
+      // Do not mark the directory as cached until the complete in-memory result
+      // has actually committed to Room. persist() is running on this background
+      // worker, so it waits for the requested Room write and reports real failure.
+      final boolean roomSaved=total<=0||persist();
+      final boolean usefulChinaDirectory=roomSaved
+          &&recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
-        cachePrefs.edit().putLong("china_supplement_last_success",System.currentTimeMillis()).apply();
+        cachePrefs.edit()
+            .putLong("china_supplement_last_success",System.currentTimeMillis())
+            .putInt("china_directory_cached_count",recognizedChinaCount)
+            .putBoolean("china_directory_room_committed",true)
+            .apply();
       }
       runOnUiThread(()->{
         chinaLoading=false;
-        if(isFinishing())return;
+        if(isFinishing()||isDestroyed()||info==null)return;
         if(total>0)refresh();
         String status=usefulChinaDirectory
             ?"已识别 "+recognizedChinaCount+" 个国内频道条目，频道缓存已保留。"
@@ -3771,7 +3782,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
       }catch(Throwable failure){
         final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
-        runOnUiThread(()->{chinaLoading=false;if(!isFinishing())info.setText("国内频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);});
+        runOnUiThread(()->{chinaLoading=false;if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("国内频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);});
       }
     });}catch(RuntimeException rejected){
       chinaLoading=false;
@@ -6246,5 +6257,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
