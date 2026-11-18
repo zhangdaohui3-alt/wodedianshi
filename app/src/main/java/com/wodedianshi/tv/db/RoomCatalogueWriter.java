@@ -72,7 +72,7 @@ public final class RoomCatalogueWriter {
                 if (sourceScopes != null) for (String scope : sourceScopes) sourceScopeArray.put(scope);
                 sourceRows.add(new BackupSourceEntity(id, url, i, sourceScopeArray.toString()));
             }
-            dao.writeChannelWithSources(category, channel, sourceRows);
+            dao.replaceChannelWithSources(category, channel, sourceRows);
             written++;
         }
         return written;
