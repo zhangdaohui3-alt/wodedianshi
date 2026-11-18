@@ -36,8 +36,8 @@ public final class LibVlcPlaybackEngine {
 
     private final Context appContext;
     private final VLCVideoLayout videoLayout;
-    private LibVLC libVlc;
-    private MediaPlayer mediaPlayer;
+    private volatile LibVLC libVlc;
+    private volatile MediaPlayer mediaPlayer;
     // Native VLC events arrive off the UI thread; lifecycle writes must be visible to callbacks.
     private volatile Listener listener;
     private volatile boolean released = true;
@@ -305,10 +305,12 @@ public final class LibVlcPlaybackEngine {
             }
             try {
                 recordNativeStage("VLC_DETACH_CHECK_BEGIN");
-                if (player.getVLCVout().areViewsAttached()) {
-                    recordNativeStage("VLC_DETACH_VIEWS_BEGIN");
-                    player.detachViews();
-                }
+                runViewOperationOnMain(() -> {
+                    if (player.getVLCVout().areViewsAttached()) {
+                        recordNativeStage("VLC_DETACH_VIEWS_BEGIN");
+                        player.detachViews();
+                    }
+                });
             } catch (RuntimeException | LinkageError error) {
                 recordNativeStage("VLC_DETACH_FAILED_" + error.getClass().getSimpleName());
             }
