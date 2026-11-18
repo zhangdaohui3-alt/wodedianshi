@@ -3839,7 +3839,8 @@ public class MainActivity extends Activity {
       });
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
-          if(listenerOwner!=MainActivity.this.player)return;
+          // Ignore late track callbacks from the previous item after a rapid channel/source switch.
+          if(!isCurrent())return;
           boolean audioPresent=false,audioSupported=false,audioSelected=false,videoPresent=false,videoSupported=false,videoSelected=false;
           for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()==C.TRACK_TYPE_AUDIO){

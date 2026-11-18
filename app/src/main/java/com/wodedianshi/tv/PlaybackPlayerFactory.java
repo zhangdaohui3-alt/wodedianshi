@@ -51,11 +51,14 @@ public final class PlaybackPlayerFactory {
                 .setPrioritizeTimeOverSizeThresholds(false)
                 .build();
 
-        return new ExoPlayer.Builder(context, renderers(context, decoderFallback))
+        ExoPlayer player = new ExoPlayer.Builder(context, renderers(context, decoderFallback))
                 .setLoadControl(loadControl)
                 .setMediaSourceFactory(new DefaultMediaSourceFactory(context)
                         .setDataSourceFactory(httpFactory))
                 .build();
+        // Let Media3 request, respond to and abandon audio focus for live playback.
+        player.setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT, true);
+        return player;
     }
 
     public static ExoPlayer createVodPlayer(Context context, boolean decoderFallback) {
@@ -65,9 +68,12 @@ public final class PlaybackPlayerFactory {
                 .setConnectTimeoutMs(15000)
                 .setReadTimeoutMs(30000);
 
-        return new ExoPlayer.Builder(context, renderers(context, decoderFallback))
+        ExoPlayer player = new ExoPlayer.Builder(context, renderers(context, decoderFallback))
                 .setMediaSourceFactory(new DefaultMediaSourceFactory(context)
                         .setDataSourceFactory(httpFactory))
                 .build();
+        // Keep VOD audio-focus behavior consistent with live playback.
+        player.setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT, true);
+        return player;
     }
 }
