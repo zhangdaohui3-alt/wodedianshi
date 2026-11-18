@@ -113,9 +113,10 @@ public final class RoomCatalogueReader {
             if (consumer == null) allRows.addAll(records);
             else consumer.accept(records);
         }
-        if (total > 0 && loaded == 0) {
-            throw new IllegalStateException("Room catalogue checkpoint exists but no channels were readable");
-        }
+        // Never publish a partial directory as a valid startup snapshot. A missing
+        // middle page, concurrent truncation, or malformed row must fail closed so
+        // callers can retain the previous complete local directory instead.
+        CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
                 favorites, loaded);
