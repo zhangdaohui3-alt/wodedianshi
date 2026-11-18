@@ -3572,14 +3572,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         // Resolve the selected channel position after sorting, on this worker. The UI
         // renderer must never scan thousands of matches while handling D-pad input.
-        int selectedVisibleIndex=-1;
+        int selectedVisibleIndexValue=-1;
         if(selectedKey!=null){
           for(int i=0;i<visible.size();i++){
             if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
             Channel candidate=visible.get(i);
-            if(candidate!=null&&selectedKey.equals(candidate.key())){selectedVisibleIndex=i;break;}
+            if(candidate!=null&&selectedKey.equals(candidate.key())){selectedVisibleIndexValue=i;break;}
           }
         }
+        final int selectedVisibleIndex=selectedVisibleIndexValue;
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" selected_visible_index="+selectedVisibleIndex+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->{
