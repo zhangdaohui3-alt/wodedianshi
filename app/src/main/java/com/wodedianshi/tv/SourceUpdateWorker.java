@@ -25,6 +25,9 @@ public class SourceUpdateWorker extends Worker {
   // The first 59 entries in the upstream aggregate are national/satellite channels;
   // start the dedicated local feed at the first regional block.
   private static final int REGIONAL_LOCAL_FEED_START = 59;
+  // One larger bounded page lets the regional allowlist yield enough local
+  // channels in the first discovery cycle without expanding every other feed.
+  private static final int REGIONAL_LOCAL_FEED_QUOTA = 24;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -166,7 +169,8 @@ public class SourceUpdateWorker extends Worker {
             if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
               throw new IOException("目录格式无效");
             parsedCount[0]=parsePlaylist(reader,feedCandidates,scopeForFeed(feed),
-                feedCursor,MAX_DISCOVERY_PER_FEED,regionalLocalFeed);
+                feedCursor,regionalLocalFeed?REGIONAL_LOCAL_FEED_QUOTA:MAX_DISCOVERY_PER_FEED,
+                regionalLocalFeed);
           }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
@@ -364,7 +368,9 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
-          if(initialDiscoveryChain&&batch.parsed<MAX_DISCOVERY_PER_FEED){
+          int batchQuota=batch.index==REGIONAL_LOCAL_FEED_INDEX
+              ?REGIONAL_LOCAL_FEED_QUOTA:MAX_DISCOVERY_PER_FEED;
+          if(initialDiscoveryChain&&batch.parsed<batchQuota){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
           }else if(batch.parsed>0){
@@ -423,7 +429,7 @@ public class SourceUpdateWorker extends Worker {
     if(!localDone){
       for(FeedBatch batch:batches){
         if(batch.index==REGIONAL_LOCAL_FEED_INDEX&&batch.success
-            &&batch.parsed<MAX_DISCOVERY_PER_FEED){localDone=true;break;}
+            &&batch.parsed<REGIONAL_LOCAL_FEED_QUOTA){localDone=true;break;}
       }
     }
     return localDone;
