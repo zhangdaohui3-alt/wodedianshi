@@ -17,8 +17,8 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_SOURCES_PER_CHANNEL = 8;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
-  // Four rotating entries per feed let all six China/HMT feeds fit one 24-probe
-  // first-run batch. The cursor advances only after the whole batch has been probed.
+  // Four rotating entries per feed cover the eight China/HMT feeds in two 24-probe
+  // batches. The cursor advances only after the whole batch has been probed.
   private static final int MAX_DISCOVERY_PER_FEED = 4;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
@@ -43,7 +43,9 @@ public class SourceUpdateWorker extends Worker {
      String[] feeds={
        // China-first discovery: domestic and regional channels are read before the global index.
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv_status.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province_status.m3u8",
        "https://iptv-org.github.io/iptv/countries/cn.m3u",
        "https://iptv-org.github.io/iptv/countries/hk.m3u",
        "https://iptv-org.github.io/iptv/countries/mo.m3u",
@@ -124,7 +126,7 @@ public class SourceUpdateWorker extends Worker {
       }
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
-        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=6)break;
+        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=8)break;
         if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         if(initialDiscoveryChain&&prefs.getBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
@@ -396,7 +398,7 @@ public class SourceUpdateWorker extends Worker {
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
   private boolean areInitialChinaFeedsComplete(SharedPreferences prefs,List<FeedBatch> batches){
-    for(int i=0;i<6;i++){
+    for(int i=0;i<8;i++){
       boolean done=prefs.getBoolean(initialFeedDoneKey(i),false);
       if(!done){
         for(FeedBatch batch:batches){
