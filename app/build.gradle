@@ -2,7 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+def buildCommitSha = System.getenv('GITHUB_SHA') ?: 'local'
+
 android {
+    buildFeatures { buildConfig true }
     namespace 'com.wodedianshi.tv'
     compileSdk 36
 
@@ -12,6 +15,7 @@ android {
         targetSdk 28
         versionCode 159
         versionName '2.74.3'
+        buildConfigField "String", "GIT_SHA", "\"${buildCommitSha}\""
         // Android TV boxes use ARM; retain both 32-bit and 64-bit ARM for older Dangbei models.
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         javaCompileOptions {
