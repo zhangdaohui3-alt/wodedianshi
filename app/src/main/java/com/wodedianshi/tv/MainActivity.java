@@ -239,7 +239,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     worker.execute(() -> {
       long prefsWarmStarted = android.os.SystemClock.elapsedRealtime();
       try {
-        getSharedPreferences("mytv",0); // first access: load the large XML off the UI thread
+        android.content.SharedPreferences startupPrefs=getSharedPreferences("mytv",0);
+        // Old channel JSON and favorites are explicitly disposable. Remove only
+        // catalogue-era keys while preserving playback, parental-lock and UI settings.
+        boolean hadLegacyCatalogue=startupPrefs.contains("channels")
+            ||startupPrefs.contains("fav")
+            ||startupPrefs.contains("source_update_pending_channels");
+        if(hadLegacyCatalogue){
+          boolean cleared=startupPrefs.edit()
+              .remove("channels").remove("fav").remove("defaults_loaded")
+              .remove("source_update_pending_channels")
+              .remove("source_update_pending_base")
+              .remove("source_update_pending_base_fingerprint")
+              .commit();
+          android.util.Log.i("MyTVRoom","discarded legacy channel cache committed="+cleared);
+        }
         recordPreviousProcessExitReason();
         setSourceUpdatePlaybackActive(false);
         android.util.Log.i("MyTVStartup","preferences_warm_ms="
