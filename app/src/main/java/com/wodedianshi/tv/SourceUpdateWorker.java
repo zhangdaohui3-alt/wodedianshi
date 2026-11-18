@@ -74,8 +74,7 @@ public class SourceUpdateWorker extends Worker {
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
           com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
       final boolean roomAuthoritative=roomSnapshot!=null;
-      String channelsSnapshot=roomAuthoritative
-          ?roomSnapshotToJson(roomSnapshot):prefs.getString("channels","[]");
+      String channelsSnapshot=roomAuthoritative?null:prefs.getString("channels","[]");
       String savedChannelsJson=channelsSnapshot;
       if(!roomAuthoritative){
         String pendingBase=prefs.getString("source_update_pending_base",null);
@@ -101,14 +100,18 @@ public class SourceUpdateWorker extends Worker {
         }
       }
       JSONArray saved;
-      try{saved=new JSONArray(savedChannelsJson);}
-      catch(JSONException invalidPending){
-        saved=new JSONArray(channelsSnapshot);
-        savedChannelsJson=channelsSnapshot;
-        PendingCatalogueStore.delete(getApplicationContext());
-        prefs.edit().remove("source_update_pending_base_fingerprint")
-            .remove("source_update_pending_base")
-            .remove("source_update_pending_channels").apply();
+      if(roomAuthoritative){
+        saved=roomSnapshotToArray(roomSnapshot);
+      }else{
+        try{saved=new JSONArray(savedChannelsJson);}
+        catch(JSONException invalidPending){
+          saved=new JSONArray(channelsSnapshot);
+          savedChannelsJson=channelsSnapshot;
+          PendingCatalogueStore.delete(getApplicationContext());
+          prefs.edit().remove("source_update_pending_base_fingerprint")
+              .remove("source_update_pending_base")
+              .remove("source_update_pending_channels").apply();
+        }
       }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
@@ -369,7 +372,7 @@ public class SourceUpdateWorker extends Worker {
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
-  private String roomSnapshotToJson(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
+  private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
       throws JSONException {
     JSONArray result=new JSONArray();
     for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
@@ -393,7 +396,7 @@ public class SourceUpdateWorker extends Worker {
       channel.put("backupSourceScopes",ownership);
       result.put(channel);
     }
-    return result.toString();
+    return result;
   }
 
   private boolean isActivityActive(SharedPreferences prefs){
