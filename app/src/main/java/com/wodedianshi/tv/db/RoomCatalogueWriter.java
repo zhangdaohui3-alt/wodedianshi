@@ -19,63 +19,81 @@ public final class RoomCatalogueWriter {
 
     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
-        ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
-        HashMap<String, Integer> occurrences = new HashMap<>();
-        HashMap<String, Integer> categoryOrders = new HashMap<>();
-        int written = 0;
-        for (int row = 0; row < snapshot.length(); row++) {
-            JSONObject item = snapshot.optJSONObject(row);
-            if (item == null) continue;
-            String name = item.optString("name", "").trim();
-            String primary = item.optString("url", "").trim();
-            if (name.isEmpty() || primary.isEmpty()) continue;
-            String group = item.optString("group", "");
-            String categoryId = group.isEmpty() ? "__ungrouped__" : group;
-            Integer categoryOrder = categoryOrders.get(categoryId);
-            if (categoryOrder == null) {
-                categoryOrder = categoryOrders.size();
-                categoryOrders.put(categoryId, categoryOrder);
-            }
-            CategoryEntity category = new CategoryEntity(categoryId,
-                    group.isEmpty() ? "未分类" : group, categoryOrder);
-
-            ArrayList<String> rawUrls = new ArrayList<>();
-            JSONArray rawSources = item.optJSONArray("sources");
-            if (rawSources != null) {
-                for (int i = 0; i < rawSources.length(); i++) {
-                    String url = rawSources.optString(i, "").trim();
-                    if (!url.isEmpty()) rawUrls.add(url);
+        AppDatabase db = RoomDatabaseProvider.get(context);
+        ChannelDao dao = db.channelDao();
+        CatalogueMigrationEntity checkpoint = dao.getMigration(LegacyCatalogueImporter.MIGRATION_KEY);
+        // Do not race the one-time legacy seed. Until it has completed, the worker
+        // must retry rather than write a partial Room catalogue that a later import
+        // would replace with an older snapshot.
+        if (checkpoint == null) throw new IllegalStateException("Room catalogue seed is not ready");
+        final int[] written = {0};
+        db.runInTransaction(() -> {
+            HashMap<String, Integer> occurrences = new HashMap<>();
+            HashMap<String, Integer> categoryOrders = new HashMap<>();
+            for (int row = 0; row < snapshot.length(); row++) {
+                JSONObject item = snapshot.optJSONObject(row);
+                if (item == null) continue;
+                String name = item.optString("name", "").trim();
+                String primary = item.optString("url", "").trim();
+                if (name.isEmpty() || primary.isEmpty()) continue;
+                String group = item.optString("group", "");
+                String categoryId = group.isEmpty() ? "__ungrouped__" : group;
+                Integer categoryOrder = categoryOrders.get(categoryId);
+                if (categoryOrder == null) {
+                    categoryOrder = categoryOrders.size();
+                    categoryOrders.put(categoryId, categoryOrder);
                 }
-            }
-            LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
-                    rawUrls, primary, item.optInt("activeSource", 0));
-            if (ordered.urls.isEmpty()) continue;
+                CategoryEntity category = new CategoryEntity(categoryId,
+                        group.isEmpty() ? "未分类" : group, categoryOrder);
 
-            String identity = LegacyChannelIdPolicy.identityKey(name, primary);
-            int occurrence = occurrences.containsKey(identity) ? occurrences.get(identity) : 0;
-            occurrences.put(identity, occurrence + 1);
-            String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
-            String legacyKey = name + "|" + primary;
-            JSONArray channelScopes = item.optJSONArray("sourceScopes");
-            String scopesJson = channelScopes == null ? "[]" : channelScopes.toString();
+                ArrayList<String> rawUrls = new ArrayList<>();
+                JSONArray rawSources = item.optJSONArray("sources");
+                if (rawSources != null) {
+                    for (int i = 0; i < rawSources.length(); i++) {
+                        String url = rawSources.optString(i, "").trim();
+                        if (!url.isEmpty()) rawUrls.add(url);
+                    }
+                }
+                LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
+                        rawUrls, primary, item.optInt("activeSource", 0));
+                if (ordered.urls.isEmpty()) continue;
 
-            ChannelEntity channel = new ChannelEntity(id, legacyKey, name,
-                    ordered.urls.get(0), group, categoryId,
-                    item.optString("tvgId", ""), item.optString("tvgName", ""),
-                    scopesJson, ordered.activeIndex, row);
-            Map<String, HashSet<String>> ownership = readOwnership(item.optJSONArray("backupSourceScopes"));
-            ArrayList<BackupSourceEntity> sourceRows = new ArrayList<>();
-            for (int i = 0; i < ordered.urls.size(); i++) {
-                String url = ordered.urls.get(i);
-                HashSet<String> sourceScopes = ownership.get(url);
-                JSONArray sourceScopeArray = new JSONArray();
-                if (sourceScopes != null) for (String scope : sourceScopes) sourceScopeArray.put(scope);
-                sourceRows.add(new BackupSourceEntity(id, url, i, sourceScopeArray.toString()));
+                String identity = LegacyChannelIdPolicy.identityKey(name, primary);
+                int occurrence = occurrences.containsKey(identity) ? occurrences.get(identity) : 0;
+                occurrences.put(identity, occurrence + 1);
+                String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
+                String legacyKey = name + "|" + primary;
+                JSONArray channelScopes = item.optJSONArray("sourceScopes");
+                String scopesJson = channelScopes == null ? "[]" : channelScopes.toString();
+
+                ChannelEntity channel = new ChannelEntity(id, legacyKey, name,
+                        ordered.urls.get(0), group, categoryId,
+                        item.optString("tvgId", ""), item.optString("tvgName", ""),
+                        scopesJson, ordered.activeIndex, row);
+                Map<String, HashSet<String>> ownership = readOwnership(item.optJSONArray("backupSourceScopes"));
+                ArrayList<BackupSourceEntity> sourceRows = new ArrayList<>();
+                for (int i = 0; i < ordered.urls.size(); i++) {
+                    String url = ordered.urls.get(i);
+                    HashSet<String> sourceScopes = ownership.get(url);
+                    JSONArray sourceScopeArray = new JSONArray();
+                    if (sourceScopes != null) for (String scope : sourceScopes) sourceScopeArray.put(scope);
+                    sourceRows.add(new BackupSourceEntity(id, url, i, sourceScopeArray.toString()));
+                }
+                dao.replaceChannelWithSources(category, channel, sourceRows);
+                written[0]++;
             }
-            dao.replaceChannelWithSources(category, channel, sourceRows);
-            written++;
-        }
-        return written;
+            if (snapshot.length() > 0 && written[0] == 0) {
+                throw new IllegalStateException("Room catalogue update produced no channel rows");
+            }
+            // Keep the seed checkpoint consistent with intentional Room writes.
+            // Otherwise the next legacy reconcile sees changed row counts and
+            // rebuilds the entire DB from stale SharedPreferences, erasing new feeds.
+            dao.insertMigration(new CatalogueMigrationEntity(
+                    checkpoint.migrationKey, dao.countChannels(), dao.countBackupSources(),
+                    dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
+                    checkpoint.catalogueFingerprint));
+        });
+        return written[0];
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
