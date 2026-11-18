@@ -14,6 +14,7 @@ import java.util.List;
  * must first validate parity and keep the SharedPreferences rollback snapshot.
  */
 public final class MasterCatalogueRepository {
+    public static final String MIGRATION_KEY = "room_native_catalogue_v1";
     private final ChannelDao dao;
 
     public MasterCatalogueRepository(Context context) {
@@ -24,7 +25,7 @@ public final class MasterCatalogueRepository {
     /** The master snapshot is usable only when every imported table matches its checkpoint. */
     public boolean isSnapshotReady() {
         CatalogueMigrationEntity checkpoint =
-                dao.getMigration(LegacyCatalogueImporter.MIGRATION_KEY);
+                dao.getMigration(MIGRATION_KEY);
         if (checkpoint == null || checkpoint.channelsCount <= 0) return false;
         return dao.countChannels() == checkpoint.channelsCount
                 && dao.countBackupSources() == checkpoint.backupSourcesCount
