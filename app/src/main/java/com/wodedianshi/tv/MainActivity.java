@@ -834,6 +834,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
     }
+    cachedRemoteChannelOrder=null;
   }
   private void normalizeBroadcasterLabel(Channel channel){
     if(channel==null)return;
@@ -4789,10 +4790,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{remoteChannelOrderWorker.execute(()->{
       RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
       int currentCount; synchronized(channels){currentCount=channels.size();}
-      String currentQuery=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
-      String currentKey=remoteChannelOrderKey(activeCategory,currentQuery,favoriteMode,
-          catalogueFilterGeneration,currentCount,favorites.hashCode());
-      if(key.equals(currentKey))cachedRemoteChannelOrder=ready;
+      // Do not touch Android Views from this worker. A category/search change
+      // increments catalogueFilterGeneration and invalidates this prewarm.
+      if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
+          &&currentCount==count&&favorites.hashCode()==favoritesHash)
+        cachedRemoteChannelOrder=ready;
     });}catch(RuntimeException ignored){}
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
