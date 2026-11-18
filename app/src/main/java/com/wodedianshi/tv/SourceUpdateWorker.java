@@ -26,6 +26,7 @@ public class SourceUpdateWorker extends Worker {
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     final boolean manual=getInputData().getBoolean("manual",false);
+    final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     if(prefs.getBoolean("source_update_playback_active",false)){
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
@@ -171,6 +172,10 @@ public class SourceUpdateWorker extends Worker {
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
       int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
+      String discoveryFingerprint=discoveryFingerprint(candidates);
+      String previousDiscoveryFingerprint=prefs.getString("source_initial_discovery_fingerprint","");
+      int initialDiscoveryScanned=discoveryFingerprint.equals(previousDiscoveryFingerprint)
+          ?prefs.getInt("source_initial_discovery_scanned",0):0;
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -308,6 +313,9 @@ public class SourceUpdateWorker extends Worker {
         throw new IllegalStateException("Room catalogue update produced no channel rows");
       }
       // No JSON hand-off: the validated directory is committed directly to Room.
+      int nextInitialDiscoveryScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
+      boolean initialDiscoveryComplete=initialDiscoveryChain&&candidates.size()>0
+          &&nextInitialDiscoveryScanned>=candidates.size()&&feedsFailed==0;
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -320,14 +328,40 @@ public class SourceUpdateWorker extends Worker {
       // Do not mark initial discovery complete for an HTTP-200 but empty playlist,
       // or when every discovered candidate fails media preflight. A later app launch
       // can retry after the catalogue or network recovers.
-      if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
+      if(initialDiscoveryChain){
+        if(initialDiscoveryComplete){
+          update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned");
+          if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
+            update.putLong("source_update_last_success_at",System.currentTimeMillis());
+        }else if(candidates.size()>0){
+          update.putString("source_initial_discovery_fingerprint",discoveryFingerprint)
+              .putInt("source_initial_discovery_scanned",nextInitialDiscoveryScanned);
+        }
+      }else if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
+      }
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
+      if(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.size()>0){
+        androidx.work.OneTimeWorkRequest continuation=
+            new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+                .setConstraints(new androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+                .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+                    .putBoolean("initial_discovery_chain",true).build())
+                .build();
+        androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
+            "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
+      }
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private String discoveryFingerprint(List<Entry> entries){
+    StringBuilder value=new StringBuilder(entries.size()*48);
+    for(Entry entry:entries)value.append(SourceSelectionPolicy.endpointKey(entry.url)).append('\\n');
+    return Integer.toHexString(value.toString().hashCode())+":"+entries.size();
   }
   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
       throws JSONException {
