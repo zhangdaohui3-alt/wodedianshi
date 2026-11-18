@@ -28,11 +28,11 @@ public final class DirectoryCacheStore {
     private static final int MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
     private static final int DIGEST_BYTES = 32;
     private static final String[] FILE_NAMES = {
-            "china-directory.cache", "global-directory.cache"
+            "china-directory.cache", "global-directory.cache", "all-directory.cache"
     };
 
     public enum Directory {
-        CHINA(0), GLOBAL(1);
+        CHINA(0), GLOBAL(1), ALL(2);
         final int fileIndex;
         Directory(int fileIndex) { this.fileIndex = fileIndex; }
     }
