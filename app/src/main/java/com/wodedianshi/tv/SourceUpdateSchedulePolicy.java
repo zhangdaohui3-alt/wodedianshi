@@ -1,6 +1,6 @@
 package com.wodedianshi.tv;
 
-/** Prevents repeating the one-time China-first catalogue discovery on every app launch. */
+/** Controls the one-time China-first catalogue discovery lifecycle. */
 public final class SourceUpdateSchedulePolicy {
     private SourceUpdateSchedulePolicy() {}
 
