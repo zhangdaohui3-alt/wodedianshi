@@ -624,6 +624,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Startup must display the exact last-saved catalogue first. A staged source-update
     // candidate is intentionally not applied here; maintenance/reconciliation runs later,
     // after the complete saved list has been rendered and is usable.
+    // Room is the normal startup authority. SharedPreferences is consulted only
+    // when this installation has not completed its one-time legacy seed yet.
+    try{
+      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
+          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
+      if(roomSnapshot!=null){
+        synchronized(channels){
+          channels.clear();
+          for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:roomSnapshot.channels){
+            Channel channel=new Channel(row.name,row.url,row.group);
+            channel.tvgId=row.tvgId;
+            channel.tvgName=row.tvgName;
+            channel.backups.clear();
+            channel.backups.addAll(row.sources);
+            channel.sourceScopes.addAll(row.sourceScopes);
+            for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+              channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+            }
+            channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+            channels.add(channel);
+          }
+        }
+        synchronized(favorites){
+          favorites.clear();
+          favorites.addAll(roomSnapshot.favorites);
+        }
+        rebuildChannelIndexes();
+        catalogueSnapshotTrusted=true;
+        logCatalogueMemory("room_restore_ready",channels.size(),roomSnapshot.channels.size(),android.os.SystemClock.elapsedRealtime()-restoreStarted);
+        android.util.Log.i("MyTVRoom","authoritative Room restore complete channels="
+            +roomSnapshot.channels.size()+" favorites="+roomSnapshot.favorites.size());
+        return;
+      }
+    }catch(Throwable roomReadFailure){
+      android.util.Log.e("MyTVRoom","Room read failed; attempting one-time legacy recovery",roomReadFailure);
+      saveLiveDiagnostic("ROOM_READ_ERROR",roomReadFailure.getClass().getSimpleName()+": "+String.valueOf(roomReadFailure.getMessage()));
+    }
     String savedChannelsJson=p.getString("channels","[]");
     lastPersistedChannelsJson=savedChannelsJson;
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
@@ -1105,6 +1142,41 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
 
+      // Once the Room seed is valid, persist the live catalogue directly to the
+      // single database. No full-catalogue JSON string or SharedPreferences write
+      // is created on the normal path.
+      if(com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext())!=null){
+        ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> roomRows=new ArrayList<>();
+        synchronized(channels){
+          persistedChannels=channels.size();
+          for(Channel channel:channels){
+            if(channel==null)continue;
+            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+            row.name=channel.name;row.url=channel.url;row.group=channel.group;
+            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
+            row.activeSource=channel.activeSource;
+            if(channel.backups!=null){row.sources.addAll(channel.backups);persistedSources+=channel.backups.size();}
+            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+            if(channel.backupSourceScopes!=null){
+              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
+                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+              }
+            }
+            roomRows.add(row);
+          }
+        }
+        int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
+            getApplicationContext(),roomRows,favoriteSnapshot);
+        if(written==0&&!roomRows.isEmpty())throw new IllegalStateException("Room wrote zero catalogue rows");
+        saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM","saved "+written+" channels and "+favoriteSnapshot.size()+" favorites directly to Room");
+        android.util.Log.i("MyTVRoom","authoritative Room write complete channels="+written
+            +" sources="+persistedSources+" favorites="+favoriteSnapshot.size());
+        return true;
+      }
+
+      // First install/upgrade only: before the Room seed exists, preserve the
+      // legacy snapshot long enough for the one-time importer to populate Room.
       // Do not deep-copy 11k+ Channel objects before encoding. The previous
       // implementation retained both that detached object graph and the complete
       // StringWriter buffer, then toString() allocated another full-size char array.
