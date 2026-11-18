@@ -6102,18 +6102,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     libVlcFrameVerified=false;
     final Runnable[] task=new Runnable[1];
     task[0]=()->{
-      if(libVlcEngine!=expectedEngine||selected!=expectedChannel
-          ||!expectedMediaId.equals(currentMediaId)||!usingLibVlc
-          ||libVlcFrameVerified||libVlcFrameProbeSurface!=surface)return;
+      if(isFinishing()||isDestroyed()||libVlcEngine!=expectedEngine
+          ||selected!=expectedChannel||!expectedMediaId.equals(currentMediaId)
+          ||!usingLibVlc||libVlcFrameVerified||libVlcFrameProbeSurface!=surface)return;
       if(!surface.isShown()||surface.getWidth()<=0||surface.getHeight()<=0){
         uiHandler.postDelayed(task[0],1000L);
         return;
       }
       try{
         android.view.PixelCopy.request(surface,sample,result->{
-          if(libVlcEngine!=expectedEngine||selected!=expectedChannel
-              ||!expectedMediaId.equals(currentMediaId)||!usingLibVlc
-              ||libVlcFrameProbeSurface!=surface)return;
+          if(isFinishing()||isDestroyed()||libVlcEngine!=expectedEngine
+              ||selected!=expectedChannel||!expectedMediaId.equals(currentMediaId)
+              ||!usingLibVlc||libVlcFrameProbeSurface!=surface)return;
           if(result==android.view.PixelCopy.SUCCESS){
             int[] pixels=new int[32*18];
             sample.getPixels(pixels,0,32,0,0,32,18);
@@ -6157,12 +6157,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
           }
           // PixelCopy is an occasional health probe, not a per-frame monitor.
-          // A 3.5s cadence limits GPU readback overhead on low-end Android TV SoCs.
-          if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],3500L);
+          // A 1.5s cadence plus three successful black samples bounds failover
+          // near 4.5s after the first probe without turning PixelCopy into a frame loop.
+          if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],1500L);
         },uiHandler);
       }catch(RuntimeException copyFailure){
         saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR",copyFailure.getClass().getSimpleName());
-        uiHandler.postDelayed(task[0],3500L);
+        uiHandler.postDelayed(task[0],1500L);
       }
     };
     libVlcFrameProbe=task[0];
