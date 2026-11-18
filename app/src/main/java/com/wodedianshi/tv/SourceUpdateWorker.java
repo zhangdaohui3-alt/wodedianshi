@@ -314,8 +314,9 @@ public class SourceUpdateWorker extends Worker {
       }
       // No JSON hand-off: the validated directory is committed directly to Room.
       int nextInitialDiscoveryScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
-      boolean initialDiscoveryComplete=initialDiscoveryChain&&candidates.size()>0
-          &&nextInitialDiscoveryScanned>=candidates.size()&&feedsFailed==0;
+      boolean initialDiscoveryComplete=initialDiscoveryChain
+          &&SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(
+              candidates.size(),nextInitialDiscoveryScanned,feedsFailed);
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
