@@ -6117,7 +6117,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(SurfaceFrameHealthPolicy.isNearBlack(pixels)){
               libVlcBlackFrameSamples++;
               saveLiveDiagnostic("VLC_FRAME_SAMPLE","near_black=true consecutive="+libVlcBlackFrameSamples);
-              if(libVlcBlackFrameSamples>=SurfaceFrameHealthPolicy.BLACK_SAMPLE_FAILOVER_COUNT
+              if(SurfaceFrameHealthPolicy.shouldFailOverAfterBlackSamples(libVlcBlackFrameSamples)
                   &&libVlcVideoOutputReady&&expectedEngine.isPlaying()){
                 saveLiveDiagnostic("VLC_BLACK_SCREEN_FAILOVER",
                     "Vout/Playing were active but "+libVlcBlackFrameSamples
