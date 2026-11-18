@@ -4158,43 +4158,56 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     entertainmentLoading=true;info.setText("正在检查全球娱乐频道（已有频道仍可使用）…");
-    worker.execute(()->{
-      int added=0;StringBuilder errors=new StringBuilder();
-      String[] feeds={
-        "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-        "https://iptv-org.github.io/iptv/categories/movies.m3u",
-        "https://iptv-org.github.io/iptv/categories/series.m3u",
-        "https://iptv-org.github.io/iptv/categories/music.m3u",
-        "https://iptv-org.github.io/iptv/categories/kids.m3u",
-        "https://iptv-org.github.io/iptv/categories/animation.m3u",
-        "https://iptv-org.github.io/iptv/categories/comedy.m3u",
-        "https://iptv-org.github.io/iptv/categories/documentary.m3u",
-        "https://iptv-org.github.io/iptv/categories/family.m3u",
-        "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
-        "https://iptv-org.github.io/iptv/categories/culture.m3u",
-        "https://iptv-org.github.io/iptv/languages/zho.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u"
-      };
-      for(String address:feeds){HttpURLConnection c=null;try{
-        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-        String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        added+=parse(data,null,"global");
-      }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
-      final int total=added;final String err=errors.toString();
-      final boolean saved=total<=0||persist();
-      if(saved&&(total>0||err.isEmpty())){
-        cachePrefs.edit().putLong("entertainment_supplement_last_success",System.currentTimeMillis())
-            .putInt("entertainment_supplement_cached_count",total).apply();
-      }
-      runOnUiThread(()->{
-        refresh();entertainmentLoading=false;
-        info.setText("娱乐频道目录检查完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧及生活。"
-            +(saved?"目录缓存已保留。":"本轮保存未成功，保留原有目录。")
-            +(err.isEmpty()?"":"部分来源不可用："+err));
+    try{
+      worker.execute(()->{
+        try{
+          StringBuilder errors=new StringBuilder();
+          String[] feeds={
+            "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+            "https://iptv-org.github.io/iptv/categories/movies.m3u",
+            "https://iptv-org.github.io/iptv/categories/series.m3u",
+            "https://iptv-org.github.io/iptv/categories/music.m3u",
+            "https://iptv-org.github.io/iptv/categories/kids.m3u",
+            "https://iptv-org.github.io/iptv/categories/animation.m3u",
+            "https://iptv-org.github.io/iptv/categories/comedy.m3u",
+            "https://iptv-org.github.io/iptv/categories/documentary.m3u",
+            "https://iptv-org.github.io/iptv/categories/family.m3u",
+            "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
+            "https://iptv-org.github.io/iptv/categories/culture.m3u",
+            "https://iptv-org.github.io/iptv/languages/zho.m3u",
+            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u"
+          };
+          // Match the China/global loaders: parse each response incrementally on
+          // bounded playlist workers instead of materializing a whole feed String.
+          // The shared path enforces a per-feed byte ceiling and retains complete
+          // parsed entries even if a later network read fails.
+          int added=fetchAndMergePlaylists(feeds,22000,errors,"global");
+          final int total=added;final String err=errors.toString();
+          final boolean saved=total<=0||persist();
+          if(saved&&(total>0||err.isEmpty())){
+            cachePrefs.edit().putLong("entertainment_supplement_last_success",System.currentTimeMillis())
+                .putInt("entertainment_supplement_cached_count",total).apply();
+          }
+          runOnUiThread(()->{
+            if(isFinishing()||isDestroyed())return;
+            refresh();entertainmentLoading=false;
+            info.setText("娱乐频道目录检查完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧及生活。"
+                +(saved?"目录缓存已保留。":"本轮保存未成功，保留原有目录。")
+                +(err.isEmpty()?"":"部分来源不可用："+err));
+          });
+        }catch(Throwable failure){
+          final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
+          runOnUiThread(()->{
+            entertainmentLoading=false;
+            if(!isFinishing()&&!isDestroyed()&&info!=null)
+              info.setText("娱乐频道目录检查中断，已有频道仍可使用；可稍后重试。原因："+message);
+          });
+        }
       });
-    });
+    }catch(RuntimeException rejected){
+      entertainmentLoading=false;
+      info.setText("娱乐频道目录任务暂时无法启动，已有频道仍可使用；请稍后重试。");
+    }
   }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);e.setHint("https://网站或 /playlist.m3u");e.setText(getSharedPreferences("mytv",0).getString("last_playlist_url",""));e.setSelection(e.getText().length());new AlertDialog.Builder(this).setTitle("输入网站 / 播放列表入口").setMessage("支持可直接访问的 M3U/M3U8 播放列表网址；普通网页需提供实际播放列表或视频地址。").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->{String url=e.getText().toString().trim();getSharedPreferences("mytv",0).edit().putString("last_playlist_url",url).apply();download(url);}).show();}
   private void download(String address){
