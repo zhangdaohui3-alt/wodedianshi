@@ -20,6 +20,11 @@ public class SourceUpdateWorker extends Worker {
   // Four rotating entries per feed cover the eight China/HMT feeds in two 24-probe
   // batches. The cursor advances only after the whole batch has been probed.
   private static final int MAX_DISCOVERY_PER_FEED = 4;
+  // This feed is appended (not inserted) so existing per-feed cursors remain valid.
+  private static final int REGIONAL_LOCAL_FEED_INDEX = 21;
+  // The first 59 entries in the upstream aggregate are national/satellite channels;
+  // start the dedicated local feed at the first regional block.
+  private static final int REGIONAL_LOCAL_FEED_START = 59;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -66,7 +71,10 @@ public class SourceUpdateWorker extends Worker {
        "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u",
        "https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u",
        // The large worldwide index is last so it cannot starve regional/category feeds.
-       "https://iptv-org.github.io/iptv/index.m3u"
+       "https://iptv-org.github.io/iptv/index.m3u",
+       // Curated regional/city broadcaster list. Only allowlisted broadcaster
+       // domains are accepted below; every candidate still must pass media probing.
+       "https://raw.githubusercontent.com/zilong7728/Collect-IPTV/main/best_sorted.m3u8"
      };
     try{
       // Snapshot the user's current catalogue before discovery/probing. The Activity
@@ -126,11 +134,15 @@ public class SourceUpdateWorker extends Worker {
       }
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
-        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=8)break;
+        boolean regionalLocalFeed=feedIndex==REGIONAL_LOCAL_FEED_INDEX;
+        // Foreground/manual and first-install passes include the eight existing
+        // China/HMT feeds plus the dedicated local-TV feed. Other world feeds wait.
+        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=8&&!regionalLocalFeed)continue;
         if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         if(initialDiscoveryChain&&prefs.getBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
-        int feedCursor=prefs.getInt(feedCursorKey(feedIndex),0);
+        int feedCursor=prefs.getInt(feedCursorKey(feedIndex),
+            regionalLocalFeed?REGIONAL_LOCAL_FEED_START:0);
         int[] parsedCount={0};
         boolean feedReadSucceeded=false;
         if(isStopped())return Result.retry();
@@ -154,7 +166,7 @@ public class SourceUpdateWorker extends Worker {
             if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
               throw new IOException("目录格式无效");
             parsedCount[0]=parsePlaylist(reader,feedCandidates,scopeForFeed(feed),
-                feedCursor,MAX_DISCOVERY_PER_FEED);
+                feedCursor,MAX_DISCOVERY_PER_FEED,regionalLocalFeed);
           }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
@@ -407,7 +419,14 @@ public class SourceUpdateWorker extends Worker {
       }
       if(!done)return false;
     }
-    return true;
+    boolean localDone=prefs.getBoolean(initialFeedDoneKey(REGIONAL_LOCAL_FEED_INDEX),false);
+    if(!localDone){
+      for(FeedBatch batch:batches){
+        if(batch.index==REGIONAL_LOCAL_FEED_INDEX&&batch.success
+            &&batch.parsed<MAX_DISCOVERY_PER_FEED){localDone=true;break;}
+      }
+    }
+    return localDone;
   }
   private String discoveryFingerprint(List<Entry> entries){
     StringBuilder value=new StringBuilder(entries.size()*48);
@@ -470,11 +489,43 @@ public class SourceUpdateWorker extends Worker {
   }
   private int parsePlaylist(Reader reader,List<Entry> out,String sourceScope,
                             int skipEntries,int maxEntries)throws IOException{
+    return parsePlaylist(reader,out,sourceScope,skipEntries,maxEntries,false);
+  }
+  private int parsePlaylist(Reader reader,List<Entry> out,String sourceScope,
+                            int skipEntries,int maxEntries,boolean regionalLocalOnly)throws IOException{
     return PlaylistParser.parseEach(reader,skipEntries,maxEntries,source->{
+      if(regionalLocalOnly&&!isTrustedRegionalLocalEntry(source))return;
       String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
       out.add(new Entry(source.name,source.url,source.group,false,scope,
           source.tvgId,source.tvgName));
     });
+  }
+  private boolean isTrustedRegionalLocalEntry(PlaylistParser.ChannelSource source){
+    if(source==null||source.url==null||source.name==null)return false;
+    String group=source.group==null?"":source.group;
+    String metadata=(source.name+" "+source.tvgName+" "+source.tvgId+" "+group);
+    if(ChannelNamePolicy.isSatellite(metadata,group))return false;
+    // Require an explicit province/municipality in the channel name or group.
+    // This prevents unrelated channels in a mixed public playlist entering 地方.
+    String[] provinces={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+    boolean regional=false;
+    for(String province:provinces)if(metadata.contains(province)){regional=true;break;}
+    if(!regional)return false;
+    try{
+      String host=new java.net.URL(source.url).getHost().toLowerCase(Locale.ROOT);
+      String[] trustedDomains={
+          "bestv.cn","jlntv.cn","hebyun.com.cn","cztvcloud.com","cztv.com",
+          "jmtv.com.cn","voc.com.cn","hntv.tv","xysrmt.cn","jyrmt.cn",
+          "hugd.com","ahbztv.com","gdtv.cn","gdtv.com.cn","sctv.cn",
+          "sctv.com.cn","hbtv.com.cn","nmtv.cn","gztv.com.cn","cqntv.com.cn",
+          "ynntv.cn","gxntv.cn","lnntv.cn","fjtv.net","hljtv.com","sxrtv.com",
+          "sxntv.cn","xztv.cn","qhtv.cn"
+      };
+      for(String domain:trustedDomains){
+        if(host.equals(domain)||host.endsWith("."+domain))return true;
+      }
+    }catch(Exception ignored){}
+    return false;
   }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
