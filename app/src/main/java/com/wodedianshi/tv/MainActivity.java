@@ -4559,9 +4559,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
-  // The Room database is still a shadow catalogue. Resolve exactly the same
+  // Room receives these user mutations directly. Resolve exactly the same
   // stable identity scheme used by LegacyCatalogueImporter, including duplicate
-  // rows, before queuing a small write-through update off the UI thread.
+  // rows, before queuing a small Room update off the UI thread.
   private String roomChannelIdAt(int channelIndex){
     synchronized(channels){
       if(channelIndex<0||channelIndex>=channels.size())return "";
@@ -4583,7 +4583,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       worker.execute(()->{
         try{
-          com.wodedianshi.tv.db.RoomShadowSync.setFavorite(
+          com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
               getApplicationContext(),legacyKey,favorite);
         }catch(Throwable failure){
           android.util.Log.w("MyTVRoomSync","favorite shadow update skipped",failure);
@@ -4604,7 +4604,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       worker.execute(()->{
         try{
-          boolean updated=com.wodedianshi.tv.db.RoomShadowSync.setActiveSourceUrl(
+          boolean updated=com.wodedianshi.tv.db.RoomCatalogueMutations.setActiveSourceUrl(
               getApplicationContext(),legacyKey,sourceUrl);
           if(!updated)android.util.Log.d("MyTVRoomSync",
               "active source not mirrored (scoped catalogue row/source not imported yet)");
