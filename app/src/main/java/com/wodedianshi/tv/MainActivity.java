@@ -21,6 +21,7 @@ import androidx.media3.exoplayer.source.LoadEventInfo;
 import androidx.media3.exoplayer.source.MediaLoadData;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.ui.PlayerView;
+import androidx.media3.ui.TrackSelectionDialogBuilder;
 import java.io.*;
 import org.json.JSONArray;
 import java.net.*;
@@ -2114,7 +2115,7 @@ public class MainActivity extends Activity {
     final SeekBar[] vodSeekHolder=new SeekBar[1];
     final LinearLayout[] vodControlsHolder=new LinearLayout[1];
     final Runnable[] hideVodSeekTask=new Runnable[1];
-    final View[] vodTopControls=new View[4];
+    final View[] vodTopControls=new View[5];
     FrameLayout stage=new FrameLayout(this){
       private void revealVodSeekBar(){
         boolean controlsWereHidden=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()!=View.VISIBLE;
@@ -2302,6 +2303,7 @@ public class MainActivity extends Activity {
     Button favorite=new Button(this);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");favorite.setAllCaps(false);favorite.setTextSize(14);favorite.setFocusable(true);favorite.setFocusableInTouchMode(true);styleVodTopControl(favorite);favorite.setOnClickListener(v->{toggleVodFavorite(item);favorite.setText(isVodFavorite(item)?"★ 已收藏":"☆ 收藏");toast(isVodFavorite(item)?"已加入我的收藏":"已取消收藏");});FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(4);favoriteParams.rightMargin=dp(116);stage.addView(favorite,favoriteParams);vodTopControls[1]=favorite;
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
      Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
+    Button tracks=new Button(this);tracks.setText("音轨/字幕");tracks.setAllCaps(false);tracks.setTextSize(14);tracks.setFocusable(true);tracks.setFocusableInTouchMode(true);styleVodTopControl(tracks);tracks.setOnClickListener(v->showVodTrackSelection(vodPlayer));FrameLayout.LayoutParams tracksParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);tracksParams.topMargin=dp(4);tracksParams.rightMargin=dp(330);stage.addView(tracks,tracksParams);vodTopControls[4]=tracks;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
      d.setContentView(stage);d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(vodPlayer!=null){if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPlayer.getCurrentPosition(),vodPlayer.getDuration());pv.setKeepScreenOn(false);pv.setPlayer(null);vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;});
     try{
@@ -3195,6 +3197,33 @@ public class MainActivity extends Activity {
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
   }
+  private void showVodTrackSelection(ExoPlayer target){
+    if(target==null||target!=vodPlayer){toast("播放器尚未就绪");return;}
+    Tracks available=target.getCurrentTracks();
+    boolean hasAudio=available.containsType(C.TRACK_TYPE_AUDIO);
+    boolean hasText=available.containsType(C.TRACK_TYPE_TEXT);
+    if(!hasAudio&&!hasText){toast("当前影片没有可切换的音轨或字幕");return;}
+    ArrayList<String> labels=new ArrayList<>();
+    ArrayList<Integer> types=new ArrayList<>();
+    if(hasAudio){labels.add("选择音轨");types.add(C.TRACK_TYPE_AUDIO);}
+    if(hasText){labels.add("选择字幕");types.add(C.TRACK_TYPE_TEXT);}
+    new AlertDialog.Builder(this).setTitle("音轨与字幕")
+      .setItems(labels.toArray(new String[0]),(dialog,which)->{
+        if(which<0||which>=types.size()||target!=vodPlayer)return;
+        int type=types.get(which);
+        String title=type==C.TRACK_TYPE_AUDIO?"选择音轨":"选择字幕";
+        try{
+          new TrackSelectionDialogBuilder(this,title,target,type)
+            .setAllowAdaptiveSelections(false)
+            .setShowDisableOption(type==C.TRACK_TYPE_TEXT)
+            .build().show();
+        }catch(RuntimeException error){
+          android.util.Log.w("MyTVTracks","Unable to show track selector",error);
+          toast("当前设备暂不支持切换此音轨或字幕");
+        }
+      }).setNegativeButton("取消",null).show();
+  }
+
   private void showAspectRatioDialog(PlayerView target,String preferenceKey){
     if(target==null)return;
     String[] choices={"完整显示（保留比例）","铺满屏幕（边缘可能裁切）","拉伸全屏（可能变形）"};
