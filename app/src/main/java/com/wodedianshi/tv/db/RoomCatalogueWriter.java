@@ -1,6 +1,8 @@
 package com.wodedianshi.tv.db;
 
 import android.content.Context;
+import android.os.SystemClock;
+import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
@@ -38,6 +40,10 @@ public final class RoomCatalogueWriter {
         ChannelDao dao = db.channelDao();
         CatalogueMigrationEntity checkpoint = dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
         final int[] written = {0};
+        final long[] sourceRowsWritten = {0L};
+        final int[] sourceBatchCount = {0};
+        final int[] largestSourceBatch = {0};
+        final long transactionStartedAt = SystemClock.elapsedRealtime();
         db.runInTransaction(() -> {
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
@@ -56,7 +62,6 @@ public final class RoomCatalogueWriter {
                 int limit = Math.min(snapshot.size(), offset + batchSize);
                 ArrayList<CategoryEntity> categoryBatch = new ArrayList<>();
                 ArrayList<ChannelEntity> channelBatch = new ArrayList<>(limit - offset);
-                ArrayList<BackupSourceEntity> sourceBatch = new ArrayList<>();
                 HashSet<String> categoryBatchIds = new HashSet<>();
 
                 for (int row = offset; row < limit; row++) {
@@ -97,14 +102,6 @@ public final class RoomCatalogueWriter {
                             item.tvgName == null ? "" : item.tvgName,
                             channelScopes.toString(), active, row));
 
-                    for (int i = 0; i < ordered.urls.size(); i++) {
-                        String url = ordered.urls.get(i);
-                        JSONArray scopes = new JSONArray();
-                        HashSet<String> owned = item.backupSourceScopes == null
-                                ? null : item.backupSourceScopes.get(url);
-                        if (owned != null) for (String scope : owned) scopes.put(scope);
-                        sourceBatch.add(new BackupSourceEntity(id, url, i, scopes.toString()));
-                    }
                     presentChannelIds.add(id);
                     if (favoriteKeys != null && favoriteKeys.contains(legacyKey)) {
                         desiredFavoriteIds.add(id);
@@ -122,7 +119,47 @@ public final class RoomCatalogueWriter {
                     dao.insertChannelsIfAbsent(channelBatch);
                     dao.updateChannels(channelBatch);
                 }
-                if (!sourceBatch.isEmpty()) dao.insertBackupSources(sourceBatch);
+
+                // Build source entities only after their channel parents exist.
+                // Flush at a fixed route count so a few channels with unusually
+                // many backup URLs cannot create an unbounded temporary list.
+                ArrayList<BackupSourceEntity> sourceBatch = new ArrayList<>(256);
+                HashMap<String, Integer> sourceOccurrences = new HashMap<>();
+                for (int row = offset; row < limit; row++) {
+                    ChannelSnapshot item = snapshot.get(row);
+                    if (item == null || item.name == null || item.name.trim().isEmpty()
+                            || item.url == null || item.url.trim().isEmpty()) continue;
+                    String name = item.name.trim(), primary = item.url.trim();
+                    String identity = LegacyChannelIdPolicy.identityKey(name, primary);
+                    int occurrence = sourceOccurrences.containsKey(identity)
+                            ? sourceOccurrences.get(identity) : 0;
+                    sourceOccurrences.put(identity, occurrence + 1);
+                    String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
+                    LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
+                            item.sources, primary, item.activeSource);
+                    if (ordered.urls.isEmpty()) continue;
+                    for (int i = 0; i < ordered.urls.size(); i++) {
+                        String url = ordered.urls.get(i);
+                        JSONArray scopes = new JSONArray();
+                        HashSet<String> owned = item.backupSourceScopes == null
+                                ? null : item.backupSourceScopes.get(url);
+                        if (owned != null) for (String scope : owned) scopes.put(scope);
+                        sourceBatch.add(new BackupSourceEntity(id, url, i, scopes.toString()));
+                        if (sourceBatch.size() == 256) {
+                            dao.insertBackupSources(sourceBatch);
+                            sourceRowsWritten[0] += sourceBatch.size();
+                            sourceBatchCount[0]++;
+                            largestSourceBatch[0] = Math.max(largestSourceBatch[0], sourceBatch.size());
+                            sourceBatch.clear();
+                        }
+                    }
+                }
+                if (!sourceBatch.isEmpty()) {
+                    dao.insertBackupSources(sourceBatch);
+                    sourceRowsWritten[0] += sourceBatch.size();
+                    sourceBatchCount[0]++;
+                    largestSourceBatch[0] = Math.max(largestSourceBatch[0], sourceBatch.size());
+                }
                 written[0] += channelBatch.size();
             }
 
@@ -157,6 +194,11 @@ public final class RoomCatalogueWriter {
                     dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
                     checkpoint == null ? "room_native_seed_v1" : checkpoint.catalogueFingerprint));
         });
+        Log.i("MyTVRoomWrite", "complete channels=" + written[0]
+                + " source_routes=" + sourceRowsWritten[0]
+                + " source_batches=" + sourceBatchCount[0]
+                + " max_source_batch=" + largestSourceBatch[0]
+                + " transaction_ms=" + (SystemClock.elapsedRealtime() - transactionStartedAt));
         return written[0];
     }
 
