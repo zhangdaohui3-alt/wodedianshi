@@ -52,7 +52,9 @@ public interface ChannelDao {
         updateChannelFields(channel.id, channel.legacyKey, channel.name, channel.primaryUrl,
                 channel.groupName, channel.categoryId, channel.tvgId, channel.tvgName,
                 channel.channelScopesJson, channel.activeSource, channel.sortOrder);
-        clearBackupSourcesForChannel(channel.id);
+        // Merge source rows instead of clearing the relation. A partial feed
+        // refresh must never erase previously verified fallback URLs that were
+        // absent from this particular update batch.
         if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
     }
 
