@@ -259,6 +259,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   public void onCreate(Bundle b) {
     super.onCreate(b);
     installCrashDiagnosticsHandler();
+    String buildAbi=android.os.Build.SUPPORTED_ABIS.length>0?android.os.Build.SUPPORTED_ABIS[0]:"unknown";
+    String buildStamp="version="+BuildConfig.VERSION_NAME+" commit="+BuildConfig.GIT_SHA
+        +" sdk="+android.os.Build.VERSION.SDK_INT+" abi="+buildAbi;
+    android.util.Log.i("MyTVBuild",buildStamp);
+    saveLiveDiagnostic("APP_BUILD",buildStamp);
     getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
     // Show the real TV interface immediately. Room restoration and preference
