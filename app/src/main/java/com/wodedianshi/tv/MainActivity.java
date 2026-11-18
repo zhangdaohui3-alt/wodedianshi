@@ -4369,23 +4369,181 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
     });
   }
+  private FullscreenMenuConfig loadFullscreenMenuConfig(){
+    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+    String saved=prefs.getString("fullscreen_menu_config_v1",null);
+    FullscreenMenuConfig config=saved==null?FullscreenMenuConfig.defaults()
+        :FullscreenMenuConfig.decode(saved);
+    if(saved==null)prefs.edit().putString("fullscreen_menu_config_v1",config.encode()).apply();
+    return config;
+  }
+  private void saveFullscreenMenuConfig(FullscreenMenuConfig config){
+    getSharedPreferences("mytv",0).edit()
+        .putString("fullscreen_menu_config_v1",config.encode()).apply();
+  }
   private void showLivePlaybackActions(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
-    Channel c=channels.get(selected);
-    boolean saved=favorites.contains(c.key());
-    String[] actions={saved?"取消收藏当前频道":"收藏当前频道","选择播放源","打开频道列表"};
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 播放操作")
-      .setItems(actions,(d,which)->{
-        d.dismiss();
-        uiHandler.post(()->{
-          if(which==0)toggleCurrentLiveFavorite();
-          else if(which==1)showSourcePicker();
-          else if(which==2)showFullscreenChannelMenu();
+    final FullscreenMenuConfig config=loadFullscreenMenuConfig();
+    final Dialog dialog=new Dialog(this);
+    LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);
+    shell.setPadding(dp(12),dp(10),dp(12),dp(10));shell.setBackgroundColor(Color.rgb(8,13,24));
+    TextView heading=new TextView(this);heading.setText("全屏快捷菜单");heading.setTextColor(Color.WHITE);
+    heading.setTextSize(19);heading.setPadding(dp(8),dp(4),dp(8),dp(10));shell.addView(heading);
+    LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
+    LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
+    LinearLayout right=new LinearLayout(this);right.setOrientation(LinearLayout.VERTICAL);
+    ScrollView leftScroll=new ScrollView(this);leftScroll.addView(left);
+    ScrollView rightScroll=new ScrollView(this);rightScroll.addView(right);
+    columns.addView(leftScroll,new LinearLayout.LayoutParams(0,dp(300),1.05f));
+    columns.addView(rightScroll,new LinearLayout.LayoutParams(0,dp(300),1.65f));
+    shell.addView(columns);
+    Button manage=new Button(this);manage.setText("管理菜单：添加 / 删除 / 排序");manage.setAllCaps(false);
+    manage.setOnClickListener(v->{dialog.dismiss();showFullscreenMenuEditor();});
+    shell.addView(manage,new LinearLayout.LayoutParams(-1,dp(46)));
+    Button close=new Button(this);close.setText("关闭");close.setAllCaps(false);
+    close.setOnClickListener(v->dialog.dismiss());
+    shell.addView(close,new LinearLayout.LayoutParams(-1,dp(42)));
+    final int[] selectedCategory={0};
+    Runnable[] renderRight=new Runnable[1];
+    renderRight[0]=()->{
+      right.removeAllViews();
+      List<FullscreenMenuConfig.Category> categories=config.getCategories();
+      if(categories.isEmpty())return;
+      int index=Math.max(0,Math.min(selectedCategory[0],categories.size()-1));
+      FullscreenMenuConfig.Category category=categories.get(index);
+      TextView subheading=new TextView(this);subheading.setText(category.title);
+      subheading.setTextColor(Color.rgb(255,205,95));subheading.setTextSize(16);
+      subheading.setPadding(dp(10),dp(7),dp(6),dp(7));right.addView(subheading);
+      for(FullscreenMenuConfig.Item item:category.getItems()){
+        Button action=new Button(this);action.setText(item.title);action.setAllCaps(false);
+        action.setTextColor(Color.WHITE);action.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
+        action.setPadding(dp(12),0,dp(8),0);styleTvButton(action,Color.rgb(20,34,54));
+        action.setOnClickListener(v->{
+          String id=item.id;dialog.dismiss();
+          if("favorite".equals(id))toggleCurrentLiveFavorite();
+          else if("sources".equals(id))showSourcePicker();
+          else if("channel_list".equals(id)||"category".equals(id))showFullscreenChannelMenu();
+          else if("aspect".equals(id))showAspectRatioDialog(video,"live_aspect_mode");
+          else if("decoder".equals(id))decoderSettingsDialog();
+          else if("refresh".equals(id))startManualSourceUpdate();
+          else if("vod_catalogue".equals(id))vodDialog();
+          else if("vod_controls".equals(id))toast("请在点播全屏画面按菜单键显示播放控制");
+          else toast("此快捷项目尚未绑定操作："+item.title);
         });
-      }).setNegativeButton("关闭",null).create();
+        right.addView(action,new LinearLayout.LayoutParams(-1,dp(48)));
+      }
+      if(category.getItems().isEmpty()){
+        TextView empty=new TextView(this);empty.setText("此主项目还没有子项目");
+        empty.setTextColor(Color.LTGRAY);empty.setPadding(dp(10),dp(12),dp(6),dp(12));right.addView(empty);
+      }
+    };
+    for(int i=0;i<config.getCategories().size();i++){
+      final int index=i;FullscreenMenuConfig.Category category=config.getCategories().get(i);
+      Button button=new Button(this);button.setText(category.title);button.setAllCaps(false);
+      button.setTextColor(Color.WHITE);button.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
+      button.setPadding(dp(8),0,dp(4),0);
+      styleTvButton(button,i==0?Color.rgb(35,91,145):Color.rgb(18,27,43));
+      button.setOnClickListener(v->{
+        selectedCategory[0]=index;
+        for(int n=0;n<left.getChildCount();n++){
+          View child=left.getChildAt(n);
+          if(child instanceof Button)styleTvButton((Button)child,n==index?Color.rgb(35,91,145):Color.rgb(18,27,43));
+        }
+        renderRight[0].run();
+      });
+      left.addView(button,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
+    renderRight[0].run();
+    dialog.setContentView(shell);
+    Window window=dialog.getWindow();
+    if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);
+      window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(680)),
+          WindowManager.LayoutParams.WRAP_CONTENT);}
     fullscreenRemoteDialogOpen=true;
     dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     dialog.show();
+    if(dialog.getWindow()!=null)dialog.getWindow().setLayout(
+        Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(680)),
+        WindowManager.LayoutParams.WRAP_CONTENT);
+    if(left.getChildCount()>0)left.getChildAt(0).requestFocus();
+  }
+  private void showFullscreenMenuEditor(){
+    final FullscreenMenuConfig config=loadFullscreenMenuConfig();
+    final ArrayList<String> ids=new ArrayList<>();
+    final ArrayList<String> labels=new ArrayList<>();
+    for(FullscreenMenuConfig.Category category:config.getCategories()){
+      ids.add(category.id);labels.add(category.title+"（"+category.getItems().size()+"项）");
+    }
+    String[] choices=labels.toArray(new String[0]);
+    new AlertDialog.Builder(this).setTitle("全屏菜单管理")
+      .setItems(choices,(d,which)->showFullscreenMenuCategoryEditor(config,ids.get(which)))
+      .setPositiveButton("添加主项目",(d,w)->{
+        EditText input=new EditText(this);input.setHint("主项目名称");
+        new AlertDialog.Builder(this).setTitle("添加主项目").setView(input)
+          .setNegativeButton("取消",null).setPositiveButton("添加",(x,y)->{
+            String title=input.getText().toString().trim();
+            String id="custom_"+UUID.randomUUID().toString().replace("-","");
+            if(config.addCategory(id,title)){saveFullscreenMenuConfig(config);toast("主项目已添加");}
+            else toast("添加失败：名称为空或主项目数量已达上限");
+          }).show();
+      }).setNeutralButton("恢复默认",(d,w)->{
+        saveFullscreenMenuConfig(FullscreenMenuConfig.defaults());toast("已恢复默认菜单");
+      }).setNegativeButton("关闭",null).show();
+  }
+  private void showFullscreenMenuCategoryEditor(FullscreenMenuConfig config,String categoryId){
+    FullscreenMenuConfig.Category category=config.findCategory(categoryId);if(category==null)return;
+    String[] actions={"添加子项目","重命名主项目","删除主项目","主项目上移","主项目下移","管理已有子项目"};
+    new AlertDialog.Builder(this).setTitle(category.title+" · 编辑")
+      .setItems(actions,(d,which)->{
+        if(which==0){
+          String[] names={"收藏当前频道","选择备用播放源","打开频道列表","画面比例","解码与声音设置","频道分类","更新频道目录","返回点播目录"};
+          String[] actionIds={"favorite","sources","channel_list","aspect","decoder","category","refresh","vod_catalogue"};
+          new AlertDialog.Builder(this).setTitle("添加子项目").setItems(names,(x,n)->{
+            if(config.addItem(categoryId,actionIds[n],names[n])){saveFullscreenMenuConfig(config);toast("子项目已添加");}
+            else toast("添加失败：项目已存在或数量已达上限");
+          }).show();
+        }else if(which==1){
+          EditText input=new EditText(this);input.setText(category.title);
+          new AlertDialog.Builder(this).setTitle("重命名主项目").setView(input)
+            .setNegativeButton("取消",null).setPositiveButton("保存",(x,y)->{
+              if(config.renameCategory(categoryId,input.getText().toString()))saveFullscreenMenuConfig(config);
+              else toast("名称无效");
+            }).show();
+        }else if(which==2){
+          new AlertDialog.Builder(this).setTitle("删除主项目？")
+            .setMessage("该主项目及其子项目将从快捷菜单移除。")
+            .setNegativeButton("取消",null).setPositiveButton("删除",(x,y)->{
+              config.removeCategory(categoryId);saveFullscreenMenuConfig(config);
+            }).show();
+        }else if(which==3||which==4){
+          int index=0;for(int i=0;i<config.getCategories().size();i++)
+            if(config.getCategories().get(i).id.equals(categoryId)){index=i;break;}
+          if(config.moveCategory(categoryId,index+(which==3?-1:1)))saveFullscreenMenuConfig(config);
+          else toast("已经到达边界");
+        }else showFullscreenMenuItemEditor(config,categoryId);
+      }).show();
+  }
+  private void showFullscreenMenuItemEditor(FullscreenMenuConfig config,String categoryId){
+    FullscreenMenuConfig.Category category=config.findCategory(categoryId);if(category==null)return;
+    List<FullscreenMenuConfig.Item> items=category.getItems();
+    if(items.isEmpty()){toast("此主项目没有子项目");return;}
+    String[] labels=new String[items.size()];for(int i=0;i<items.size();i++)labels[i]=items.get(i).title;
+    new AlertDialog.Builder(this).setTitle("选择要编辑的子项目").setItems(labels,(d,which)->{
+      String itemId=items.get(which).id;
+      String[] actions={"重命名","删除","上移","下移"};
+      new AlertDialog.Builder(this).setTitle(items.get(which).title).setItems(actions,(x,action)->{
+        if(action==0){
+          EditText input=new EditText(this);input.setText(items.get(which).title);
+          new AlertDialog.Builder(this).setTitle("重命名子项目").setView(input)
+            .setNegativeButton("取消",null).setPositiveButton("保存",(a,b)->{
+              if(config.renameItem(categoryId,itemId,input.getText().toString()))saveFullscreenMenuConfig(config);
+              else toast("名称无效");
+            }).show();
+        }else if(action==1){config.removeItem(categoryId,itemId);saveFullscreenMenuConfig(config);}
+        else if(config.moveItem(categoryId,itemId,which+(action==2?-1:1)))saveFullscreenMenuConfig(config);
+        else toast("已经到达边界");
+      }).show();
+    }).show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
