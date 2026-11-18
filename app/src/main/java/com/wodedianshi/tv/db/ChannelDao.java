@@ -5,6 +5,7 @@ import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
 import androidx.room.Transaction;
+import androidx.room.Update;
 import java.util.List;
 
 @Dao
@@ -20,6 +21,18 @@ public interface ChannelDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertBackupSources(List<BackupSourceEntity> sources);
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    void insertCategoriesIfAbsent(List<CategoryEntity> categories);
+
+    @Update
+    void updateCategories(List<CategoryEntity> categories);
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    void insertChannelsIfAbsent(List<ChannelEntity> channels);
+
+    @Update
+    void updateChannels(List<ChannelEntity> channels);
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertFavorites(List<FavoriteEntity> favorites);

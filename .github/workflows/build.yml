@@ -9,6 +9,7 @@ on:
       - 'upgrade/**'
       - 'feat/**'
       - 'feature/**'
+      - 'perf/**'
   pull_request:
     branches:
       - main
@@ -16,6 +17,7 @@ on:
       - 'upgrade/**'
       - 'feat/**'
       - 'feature/**'
+      - 'perf/**'
 
 concurrency:
   # Keep builds on separate branches from cancelling each other.
