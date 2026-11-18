@@ -354,7 +354,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // China, international and custom rows with per-source scope metadata.
         // Import it once into the master Room database; do not build duplicate
         // regional databases from the same large SharedPreferences snapshot.
-        if(restoreSucceeded&&!channels.isEmpty()){
+        if(restoreSucceeded&&!channels.isEmpty()
+            &&!new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
           worker.execute(()->{
             try{
               android.content.SharedPreferences legacy=getSharedPreferences("mytv",0);
@@ -1145,7 +1146,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Once the Room seed is valid, persist the live catalogue directly to the
       // single database. No full-catalogue JSON string or SharedPreferences write
       // is created on the normal path.
-      if(com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext())!=null){
+      if(new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
         ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> roomRows=new ArrayList<>();
         synchronized(channels){
           persistedChannels=channels.size();
@@ -3896,7 +3897,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Transitional single-store reconciliation. China/international are scope
   // filters over the complete catalogue, not independent databases.
   private void syncRoomCataloguesAfterSave(){
+    // Room is authoritative after the first successful seed. Never replay the
+    // legacy preference snapshot over a newer database catalogue.
     try{
+      if(new com.wodedianshi.tv.db.MasterCatalogueRepository(getApplicationContext()).isSnapshotReady()){
+        android.util.Log.d("MyTVRoomSync","legacy reconcile skipped: Room is authoritative");
+        return;
+      }
       android.content.SharedPreferences saved=getSharedPreferences("mytv",0);
       com.wodedianshi.tv.db.LegacyCatalogueImporter.Result all=
           com.wodedianshi.tv.db.LegacyCatalogueImporter.importIfNeeded(getApplicationContext(),saved);
