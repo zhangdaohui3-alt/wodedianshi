@@ -576,38 +576,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return DecoderPolicy.isDecoderFallbackEnabled(
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
-  // Worker candidates live in an app-private atomic file, not the large
-  // SharedPreferences XML. The already-parsed background snapshot is passed in,
-  // so this publication check performs no large file read or hash on the UI thread.
-  private boolean applyPendingSourceUpdateIfSafe(android.content.SharedPreferences prefs,
-      String expectedPersisted,String candidate){
-    // Candidate publication is rare (returning from background). Coordinate it with
-    // the background disk writer without making ordinary UI persist() calls wait
-    // for the large SharedPreferences commit.
-    synchronized(cataloguePreferenceWriteLock){
-      synchronized(cataloguePersistLock){
-        if(candidate==null||candidate.isEmpty())return false;
-        String current=prefs.getString("channels","[]");
-        boolean applied=expectedPersisted!=null&&expectedPersisted.equals(current);
-        android.content.SharedPreferences.Editor edit=prefs.edit();
-        if(applied){
-          edit.putString("channels",candidate)
-              .putString("source_update_result","后台频道源更新已安全应用；没有覆盖用户期间的频道修改");
-        }else{
-          edit.putString("source_update_result","检测到用户已修改频道列表，已放弃过期后台更新并保留当前频道");
-        }
-        edit.remove("source_update_pending_base_fingerprint")
-            .remove("source_update_pending_base")
-            .remove("source_update_pending_channels")
-            .apply();
-        // Metadata is removed in either outcome, so discard the now-unreferenced
-        // candidate file whether it was applied or rejected as stale.
-        PendingCatalogueStore.delete(getApplicationContext());
-        return applied;
-      }
-    }
-  }
-
   private String readCatalogueJsonString(android.util.JsonReader reader,String fallback) throws java.io.IOException {
     android.util.JsonToken token=reader.peek();
     if(token==android.util.JsonToken.NULL){reader.nextNull();return fallback;}
