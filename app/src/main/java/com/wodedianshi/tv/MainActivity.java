@@ -739,7 +739,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
         }
-        synchronized(channels){channels.clear();channels.addAll(restored);}
+        synchronized(channels){
+          String selectedIdentity=selected>=0&&selected<channels.size()
+              ?identity(channels.get(selected)):null;
+          channels.clear();channels.addAll(restored);
+          if(selectedIdentity!=null){
+            selected=-1;
+            for(int i=0;i<channels.size();i++)if(selectedIdentity.equals(identity(channels.get(i)))){
+              selected=i;break;
+            }
+          }
+        }
         synchronized(favorites){favorites.clear();favorites.addAll(room.favorites);}
         rebuildChannelIndexes();
         writeLocalDirectorySnapshot("room_reconcile");
