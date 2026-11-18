@@ -138,6 +138,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // and resorted on every remote-control key press.
   private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
+  // Parsed source-quality JSON is reused until a playback metric actually updates
+  // the backing preference strings; channel zapping must not reparse a large map.
+  private final Object sourceScoreCacheLock = new Object();
+  private String cachedProbeScoreRaw,cachedQoeScoreRaw;
+  private org.json.JSONObject cachedProbeScoreJson,cachedQoeScoreJson;
 
   private volatile long catalogueFilterGeneration=0L;
   private volatile int lastFilteredMatchCount=0;
@@ -6022,9 +6027,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(urls==null||urls.isEmpty())return scores;
     try{
       android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-      // Read and parse both persisted score maps once per ranking operation.
-      org.json.JSONObject measured=new org.json.JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      org.json.JSONObject allQoe=new org.json.JSONObject(prefs.getString("source_qoe_v1","{}"));
+      String probeRaw=prefs.getString("source_probe_scores_v1","{}");
+      String qoeRaw=prefs.getString("source_qoe_v1","{}");
+      org.json.JSONObject measured,allQoe;
+      synchronized(sourceScoreCacheLock){
+        if(cachedProbeScoreJson==null||cachedQoeScoreJson==null
+            ||probeRaw!=cachedProbeScoreRaw||qoeRaw!=cachedQoeScoreRaw){
+          try{cachedProbeScoreJson=new org.json.JSONObject(probeRaw);}
+          catch(Exception malformed){cachedProbeScoreJson=new org.json.JSONObject();}
+          try{cachedQoeScoreJson=new org.json.JSONObject(qoeRaw);}
+          catch(Exception malformed){cachedQoeScoreJson=new org.json.JSONObject();}
+          cachedProbeScoreRaw=probeRaw;cachedQoeScoreRaw=qoeRaw;
+        }
+        measured=cachedProbeScoreJson;allQoe=cachedQoeScoreJson;
+      }
       long now=System.currentTimeMillis();
       for(String url:urls){
         int label=sourceQualityScore(url);
