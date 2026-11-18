@@ -544,6 +544,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
    */
   private void restore(){
     catalogueSnapshotTrusted=false;
+    final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     // A verified local directory is the first startup source. It is deliberately
     // loaded before Room reconciliation and never depends on network availability.
     try{
@@ -574,7 +575,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }catch(Throwable cacheFailure){
       android.util.Log.w("MyTVCache","local directory cache rejected; falling back to Room",cacheFailure);
     }
-    final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     synchronized(channels){channels.clear();}
     synchronized(favorites){favorites.clear();}
     try{
