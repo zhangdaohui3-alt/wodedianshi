@@ -26,8 +26,8 @@ public final class RoomCatalogueReader {
         ChannelRecord(ChannelEntity channel, List<BackupSourceEntity> sourceRows) {
             name = channel.name == null ? "" : channel.name;
             String legacyKey = channel.legacyKey == null ? "" : channel.legacyKey;
-            int separator = legacyKey.lastIndexOf('|');
-            url = separator >= 0 ? legacyKey.substring(separator + 1)
+            String prefix = name + "|";
+            url = legacyKey.startsWith(prefix) ? legacyKey.substring(prefix.length())
                     : (channel.primaryUrl == null ? "" : channel.primaryUrl);
             group = channel.groupName == null ? "" : channel.groupName;
             tvgId = channel.tvgId == null ? "" : channel.tvgId;
@@ -67,12 +67,18 @@ public final class RoomCatalogueReader {
         }
     }
 
+    public interface PageConsumer {
+        void accept(List<ChannelRecord> page);
+    }
+
     public static final class Snapshot {
         public final List<ChannelRecord> channels;
         public final Set<String> favorites;
-        Snapshot(List<ChannelRecord> channels, Set<String> favorites) {
+        public final int channelCount;
+        Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount) {
             this.channels = channels;
             this.favorites = favorites;
+            this.channelCount = channelCount;
         }
     }
 
@@ -80,25 +86,38 @@ public final class RoomCatalogueReader {
 
     /** Returns null when the one-time seed/checkpoint is absent or inconsistent. */
     public static Snapshot read(Context context) {
+        return read(context, null);
+    }
+
+    /**
+     * Paged startup variant. A consumer can convert each page directly into the
+     * Activity model, avoiding a second full in-memory copy of a large catalogue.
+     */
+    public static Snapshot read(Context context, PageConsumer consumer) {
         if (context == null) throw new IllegalArgumentException("context is null");
         MasterCatalogueRepository repository = new MasterCatalogueRepository(context);
         if (!repository.isSnapshotReady()) return null;
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
-        ArrayList<ChannelRecord> rows = new ArrayList<>();
+        ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
         int total = dao.countChannels();
+        int loaded = 0;
         for (int offset = 0; offset < total; offset += PAGE_SIZE) {
-            List<ChannelWithSources> page = dao.getAllChannelsPage(
-                    PAGE_SIZE, offset);
+            List<ChannelWithSources> page = dao.getAllChannelsPage(PAGE_SIZE, offset);
             if (page == null || page.isEmpty()) break;
+            ArrayList<ChannelRecord> records = new ArrayList<>(page.size());
             for (ChannelWithSources item : page) {
                 if (item == null || item.channel == null) continue;
-                rows.add(new ChannelRecord(item.channel, item.getSourcesInPriorityOrder()));
+                records.add(new ChannelRecord(item.channel, item.getSourcesInPriorityOrder()));
             }
+            loaded += records.size();
+            if (consumer == null) allRows.addAll(records);
+            else consumer.accept(records);
         }
-        if (total > 0 && rows.isEmpty()) {
+        if (total > 0 && loaded == 0) {
             throw new IllegalStateException("Room catalogue checkpoint exists but no channels were readable");
         }
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
-        return new Snapshot(rows, favorites);
+        return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
+                favorites, loaded);
     }
 }
