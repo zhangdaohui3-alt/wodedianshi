@@ -58,6 +58,21 @@ public interface ChannelDao {
         if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
     }
 
+    // Exact source-list replacement for a complete catalogue snapshot. The
+    // channel row is updated in place, so favorites remain attached; only that
+    // channel's obsolete backup URL rows are replaced.
+    @Transaction
+    default void replaceChannelWithSources(CategoryEntity category, ChannelEntity channel,
+            List<BackupSourceEntity> sources) {
+        insertCategoryIfAbsent(category);
+        insertChannelIfAbsent(channel);
+        updateChannelFields(channel.id, channel.legacyKey, channel.name, channel.primaryUrl,
+                channel.groupName, channel.categoryId, channel.tvgId, channel.tvgName,
+                channel.channelScopesJson, channel.activeSource, channel.sortOrder);
+        clearBackupSourcesForChannel(channel.id);
+        if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
+    }
+
     @Query("SELECT * FROM categories ORDER BY sortOrder, name")
     List<CategoryEntity> getCategories();
 
