@@ -49,6 +49,31 @@ public class PlaylistParserTest {
         assertEquals("中央电视台综合频道", items.get(0).name);
     }
 
+    @Test public void readerParserCanRotatePastTheFirstPageWithoutMaterializingPlaylist() throws IOException {
+        String m3u = "#EXTINF:-1,A\nhttps://a.example/live\n"
+                + "#EXTINF:-1,B\nhttps://b.example/live\n"
+                + "#EXTINF:-1,C\nhttps://c.example/live\n"
+                + "#EXTINF:-1,D\nhttps://d.example/live";
+        ArrayList<PlaylistParser.ChannelSource> page = new ArrayList<>();
+        try (StringReader reader = new StringReader(m3u)) {
+            assertEquals(2, PlaylistParser.parseEach(reader, 2, 2, page::add));
+        }
+        assertEquals(2, page.size());
+        assertEquals("C", page.get(0).name);
+        assertEquals("D", page.get(1).name);
+    }
+
+    @Test public void rotatedPageReportsShortFinalPage() throws IOException {
+        String m3u = "#EXTINF:-1,A\nhttps://a.example/live\n"
+                + "#EXTINF:-1,B\nhttps://b.example/live\n"
+                + "#EXTINF:-1,C\nhttps://c.example/live";
+        ArrayList<PlaylistParser.ChannelSource> page = new ArrayList<>();
+        try (StringReader reader = new StringReader(m3u)) {
+            assertEquals(1, PlaylistParser.parseEach(reader, 2, 2, page::add));
+        }
+        assertEquals("C", page.get(0).name);
+    }
+
     @Test public void readerParserStopsAtTheRequestedEntryLimit() throws IOException {
         String m3u = "#EXTINF:-1,A\nhttps://a.example/live\n"
                 + "#EXTINF:-1,B\nhttps://b.example/live\n"
