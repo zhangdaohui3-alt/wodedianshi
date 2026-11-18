@@ -73,46 +73,15 @@ public class SourceUpdateWorker extends Worker {
       // Never let a stale worker snapshot overwrite those newer user changes.
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
           com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
-      final boolean roomAuthoritative=roomSnapshot!=null;
-      String channelsSnapshot=roomAuthoritative?null:prefs.getString("channels","[]");
+      // Room is the only catalogue authority. If first-install seeding has not
+      // completed yet, retry rather than resurrecting stale SharedPreferences JSON.
+      if(roomSnapshot==null) {
+        saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
+        return Result.retry();
+      }
+      String channelsSnapshot=roomSnapshotToArray(roomSnapshot).toString();
       String savedChannelsJson=channelsSnapshot;
-      if(!roomAuthoritative){
-        String pendingBase=prefs.getString("source_update_pending_base",null);
-        String pendingFingerprint=prefs.getString("source_update_pending_base_fingerprint",null);
-        String legacyPendingChannels=prefs.getString("source_update_pending_channels",null);
-        String pendingChannels=PendingCatalogueStore.read(getApplicationContext());
-        if(pendingChannels==null)pendingChannels=legacyPendingChannels;
-        boolean hasPending=pendingFingerprint!=null||pendingBase!=null||legacyPendingChannels!=null;
-        boolean fingerprintMatches=pendingFingerprint!=null&&pendingChannels!=null
-            &&!pendingChannels.isEmpty()
-            &&pendingFingerprint.equals(CatalogueFingerprint.sha256(channelsSnapshot));
-        boolean legacyMatches=pendingBase!=null&&pendingChannels!=null
-            &&!pendingChannels.isEmpty()&&channelsSnapshot.equals(pendingBase);
-        if(hasPending){
-          if(fingerprintMatches||legacyMatches){
-            savedChannelsJson=pendingChannels;
-          }else{
-            PendingCatalogueStore.delete(getApplicationContext());
-            prefs.edit().remove("source_update_pending_base_fingerprint")
-                .remove("source_update_pending_base")
-                .remove("source_update_pending_channels").apply();
-          }
-        }
-      }
-      JSONArray saved;
-      if(roomAuthoritative){
-        saved=roomSnapshotToArray(roomSnapshot);
-      }else{
-        try{saved=new JSONArray(savedChannelsJson);}
-        catch(JSONException invalidPending){
-          saved=new JSONArray(channelsSnapshot);
-          savedChannelsJson=channelsSnapshot;
-          PendingCatalogueStore.delete(getApplicationContext());
-          prefs.edit().remove("source_update_pending_base_fingerprint")
-              .remove("source_update_pending_base")
-              .remove("source_update_pending_channels").apply();
-        }
-      }
+      JSONArray saved=new JSONArray(savedChannelsJson);
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
@@ -320,11 +289,8 @@ public class SourceUpdateWorker extends Worker {
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       trimProbeScores(measuredScores,savedPool,probeCandidates);
-      String latestChannels=prefs.getString("channels","[]");
-      if(!roomAuthoritative&&!channelsSnapshot.equals(latestChannels)){
-        saveStatus(prefs,"频道列表在后台检测期间发生变化，已保留最新用户数据并安排重试",0);
-        return Result.retry();
-      }
+      // The database snapshot is checked again at commit time by Room's transaction;
+      // no SharedPreferences catalogue comparison participates in this update.
       // Playback can begin after the last probe-loop check but before persistence.
       // Re-check immediately before the catalogue commit so a just-started session
       // is not overlapped by the worker's final state write.
@@ -341,10 +307,7 @@ public class SourceUpdateWorker extends Worker {
       if (saved.length() > 0 && roomRowsWritten == 0) {
         throw new IllegalStateException("Room catalogue update produced no channel rows");
       }
-      // Keep the existing hand-off temporarily until MainActivity has completed
-      // its Room read/write cutover. It is compatibility staging, not the durable
-      // destination for the source updater.
-      if(!roomAuthoritative)PendingCatalogueStore.write(getApplicationContext(),saved.toString());
+      // No JSON hand-off: the validated directory is committed directly to Room.
       android.content.SharedPreferences.Editor update=prefs.edit()
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -359,15 +322,9 @@ public class SourceUpdateWorker extends Worker {
       // can retry after the catalogue or network recovers.
       if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
-      if(roomAuthoritative){
-        update.remove("source_update_pending_base_fingerprint")
-            .remove("source_update_pending_base")
-            .remove("source_update_pending_channels");
-      }else{
-        update.putString("source_update_pending_base_fingerprint",CatalogueFingerprint.sha256(channelsSnapshot))
-            .remove("source_update_pending_base")
-            .remove("source_update_pending_channels");
-      }
+      update.remove("source_update_pending_base_fingerprint")
+          .remove("source_update_pending_base")
+          .remove("source_update_pending_channels");
       update.apply();
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
