@@ -19,7 +19,8 @@ final class SourceFeedScopePolicy {
 
         // The app's China-first feeds use cn_cctv.m3u8 and cn_province.m3u8.
         // Do not require the iptv-org /countries/ path for these repository feeds.
-        if (fileName.matches("cn(?:[_-][a-z0-9][a-z0-9._-]*)?\\.(?:m3u8?|txt)")) {
+        if (fileName.matches("cn(?:[_-][a-z0-9][a-z0-9._-]*)?\\.(?:m3u8?|txt)")
+                || value.contains("zilong7728/collect-iptv/")) {
             return "china";
         }
 
