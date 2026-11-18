@@ -6157,8 +6157,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
           }
           // PixelCopy is an occasional health probe, not a per-frame monitor.
-          // A 1.5s cadence plus three successful black samples bounds failover
-          // near 4.5s after the first probe without turning PixelCopy into a frame loop.
+          // A 1.5s cadence plus five successful black samples bounds failover
+          // near 7.5s after the first probe without turning PixelCopy into a frame loop.
           if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],1500L);
         },uiHandler);
       }catch(RuntimeException copyFailure){
