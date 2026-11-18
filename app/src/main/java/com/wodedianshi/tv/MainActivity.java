@@ -6156,11 +6156,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(result!=android.view.PixelCopy.ERROR_SOURCE_NO_DATA)
               saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
           }
-          if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],2500L);
+          // PixelCopy is an occasional health probe, not a per-frame monitor.
+          // A 3.5s cadence limits GPU readback overhead on low-end Android TV SoCs.
+          if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],3500L);
         },uiHandler);
       }catch(RuntimeException copyFailure){
         saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR",copyFailure.getClass().getSimpleName());
-        uiHandler.postDelayed(task[0],2500L);
+        uiHandler.postDelayed(task[0],3500L);
       }
     };
     libVlcFrameProbe=task[0];
