@@ -228,16 +228,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     installCrashDiagnosticsHandler();
     getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-    // Warm lightweight user settings on a worker before UI setup. The channel
-    // directory itself is now initialized directly in Room, not SharedPreferences.
-    // Show a tiny native loading surface immediately so the main thread stays free.
-    TextView startup = new TextView(this);
-    startup.setText("我的电视\\n正在安全恢复频道数据…");
-    startup.setTextColor(Color.WHITE);
-    startup.setTextSize(22);
-    startup.setGravity(Gravity.CENTER);
-    startup.setBackgroundColor(Color.rgb(8,13,24));
-    setContentView(startup);
+    // Show the real TV interface immediately. Room restoration and preference
+    // warm-up continue in the background; startup must never replace the home
+    // screen with a recovery page or make users wait on a modal/loading surface.
+    setSourceUpdateActivityActive(true);
+    makeUi();
+    remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
+      @Override public void onLockStateChanged(boolean locked, String reason) {
+        if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
+        else dismissRemoteParentLock();
+      }
+      @Override public void onStatus(String message) {
+        android.util.Log.i("MyTVRemoteLock", message);
+      }
+    });
 
     worker.execute(() -> {
       long prefsWarmStarted = android.os.SystemClock.elapsedRealtime();
@@ -264,20 +268,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       } catch (Throwable warmFailure) {
         android.util.Log.e("MyTVStartup","background preferences warm-up failed",warmFailure);
       }
-      runOnUiThread(() -> {
-        if (isFinishing()) return;
-        setSourceUpdateActivityActive(true);
-        makeUi();
-        remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
-          @Override public void onLockStateChanged(boolean locked, String reason) {
-            if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
-            else dismissRemoteParentLock();
-          }
-          @Override public void onStatus(String message) {
-            android.util.Log.i("MyTVRemoteLock", message);
-          }
-        });
-        worker.execute(() -> {
+      worker.execute(() -> {
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       Throwable restoreFailure=null;
       try{restore();}
@@ -984,9 +975,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
     String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;toast("频道数据仍在恢复，已记下选择，恢复后自动打开");return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){showProvinceDialog();loadChinaChannels();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){showProvinceDialog();loadChinaChannels();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else configureRemoteParentLock();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady)return;new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else configureRemoteParentLock();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
