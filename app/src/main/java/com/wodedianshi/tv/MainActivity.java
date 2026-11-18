@@ -137,6 +137,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Fullscreen zap order is built once per catalogue/filter state, not rescanned
   // and resorted on every remote-control key press.
   private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
+  // Serialize live QoE/diagnostic persistence away from UI and player callbacks.
+  // A single worker preserves metric ordering and prevents concurrent JSON read-modify-write loss.
+  private final ExecutorService livePersistenceWorker = Executors.newSingleThreadExecutor();
+  private final Object remoteChannelOrderQueueLock = new Object();
+  private volatile String queuedRemoteChannelOrderKey="";
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
   // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
@@ -4811,25 +4816,41 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int count; synchronized(channels){count=channels.size();}
     final int favoritesHash=favorites.hashCode();
     final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
+    synchronized(remoteChannelOrderQueueLock){
+      if(key.equals(queuedRemoteChannelOrderKey))return;
+      queuedRemoteChannelOrderKey=key;
+    }
     try{remoteChannelOrderWorker.execute(()->{
-      RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
-      int currentCount; synchronized(channels){currentCount=channels.size();}
-      // Do not touch Android Views from this worker. A category/search change
-      // increments catalogueFilterGeneration and invalidates this prewarm.
-      if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
-          &&currentCount==count&&favorites.hashCode()==favoritesHash){
-        cachedRemoteChannelOrder=ready;
-        uiHandler.post(()->{
-          if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
-              ||!fullScreenPlayback)return;
-          int queuedSteps=pendingRemoteZapSteps;
-          pendingRemoteZapSteps=0;
-          pendingRemoteZapGeneration=-1L;
-          RemoteChannelOrder current=currentRemoteChannelOrder();
-          if(current!=null)applyChannelZap(current,queuedSteps);
-        });
+      try{
+        RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
+        int currentCount; synchronized(channels){currentCount=channels.size();}
+        // Do not touch Android Views from this worker. A category/search change
+        // increments catalogueFilterGeneration and invalidates this prewarm.
+        if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
+            &&currentCount==count&&favorites.hashCode()==favoritesHash){
+          cachedRemoteChannelOrder=ready;
+          uiHandler.post(()->{
+            if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
+                ||!fullScreenPlayback)return;
+            int queuedSteps=pendingRemoteZapSteps;
+            pendingRemoteZapSteps=0;
+            pendingRemoteZapGeneration=-1L;
+            RemoteChannelOrder current=currentRemoteChannelOrder();
+            if(current!=null)applyChannelZap(current,queuedSteps);
+          });
+        }
+      }catch(RuntimeException error){
+        android.util.Log.w("MyTVZap","channel_order_prewarm_failed",error);
+      }finally{
+        synchronized(remoteChannelOrderQueueLock){
+          if(key.equals(queuedRemoteChannelOrderKey))queuedRemoteChannelOrderKey="";
+        }
       }
-    });}catch(RuntimeException ignored){}
+    });}catch(RuntimeException ignored){
+      synchronized(remoteChannelOrderQueueLock){
+        if(key.equals(queuedRemoteChannelOrderKey))queuedRemoteChannelOrderKey="";
+      }
+    }
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
     String category=activeCategory==null?"全部":activeCategory;
@@ -5088,18 +5109,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }catch(RuntimeException ignored){}
   }
   private void saveLiveDiagnostic(String stage,String detail){
-    String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
+    final String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
         +" | "+stage+" | "+safeDiagnosticDetail(detail);
+    // Keep Logcat useful immediately, but move preference reads, history trimming and
+    // serialization to the same ordered worker used by QoE metrics.
     android.util.Log.w("MyTVLiveDiag",line);
     try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      String old=p.getString("live_diagnostics_v1","");
-      ArrayList<String> entries=new ArrayList<>();
-      if(old!=null&&!old.isEmpty())entries.addAll(Arrays.asList(old.split("\\n")));
-      entries.add(line);
-      while(entries.size()>30)entries.remove(0);
-      p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
-    }catch(Exception ignored){}
+      livePersistenceWorker.execute(()->{
+        try{
+          android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+          String old=p.getString("live_diagnostics_v1","");
+          ArrayList<String> entries=new ArrayList<>();
+          if(old!=null&&!old.isEmpty())entries.addAll(Arrays.asList(old.split("\\n")));
+          entries.add(line);
+          while(entries.size()>30)entries.remove(0);
+          p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
+        }catch(Exception ignored){}
+      });
+    }catch(RuntimeException ignored){}
   }
   private void recordDecoderInventoryOnce(){
     if(decoderInventoryRecorded)return;
@@ -5600,9 +5627,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Only count a frame after Media3 confirms it was rendered to the output.
           sourceFirstFrameRecorded=true;
           lastVideoPipelineActivityAt=android.os.SystemClock.elapsedRealtime();
+          long firstFrameMs=lastVideoPipelineActivityAt-sourceAttemptStartedAt;
+          android.util.Log.i("MyTVZap","source_first_frame_ms="+firstFrameMs
+              +" channel="+(selected>=0&&selected<channels.size()?channels.get(selected).name:"?"));
           String renderedUrl=currentSourceUrl();
-          recordSourceMetric(renderedUrl,"firstFrame",
-              android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+          recordSourceMetric(renderedUrl,"firstFrame",firstFrameMs);
           if(selected>=0&&selected<channels.size()){
             Channel renderedChannel=channels.get(selected);
             SourceMemoryStore.saveLastGood(MainActivity.this,
@@ -5721,7 +5750,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             sourceWasBuffering=false;
             if(!sourceReadyRecorded){
               sourceReadyRecorded=true;
-              recordSourceMetric(currentSourceUrl(),"ready",android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+              long readyMs=android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt;
+              android.util.Log.i("MyTVZap","source_ready_ms="+readyMs
+                  +" channel="+(selected>=0&&selected<channels.size()?channels.get(selected).name:"?"));
+              recordSourceMetric(currentSourceUrl(),"ready",readyMs);
             }
             cancelBufferingFallback();
             // Avoid automatic source switching based on a short audio-startup window on older TV SoCs.
@@ -6019,36 +6051,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
+    final String metricUrl=url;
+    final String metricEvent=event;
+    final long metricReadyMs=readyMs;
     try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
-      String key=StableKey.url(url);
-      String legacyKey=StableKey.legacyUrl(url);
-      org.json.JSONObject m=all.optJSONObject(key);
-      if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
-      if(m==null)m=new org.json.JSONObject();
-      if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
-      else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
-      else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
-      else if("audioCodecError".equals(event))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
-      else if("audioSinkError".equals(event))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
-      else if("videoCodecError".equals(event))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
-      else if("ready".equals(event)){
-        int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
-        m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastReady",System.currentTimeMillis());
-      }else if("firstFrame".equals(event)){
-        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
-        m.put("firstFrames",count+1);
-        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastFirstFrame",System.currentTimeMillis());
-      }else if("stable".equals(event)){
-        m.put("stablePlays",m.optInt("stablePlays",0)+1);
-        m.put("lastStable",System.currentTimeMillis());
-      }
-      m.put("updated",System.currentTimeMillis());all.put(key,m);
-      p.edit().putString("source_qoe_v1",all.toString()).apply();
-    }catch(Exception ignored){}
+      livePersistenceWorker.execute(()->{
+        try{
+          android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+          org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
+          String key=StableKey.url(metricUrl);
+          String legacyKey=StableKey.legacyUrl(metricUrl);
+          org.json.JSONObject m=all.optJSONObject(key);
+          if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
+          if(m==null)m=new org.json.JSONObject();
+          if("attempt".equals(metricEvent))m.put("attempts",m.optInt("attempts",0)+1);
+          else if("failure".equals(metricEvent))m.put("failures",m.optInt("failures",0)+1);
+          else if("buffer".equals(metricEvent))m.put("buffers",m.optInt("buffers",0)+1);
+          else if("audioCodecError".equals(metricEvent))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
+          else if("audioSinkError".equals(metricEvent))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
+          else if("videoCodecError".equals(metricEvent))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
+          else if("ready".equals(metricEvent)){
+            int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
+            m.put("ready",count+1);m.put("avgReadyMs",count==0?metricReadyMs:((avg*count)+metricReadyMs)/(count+1));
+            m.put("lastReady",System.currentTimeMillis());
+          }else if("firstFrame".equals(metricEvent)){
+            int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
+            m.put("firstFrames",count+1);
+            m.put("avgFirstFrameMs",count==0?metricReadyMs:((avg*count)+metricReadyMs)/(count+1));
+            m.put("lastFirstFrame",System.currentTimeMillis());
+          }else if("stable".equals(metricEvent)){
+            m.put("stablePlays",m.optInt("stablePlays",0)+1);
+            m.put("lastStable",System.currentTimeMillis());
+          }
+          m.put("updated",System.currentTimeMillis());all.put(key,m);
+          p.edit().putString("source_qoe_v1",all.toString()).apply();
+        }catch(Exception ignored){}
+      });
+    }catch(RuntimeException ignored){}
   }
   private HashMap<String,Double> observedSourceScores(List<String> urls){
     HashMap<String,Double> scores=new HashMap<>();
@@ -6723,5 +6762,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();livePersistenceWorker.shutdown();setSourceUpdateActivityActive(false);}
 }
