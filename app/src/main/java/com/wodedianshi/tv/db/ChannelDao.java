@@ -76,6 +76,24 @@ public interface ChannelDao {
     @Query("SELECT * FROM categories ORDER BY sortOrder, name")
     List<CategoryEntity> getCategories();
 
+    @Query("SELECT id FROM categories")
+    List<String> getAllCategoryIds();
+
+    @Query("UPDATE categories SET name = :name, sortOrder = :sortOrder WHERE id = :id")
+    void updateCategoryFields(String id, String name, int sortOrder);
+
+    @Query("DELETE FROM categories WHERE id = :id")
+    void deleteCategoryById(String id);
+
+    @Query("SELECT id FROM channels")
+    List<String> getAllChannelIds();
+
+    @Query("DELETE FROM channels WHERE id = :id")
+    void deleteChannelById(String id);
+
+    @Query("SELECT channelId FROM favorites")
+    List<String> getFavoriteChannelIds();
+
     @Transaction
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
     List<ChannelWithSources> getChannelsByCategory(String categoryId);
