@@ -176,14 +176,30 @@ public final class DirectoryCacheStore {
                 out.writeInt((int) payloadLength);
                 out.writeInt(digest.length);
                 out.write(digest);
+                MessageDigest copiedDigest;
+                try {
+                    copiedDigest = MessageDigest.getInstance("SHA-256");
+                } catch (Exception unavailable) {
+                    throw new IOException("SHA-256 unavailable", unavailable);
+                }
+                long copied = 0L;
                 FileInputStream payloadIn = new FileInputStream(payloadFile);
                 try {
                     byte[] buffer = new byte[16 * 1024];
                     int count;
-                    while ((count = payloadIn.read(buffer)) != -1) out.write(buffer, 0, count);
+                    while ((count = payloadIn.read(buffer)) != -1) {
+                        copied += count;
+                        if (copied > payloadLength)
+                            throw new IOException("directory snapshot payload changed while copying");
+                        copiedDigest.update(buffer, 0, count);
+                        out.write(buffer, 0, count);
+                    }
                 } finally {
                     payloadIn.close();
                 }
+                if (copied != payloadLength
+                        || !MessageDigest.isEqual(digest, copiedDigest.digest()))
+                    throw new IOException("directory snapshot payload changed while copying");
                 out.flush();
                 fileOut.getFD().sync();
                 out.close();
