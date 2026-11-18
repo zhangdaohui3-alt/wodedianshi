@@ -748,11 +748,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     try{
-      byte[] payload=ChannelDirectorySnapshotCodec.encode(rows,favoriteSnapshot);
-      new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.ALL,
-          "room-catalogue-v1",payload,System.currentTimeMillis());
-      android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
-          +" channels="+rows.size()+" bytes="+payload.length+" heap_headroom_mb="+(headroom/1048576L));
+      File payloadFile=new File(getCacheDir(),
+          "directory-snapshot-"+Thread.currentThread().getId()+".payload.tmp");
+      try{
+        FileOutputStream payloadOut=new FileOutputStream(payloadFile);
+        try{
+          ChannelDirectorySnapshotCodec.writeCompressed(payloadOut,rows,favoriteSnapshot);
+          payloadOut.flush();
+          payloadOut.getFD().sync();
+        }finally{try{payloadOut.close();}catch(IOException ignored){}}
+        new DirectoryCacheStore(getFilesDir()).saveFromFile(
+            DirectoryCacheStore.Directory.ALL,"room-catalogue-v1",payloadFile,
+            System.currentTimeMillis());
+        android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
+            +" channels="+rows.size()+" bytes="+payloadFile.length()
+            +" heap_headroom_mb="+(headroom/1048576L));
+      }finally{if(payloadFile.exists())payloadFile.delete();}
     }catch(OutOfMemoryError memoryFailure){
       // A cache is disposable. Do not turn a successful Room save into a process
       // crash just because encoding the optional compressed copy ran out of heap.
