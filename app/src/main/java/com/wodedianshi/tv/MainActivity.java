@@ -6146,8 +6146,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               libVlcFrameProbeBitmap=null;
               return;
             }
-          }else if(result!=android.view.PixelCopy.ERROR_SOURCE_NO_DATA){
-            saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
+          }else{
+            // A failed copy breaks the consecutive-success sequence; never count
+            // stale black samples across a missing/invalid surface buffer.
+            libVlcBlackFrameSamples=0;
+            if(result!=android.view.PixelCopy.ERROR_SOURCE_NO_DATA)
+              saveLiveDiagnostic("VLC_FRAME_SAMPLE_ERROR","PixelCopy result="+result);
           }
           if(libVlcFrameProbe!=null)uiHandler.postDelayed(task[0],2500L);
         },uiHandler);
