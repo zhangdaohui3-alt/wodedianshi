@@ -18,7 +18,9 @@ public class SourceUpdateWorker extends Worker {
   // The full rebuild reads one feed page per worker run and spends its 24-probe
   // budget on that page. This prevents large China playlists from being starved
   // by small pages interleaved from every worldwide feed.
-  private static final int MAX_DISCOVERY_CANDIDATES = 24000;
+  // Per-worker memory safety bound only; it is not a lifetime catalogue cap.
+  // Reaching it must leave the feed cursor untouched rather than skip entries.
+  private static final int MAX_DISCOVERY_CANDIDATES_PER_RUN = 24000;
   private static final int MAX_DISCOVERY_PER_FEED = 4;
   private static final int MAX_INITIAL_DISCOVERY_PER_FEED = MAX_PROBES_PER_RUN;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
@@ -210,8 +212,14 @@ public class SourceUpdateWorker extends Worker {
                 feedCursor,feedPageSize);
           }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
-          int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
-          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+          int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
+          if(feedCandidates.size()>remaining){
+            // Never advance a feed cursor after silently truncating its parsed page.
+            // The next worker run starts with a fresh per-run budget and retries it.
+            feedCandidates.clear();
+            throw new IOException("本轮候选容量已满，保留目录游标并在下轮继续");
+          }
+          candidates.addAll(feedCandidates);
           feedCandidatesAdded=true;
           feedReadSucceeded=true;
           feedsOk++;
@@ -219,7 +227,7 @@ public class SourceUpdateWorker extends Worker {
           // Keep complete entries parsed before a transient stream read failure;
           // an incomplete feed is still reported as failed and will be retried later.
           if(!feedCandidatesAdded){
-            int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+            int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
             for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
             if(!feedCandidates.isEmpty())feedsWithEntries++;
           }
