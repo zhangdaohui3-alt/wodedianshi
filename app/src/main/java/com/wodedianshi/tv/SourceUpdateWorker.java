@@ -395,7 +395,7 @@ public class SourceUpdateWorker extends Worker {
         }
         String stablePrimaryUrl=channel.optString("url","");
         // Preserve both the stable channel identity and the user's last selected
-        // source even when the ranked list is trimmed to the five-source cap.
+        // source even when the ranked list is trimmed to the eight-source cap.
         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
         ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
             ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
