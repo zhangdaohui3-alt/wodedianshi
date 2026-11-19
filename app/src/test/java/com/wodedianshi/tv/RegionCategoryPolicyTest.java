@@ -40,6 +40,17 @@ public class RegionCategoryPolicyTest {
         assertEquals("custom", RegionCategoryPolicy.catalogueScope("自定义频道", "自建频道", "custom"));
     }
 
+    @Test public void mainlandAggregatorGroupsKeepCountyStationsInChinaCatalogue() {
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "上虞新闻综合", "中国大陆 · 新闻", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "固镇新闻", "中国大陆 · 新闻", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "旺苍新闻综合", "Mainland China · Local", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope(
+                "BBC News", "International · News", "global"));
+    }
+
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
         assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
         assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
