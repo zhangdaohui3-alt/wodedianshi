@@ -3027,8 +3027,10 @@ public class MainActivity extends Activity {
       info.setText(label+"：已从本地完整快照恢复 "+cached.size()+" 个频道，正在后台检查更新…");
       refresh();
     }else{
-      activeGeoChannelKeys=null;
+      // Do not briefly expose channels from other cities while this city is first loaded.
+      activeGeoChannelKeys=new HashSet<>();
       info.setText("首次载入 "+label+" 频道目录…");
+      refresh();
     }
     worker.execute(()->{HttpURLConnection c=null;try{
       c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.0 Android");
