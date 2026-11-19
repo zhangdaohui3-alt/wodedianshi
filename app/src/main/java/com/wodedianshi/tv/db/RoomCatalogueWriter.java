@@ -57,8 +57,9 @@ public final class RoomCatalogueWriter {
         }
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
-        // A missing checkpoint means a genuinely fresh database. Seed it directly
-        // from the bundled/current catalogue; no legacy JSON import is required.
+        // A missing checkpoint means a genuinely fresh database. It may receive
+        // either the explicit empty first-install checkpoint or a complete snapshot;
+        // no legacy JSON import or sidecar catalogue is involved.
         final int[] written = {0};
         db.runInTransaction(() -> {
             CatalogueMigrationEntity checkpoint =
@@ -223,7 +224,9 @@ public final class RoomCatalogueWriter {
             dao.insertMigration(new CatalogueMigrationEntity(
                     MasterCatalogueRepository.MIGRATION_KEY, dao.countChannels(), dao.countBackupSources(),
                     dao.countFavorites(), dao.countCategories(), completedAt,
-                    checkpoint == null ? "room_native_seed_v1" : checkpoint.catalogueFingerprint));
+                    checkpoint == null
+                            ? (allowEmptyInitialization ? "room_empty_initialization_v1" : "room_native_seed_v1")
+                            : checkpoint.catalogueFingerprint));
             if (clearBuildRowsOnCommit) {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
