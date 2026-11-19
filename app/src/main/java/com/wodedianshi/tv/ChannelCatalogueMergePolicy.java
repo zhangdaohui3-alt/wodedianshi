@@ -132,6 +132,24 @@ final class ChannelCatalogueMergePolicy {
         return result;
     }
 
+    static java.util.Set<String> migrateFavoriteKeys(java.util.Set<String> favorites,
+                                                        List<ChannelRecord> current,
+                                                        List<ChannelRecord> merged) {
+        java.util.LinkedHashSet<String> result = new java.util.LinkedHashSet<>();
+        if (favorites != null) result.addAll(favorites);
+        if (current == null || merged == null) return result;
+        java.util.HashMap<String, ChannelRecord> before = new java.util.HashMap<>();
+        for (ChannelRecord record : current) if (record != null) before.put(record.identity, record);
+        for (ChannelRecord after : merged) {
+            if (after == null) continue;
+            ChannelRecord prior = before.get(after.identity);
+            if (prior == null || prior.primaryUrl.equals(after.primaryUrl)) continue;
+            String oldKey = prior.name + "|" + prior.primaryUrl;
+            if (result.remove(oldKey)) result.add(after.name + "|" + after.primaryUrl);
+        }
+        return result;
+    }
+
     private static ChannelRecord normalizeCurrent(ChannelRecord record) {
         LinkedHashSet<String> urls = validUrls(record.sources);
         if (isHttp(record.primaryUrl)) urls.add(record.primaryUrl);
