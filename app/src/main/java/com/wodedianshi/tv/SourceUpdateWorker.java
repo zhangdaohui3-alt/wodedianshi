@@ -360,11 +360,10 @@ public class SourceUpdateWorker extends Worker {
         if(initialDiscoveryComplete){
           if(stagedRows<=0)throw new IllegalStateException(
               "Full catalogue rebuild completed without any validated channels; live catalogue retained");
-          roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
+          roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotAndClearBuild(
               getApplicationContext(),saved,roomSnapshot.catalogueVersion);
           if(roomRowsWritten!=stagedRows)throw new IllegalStateException(
               "Published Room rows do not match the staged full catalogue");
-          com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
         }
       }else{
         // Routine updates remain incremental against the current authoritative Room snapshot.
@@ -382,7 +381,9 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_probe_scores_v1",measuredScores.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
-          .putString("source_update_result","已安全暂存候选目录；"+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?"已解析频道条目，但候选线路均未通过媒体预检，本次不计为首次发现成功；":"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+          .putString("source_update_result",(initialDiscoveryChain
+              ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，正式目录保持不变；")
+              :"已安全更新当前目录；")+(foregroundAtStart||isActivityActive(prefs)?"本轮优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；")+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?"已解析频道条目，但候选线路均未通过媒体预检，本次不计为首次发现成功；":"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       // Advance a feed only after every candidate in the current multi-feed batch
       // has had its probe turn. This prevents losing the tail when the probe deadline
       // interrupts a run, and ensures later playlist pages are eventually discovered.
