@@ -32,6 +32,11 @@ public class RegionCategoryPolicyTest {
         assertEquals("china", RegionCategoryPolicy.catalogueScope("湖南卫视", "Entertainment", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("Xiamen News", "Local", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("综合频道", "福建地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("深圳都市频道", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("襄阳新闻综合", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("喀什电视台", "地方", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope("台州新闻频道", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("浙江台州新闻频道", "地方", "global"));
         assertEquals("custom", RegionCategoryPolicy.catalogueScope("自定义频道", "自建频道", "custom"));
     }
 
