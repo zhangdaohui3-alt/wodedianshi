@@ -113,17 +113,25 @@ final class ChannelNamePolicy {
         return matchedProvince;
     }
 
-    static boolean hasSpecificLocalCity(String metadata) {
+    static String localCityForChannel(String metadata) {
         String province = provinceForLocalChannel(metadata);
-        if (province.isEmpty()) return false;
+        if (province.isEmpty()) return "";
         String normalized = normalize(metadata);
+        java.util.LinkedHashSet<String> matches = new java.util.LinkedHashSet<>();
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             if (!province.equals(aliases[0])) continue;
             for (int i = 1; i < aliases.length; i++) {
-                if (containsAlias(metadata, aliases[i], normalized)) return true;
+                if (containsAlias(metadata, aliases[i], normalized)) {
+                    matches.add(normalize(aliases[i]));
+                }
             }
         }
-        return false;
+        // More than one city in the same metadata is not a reliable city key.
+        return matches.size() == 1 ? matches.iterator().next() : "";
+    }
+
+    static boolean hasSpecificLocalCity(String metadata) {
+        return !localCityForChannel(metadata).isEmpty();
     }
 
     private static boolean containsAlias(String metadata, String alias, String normalizedMetadata) {
