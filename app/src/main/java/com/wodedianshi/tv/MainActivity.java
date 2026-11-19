@@ -1500,8 +1500,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Initial catalogue loading is deferred until after dialog.show().
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
-      boolean shouldResumeLive=resumeLiveAfterVod&&selected>=0&&selected<channels.size()
-          &&!isChildLockCurrentlyActive();
+      // Activity stop also dismisses this dialog. In that path leave live
+      // restoration to onStart(); starting a decoder while onStop() is tearing
+      // it down creates a start/release race on Android TV.
+      boolean shouldResumeLive=activityStarted&&!isFinishing()&&resumeLiveAfterVod
+          &&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive();
       if(shouldResumeLive){
         // Recreate the live player only after VOD releases its decoder resources.
         // startCurrentSource() sets the playback-active lease before async decoder
