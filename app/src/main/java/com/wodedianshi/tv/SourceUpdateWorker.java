@@ -309,11 +309,16 @@ public class SourceUpdateWorker extends Worker {
           if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
           if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
         }
-        // A URL can already be known globally because another channel uses it.
-        // That must not prevent attaching the same endpoint to this channel identity.
-        // Deduplicate within this channel, and only record provenance for a URL that
-        // actually survives this channel's source-count and quality-retention policy.
-        if(knownUrls.contains(endpoint)&&target!=null){
+        // Merge every candidate for an existing channel through one retention policy.
+        // This protects the stable primary and last selected source before any
+        // capacity replacement occurs, rather than trying to restore them afterwards.
+        if(target==null){
+          target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
+          target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
+          target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
+          addBackupSourceScope(target,e.url,e.scope);
+          saved.put(target);byIdentity.put(key,target);added++;
+        }else{
           JSONArray currentSources=target.optJSONArray("sources");
           ArrayList<String> currentUrls=new ArrayList<>();
           if(currentSources!=null){
@@ -322,11 +327,16 @@ public class SourceUpdateWorker extends Worker {
             String primary=target.optString("url","");
             if(!primary.isEmpty())currentUrls.add(primary);
           }
+          int activeIndex=Math.max(0,target.optInt("activeSource",0));
+          String activeUrl=activeIndex<currentUrls.size()
+              ?currentUrls.get(activeIndex):target.optString("url","");
+          String primaryUrl=target.optString("url","");
           ArrayList<String> retainedUrls=new ArrayList<>(
               SourceChannelMergePolicy.attachSharedEndpoint(currentUrls,e.url,
                   MAX_SOURCES_PER_CHANNEL,
                   (a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),
-                      combinedScore(a,measuredScores,observedQoe))));
+                      combinedScore(a,measuredScores,observedQoe)),
+                  primaryUrl,activeUrl));
           boolean changed=currentUrls.size()!=retainedUrls.size();
           if(!changed){
             for(int i=0;i<currentUrls.size();i++){
@@ -347,34 +357,6 @@ public class SourceUpdateWorker extends Worker {
           }
           if(!retainedEndpointUrl.isEmpty()){
             addBackupSourceScope(target,retainedEndpointUrl,e.scope);
-          }
-          continue;
-        }
-        // The same stream URL may legitimately label two distinct channels. Avoid
-        // duplicating the URL within one channel, but do not drop the second channel row.
-        if(target==null){
-          target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
-          target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
-          target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
-          addBackupSourceScope(target,e.url,e.scope);
-          saved.put(target);byIdentity.put(key,target);added++;
-        }else{
-          JSONArray sources=target.optJSONArray("sources");
-          if(sources==null){sources=new JSONArray();String primary=target.optString("url");if(!primary.isEmpty())sources.put(primary);target.put("sources",sources);}
-          String candidateEndpoint=SourceSelectionPolicy.endpointKey(e.url);
-          boolean duplicate=false;for(int i=0;i<sources.length();i++)if(candidateEndpoint.equals(SourceSelectionPolicy.endpointKey(sources.optString(i)))){duplicate=true;break;}
-          if(!duplicate){
-            if(sources.length()<MAX_SOURCES_PER_CHANNEL){sources.put(e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
-            else{
-              int worstIndex=-1,worstScore=Integer.MAX_VALUE;
-              for(int i=0;i<sources.length();i++){
-                String old=sources.optString(i);
-                int oldScore=(int)Math.round(combinedScore(old,measuredScores,observedQoe));
-                if(oldScore<worstScore){worstScore=oldScore;worstIndex=i;}
-              }
-              int candidateScore=(int)Math.round(combinedScore(e.url,measuredScores,observedQoe));
-              if(worstIndex>=0&&candidateScore>worstScore){sources.put(worstIndex,e.url);addBackupSourceScope(target,e.url,e.scope);added++;}
-            }
           }
         }
         knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
