@@ -386,7 +386,9 @@ public class MainActivity extends Activity {
         if(!full.isEmpty()&&!"[]".equals(full)){
           android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(full));
           reader.beginArray();
-          while(reader.hasNext()&&previewChannels.size()<60){
+          int scannedObjects=0;
+          while(reader.hasNext()&&scannedObjects<60){
+            scannedObjects++;
             String name="",url="",group="";
             reader.beginObject();
             while(reader.hasNext()){
