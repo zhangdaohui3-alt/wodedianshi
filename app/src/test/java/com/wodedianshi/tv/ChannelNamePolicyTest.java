@@ -60,6 +60,11 @@ public class ChannelNamePolicyTest {
         assertEquals("新疆", ChannelNamePolicy.provinceForLocalChannel("Kashgar TV"));
     }
 
+    @Test public void explicitProvinceDisambiguatesCityOnlyAliases() {
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("福建 Fuzhou TV"));
+        assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("江苏 Suzhou TV"));
+    }
+
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
