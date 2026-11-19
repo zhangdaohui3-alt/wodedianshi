@@ -3530,6 +3530,8 @@ public class MainActivity extends Activity {
   private boolean audioTrackSelected=false;
   private volatile boolean audioPositionAdvancing=false;
   private volatile boolean audioSinkErrorObserved=false;
+  // Counts audio output underruns for the current live-source attempt.
+  private final java.util.concurrent.atomic.AtomicInteger audioUnderrunCount=new java.util.concurrent.atomic.AtomicInteger();
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3758,7 +3760,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;audioTrackCheckCompleted=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;audioTrackCheckCompleted=false;audioUnderrunCount.set(0);videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3860,6 +3862,20 @@ public class MainActivity extends Activity {
               }
             });
           }
+        }
+        @Override public void onAudioUnderrun(AnalyticsListener.EventTime eventTime,int bufferSize,long bufferSizeMs,long elapsedSinceLastFeedMs){
+          // Underruns can recover on their own. Record a bounded diagnostic signal,
+          // but never fail over on a single underrun.
+          if(!isCurrentEvent(eventTime))return;
+          int count=audioUnderrunCount.incrementAndGet();
+          if(!AudioUnderrunDiagnosticPolicy.shouldRecord(count))return;
+          final String underrunMediaId=currentMediaId;
+          final String detail="count="+count+" bufferSize="+bufferSize
+              +" bufferSizeMs="+bufferSizeMs+" elapsedSinceLastFeedMs="+elapsedSinceLastFeedMs;
+          uiHandler.post(()->{
+            if(underrunMediaId.equals(currentMediaId))
+              saveLiveDiagnostic("AUDIO_UNDERRUN",detail);
+          });
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
