@@ -134,6 +134,9 @@ public class MainActivity extends Activity {
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
+    // Show a compact, locally cached channel preview immediately; full catalogue
+    // recovery and index rebuilding continue on the worker thread below.
+    restoreStartupChannelPreview();
     remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
       @Override public void onLockStateChanged(boolean locked, String reason) {
         if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
@@ -360,6 +363,47 @@ public class MainActivity extends Activity {
   private boolean isDecoderFallbackEnabled(){
     return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
+  // A small first-page snapshot avoids parsing a potentially huge saved M3U/JSON
+  // catalogue on the Android TV UI thread at every launch.
+  private boolean restoreStartupChannelPreview(){
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    String raw=p.getString("startup_channels","[]");
+    if(raw.isEmpty()||"[]".equals(raw))return false;
+    try{
+      org.json.JSONArray a=new org.json.JSONArray(raw);
+      int count=Math.min(60,a.length());
+      for(int i=0;i<count;i++){
+        org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
+        String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
+        if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))channels.add(new Channel(name,url,group));
+      }
+      if(channels.isEmpty())return false;
+      favorites.addAll(p.getStringSet("fav",new HashSet<>()));
+      rebuildChannelIndexes();
+      refresh();
+      if(info!=null)info.setText("已快速显示本地频道 · 正在后台校准完整频道列表");
+      android.util.Log.i("MyTVStartup","preview_channels="+channels.size());
+      return true;
+    }catch(Exception e){
+      android.util.Log.w("MyTVStartup","startup preview unavailable",e);
+      return false;
+    }
+  }
+  private void writeStartupChannelPreview(){
+    try{
+      org.json.JSONArray preview=new org.json.JSONArray();
+      synchronized(channels){
+        int count=Math.min(60,channels.size());
+        for(int i=0;i<count;i++){
+          Channel channel=channels.get(i);
+          org.json.JSONObject item=new org.json.JSONObject();
+          item.put("name",channel.name);item.put("url",channel.url);item.put("group",channel.group);
+          preview.put(item);
+        }
+      }
+      getSharedPreferences("mytv",0).edit().putString("startup_channels",preview.toString()).apply();
+    }catch(Exception e){android.util.Log.w("MyTVStartup","preview save failed",e);}
+  }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
@@ -378,6 +422,7 @@ public class MainActivity extends Activity {
       }
       p.edit().putBoolean("defaults_loaded",true).apply();
     }
+    writeStartupChannelPreview();
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
@@ -516,11 +561,24 @@ public class MainActivity extends Activity {
     channels.get(found).activeSource=0;
     play(found);
   }
+  private String buildStartupChannelPreview(){
+    org.json.JSONArray preview=new org.json.JSONArray();
+    synchronized(channels){
+      int count=Math.min(60,channels.size());
+      for(int i=0;i<count;i++){
+        try{
+          Channel channel=channels.get(i);org.json.JSONObject item=new org.json.JSONObject();
+          item.put("name",channel.name);item.put("url",channel.url);item.put("group",channel.group);preview.put(item);
+        }catch(Exception ignored){}
+      }
+    }
+    return preview.toString();
+  }
   private void persist(){
     try {
       org.json.JSONArray a=new org.json.JSONArray();
       for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
+      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).putString("startup_channels",buildStartupChannelPreview()).apply();
     } catch(Exception ignored) {}
   }
   private String activeCategory="全部";
@@ -2673,7 +2731,7 @@ public class MainActivity extends Activity {
         String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
-        b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
+        b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setEnabled(startupDataReady);b.setOnClickListener(v->play(ix));
         b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
       }
