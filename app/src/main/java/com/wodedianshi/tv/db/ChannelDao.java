@@ -248,9 +248,18 @@ public interface ChannelDao {
     @Query("DELETE FROM catalogue_build_rows")
     void clearCatalogueBuildRows();
 
+    @Query("DELETE FROM catalogue_build_rows WHERE sortOrder >= :size")
+    void deleteCatalogueBuildRowsFrom(int size);
+
     @Transaction
     default void replaceCatalogueBuildRows(List<CatalogueBuildRowEntity> rows) {
         clearCatalogueBuildRows();
         if (rows != null && !rows.isEmpty()) insertCatalogueBuildRows(rows);
+    }
+
+    @Transaction
+    default void mergeCatalogueBuildRows(List<CatalogueBuildRowEntity> changedRows, int size) {
+        if (changedRows != null && !changedRows.isEmpty()) insertCatalogueBuildRows(changedRows);
+        deleteCatalogueBuildRowsFrom(Math.max(0, size));
     }
 }
