@@ -30,7 +30,7 @@ public class RegionCategoryPolicyTest {
         assertEquals("global", RegionCategoryPolicy.catalogueScope("BBC News", "United Kingdom", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("CCTV-1", "News", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("湖南卫视", "Entertainment", "global"));
-        assertEquals("china", RegionCategoryPolicy.catalogueScope("Fuzhou News", "Local", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("Xiamen News", "Local", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("综合频道", "福建地方", "global"));
         assertEquals("custom", RegionCategoryPolicy.catalogueScope("自定义频道", "自建频道", "custom"));
     }
