@@ -3823,6 +3823,24 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentEvent(eventTime))saveLiveDiagnostic("LIVE_VIDEO_DECODER",
+              "name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentEvent(eventTime))saveLiveDiagnostic("LIVE_AUDIO_DECODER",
+              "name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentEvent(eventTime)&&format!=null)saveLiveDiagnostic("LIVE_VIDEO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)
+                  +" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentEvent(eventTime)&&format!=null)saveLiveDiagnostic("LIVE_AUDIO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)
+                  +" sampleRate="+format.sampleRate+" channels="+format.channelCount);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(isCurrentEvent(eventTime))audioPositionAdvancing=true;
         }
