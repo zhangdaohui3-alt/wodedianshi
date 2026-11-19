@@ -129,6 +129,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile String roomSourceProbeJson="{}";
   private volatile String roomSourceQoeJson="{}";
   private volatile long roomSourceUpdateLastSuccessAt=0L;
+  private volatile long roomFullRebuildCompletedAt=0L;
   private volatile long roomChinaSupplementLastSuccess=0L;
   private volatile int roomChinaCachedCount=0;
   private volatile boolean roomChinaDirectoryCommitted=false;
@@ -682,6 +683,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
+    roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
     roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
     roomChinaCachedCount=parseRoomInt("china_directory_cached_count",0);
     roomChinaDirectoryCommitted=Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
@@ -1134,7 +1136,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Run the one-time China-first discovery through the complete first candidate
     // pass. Later launches use the 24-hour periodic worker instead of repeating it.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
-        enabled,roomSourceUpdateLastSuccessAt)){
+        enabled,roomFullRebuildCompletedAt)){
       // The first discovery is part of first-run setup, not a routine background
       // refresh. Let it run while the catalogue screen is open; playback-active
       // protection inside the Worker still pauses it if the user starts watching.
@@ -1175,7 +1177,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
+    boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints)
+        .setInputData(new Data.Builder().putBoolean("manual",true)
+            .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
+        .build();
     WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
     toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
     WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
