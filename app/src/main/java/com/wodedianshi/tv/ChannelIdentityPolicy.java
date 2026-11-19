@@ -43,10 +43,23 @@ final class ChannelIdentityPolicy {
         String city = ChannelNamePolicy.localCityForChannel(metadata);
         if (province.isEmpty() || city.isEmpty()) return "";
 
-        String label = hasMeaningfulStationLabel(displayName) ? displayName : guideName;
+        String label;
+        if (hasChinese(displayName) && hasMeaningfulStationLabel(displayName)) {
+            label = displayName;
+        } else if (hasChinese(guideName) && hasMeaningfulStationLabel(guideName)) {
+            // Prefer the Chinese guide label when a feed exposes an English
+            // display title for the same station.
+            label = guideName;
+        } else {
+            label = hasMeaningfulStationLabel(displayName) ? displayName : guideName;
+        }
         String normalizedLabel = normalizeLocalStationLabel(label);
         if (normalizedLabel.length() < 4) return "";
         return "local:" + province + "|" + city + "|" + normalizedLabel;
+    }
+
+    private static boolean hasChinese(String value) {
+        return value != null && value.matches(".*[\\u4E00-\\u9FFF].*");
     }
 
     private static boolean hasMeaningfulStationLabel(String value) {
