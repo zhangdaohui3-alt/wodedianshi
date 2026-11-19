@@ -234,4 +234,20 @@ public interface ChannelDao {
 
     @Query("SELECT c.legacyKey FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
     List<String> getFavoriteLegacyKeys();
+
+    // Isolated full-rebuild staging. These rows are never visible to the live UI.
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void insertCatalogueBuildRows(List<CatalogueBuildRowEntity> rows);
+
+    @Query("SELECT * FROM catalogue_build_rows ORDER BY sortOrder, rowId")
+    List<CatalogueBuildRowEntity> getCatalogueBuildRows();
+
+    @Query("DELETE FROM catalogue_build_rows")
+    void clearCatalogueBuildRows();
+
+    @Transaction
+    default void replaceCatalogueBuildRows(List<CatalogueBuildRowEntity> rows) {
+        clearCatalogueBuildRows();
+        if (rows != null && !rows.isEmpty()) insertCatalogueBuildRows(rows);
+    }
 }
