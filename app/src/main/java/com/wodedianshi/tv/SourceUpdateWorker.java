@@ -231,6 +231,8 @@ public class SourceUpdateWorker extends Worker {
           return Result.retry();
         }
         JSONArray committedChannels=writeCatalogueRecords(mergedRecords);
+        Set<String> updatedFavorites=ChannelCatalogueMergePolicy.migrateFavoriteKeys(
+            prefs.getStringSet("fav",Collections.emptySet()),currentRecords,mergedRecords);
         long nextGeneration=prefs.getLong("channel_catalogue_generation",0L)+1L;
         boolean committed=prefs.edit()
             .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
@@ -239,6 +241,7 @@ public class SourceUpdateWorker extends Worker {
             .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
             .putString("source_probe_scores_v1",measuredScores.toString())
             .putString("channels",committedChannels.toString())
+            .putStringSet("fav",updatedFavorites)
             .putLong("channel_catalogue_generation",nextGeneration)
             .putString("source_update_time",now())
             .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；本轮只合并通过校验的目录与线路，保留当前主源和播放源；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
