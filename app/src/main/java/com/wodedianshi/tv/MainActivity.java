@@ -47,6 +47,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private FrameLayout liveStage;
   private VLCVideoLayout vlcVideoLayout;
   private volatile LibVlcPlaybackEngine libVlcEngine;
+  // Serialize every new live tune behind asynchronous LibVLC teardown. The
+  // callbacks are UI-thread owned; stale tune generations self-discard.
+  private boolean libVlcReleaseInProgress=false;
+  private final ArrayList<Runnable> libVlcReleaseCallbacks=new ArrayList<>();
   private boolean usingLibVlc=false;
   private boolean libVlcVideoOutputReady=false;
   // Require two consecutive healthy VLC watchdog checks before remembering a source.
@@ -5554,7 +5558,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startCurrentSourceInternal(){
     if(selected<0||selected>=channels.size())return;
-    releaseLibVlcEngine();
+    // LibVLC teardown can block on Android 9 vendor decoders. Never start a
+    // Media3 tune while that native audio/video session is still being released.
+    // Multiple rapid tune requests queue behind the same release; only the latest
+    // matching playback generation is allowed to continue.
+    if(libVlcEngine!=null||libVlcReleaseInProgress){
+      final String expectedMediaId=currentMediaId;
+      final int expectedChannel=selected;
+      releaseLibVlcEngine(()->{
+        if(activityStarted&&!isFinishing()&&!isDestroyed()
+            &&selected==expectedChannel&&expectedMediaId.equals(currentMediaId))
+          startCurrentSourceInternal();
+      });
+      return;
+    }
     usingLibVlc=false;
     libVlcAttemptedForSource=false;
     if(video!=null)video.setVisibility(View.VISIBLE);
@@ -6010,19 +6027,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseLibVlcEngine(){
     releaseLibVlcEngine(null);
   }
+  private void finishLibVlcRelease(){
+    libVlcReleaseInProgress=false;
+    if(libVlcReleaseCallbacks.isEmpty())return;
+    ArrayList<Runnable> callbacks=new ArrayList<>(libVlcReleaseCallbacks);
+    libVlcReleaseCallbacks.clear();
+    for(Runnable callback:callbacks){
+      try{callback.run();}
+      catch(RuntimeException failure){
+        saveLiveDiagnostic("VLC_RELEASE_CALLBACK_ERROR",failure.getClass().getSimpleName());
+      }
+    }
+  }
   private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
-    if(old==null){
-      if(afterRelease!=null)afterRelease.run();
-      return;
+    if(afterRelease!=null){
+      if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
+      else if(old==null){afterRelease.run();return;}
+      else libVlcReleaseCallbacks.add(afterRelease);
     }
+    if(old==null)return;
+    libVlcReleaseInProgress=true;
     Runnable teardown=()->{
       try{old.release();}catch(Throwable failure){
         saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
       }finally{
-        if(afterRelease!=null)uiHandler.post(afterRelease);
+        uiHandler.post(this::finishLibVlcRelease);
       }
     };
     try{libVlcWorker.execute(teardown);}
@@ -6032,7 +6064,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{new Thread(teardown,"MyTV-VLC-Release").start();}
       catch(RuntimeException threadRejected){
         saveLiveDiagnostic("VLC_RELEASE_FALLBACK_ERROR",threadRejected.getClass().getSimpleName());
-        if(afterRelease!=null)uiHandler.post(afterRelease);
+        uiHandler.post(this::finishLibVlcRelease);
       }
     }
   }
