@@ -95,8 +95,16 @@ final class ChannelNamePolicy {
             for (int i = 1; i < aliases.length; i++) {
                 String alias = normalize(aliases[i]);
                 if (!containsAlias(metadata, aliases[i], normalized)) continue;
+                boolean ambiguousCity = false;
                 for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
-                    if (alias.equals(ambiguous) && !explicitProvince) return "";
+                    if (alias.equals(ambiguous)) {
+                        ambiguousCity = true;
+                        break;
+                    }
+                }
+                if (ambiguousCity) {
+                    if (!explicitProvince) return "";
+                    continue;
                 }
                 if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
                 matchedProvince = aliases[0];
