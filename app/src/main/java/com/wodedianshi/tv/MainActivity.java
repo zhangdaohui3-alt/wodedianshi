@@ -4409,12 +4409,47 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
+  // A favorite toggle changes one Room relation, not the channel catalogue.
+  // Serialize it with full catalogue writes so a queued older snapshot cannot
+  // overwrite the user's latest favorite state.
+  private void queueFavoriteMutation(String legacyKey,boolean favorite){
+    synchronized(cataloguePersistLock){
+      catalogueMutationGeneration++;
+      try{
+        cataloguePersistWorker.execute(()->{
+          try{
+            com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
+                getApplicationContext(),legacyKey,favorite);
+            saveLiveDiagnostic("FAVORITE_ROOM_MUTATION",
+                (favorite?"added ":"removed ")+legacyKey);
+          }catch(Throwable failure){
+            android.util.Log.e("MyTVCatalogue","Room favorite mutation failed",failure);
+            saveLiveDiagnostic("FAVORITE_ROOM_MUTATION_ERROR",
+                failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
+            // Recover through the normal complete-snapshot writer on a different
+            // executor; never block this single-thread Room mutation queue.
+            try{worker.execute(this::persist);}
+            catch(RuntimeException rejected){
+              android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",rejected);
+            }
+          }
+        });
+      }catch(RuntimeException rejected){
+        android.util.Log.e("MyTVCatalogue","favorite mutation queue was rejected",rejected);
+        try{worker.execute(this::persist);}
+        catch(RuntimeException fallbackRejected){
+          android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",fallbackRejected);
+        }
+      }
+    }
+  }
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
-    if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
-    else{favorites.add(c.key());toast("已加入收藏："+c.name);}
-    persist();
+    boolean favorite=!favorites.contains(c.key());
+    if(favorite){favorites.add(c.key());toast("已加入收藏："+c.name);}
+    else{favorites.remove(c.key());toast("已取消收藏："+c.name);}
+    queueFavoriteMutation(c.key(),favorite);
 
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
