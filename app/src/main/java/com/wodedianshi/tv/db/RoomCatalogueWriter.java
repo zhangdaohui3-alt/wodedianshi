@@ -147,13 +147,13 @@ public final class RoomCatalogueWriter {
     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
-        // SourceUpdateWorker only enriches a Room-derived snapshot; it must never
-        // replace the authoritative directory with a truncated/partial feed result.
+        // Channel count is deliberately not compared with the previous catalogue:
+        // a fully collected and normalized refresh may correctly remove dead,
+        // duplicate or invalid channels. Completeness is validated structurally
+        // below and again inside the Room transaction, not inferred from row count.
         AppDatabase database = RoomDatabaseProvider.get(context);
-        int existingChannels = database.channelDao().countChannels();
-        if (!BackgroundSnapshotPolicy.isComplete(existingChannels, snapshot.length())) {
-            throw new IllegalStateException("Refusing incomplete background catalogue snapshot: "
-                    + snapshot.length() + " rows for " + existingChannels + " saved channels");
+        if (snapshot.length() == 0) {
+            throw new IllegalStateException("Refusing an empty background catalogue snapshot");
         }
         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
         for (int row = 0; row < snapshot.length(); row++) {
@@ -190,11 +190,6 @@ public final class RoomCatalogueWriter {
         // shorter list that still passes the non-shrinking background policy.
         if (rows.size() != snapshot.length()) {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
-        }
-        int savedCount = database.channelDao().countChannels();
-        if (savedCount > 0 && rows.size() < savedCount) {
-            throw new IllegalStateException("Refusing to replace " + savedCount
-                    + " saved channels with " + rows.size() + " decoded rows");
         }
         return writeRecords(context, rows, favoriteKeys);
     }
