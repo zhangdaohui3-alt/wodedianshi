@@ -115,6 +115,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // SharedPreferences persistence now runs on a background writer; synchronize
   // the wrapper so UI favorite toggles cannot race its detached snapshot.
   private final Set<String> favorites = Collections.synchronizedSet(new HashSet<String>());
+  // Durable business state is loaded from Room on the startup worker.
+  private static final String ROOM_STATE_LAST_CHANNEL_IDENTITY="last_channel_identity";
+  private static final String ROOM_STATE_LAST_CHANNEL_URL="last_channel_url";
+  private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
+  private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
+  private volatile String roomLastChannelIdentity="";
+  private volatile String roomLastChannelUrl="";
+  private volatile String roomVodFavoritesJson="[]";
+  private volatile String roomVodHistoryJson="[]";
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
@@ -274,19 +283,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long prefsWarmStarted = android.os.SystemClock.elapsedRealtime();
       try {
         android.content.SharedPreferences startupPrefs=getSharedPreferences("mytv",0);
-        // Old channel JSON and favorites are explicitly disposable. Remove only
-        // catalogue-era keys while preserving playback, parental-lock and UI settings.
-        boolean hadLegacyCatalogue=startupPrefs.contains("channels")
+        // Previous releases are intentionally not migrated. Remove old business-data keys.
+        boolean hadLegacyBusinessData=startupPrefs.contains("channels")
             ||startupPrefs.contains("fav")
-            ||startupPrefs.contains("source_update_pending_channels");
-        if(hadLegacyCatalogue){
+            ||startupPrefs.contains("source_update_pending_channels")
+            ||startupPrefs.contains("last_channel_identity")
+            ||startupPrefs.contains("last_channel_url")
+            ||startupPrefs.contains("vod_favorites_v1")
+            ||startupPrefs.contains("vod_history_v1");
+        if(hadLegacyBusinessData){
           boolean cleared=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
               .remove("source_update_pending_channels")
               .remove("source_update_pending_base")
               .remove("source_update_pending_base_fingerprint")
+              .remove("last_channel_identity").remove("last_channel_url")
+              .remove("vod_favorites_v1").remove("vod_history_v1")
               .commit();
-          android.util.Log.i("MyTVRoom","discarded legacy channel cache committed="+cleared);
+          android.util.Log.i("MyTVRoom","discarded legacy non-authoritative business data committed="+cleared);
         }
         recordPreviousProcessExitReason();
         setSourceUpdatePlaybackActive(false);
@@ -577,6 +591,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
    */
   private void restore(){
     catalogueSnapshotTrusted=false;
+    loadRoomAppState();
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
     synchronized(channels){channels.clear();}
     synchronized(favorites){favorites.clear();}
@@ -647,6 +662,42 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
     });
+  }
+
+  private void loadRoomAppState(){
+    roomLastChannelIdentity=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_IDENTITY,"");
+    roomLastChannelUrl=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_URL,"");
+    roomVodFavoritesJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
+    roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
+  }
+
+  private void queueRoomAppStateWrite(String key,String value){
+    if(key==null||value==null)return;
+    try{
+      cataloguePersistWorker.execute(()->{
+        try{
+          com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),key,value);
+        }catch(Throwable failure){
+          android.util.Log.e("MyTVRoomState","failed to persist "+key,failure);
+        }
+      });
+    }catch(RuntimeException rejected){
+      android.util.Log.e("MyTVRoomState","state write queue rejected key="+key,rejected);
+    }
+  }
+
+  private void saveRoomVodFavorites(String json){
+    roomVodFavoritesJson=json==null?"[]":json;
+    queueRoomAppStateWrite(ROOM_STATE_VOD_FAVORITES,roomVodFavoritesJson);
+  }
+
+  private void saveRoomVodHistory(String json){
+    roomVodHistoryJson=json==null?"[]":json;
+    queueRoomAppStateWrite(ROOM_STATE_VOD_HISTORY,roomVodHistoryJson);
   }
 
   private int countChannelSources(){
@@ -833,15 +884,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Persist the channel, not the last attempted source. startCurrentSource() calls
     // this before playback succeeds, so last_source_url could permanently remember
     // a dead endpoint and make every next launch start from that failed URL.
-    getSharedPreferences("mytv",0).edit()
-        .putString("last_channel_identity",identity(c))
-        .putString("last_channel_url",c.url).apply();
+    roomLastChannelIdentity=identity(c);
+    roomLastChannelUrl=c.url==null?"":c.url;
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,roomLastChannelIdentity);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,roomLastChannelUrl);
   }
   private void restoreLastChannel(){
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String savedIdentity=p.getString("last_channel_identity","");
+    String savedIdentity=roomLastChannelIdentity;
     if(savedIdentity.isEmpty())return;
-    String savedUrl=p.getString("last_channel_url","");
+    String savedUrl=roomLastChannelUrl;
     int found=-1;
     for(int i=0;i<channels.size();i++){
       Channel c=channels.get(i);
@@ -1857,7 +1908,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private ArrayList<VodItem> readVodFavorites(){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
-      org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_FAVORITES_KEY,"[]"));
+      org.json.JSONArray a=new org.json.JSONArray(roomVodFavoritesJson);
       for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");if(!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));}
     }catch(Exception ignored){}
     return items;
@@ -1874,7 +1925,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       for(VodItem saved:items){if(item.identifier.equals(saved.identifier)){removed=true;continue;}org.json.JSONObject o=new org.json.JSONObject();o.put("title",saved.title);o.put("id",saved.identifier);o.put("url",saved.url);o.put("license",saved.license);out.put(o);}
       if(!removed){org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);out.put(o);}
-      getSharedPreferences("mytv",0).edit().putString(VOD_FAVORITES_KEY,out.toString()).apply();
+      saveRoomVodFavorites(out.toString());
     }catch(Exception ignored){}
   }
   private void loadVodFavorites(LinearLayout panel){
@@ -1886,7 +1937,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
     ArrayList<org.json.JSONObject> list=new ArrayList<>();
-    try{org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
+    try{org.json.JSONArray a=new org.json.JSONArray(roomVodHistoryJson);for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
     return list;
   }
   private void saveVodHistory(VodItem item,long position,long duration){
@@ -1895,7 +1946,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       ArrayList<org.json.JSONObject> old=readVodHistory();org.json.JSONArray out=new org.json.JSONArray();
       org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
       for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
-      getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,out.toString()).apply();
+      saveRoomVodHistory(out.toString());
     }catch(Exception ignored){}
   }
   private void loadVodHistory(LinearLayout panel){
@@ -1922,7 +1973,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
       row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
-      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
+      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);saveRoomVodHistory(a.toString());loadVodHistory(status,results);}).show();return true;});
       return row;
     }
   }
@@ -1930,7 +1981,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<org.json.JSONObject> history=readVodHistory();results.removeAllViews();
     LinearLayout tools=new LinearLayout(this);tools.setOrientation(0);
     Button clear=new Button(this);clear.setText("清空播放记录");clear.setAllCaps(false);styleTvButton(clear,Color.rgb(125,48,48));tools.addView(clear,new LinearLayout.LayoutParams(-2,dp(44)));
-    clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清空播放记录？").setMessage("将删除所有点播记录和续播进度。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->{getSharedPreferences("mytv",0).edit().remove(VOD_HISTORY_KEY).apply();loadVodHistory(status,results);}).show());
+    clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清空播放记录？").setMessage("将删除所有点播记录和续播进度。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->{saveRoomVodHistory("[]");loadVodHistory(status,results);}).show());
     results.addView(tools);
     status.setText(history.isEmpty()?"还没有点播记录。观看过的影片会自动保存在这里。":"最近观看 · "+history.size()+" 部（点击继续观看，长按删除）");
     GridView grid=ensureVodGrid(results,1);grid.setAdapter(new VodHistoryAdapter(history,status,results));grid.setSelection(0);
