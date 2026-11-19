@@ -61,6 +61,9 @@ public class MainActivity extends Activity {
   private Runnable networkSpeedUpdater;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
+  private androidx.lifecycle.Observer<WorkInfo> manualSourceUpdateObserver;
+  private AlertDialog manualSourceProgressDialog;
+  private UUID manualSourceUpdateId;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
   private View hoveredVodCard;
@@ -641,19 +644,47 @@ public class MainActivity extends Activity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
-    WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
-    toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
-        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
-        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
-          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints)
+        .setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
+    WorkManager manager=WorkManager.getInstance(this);
+    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
+    if(manualSourceUpdateObserver!=null&&manualSourceUpdateId!=null){
+      manager.getWorkInfoByIdLiveData(manualSourceUpdateId).removeObserver(manualSourceUpdateObserver);
+      manualSourceUpdateObserver=null;
+    }
+    if(manualSourceProgressDialog!=null&&manualSourceProgressDialog.isShowing())manualSourceProgressDialog.dismiss();
+    manualSourceUpdateId=request.getId();
+    AlertDialog progressDialog=new AlertDialog.Builder(this)
+        .setTitle("频道资料刷新")
+        .setMessage("正在准备频道目录…")
+        .setNegativeButton("后台运行",null).create();
+    manualSourceProgressDialog=progressDialog;
+    progressDialog.show();
+    final androidx.lifecycle.Observer<WorkInfo>[] holder=new androidx.lifecycle.Observer[1];
+    holder[0]=result->{
+      if(result==null)return;
+      String message=result.getProgress().getString("message");
+      if(message!=null&&!isFinishing()&&manualSourceProgressDialog==progressDialog&&progressDialog.isShowing()){
+        progressDialog.setMessage(message);
+      }
+      if(result.getState().isFinished()){
+        manager.getWorkInfoByIdLiveData(request.getId()).removeObserver(holder[0]);
+        if(manualSourceUpdateObserver==holder[0])manualSourceUpdateObserver=null;
+        if(manualSourceProgressDialog==progressDialog)manualSourceProgressDialog=null;
+        if(progressDialog.isShowing())progressDialog.dismiss();
+        if(result.getState()==WorkInfo.State.SUCCEEDED){
+          runOnUiThread(()->{if(!isFinishing()){reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();}});
+        }else if(result.getState()==WorkInfo.State.FAILED){
+          runOnUiThread(()->{if(!isFinishing())toast("频道源更新失败，请检查网络后重试");});
+        }else if(result.getState()==WorkInfo.State.CANCELLED){
+          runOnUiThread(()->{if(!isFinishing())toast("频道源刷新已取消，原频道资料保持不变");});
         }
-      }catch(Exception ignored){}
-    },worker);
+      }
+    };
+    manualSourceUpdateObserver=holder[0];
+    manager.getWorkInfoByIdLiveData(request.getId()).observeForever(holder[0]);
+    toast("已开始整理频道资料；刷新期间仍可使用原有频道");
   }
   private void reloadChannelsAfterSourceUpdate(){
     String keepIdentity="";
@@ -4518,5 +4549,5 @@ public class MainActivity extends Activity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onDestroy(){if(manualSourceUpdateObserver!=null&&manualSourceUpdateId!=null){WorkManager.getInstance(this).getWorkInfoByIdLiveData(manualSourceUpdateId).removeObserver(manualSourceUpdateObserver);manualSourceUpdateObserver=null;}if(manualSourceProgressDialog!=null&&manualSourceProgressDialog.isShowing())manualSourceProgressDialog.dismiss();manualSourceProgressDialog=null;if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
