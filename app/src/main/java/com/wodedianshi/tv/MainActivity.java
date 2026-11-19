@@ -3715,6 +3715,8 @@ public class MainActivity extends Activity {
   private boolean audioTrackSupported=false;
   private boolean audioTrackSelected=false;
   private boolean audioPositionAdvancing=false;
+  private final java.util.concurrent.atomic.AtomicInteger audioUnderrunCount=new java.util.concurrent.atomic.AtomicInteger();
+  private final java.util.concurrent.atomic.AtomicInteger videoDropReportCount=new java.util.concurrent.atomic.AtomicInteger();
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3927,7 +3929,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioUnderrunCount.set(0);videoDropReportCount.set(0);videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3975,8 +3977,38 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)saveLiveDiagnostic("LIVE_VIDEO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)saveLiveDiagnostic("LIVE_AUDIO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)saveLiveDiagnostic("LIVE_VIDEO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)saveLiveDiagnostic("LIVE_AUDIO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" sampleRate="+format.sampleRate+" channels="+format.channelCount);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
+        }
+        @Override public void onAudioUnderrun(AnalyticsListener.EventTime eventTime,int bufferSize,long bufferSizeMs,long elapsedSinceLastFeedMs){
+          if(listenerOwner!=MainActivity.this.player)return;
+          int count=audioUnderrunCount.incrementAndGet();
+          if(count!=1&&count%5!=0)return;
+          final String expectedMediaId=currentMediaId;
+          final String detail="count="+count+" bufferSize="+bufferSize+" bufferSizeMs="+bufferSizeMs+" elapsedSinceLastFeedMs="+elapsedSinceLastFeedMs;
+          uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("AUDIO_UNDERRUN",detail);});
+        }
+        @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
+          if(listenerOwner!=MainActivity.this.player||droppedFrames<=0)return;
+          int count=videoDropReportCount.incrementAndGet();
+          if(count!=1&&count%5!=0)return;
+          final String expectedMediaId=currentMediaId;
+          final String detail="reports="+count+" droppedFrames="+droppedFrames+" elapsedMs="+elapsedMs;
+          uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("VIDEO_DROPPED_FRAMES",detail);});
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;
