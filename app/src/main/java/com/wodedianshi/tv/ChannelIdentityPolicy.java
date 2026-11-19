@@ -10,7 +10,7 @@ import java.util.Locale;
  * tvg-id is present; display names alone are not strong enough to merge local
  * stations from different cities or providers.
  */
-final class ChannelIdentityPolicy {
+public final class ChannelIdentityPolicy {
     private ChannelIdentityPolicy() {}
 
     static String identity(String broadcaster, String tvgId, String fallbackIdentity) {
@@ -35,7 +35,7 @@ final class ChannelIdentityPolicy {
         return fallbackIdentity == null ? "" : fallbackIdentity;
     }
 
-    static String localStationIdentity(String name, String tvgName) {
+    public static String localStationIdentity(String name, String tvgName) {
         String displayName = name == null ? "" : name.trim();
         String guideName = tvgName == null ? "" : tvgName.trim();
         String metadata = (displayName + " " + guideName).trim();
