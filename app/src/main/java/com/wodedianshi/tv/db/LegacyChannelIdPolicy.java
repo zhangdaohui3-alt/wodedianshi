@@ -27,11 +27,6 @@ public final class LegacyChannelIdPolicy {
      * without a stable provider id remain host/URL-scoped to avoid false merges.
      */
     public static String stableIdentityKey(String name, String primaryUrl, String tvgId) {
-        String safeId = tvgId == null ? "" : tvgId.trim().toLowerCase(java.util.Locale.ROOT)
-                .replaceAll("\\s+", "");
-        if (safeId.length() >= 4 && safeId.matches(".*[a-z\\u4e00-\\u9fff].*")) {
-            return "tvgid:" + safeId;
-        }
         String canonical = name == null ? "" : name.trim().replaceAll("\\s+", "");
         String upper = canonical.toUpperCase(java.util.Locale.ROOT);
         if (upper.matches("CCTV[-_ ]?\\d+([+]?|KIDS)?")) {
@@ -39,6 +34,11 @@ public final class LegacyChannelIdPolicy {
         }
         if (canonical.endsWith("卫视")) {
             return "broadcaster:" + canonical.toLowerCase(java.util.Locale.ROOT);
+        }
+        String safeId = tvgId == null ? "" : tvgId.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", "");
+        if (safeId.length() >= 4 && safeId.matches(".*[a-z\\u4e00-\\u9fff].*")) {
+            return "tvgid:" + safeId;
         }
         return identityKey(name, primaryUrl);
     }
