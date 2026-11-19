@@ -26,8 +26,8 @@ public class SourceChannelMergePolicyTest {
 
     @Test public void deduplicatesEndpointAliasesAlreadyAttachedToChannel() {
         List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
-                Arrays.asList("https://cdn.example/live.m3u8?token=one"),
-                "https://cdn.example/live.m3u8?token=two", 8, BEST_FIRST);
+                Arrays.asList("https://CDN.example:443/live.m3u8"),
+                "https://cdn.example/live.m3u8", 8, BEST_FIRST);
         assertEquals(1, result.size());
     }
 
