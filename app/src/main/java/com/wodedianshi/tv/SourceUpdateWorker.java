@@ -84,6 +84,18 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain){
         String buildActive=com.wodedianshi.tv.db.AppStateStore.get(
             getApplicationContext(),"source_full_rebuild_active","false");
+        long completedRebuildAt=0L;
+        try{
+          completedRebuildAt=Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
+              getApplicationContext(),"source_full_rebuild_completed_at","0"));
+        }catch(NumberFormatException ignored){}
+        // The Room publish transaction records completion and clears the active
+        // flag atomically. If the process died after commit but before WorkManager
+        // recorded success, its retry must not start a second full rebuild.
+        if(!"true".equals(buildActive)&&completedRebuildAt>0L){
+          saveStatus(prefs,"全量频道目录已完成发布，无需重复重建",0);
+          return Result.success();
+        }
         if(!"true".equals(buildActive)){
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
