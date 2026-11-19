@@ -113,6 +113,19 @@ final class ChannelNamePolicy {
         return matchedProvince;
     }
 
+    static boolean hasSpecificLocalCity(String metadata) {
+        String province = provinceForLocalChannel(metadata);
+        if (province.isEmpty()) return false;
+        String normalized = normalize(metadata);
+        for (String[] aliases : LOCAL_CITY_ALIASES) {
+            if (!province.equals(aliases[0])) continue;
+            for (int i = 1; i < aliases.length; i++) {
+                if (containsAlias(metadata, aliases[i], normalized)) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean containsAlias(String metadata, String alias, String normalizedMetadata) {
         String normalizedAlias = normalize(alias);
         if (normalizedAlias.isEmpty()) return false;
