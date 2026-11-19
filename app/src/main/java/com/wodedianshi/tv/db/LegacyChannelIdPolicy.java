@@ -27,6 +27,11 @@ public final class LegacyChannelIdPolicy {
      * without a stable provider id remain host/URL-scoped to avoid false merges.
      */
     public static String stableIdentityKey(String name, String primaryUrl, String tvgId) {
+        return stableIdentityKey(name, primaryUrl, tvgId, "");
+    }
+
+    public static String stableIdentityKey(String name, String primaryUrl,
+            String tvgId, String group) {
         String canonical = name == null ? "" : name.trim().replaceAll("\\s+", "");
         String upper = canonical.toUpperCase(java.util.Locale.ROOT);
         if (upper.matches("CCTV[-_ ]?\\d+([+]?|KIDS)?")) {
@@ -39,6 +44,17 @@ public final class LegacyChannelIdPolicy {
                 .replaceAll("\\s+", "");
         if (safeId.length() >= 4 && safeId.matches(".*[a-z\\u4e00-\\u9fff].*")) {
             return "tvgid:" + safeId;
+        }
+        String host = "";
+        try {
+            java.net.URI uri = java.net.URI.create(primaryUrl == null ? "" : primaryUrl.trim());
+            if (uri.getHost() != null) host = uri.getHost().toLowerCase(java.util.Locale.ROOT);
+        } catch (Exception ignored) {}
+        if (!host.isEmpty()) {
+            String safeName = name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT);
+            String safeGroup = group == null ? "" : group.trim().toLowerCase(java.util.Locale.ROOT);
+            return "local:" + safeName.length() + ":" + safeName
+                    + safeGroup.length() + ":" + safeGroup + host.length() + ":" + host;
         }
         return identityKey(name, primaryUrl);
     }
