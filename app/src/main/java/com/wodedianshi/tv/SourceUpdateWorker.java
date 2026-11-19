@@ -67,6 +67,7 @@ public class SourceUpdateWorker extends Worker {
         if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
         knownUrls.add(c.optString("url"));
       }
+      HashSet<String> originalIdentities=new HashSet<>(byIdentity.keySet());
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
       // pool. Previously only URLs rediscovered in public playlists were probed,
@@ -205,16 +206,64 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
-      prefs.edit().putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
-          .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
-          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
-          .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
-          .putString("source_probe_scores_v1",measuredScores.toString())
-          .putString("channels",saved.toString()).putString("source_update_time",now())
-          .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；评分结合连续分片、清晰度、响应速度和本机播放反馈；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
-          .apply();
+      // Build the commit against the newest active snapshot, not the stale copy
+      // read before network discovery. UI persistence uses the same lock and
+      // generation counter, so favorites/last-channel state and user edits survive.
+      synchronized(ChannelCatalogueStore.LOCK){
+        JSONArray latestActive=new JSONArray(prefs.getString("channels","[]"));
+        ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> currentRecords=readCatalogueRecords(latestActive);
+        ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> candidateRecords=readCatalogueRecords(saved);
+        List<ChannelCatalogueMergePolicy.ChannelRecord> mergedRecords=
+            ChannelCatalogueMergePolicy.merge(currentRecords,candidateRecords,originalIdentities);
+        if(mergedRecords==null||mergedRecords.isEmpty()){
+          saveStatus(prefs,"候选频道资料未通过完整性校验，已保留原频道库；请稍后重试",0);
+          return Result.retry();
+        }
+        JSONArray committedChannels=writeCatalogueRecords(mergedRecords);
+        long nextGeneration=prefs.getLong("channel_catalogue_generation",0L)+1L;
+        boolean committed=prefs.edit()
+            .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+            .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+            .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+            .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
+            .putString("source_probe_scores_v1",measuredScores.toString())
+            .putString("channels",committedChannels.toString())
+            .putLong("channel_catalogue_generation",nextGeneration)
+            .putString("source_update_time",now())
+            .putString("source_update_result",(discoveryUnavailable?"所有公开目录暂不可用；仍完成已保存线路的轮检；":"成功读取 "+feedsOk+" 个目录；")+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个优质备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；本轮只合并通过校验的目录与线路，保留当前主源和播放源；仍需播放器验证画面与声音；"+(errors.length()>0?"部分目录失败。":""))
+            .commit();
+        if(!committed){
+          saveStatus(prefs,"频道资料原子保存失败，原频道库保持不变；请稍后重试",0);
+          return Result.retry();
+        }
+      }
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> readCatalogueRecords(JSONArray array){
+    ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> records=new ArrayList<>();
+    for(int i=0;i<array.length();i++){
+      JSONObject channel=array.optJSONObject(i);if(channel==null)continue;
+      String name=channel.optString("name",""),group=channel.optString("group",""),primary=channel.optString("url","");
+      JSONArray values=channel.optJSONArray("sources");
+      ArrayList<String> sources=new ArrayList<>();
+      if(values!=null)for(int j=0;j<values.length();j++){String url=values.optString(j,"");if(url.startsWith("http://")||url.startsWith("https://"))sources.add(url);}
+      if(sources.isEmpty()&&!primary.isEmpty())sources.add(primary);
+      records.add(new ChannelCatalogueMergePolicy.ChannelRecord(
+          identity(name,group,primary),name,group,primary,sources,channel.optInt("activeSource",0)));
+    }
+    return records;
+  }
+  private JSONArray writeCatalogueRecords(List<ChannelCatalogueMergePolicy.ChannelRecord> records)throws JSONException{
+    JSONArray result=new JSONArray();
+    for(ChannelCatalogueMergePolicy.ChannelRecord record:records){
+      JSONObject channel=new JSONObject();
+      channel.put("name",record.name);channel.put("url",record.primaryUrl);
+      channel.put("group",record.group);channel.put("activeSource",record.activeSource);
+      JSONArray sources=new JSONArray();for(String url:record.sources)sources.put(url);
+      channel.put("sources",sources);result.put(channel);
+    }
+    return result;
   }
   private static class Entry{
     String name,url,group;boolean savedSource;
