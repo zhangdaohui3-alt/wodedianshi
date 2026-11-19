@@ -44,6 +44,12 @@ public class ChannelIdentityPolicyTest {
         assertEquals("", ChannelIdentityPolicy.localStationIdentity("深圳广州新闻频道", ""));
     }
 
+    @Test public void prefersChineseGuideLabelForEnglishDisplayName() {
+        assertEquals("local:广东|深圳|深圳都市频道",
+                ChannelIdentityPolicy.localStationIdentity(
+                        "Shenzhen City Channel", "深圳都市频道"));
+    }
+
     @Test public void recognizesMunicipalitiesAsTheirOwnCityIdentity() {
         assertEquals("local:北京|北京|北京新闻频道",
                 ChannelIdentityPolicy.localStationIdentity("北京新闻频道", ""));
