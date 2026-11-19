@@ -710,6 +710,9 @@ public class SourceUpdateWorker extends Worker {
   private double combinedScore(String url,JSONObject probes,JSONObject qoe){
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
+    // URL resolution labels contribute at most 12 points; media preflight and
+    // observed playback QoE remain dominant, so a fake "1080p" label cannot
+    // outrank a materially healthier stream by itself.
     double score=probeScore+sourceQualityScore(url)*0.01;
     // Keep a currently failed preflight below unprobed/valid sources even if its old QoE was excellent.
     if(SourceQualityScorer.isFailedProbeScore(probeScore))return score;
