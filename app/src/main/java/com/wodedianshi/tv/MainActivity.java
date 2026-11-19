@@ -1156,17 +1156,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
         .observe(this,workInfos->{
           if(workInfos==null)return;
+          boolean allSucceeded=!workInfos.isEmpty();
           for(androidx.work.WorkInfo workInfo:workInfos){
-            if(workInfo.getState()==androidx.work.WorkInfo.State.SUCCEEDED){
-              worker.execute(()->{
-                long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
-                runOnUiThread(()->{
-                  roomFullRebuildCompletedAt=completed;
-                  reloadChannelsAfterBackgroundUpdateIfNeeded();
-                });
-              });
+            if(workInfo.getState()!=androidx.work.WorkInfo.State.SUCCEEDED){
+              allSucceeded=false;
               break;
             }
+          }
+          // A first batch may succeed while it has appended more work to the
+          // unique chain. Reload only after the entire discovery chain completes.
+          if(allSucceeded){
+            worker.execute(()->{
+              long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
+              runOnUiThread(()->{
+                roomFullRebuildCompletedAt=completed;
+                reloadChannelsAfterBackgroundUpdateIfNeeded();
+              });
+            });
           }
         });
   }
@@ -1198,7 +1204,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
           runOnUiThread(()->{
             roomFullRebuildCompletedAt=completed;
-            reloadChannelsAfterBackgroundUpdateIfNeeded();
+            if(!needsInitialFullRebuild||completed>0L){
+              reloadChannelsAfterBackgroundUpdateIfNeeded();
+            }
             showSourceUpdateStatus();
           });
         }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
