@@ -16,6 +16,11 @@ public final class SourceChannelMergePolicy {
      */
     public static List<String> attachSharedEndpoint(List<String> current, String candidate,
             int limit, Comparator<String> bestFirst) {
+        return attachSharedEndpoint(current, candidate, limit, bestFirst, "", "");
+    }
+
+    public static List<String> attachSharedEndpoint(List<String> current, String candidate,
+            int limit, Comparator<String> bestFirst, String primaryUrl, String activeUrl) {
         ArrayList<String> result = new ArrayList<>();
         if (limit <= 0) return result;
         HashSet<String> endpoints = new HashSet<>();
@@ -34,13 +39,19 @@ public final class SourceChannelMergePolicy {
             return result;
         }
         if (bestFirst == null || result.isEmpty()) return result;
-        int worstIndex = 0;
-        for (int i = 1; i < result.size(); i++) {
-            if (bestFirst.compare(result.get(i), result.get(worstIndex)) > 0) {
+        String primaryKey = SourceSelectionPolicy.endpointKey(primaryUrl);
+        String activeKey = SourceSelectionPolicy.endpointKey(activeUrl);
+        int worstIndex = -1;
+        for (int i = 0; i < result.size(); i++) {
+            String existingKey = SourceSelectionPolicy.endpointKey(result.get(i));
+            if (existingKey.equals(primaryKey) || existingKey.equals(activeKey)) continue;
+            if (worstIndex < 0
+                    || bestFirst.compare(result.get(i), result.get(worstIndex)) > 0) {
                 worstIndex = i;
             }
         }
-        if (bestFirst.compare(candidate, result.get(worstIndex)) < 0) {
+        // Never evict the stable primary or the user's last selected route.
+        if (worstIndex >= 0 && bestFirst.compare(candidate, result.get(worstIndex)) < 0) {
             result.set(worstIndex, candidate);
         }
         return result;
