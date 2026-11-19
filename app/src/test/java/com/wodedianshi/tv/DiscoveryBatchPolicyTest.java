@@ -12,6 +12,19 @@ public class DiscoveryBatchPolicyTest {
         assertEquals(3, DiscoveryBatchPolicy.remaining(scanned, 5));
     }
 
+    @Test public void duplicateEndpointDoesNotSkipUnscannedChannelAfterIt() {
+        java.util.List<String> channelEndpoints = java.util.Arrays.asList(
+                "https://shared.example/live.m3u8",
+                "https://other.example/live.m3u8",
+                "https://shared.example/live.m3u8",
+                "https://last.example/live.m3u8");
+        int scanned = DiscoveryBatchPolicy.scannedForBatch(
+                "batch", "batch", 1, channelEndpoints.size());
+        assertEquals("https://other.example/live.m3u8",
+                channelEndpoints.get(DiscoveryBatchPolicy.startIndex(
+                        scanned, channelEndpoints.size())));
+    }
+
     @Test public void changedBatchResetsPositionInsteadOfReusingOldCursor() {
         int scanned = DiscoveryBatchPolicy.scannedForBatch(
                 "new-batch", "old-batch", 4, 7);
