@@ -40,7 +40,7 @@ final class ChannelIdentityPolicy {
         String guideName = tvgName == null ? "" : tvgName.trim();
         String metadata = (displayName + " " + guideName).trim();
         String province = ChannelNamePolicy.provinceForLocalChannel(metadata);
-        if (province.isEmpty()) return "";
+        if (province.isEmpty() || !ChannelNamePolicy.hasSpecificLocalCity(metadata)) return "";
 
         String label = hasMeaningfulStationLabel(displayName) ? displayName : guideName;
         String normalizedLabel = normalizeLocalStationLabel(label);
