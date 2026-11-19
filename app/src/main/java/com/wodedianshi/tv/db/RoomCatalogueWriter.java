@@ -27,11 +27,12 @@ public final class RoomCatalogueWriter {
     /** Apply an exact snapshot without dropping and recreating the whole database. */
     public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys) {
-        return writeRecords(context, snapshot, favoriteKeys, -1L);
+        return writeRecords(context, snapshot, favoriteKeys, -1L, false);
     }
 
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion) {
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty()) throw new IllegalArgumentException("refusing to commit an empty catalogue");
         AppDatabase db = RoomDatabaseProvider.get(context);
@@ -152,6 +153,12 @@ public final class RoomCatalogueWriter {
                     MasterCatalogueRepository.MIGRATION_KEY, dao.countChannels(), dao.countBackupSources(),
                     dao.countFavorites(), dao.countCategories(), completedAt,
                     checkpoint == null ? "room_native_seed_v1" : checkpoint.catalogueFingerprint));
+            if (clearBuildRowsOnCommit) {
+                // Publish and discard the staging snapshot in the same transaction.
+                // A crash cannot leave a stale build marked active after publication.
+                dao.clearCatalogueBuildRows();
+                db.appStateDao().remove("source_full_rebuild_active");
+            }
         });
         return written[0];
     }
@@ -164,6 +171,17 @@ public final class RoomCatalogueWriter {
     /** Commit only if no user/catalogue mutation has happened since the worker read Room. */
     public static int writeSnapshot(Context context, JSONArray snapshot,
             long expectedCatalogueVersion) throws Exception {
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, false);
+    }
+
+    /** Atomically publish a complete rebuild and clear its staging rows. */
+    public static int writeSnapshotAndClearBuild(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion) throws Exception {
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, true);
+    }
+
+    private static int writeSnapshot(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
         // Channel count is deliberately not compared with the previous catalogue:
@@ -210,7 +228,8 @@ public final class RoomCatalogueWriter {
         if (rows.size() != snapshot.length()) {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
-        return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion);
+        return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
+                clearBuildRowsOnCommit);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
