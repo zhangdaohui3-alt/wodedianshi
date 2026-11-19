@@ -488,9 +488,20 @@ public class SourceUpdateWorker extends Worker {
     return true;
   }
   private String discoveryFingerprint(List<Entry> entries){
-    StringBuilder value=new StringBuilder(entries.size()*48);
-    for(Entry entry:entries)value.append(SourceSelectionPolicy.endpointKey(entry.url)).append('\n');
+    StringBuilder value=new StringBuilder(entries.size()*96);
+    for(Entry entry:entries){
+      appendFingerprintPart(value,SourceSelectionPolicy.endpointKey(entry.url));
+      appendFingerprintPart(value,entry.name);
+      appendFingerprintPart(value,entry.group);
+      appendFingerprintPart(value,entry.tvgId);
+      appendFingerprintPart(value,entry.tvgName);
+      appendFingerprintPart(value,entry.scope);
+    }
     return CatalogueFingerprint.sha256(value.toString())+":"+entries.size();
+  }
+  private void appendFingerprintPart(StringBuilder target,String raw){
+    String value=raw==null?"":raw;
+    target.append(value.length()).append(':').append(value);
   }
   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
       throws JSONException {
