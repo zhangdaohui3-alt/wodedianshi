@@ -293,8 +293,15 @@ public class SourceUpdateWorker extends Worker {
         List<ChannelCatalogueMergePolicy.ChannelRecord> mergedRecords=
             ChannelCatalogueMergePolicy.merge(currentRecords,candidateRecords,originalIdentities);
         if(mergedRecords==null||mergedRecords.isEmpty()){
-          saveStatus(prefs,"候选频道资料未通过完整性校验，已保留原频道库；请稍后重试",0);
-          return Result.retry();
+          boolean statusSaved=prefs.edit()
+              .putInt("source_scan_cursor",0)
+              .putString("source_scan_after_key","")
+              .putString("source_update_time",now())
+              .putString("source_update_result","完整目录扫描已完成，但没有发现可加入的有效线路；原频道库保持不变")
+              .commit();
+          clearCatalogueStage();
+          reportProgress("完成",2,2,"扫描完成，没有发现可加入的有效线路；原频道库保持不变");
+          return statusSaved?Result.success():Result.retry();
         }
         JSONArray committedChannels=writeCatalogueRecords(mergedRecords);
         Set<String> updatedFavorites=ChannelCatalogueMergePolicy.migrateFavoriteKeys(
