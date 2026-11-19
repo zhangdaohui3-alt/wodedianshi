@@ -90,6 +90,19 @@ public class ChannelNamePolicyTest {
         assertEquals("辽宁", ChannelNamePolicy.provinceForLocalChannel("辽宁朝阳电视台"));
     }
 
+    @Test public void recognizesCountyLevelLocalStationNamesFromAggregatedFeeds() {
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("上虞新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("余姚新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("兰溪新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("庆元新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("开化新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("文成新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("新昌新闻综合"));
+        assertEquals("安徽", ChannelNamePolicy.provinceForLocalChannel("固镇新闻"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("旺苍新闻综合"));
+        assertEquals("上虞", ChannelNamePolicy.localCityForChannel("上虞新闻综合"));
+    }
+
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
