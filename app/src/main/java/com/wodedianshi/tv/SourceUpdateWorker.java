@@ -48,6 +48,13 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/categories/documentary.m3u",
        "https://iptv-org.github.io/iptv/categories/weather.m3u",
        "https://iptv-org.github.io/iptv/categories/education.m3u",
+       "https://iptv-org.github.io/iptv/categories/sports.m3u",
+       "https://iptv-org.github.io/iptv/categories/series.m3u",
+       "https://iptv-org.github.io/iptv/categories/animation.m3u",
+       "https://iptv-org.github.io/iptv/categories/comedy.m3u",
+       "https://iptv-org.github.io/iptv/categories/family.m3u",
+       "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
+       "https://iptv-org.github.io/iptv/categories/culture.m3u",
        // These directories explicitly describe their entries as free/official/public.
        // Every URL must still pass the real playlist and media-segment probe.
        "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
