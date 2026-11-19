@@ -373,7 +373,8 @@ public class MainActivity extends Activity {
   // is parsed on the worker thread. Preview rows remain disabled until full restore.
   private boolean restoreStartupChannelPreview(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String raw=p.getString("startup_channels","[]");
+    String raw=p.getString("channels","[]");
+    if(raw.isEmpty()||"[]".equals(raw))raw=p.getString("startup_channels","[]");
     try{
       ArrayList<Channel> previewChannels=new ArrayList<>();
       if(!raw.isEmpty()&&!"[]".equals(raw)){
@@ -445,8 +446,9 @@ public class MainActivity extends Activity {
           snapshot.put(item);
         }
       }
-      getSharedPreferences("mytv",0).edit().putString("startup_channels",snapshot.toString()).apply();
-      android.util.Log.i("MyTVStartup","complete_snapshot_saved channels="+snapshot.length());
+      // "channels" is the single authoritative complete snapshot. Do not duplicate
+      // the full JSON in SharedPreferences under a second key.
+      android.util.Log.i("MyTVStartup","complete_snapshot_ready channels="+snapshot.length());
     }catch(Exception e){android.util.Log.w("MyTVStartup","complete snapshot save failed",e);}
   }
   private void restore(){
@@ -682,7 +684,7 @@ public class MainActivity extends Activity {
         }
         long nextGeneration=generation+1L;
         prefs.edit().putString("channels",a.toString())
-            .putString("startup_channels",a.toString())
+
             .putStringSet("fav",new HashSet<>(favorites))
             .putLong("channel_catalogue_generation",nextGeneration).apply();
         loadedCatalogueGeneration=nextGeneration;
