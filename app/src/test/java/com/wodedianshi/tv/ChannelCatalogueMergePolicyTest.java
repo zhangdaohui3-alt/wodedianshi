@@ -70,6 +70,27 @@ public class ChannelCatalogueMergePolicyTest {
                         Collections.singletonList("file:///bad"), 0))));
     }
 
+    @Test public void doesNotResurrectChannelDeletedAfterWorkerSnapshot() {
+        List<ChannelCatalogueMergePolicy.ChannelRecord> result =
+                ChannelCatalogueMergePolicy.merge(
+                        Collections.emptyList(),
+                        Collections.singletonList(channel("deleted", "https://old/live",
+                                Collections.singletonList("https://old/live"), 0)),
+                        Collections.singleton("deleted"));
+        assertNull(result);
+    }
+
+    @Test public void stillAddsGenuinelyNewDiscoveryNotInWorkerBaseSnapshot() {
+        List<ChannelCatalogueMergePolicy.ChannelRecord> result =
+                ChannelCatalogueMergePolicy.merge(
+                        Collections.emptyList(),
+                        Collections.singletonList(channel("new", "https://new/live",
+                                Collections.singletonList("https://new/live"), 0)),
+                        Collections.singleton("old"));
+        assertNotNull(result);
+        assertEquals("new", result.get(0).identity);
+    }
+
     @Test public void retainsCurrentSnapshotWhenCandidateContainsOnlyInvalidSources() {
         List<ChannelCatalogueMergePolicy.ChannelRecord> result =
                 ChannelCatalogueMergePolicy.merge(
