@@ -1158,7 +1158,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(workInfos==null)return;
           for(androidx.work.WorkInfo workInfo:workInfos){
             if(workInfo.getState()==androidx.work.WorkInfo.State.SUCCEEDED){
-              reloadChannelsAfterBackgroundUpdateIfNeeded();
+              worker.execute(()->{
+                long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
+                runOnUiThread(()->{
+                  roomFullRebuildCompletedAt=completed;
+                  reloadChannelsAfterBackgroundUpdateIfNeeded();
+                });
+              });
               break;
             }
           }
@@ -1177,8 +1183,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    boolean needsInitialFullRebuild=parseRoomLong(
-        "source_full_rebuild_completed_at",roomFullRebuildCompletedAt)<=0L;
+    boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
         .setConstraints(constraints)
         .setInputData(new Data.Builder().putBoolean("manual",true)
@@ -1190,7 +1195,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
         if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterBackgroundUpdateIfNeeded();showSourceUpdateStatus();});
+          long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
+          runOnUiThread(()->{
+            roomFullRebuildCompletedAt=completed;
+            reloadChannelsAfterBackgroundUpdateIfNeeded();
+            showSourceUpdateStatus();
+          });
         }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
           runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
         }
