@@ -25,6 +25,7 @@ public class SourceUpdateWorker extends Worker {
     if(!getInputData().getBoolean("manual",false)&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     if(prefs.getBoolean("source_update_playback_active",false)){
       saveStatus(prefs,"正在播放节目，暂缓抓源检测以避免占用带宽；退出播放后自动重试",0);
+      reportProgress("等待播放结束",0,0,"检测到正在播放，刷新任务已暂缓，不会影响当前画面");
       return Result.retry();
     }
     int added=0,feedsOk=0,feedsFailed=0,checked=0;
@@ -92,8 +93,11 @@ public class SourceUpdateWorker extends Worker {
           if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
         }
       }
+      int feedIndex=0;
       for(String feed:feeds){
         if(isStopped())return Result.retry();
+        reportProgress("读取目录",feedIndex+1,feeds.length,
+            "正在读取频道目录 "+(feedIndex+1)+"/"+feeds.length+"："+feed.substring(feed.lastIndexOf('/')+1));
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
           return Result.retry();
@@ -111,8 +115,10 @@ public class SourceUpdateWorker extends Worker {
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
           feedsOk++;
+          reportProgress("读取目录",feedIndex+1,feeds.length,
+              "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();}
+        finally{if(c!=null)c.disconnect();feedIndex++;}
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -137,6 +143,8 @@ public class SourceUpdateWorker extends Worker {
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
+      reportProgress("线路检测",0,probeCandidates.size(),
+          "目录读取完成：共整理 "+candidates.size()+" 条候选线路，开始检测本轮线路质量");
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+90L*1000L;
       int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
@@ -152,6 +160,8 @@ public class SourceUpdateWorker extends Worker {
         if(!visitedUrls.add(e.url))continue;
         checked++;
         ProbeResult measured=probe(e.url);
+        reportProgress("线路检测",checked,probeCandidates.size(),
+            "正在检测线路："+checked+"/"+probeCandidates.size()+"，已验证 "+(measured.valid?"可连接":"暂不可用"));
         // A previously good source that now fails its probe must lose its old high score.
         // Keep the URL as a fallback, but rank it below sources that still pass validation.
         measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
@@ -209,6 +219,7 @@ public class SourceUpdateWorker extends Worker {
       // Build the commit against the newest active snapshot, not the stale copy
       // read before network discovery. UI persistence uses the same lock and
       // generation counter, so favorites/last-channel state and user edits survive.
+      reportProgress("完整性校验",1,2,"线路检测完成，正在与最新保存的频道库合并并校验");
       synchronized(ChannelCatalogueStore.LOCK){
         JSONArray latestActive=new JSONArray(prefs.getString("channels","[]"));
         ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> currentRecords=readCatalogueRecords(latestActive);
@@ -234,9 +245,11 @@ public class SourceUpdateWorker extends Worker {
             .commit();
         if(!committed){
           saveStatus(prefs,"频道资料原子保存失败，原频道库保持不变；请稍后重试",0);
+          reportProgress("保存失败",2,2,"保存未成功，旧频道库已保留，请稍后重试");
           return Result.retry();
         }
       }
+      reportProgress("完成",2,2,"本轮频道资料已校验并整体保存；旧频道数据未在整理过程中被清空");
       return discoveryUnavailable?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
@@ -476,5 +489,10 @@ public class SourceUpdateWorker extends Worker {
     return base+"|url:"+(url==null?"":url.trim());
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
+  private void reportProgress(String stage,int done,int total,String message){
+    setProgressAsync(new androidx.work.Data.Builder()
+        .putString("stage",stage).putString("message",message)
+        .putInt("done",done).putInt("total",total).build());
+  }
   private void saveStatus(SharedPreferences p,String result,int added){p.edit().putString("source_update_time",now()).putString("source_update_result",result).apply();}
 }
