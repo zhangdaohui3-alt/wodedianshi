@@ -328,7 +328,7 @@ public class SourceUpdateWorker extends Worker {
       // The JSON object above is only this worker's in-memory discovery model;
       // Room receives normalized channel/source rows and remains the durable store.
       int roomRowsWritten = com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
-          getApplicationContext(), saved);
+          getApplicationContext(), saved, roomSnapshot.catalogueVersion);
       if (saved.length() > 0 && roomRowsWritten == 0) {
         throw new IllegalStateException("Room catalogue update produced no channel rows");
       }
