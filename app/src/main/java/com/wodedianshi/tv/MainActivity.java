@@ -61,6 +61,9 @@ public class MainActivity extends Activity {
   private Runnable networkSpeedUpdater;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
+  private androidx.lifecycle.Observer<WorkInfo> manualSourceUpdateObserver;
+  private AlertDialog manualSourceProgressDialog;
+  private UUID manualSourceUpdateId;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
   private View hoveredVodCard;
@@ -71,6 +74,10 @@ public class MainActivity extends Activity {
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
+  // Detect catalogue commits made by the background updater while this Activity
+  // was alive. The baseline also prevents deleted user channels being resurrected.
+  private long loadedCatalogueGeneration=0L;
+  private final HashSet<String> restoredCatalogueIdentities=new HashSet<>();
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -361,6 +368,7 @@ public class MainActivity extends Activity {
     return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
   private void restore(){
+    synchronized(ChannelCatalogueStore.LOCK){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
@@ -377,6 +385,10 @@ public class MainActivity extends Activity {
         } catch(Exception ignored) {}
       }
       p.edit().putBoolean("defaults_loaded",true).apply();
+    }
+    loadedCatalogueGeneration=p.getLong("channel_catalogue_generation",0L);
+    restoredCatalogueIdentities.clear();
+    for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));
     }
   }
   private void rebuildChannelIndexes(){
@@ -517,11 +529,78 @@ public class MainActivity extends Activity {
     play(found);
   }
   private void persist(){
-    try {
-      org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
-    } catch(Exception ignored) {}
+    synchronized(ChannelCatalogueStore.LOCK){
+      try {
+        android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+        long generation=prefs.getLong("channel_catalogue_generation",0L);
+        // A worker may have committed new backups/channels while this Activity
+        // was stopped or browsing. Fold those catalogue-only changes into the
+        // current in-memory list before writing, while retaining user deletions
+        // and the exact source currently selected by the user.
+        if(generation!=loadedCatalogueGeneration){
+          org.json.JSONArray latest=new org.json.JSONArray(prefs.getString("channels","[]"));
+          HashMap<String,Channel> inMemory=new HashMap<>();
+          synchronized(channels){for(Channel c:channels)inMemory.put(identity(c.name,c.group,c.url),c);}
+          boolean changed=false;
+          for(int i=0;i<latest.length();i++){
+            org.json.JSONObject o=latest.optJSONObject(i);if(o==null)continue;
+            String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
+            if(name.isEmpty()||url.isEmpty())continue;
+            String key=identity(name,group,url);Channel local=inMemory.get(key);
+            if(local==null){
+              // Only identities absent from the original restore are genuinely
+              // new background discoveries. A missing baseline identity is a
+              // user deletion and must not be reintroduced.
+              if(!restoredCatalogueIdentities.contains(key)){
+                Channel added=new Channel(name,url,group);
+                org.json.JSONArray sources=o.optJSONArray("sources");
+                if(sources!=null){added.backups.clear();for(int j=0;j<sources.length();j++){String u=sources.optString(j,"");if(u.startsWith("http://")||u.startsWith("https://"))added.backups.add(u);}}
+                if(added.backups.isEmpty())added.backups.add(url);
+                added.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),added.backups.size()-1));
+                channels.add(added);inMemory.put(key,added);changed=true;
+              }
+            }else{
+              String active=(local.activeSource>=0&&local.activeSource<local.backups.size())?local.backups.get(local.activeSource):local.url;
+              String oldKey=local.key();
+              java.util.LinkedHashSet<String> orderedSources=new java.util.LinkedHashSet<>();
+              org.json.JSONArray sources=o.optJSONArray("sources");
+              if(sources!=null)for(int j=0;j<sources.length();j++){
+                String u=sources.optString(j,"");
+                if(u.startsWith("http://")||u.startsWith("https://"))orderedSources.add(u);
+              }
+              String preferredPrimary=url.startsWith("http://")||url.startsWith("https://")?url:local.url;
+              if(!preferredPrimary.isEmpty()){
+                ArrayList<String> reordered=new ArrayList<>();reordered.add(preferredPrimary);
+                for(String u:orderedSources)if(!u.equals(preferredPrimary))reordered.add(u);
+                for(String u:local.backups)if(!reordered.contains(u))reordered.add(u);
+                if(reordered.size()>5)reordered=new ArrayList<>(reordered.subList(0,5));
+                if(!reordered.contains(active)&&!active.isEmpty())reordered.set(reordered.size()-1,active);
+                if(!local.url.equals(preferredPrimary)){
+                  local.url=preferredPrimary;
+                  if(favorites.remove(oldKey))favorites.add(local.key());
+                  changed=true;
+                }
+                if(!local.backups.equals(reordered)){local.backups.clear();local.backups.addAll(reordered);changed=true;}
+              }
+              int activeIndex=local.backups.indexOf(active);
+              if(activeIndex>=0)local.activeSource=activeIndex;
+            }
+          }
+          if(changed)rebuildChannelIndexes();
+        }
+        org.json.JSONArray a=new org.json.JSONArray();
+        synchronized(channels){
+          for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+        }
+        long nextGeneration=generation+1L;
+        prefs.edit().putString("channels",a.toString())
+            .putStringSet("fav",new HashSet<>(favorites))
+            .putLong("channel_catalogue_generation",nextGeneration).apply();
+        loadedCatalogueGeneration=nextGeneration;
+        restoredCatalogueIdentities.clear();
+        synchronized(channels){for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));}
+      } catch(Exception ignored) {}
+    }
   }
   private String activeCategory="全部";
   private void makeUi(){
@@ -583,19 +662,47 @@ public class MainActivity extends Activity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
-    WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
-    toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
-        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();});
-        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
-          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints)
+        .setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
+    WorkManager manager=WorkManager.getInstance(this);
+    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
+    if(manualSourceUpdateObserver!=null&&manualSourceUpdateId!=null){
+      manager.getWorkInfoByIdLiveData(manualSourceUpdateId).removeObserver(manualSourceUpdateObserver);
+      manualSourceUpdateObserver=null;
+    }
+    if(manualSourceProgressDialog!=null&&manualSourceProgressDialog.isShowing())manualSourceProgressDialog.dismiss();
+    manualSourceUpdateId=request.getId();
+    AlertDialog progressDialog=new AlertDialog.Builder(this)
+        .setTitle("频道资料刷新")
+        .setMessage("正在准备频道目录…")
+        .setNegativeButton("后台运行",null).create();
+    manualSourceProgressDialog=progressDialog;
+    progressDialog.show();
+    final androidx.lifecycle.Observer<WorkInfo>[] holder=new androidx.lifecycle.Observer[1];
+    holder[0]=result->{
+      if(result==null)return;
+      String message=result.getProgress().getString("message");
+      if(message!=null&&!isFinishing()&&manualSourceProgressDialog==progressDialog&&progressDialog.isShowing()){
+        progressDialog.setMessage(message);
+      }
+      if(result.getState().isFinished()){
+        manager.getWorkInfoByIdLiveData(request.getId()).removeObserver(holder[0]);
+        if(manualSourceUpdateObserver==holder[0])manualSourceUpdateObserver=null;
+        if(manualSourceProgressDialog==progressDialog)manualSourceProgressDialog=null;
+        if(progressDialog.isShowing())progressDialog.dismiss();
+        if(result.getState()==WorkInfo.State.SUCCEEDED){
+          runOnUiThread(()->{if(!isFinishing()){reloadChannelsAfterSourceUpdate();showSourceUpdateStatus();}});
+        }else if(result.getState()==WorkInfo.State.FAILED){
+          runOnUiThread(()->{if(!isFinishing())toast("频道源更新失败，请检查网络后重试");});
+        }else if(result.getState()==WorkInfo.State.CANCELLED){
+          runOnUiThread(()->{if(!isFinishing())toast("频道源刷新已取消，原频道资料保持不变");});
         }
-      }catch(Exception ignored){}
-    },worker);
+      }
+    };
+    manualSourceUpdateObserver=holder[0];
+    manager.getWorkInfoByIdLiveData(request.getId()).observeForever(holder[0]);
+    toast("已开始整理频道资料；刷新期间仍可使用原有频道");
   }
   private void reloadChannelsAfterSourceUpdate(){
     String keepIdentity="";
@@ -2674,7 +2781,7 @@ public class MainActivity extends Activity {
         b.setText((ix==selected?"▶ ":"")+(favorites.contains(c.key())?"★ ":"")+title+group);
         if(ix==selected)b.setContentDescription("当前正在播放："+title);
         b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));b.setOnClickListener(v->play(ix));
-        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
+        b.setOnLongClickListener(v->{new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(c.key())?"取消收藏":"加入收藏","查看/选择备用源（"+c.backups.size()+"个）","删除频道"},(d,w)->{if(w==0){if(!favorites.add(c.key()))favorites.remove(c.key());}else if(w==1){String[] opts=new String[c.backups.size()];for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{c.activeSource=j;persist();play(ix);}).setNegativeButton("关闭",null).show();}else{channels.remove(ix);favorites.remove(c.key());rebuildChannelIndexes();}persist();refresh();}).show();return true;});
         list.addView(b);
       }
     }
@@ -4460,5 +4567,5 @@ public class MainActivity extends Activity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}}
-  protected void onDestroy(){if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
+  protected void onDestroy(){if(manualSourceUpdateObserver!=null&&manualSourceUpdateId!=null){WorkManager.getInstance(this).getWorkInfoByIdLiveData(manualSourceUpdateId).removeObserver(manualSourceUpdateObserver);manualSourceUpdateObserver=null;}if(manualSourceProgressDialog!=null&&manualSourceProgressDialog.isShowing())manualSourceProgressDialog.dismiss();manualSourceProgressDialog=null;if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);if(vodPlayer!=null){vodPlayer.pause();vodPlayer.stop();vodPlayer.clearMediaItems();vodPlayer.release();vodPlayer=null;}releaseLivePlayerSafely();super.onDestroy();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);cancelPlaybackWatchdog();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();}
 }
