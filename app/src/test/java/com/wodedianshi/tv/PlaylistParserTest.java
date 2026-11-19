@@ -108,7 +108,7 @@ public class PlaylistParserTest {
 
     @Test public void parsesExtBurlAlternatesAsAdditionalSourcesForSameChannel() {
         String m3u = "#EXTM3U\n"
-                + "#EXTINF:-1 tvg-id=\\\"CCTV1\\\" tvg-name=\\\"CCTV One\\\" group-title=\\\"央视\\\",中央电视台综合频道\n"
+                + "#EXTINF:-1 tvg-id=\"CCTV1\" tvg-name=\"CCTV One\" group-title=\"央视\",中央电视台综合频道\n"
                 + "https://primary.example/live.m3u8\n"
                 + "#EXTBURL:https://backup.example/live.m3u8\n"
                 + "#EXTBURL:https://backup2.example/live.m3u8\n"
