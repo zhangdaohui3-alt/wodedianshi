@@ -2991,7 +2991,20 @@ public class MainActivity extends Activity {
     worker.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(25000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.2 Android");c.setRequestProperty("Accept","*/*");int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);try(InputStream in=c.getInputStream()){String data=read(in);runOnUiThread(()->finishImport(data));}finally{c.disconnect();}}catch(Exception e){runOnUiThread(()->info.setText("导入失败："+e.getMessage()));}});
   }
   private String read(InputStream in)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))!=-1){total+=n;if(total>50*1024*1024)throw new IOException("播放列表超过 50 MB，已停止导入");b.write(buf,0,n);}return b.toString("UTF-8");}
-  private void finishImport(String data){int n=parse(data);persist();refresh();info.setText("导入完成，新增 "+n+" 个频道");}
+  private void finishImport(String data){
+    if(info!=null)info.setText("正在整理播放列表…");
+    // Reading the file/network response is already off the UI thread; keep the
+    // potentially large M3U parse and channel-index updates there as well.
+    worker.execute(()->{
+      int added=parse(data);
+      persist();
+      runOnUiThread(()->{
+        if(isFinishing())return;
+        refresh();
+        if(info!=null)info.setText("导入完成，新增 "+added+" 个频道");
+      });
+    });
+  }
   private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
     String name=null,group="",pendingGroup="";int added=0;
