@@ -57,11 +57,15 @@ public final class RoomCatalogueWriter {
             HashMap<String, Integer> occurrences = new HashMap<>();
             HashMap<String, String> newIdsByStableIdentity = new HashMap<>();
             HashSet<String> ambiguousStableIdentities = new HashSet<>();
+            HashMap<String, String> newIdsByDisplayIdentity = new HashMap<>();
+            HashSet<String> ambiguousDisplayIdentities = new HashSet<>();
             // Capture favorites before stale channel rows are deleted. A full rebuild
             // may legitimately change a channel's primary URL, so its old Room id
             // cannot be used as the only favorite-preservation key.
             List<ChannelWithSources> previousFavorites = dao.getFavoriteChannels();
             HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
+            HashMap<String, Long> previousFavoriteTimesByDisplay = new HashMap<>();
+            HashSet<String> ambiguousFavoriteDisplayIdentities = new HashSet<>();
             for (ChannelWithSources favorite : previousFavorites) {
                 if (favorite == null || favorite.channel == null) continue;
                 ChannelEntity old = favorite.channel;
@@ -69,8 +73,15 @@ public final class RoomCatalogueWriter {
                 String stableKey = LegacyChannelIdPolicy.stableIdentityKey(
                         old.name, oldUrl, old.tvgId);
                 Long addedAt = dao.getFavoriteAddedAt(old.id);
-                previousFavoriteTimes.put(stableKey,
-                        addedAt == null ? System.currentTimeMillis() : addedAt);
+                long timestamp = addedAt == null ? System.currentTimeMillis() : addedAt;
+                previousFavoriteTimes.put(stableKey, timestamp);
+                String displayKey = displayIdentityKey(old.name, old.groupName);
+                if (previousFavoriteTimesByDisplay.containsKey(displayKey)) {
+                    previousFavoriteTimesByDisplay.remove(displayKey);
+                    ambiguousFavoriteDisplayIdentities.add(displayKey);
+                } else if (!ambiguousFavoriteDisplayIdentities.contains(displayKey)) {
+                    previousFavoriteTimesByDisplay.put(displayKey, timestamp);
+                }
             }
             HashMap<String, Integer> categoryOrders = new HashMap<>();
 
@@ -104,6 +115,15 @@ public final class RoomCatalogueWriter {
                         ambiguousStableIdentities.add(stableIdentity);
                     } else {
                         newIdsByStableIdentity.put(stableIdentity, id);
+                    }
+                }
+                String displayKey = displayIdentityKey(name, group);
+                if (!ambiguousDisplayIdentities.contains(displayKey)) {
+                    if (newIdsByDisplayIdentity.containsKey(displayKey)) {
+                        newIdsByDisplayIdentity.remove(displayKey);
+                        ambiguousDisplayIdentities.add(displayKey);
+                    } else {
+                        newIdsByDisplayIdentity.put(displayKey, id);
                     }
                 }
                 String legacyKey = name + "|" + primary;
@@ -153,6 +173,18 @@ public final class RoomCatalogueWriter {
                 desiredFavoriteIds.retainAll(presentChannelIds);
                 for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
                     String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
+                    if (newId == null) {
+                        // A display-name/category fallback is used only when exactly
+                        // one old favorite and one new channel share that identity.
+                        // Ambiguous same-name local stations are never guessed.
+                        String displayKey = findDisplayKeyForFavorite(
+                                previousFavorites, oldFavorite.getKey());
+                        if (!displayKey.isEmpty()
+                                && !ambiguousFavoriteDisplayIdentities.contains(displayKey)
+                                && !ambiguousDisplayIdentities.contains(displayKey)) {
+                            newId = newIdsByDisplayIdentity.get(displayKey);
+                        }
+                    }
                     if (newId == null || !presentChannelIds.contains(newId)) continue;
                     desiredFavoriteIds.add(newId);
                     preservedFavoriteTimes.put(newId, oldFavorite.getValue());
@@ -206,6 +238,28 @@ public final class RoomCatalogueWriter {
             }
         });
         return written[0];
+    }
+
+    private static String displayIdentityKey(String name, String group) {
+        String safeName = name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", "");
+        String safeGroup = group == null ? "" : group.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", "");
+        return safeName.length() + ":" + safeName + safeGroup.length() + ":" + safeGroup;
+    }
+
+    private static String findDisplayKeyForFavorite(List<ChannelWithSources> favorites,
+            String stableKey) {
+        for (ChannelWithSources favorite : favorites) {
+            if (favorite == null || favorite.channel == null) continue;
+            ChannelEntity old = favorite.channel;
+            String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
+            if (stableKey.equals(LegacyChannelIdPolicy.stableIdentityKey(
+                    old.name, oldUrl, old.tvgId))) {
+                return displayIdentityKey(old.name, old.groupName);
+            }
+        }
+        return "";
     }
 
     private static String legacyPrimaryUrl(String legacyKey, String name, String fallback) {
