@@ -21,7 +21,8 @@ public final class RoomCatalogueMutations {
             }
             String migrationKey = MasterCatalogueRepository.MIGRATION_KEY;
             if (dao.getMigration(migrationKey) != null) {
-                dao.refreshFavoriteCheckpointCount(migrationKey);
+                dao.refreshFavoriteCheckpointCount(migrationKey,
+                        Math.max(System.currentTimeMillis(), dao.getMigration(migrationKey).completedAt + 1L));
             }
         });
     }
@@ -29,7 +30,18 @@ public final class RoomCatalogueMutations {
     public static boolean setActiveSourceUrl(Context context, String legacyKey, String sourceUrl) {
         if (context == null || legacyKey == null || legacyKey.isEmpty()
                 || sourceUrl == null || sourceUrl.isEmpty()) return false;
-        ChannelDao dao = RoomDatabaseProvider.get(context.getApplicationContext()).channelDao();
-        return dao.setActiveSourceByLegacyKeyAndUrl(legacyKey, sourceUrl) > 0;
+        AppDatabase database = RoomDatabaseProvider.get(context.getApplicationContext());
+        ChannelDao dao = database.channelDao();
+        final boolean[] changed = {false};
+        database.runInTransaction(() -> {
+            changed[0] = dao.setActiveSourceByLegacyKeyAndUrl(legacyKey, sourceUrl) > 0;
+            if (changed[0] && dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY) != null) {
+                CatalogueMigrationEntity checkpoint =
+                        dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+                dao.touchCatalogueCheckpoint(MasterCatalogueRepository.MIGRATION_KEY,
+                        Math.max(System.currentTimeMillis(), checkpoint.completedAt + 1L));
+            }
+        });
+        return changed[0];
     }
 }
