@@ -2696,6 +2696,24 @@ public class MainActivity extends Activity {
       if(target!=null)target.requestFocus();
     });
   }
+  private int getCurrentLiveMatchCount(){
+    if(channels==null)return 0;
+    String q=search==null?"":search.getText().toString().toLowerCase(Locale.ROOT);
+    int count=0;
+    synchronized(channels){
+      for(Channel c:channels){
+        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
+        if(favoriteMode&&!favorites.contains(c.key()))continue;
+        if(localRegionFilterActive&&activeCategory.equals("地方")){
+          if(!matchesLocalRegion(c))continue;
+        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
+        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
+            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
+        count++;
+      }
+    }
+    return count;
+  }
   private void updateLivePaging(int total){
     int pages=Math.max(1,(total+59)/60);
     if(livePageIndex>=pages)livePageIndex=pages-1;
@@ -3986,7 +4004,7 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private double observedSourceScore(String url){
-    int label=sourceQualityScore(url);
+    int label=SourceQualityScorer.labelScore(url);
     try{
       String key=StableKey.url(url);
       String legacyKey=StableKey.legacyUrl(url);
