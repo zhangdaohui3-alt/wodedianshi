@@ -1177,7 +1177,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
+    boolean needsInitialFullRebuild=parseRoomLong(
+        "source_full_rebuild_completed_at",roomFullRebuildCompletedAt)<=0L;
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
         .setConstraints(constraints)
         .setInputData(new Data.Builder().putBoolean("manual",true)
