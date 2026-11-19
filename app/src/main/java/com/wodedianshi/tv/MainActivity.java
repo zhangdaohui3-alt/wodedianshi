@@ -304,10 +304,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             ||startupPrefs.contains("source_update_result")
             ||startupPrefs.contains("source_update_time")
             ||startupPrefs.contains("source_last_good_v1")
-            ||startupPrefs.contains("source_cooldowns_v1")
-            ||startupPrefs.getAll().keySet().stream().anyMatch(key->key.startsWith("vod_cache_")
-                ||key.startsWith("china_supplement_")||key.startsWith("china_directory_")
-                ||key.startsWith("global_supplement_"));
+            ||startupPrefs.contains("source_cooldowns_v1");
+        for(String legacyKey:startupPrefs.getAll().keySet()){
+          if(legacyKey.startsWith("vod_cache_")||legacyKey.startsWith("china_supplement_")
+              ||legacyKey.startsWith("china_directory_")||legacyKey.startsWith("global_supplement_")){
+            hadLegacyBusinessData=true;
+            break;
+          }
+        }
         if(hadLegacyBusinessData){
           android.content.SharedPreferences.Editor cleanup=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
