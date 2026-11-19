@@ -132,15 +132,11 @@ public class SourceUpdateWorker extends Worker {
         saved=roomSnapshotToArray(roomSnapshot);
       }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
-      HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
-        JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(SourceSelectionPolicy.endpointKey(src.optString(j)));
-        knownUrls.add(SourceSelectionPolicy.endpointKey(c.optString("url")));
       }
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
@@ -367,7 +363,6 @@ public class SourceUpdateWorker extends Worker {
             addBackupSourceScope(target,retainedEndpointUrl,e.scope);
           }
         }
-        knownUrls.add(SourceSelectionPolicy.endpointKey(e.url));
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
