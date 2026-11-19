@@ -16,6 +16,12 @@ final class RegionCategoryPolicy {
         if (!"global".equals(requestedScope)) return requestedScope;
         if (isHongKongMacauTaiwan(name, group)) return "china";
         String metadata = (name == null ? "" : name) + " " + (group == null ? "" : group);
+        String normalizedGroup = normalize(group);
+        // Aggregated M3U feeds often classify local county stations under
+        // "中国大陆 · 新闻" instead of putting the province in each channel name.
+        if (normalizedGroup.contains("中国大陆") || normalizedGroup.contains("mainland china")) {
+            return "china";
+        }
         if (!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()) return "china";
         if (!ChannelNamePolicy.canonicalBroadcasterName(name, "", "", group).isEmpty()) return "china";
         return requestedScope;
