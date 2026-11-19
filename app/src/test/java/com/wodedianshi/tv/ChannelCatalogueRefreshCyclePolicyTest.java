@@ -6,15 +6,16 @@ import java.util.Collections;
 import static org.junit.Assert.*;
 
 public class ChannelCatalogueRefreshCyclePolicyTest {
-    @Test public void onlyCompletesAfterLastBatchAndRequiredFeedIsAvailable() {
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 12, 30, true));
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(24, 6, 30, false));
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 0, 30, true));
-        assertTrue(ChannelCatalogueRefreshCyclePolicy.isComplete(24, 6, 30, true));
+    @Test public void scanCompletesAtEndEvenIfActivationMustWaitForRegionalFeed() {
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 12, 30));
+        assertTrue(ChannelCatalogueRefreshCyclePolicy.isScanComplete(24, 6, 30));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.canActivate(true, false));
+        assertTrue(ChannelCatalogueRefreshCyclePolicy.canActivate(true, true));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.canActivate(false, true));
     }
 
     @Test public void emptyOrInvalidRangesNeverComplete() {
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 1, 0, true));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 1, 0));
         assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(-1, 1, 10, true));
         assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(10, 1, 10, true));
         assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 11, 10, true));
