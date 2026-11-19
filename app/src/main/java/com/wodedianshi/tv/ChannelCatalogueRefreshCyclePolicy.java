@@ -3,9 +3,7 @@ package com.wodedianshi.tv;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.TreeSet;
 
 /** Pure policy for deciding when a multi-run source-discovery cycle is complete. */
 final class ChannelCatalogueRefreshCyclePolicy {
@@ -23,18 +21,17 @@ final class ChannelCatalogueRefreshCyclePolicy {
     }
 
     /**
-     * Fingerprints the set, not its ordering, so harmless playlist reordering
-     * does not restart an in-progress cycle. Any added/removed URL starts a new
-     * cycle and invalidates the old staged candidate.
+     * Fingerprints the ordered scan list. The rotating cursor is positional, so
+     * a playlist reorder must restart the cycle rather than risk skipping entries.
      */
     static String fingerprint(List<String> urls) {
-        TreeSet<String> unique = new TreeSet<>();
+        ArrayList<String> ordered = new ArrayList<>();
         if (urls != null) for (String url : urls) {
-            if (url != null && !url.trim().isEmpty()) unique.add(StableKey.url(url));
+            if (url != null && !url.trim().isEmpty()) ordered.add(StableKey.url(url));
         }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            for (String key : unique) {
+            for (String key : ordered) {
                 digest.update(key.getBytes(StandardCharsets.UTF_8));
                 digest.update((byte) 0);
             }
