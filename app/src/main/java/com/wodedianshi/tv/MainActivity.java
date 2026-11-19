@@ -368,6 +368,7 @@ public class MainActivity extends Activity {
     return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
   private void restore(){
+    synchronized(ChannelCatalogueStore.LOCK){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
@@ -388,6 +389,7 @@ public class MainActivity extends Activity {
     loadedCatalogueGeneration=p.getLong("channel_catalogue_generation",0L);
     restoredCatalogueIdentities.clear();
     for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));
+    }
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
