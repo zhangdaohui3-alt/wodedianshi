@@ -66,6 +66,7 @@ public class MainActivity extends Activity {
   private UUID manualSourceUpdateId;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
+  private long geoLoadGeneration=0L;
   private View hoveredVodCard;
   private LinearLayout list;
   private TextView info;
@@ -141,6 +142,7 @@ public class MainActivity extends Activity {
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
+    // The last-known-good complete catalogue is restored from local storage on the worker thread.
     remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
       @Override public void onLockStateChanged(boolean locked, String reason) {
         if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
@@ -370,6 +372,7 @@ public class MainActivity extends Activity {
   private void restore(){
     synchronized(ChannelCatalogueStore.LOCK){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    synchronized(channels){channels.clear();}
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
@@ -528,7 +531,8 @@ public class MainActivity extends Activity {
     channels.get(found).activeSource=0;
     play(found);
   }
-  private void persist(){
+  private void persist(){persist(null,null);}
+  private boolean persist(String snapshotPrefKey,Set<String> snapshotKeys){
     synchronized(ChannelCatalogueStore.LOCK){
       try {
         android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
@@ -589,17 +593,27 @@ public class MainActivity extends Activity {
           if(changed)rebuildChannelIndexes();
         }
         org.json.JSONArray a=new org.json.JSONArray();
+        
         synchronized(channels){
-          for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+          for(Channel c:channels){
+            org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);
+
+          }
         }
         long nextGeneration=generation+1L;
-        prefs.edit().putString("channels",a.toString())
+        android.content.SharedPreferences.Editor editor=prefs.edit().putString("channels",a.toString())
             .putStringSet("fav",new HashSet<>(favorites))
-            .putLong("channel_catalogue_generation",nextGeneration).apply();
+            .putLong("channel_catalogue_generation",nextGeneration);
+        if(snapshotPrefKey!=null&&snapshotKeys!=null)editor.putStringSet(snapshotPrefKey,new HashSet<>(snapshotKeys));
+        boolean saved;
+        if(snapshotPrefKey!=null)saved=editor.commit();
+        else{editor.apply();saved=true;}
+        if(!saved)return false;
         loadedCatalogueGeneration=nextGeneration;
         restoredCatalogueIdentities.clear();
         synchronized(channels){for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));}
-      } catch(Exception ignored) {}
+        return true;
+      } catch(Exception ignored) {return false;}
     }
   }
   private String activeCategory="全部";
@@ -611,7 +625,7 @@ public class MainActivity extends Activity {
     // satellite and local areas. Keep one clear "地方" entry.
     String[] names={"收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}geoLoadGeneration++;activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else configureRemoteParentLock();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -1909,7 +1923,7 @@ public class MainActivity extends Activity {
             return root.getJSONObject("response").getJSONArray("docs");
           }));
         }
-        long pageDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
+        long pageDeadline=android.os.SystemClock.elapsedRealtime()+10000L;
         int pagesRemaining=pageTasks.size();
         while(pagesRemaining>0&&submitted<180&&!Thread.currentThread().isInterrupted()){
           long remaining=pageDeadline-android.os.SystemClock.elapsedRealtime();
@@ -1930,7 +1944,7 @@ public class MainActivity extends Activity {
           }catch(Exception ignored){}
         }
         for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
-        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+16000L;
+        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+12000L;
         int lastProgressCount=0;
         while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
           long remaining=metadataDeadline-android.os.SystemClock.elapsedRealtime();
@@ -3007,8 +3021,25 @@ public class MainActivity extends Activity {
       else{String[] pair=data[w-1].split("\\|");loadGeoPlaylist(country+" · "+region+" · "+pair[0],"https://iptv-org.github.io/iptv/cities/"+pair[1]+".m3u");}
     });
   }
+  private String geoSnapshotKey(String address){
+    return GeoSnapshotPolicy.snapshotKey(address);
+  }
   private void loadGeoPlaylist(String label,String address){
-    info.setText("正在载入 "+label+" 频道目录…");
+    final long requestGeneration=++geoLoadGeneration;
+    // Each country/subdivision/city has its own last-known-good membership snapshot.
+    // Channel records themselves live in the complete local catalogue snapshot.
+    final String snapshotKey=geoSnapshotKey(address);
+    Set<String> cached=getSharedPreferences("mytv",0).getStringSet(snapshotKey,null);
+    if(cached!=null&&!cached.isEmpty()){
+      activeGeoChannelKeys=new HashSet<>(cached);
+      info.setText(label+"：已从本地完整快照恢复 "+cached.size()+" 个频道，正在后台检查更新…");
+      refresh();
+    }else{
+      // Do not briefly expose channels from other cities while this city is first loaded.
+      activeGeoChannelKeys=new HashSet<>();
+      info.setText("首次载入 "+label+" 频道目录…");
+      refresh();
+    }
     worker.execute(()->{HttpURLConnection c=null;try{
       c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.0 Android");
       int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
@@ -3019,10 +3050,30 @@ public class MainActivity extends Activity {
         try{parse(data);}finally{parsingGeoChannelKeys=null;}
       }
       final int matched=destinationKeys.size();
+      // An HTTP 200 response containing no valid channels is not a new snapshot.
+      // Keep the previous city snapshot instead of replacing it with an empty set.
+      if(!GeoSnapshotPolicy.shouldReplaceSnapshot(matched)){
+        runOnUiThread(()->{
+          if(requestGeneration!=geoLoadGeneration)return;
+          info.setText(label+"：目录没有解析出有效频道，已保留上次本地快照；请稍后重试。");
+        });
+        return;
+      }
+      final Set<String> committedKeys=new HashSet<>(destinationKeys);
       runOnUiThread(()->{
-        activeGeoChannelKeys=new HashSet<>(destinationKeys);
-        activeCategory="全部";favoriteMode=false;persist();refresh();
-        info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+        if(requestGeneration!=geoLoadGeneration)return;
+        activeCategory="全部";favoriteMode=false;
+        // Commit the full channel catalogue and this location's membership index
+        // in one SharedPreferences transaction. Publish the new view only on success.
+        if(persist(snapshotKey,committedKeys)){
+          activeGeoChannelKeys=new HashSet<>(committedKeys);
+          refresh();
+          info.setText(label+"：已完成本地快照更新，共 "+matched+" 个频道。其他地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+        }else{
+          activeGeoChannelKeys=cached==null?new HashSet<>():new HashSet<>(cached);
+          refresh();
+          info.setText(label+"：本地保存失败，旧目录快照仍保留；请稍后重试。");
+        }
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
   }
@@ -3636,6 +3687,8 @@ public class MainActivity extends Activity {
   private boolean audioTrackSupported=false;
   private boolean audioTrackSelected=false;
   private boolean audioPositionAdvancing=false;
+  private final java.util.concurrent.atomic.AtomicInteger audioUnderrunCount=new java.util.concurrent.atomic.AtomicInteger();
+  private final java.util.concurrent.atomic.AtomicInteger videoDropReportCount=new java.util.concurrent.atomic.AtomicInteger();
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3848,7 +3901,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioUnderrunCount.set(0);videoDropReportCount.set(0);videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3896,8 +3949,38 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)saveLiveDiagnostic("LIVE_VIDEO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(listenerOwner==MainActivity.this.player)saveLiveDiagnostic("LIVE_AUDIO_DECODER","name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)saveLiveDiagnostic("LIVE_VIDEO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(listenerOwner==MainActivity.this.player&&format!=null)saveLiveDiagnostic("LIVE_AUDIO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)+" sampleRate="+format.sampleRate+" channels="+format.channelCount);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(listenerOwner==MainActivity.this.player)audioPositionAdvancing=true;
+        }
+        @Override public void onAudioUnderrun(AnalyticsListener.EventTime eventTime,int bufferSize,long bufferSizeMs,long elapsedSinceLastFeedMs){
+          if(listenerOwner!=MainActivity.this.player)return;
+          int count=audioUnderrunCount.incrementAndGet();
+          if(!AudioUnderrunDiagnosticPolicy.shouldRecord(count))return;
+          final String expectedMediaId=currentMediaId;
+          final String detail="count="+count+" bufferSize="+bufferSize+" bufferSizeMs="+bufferSizeMs+" elapsedSinceLastFeedMs="+elapsedSinceLastFeedMs;
+          uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("AUDIO_UNDERRUN",detail);});
+        }
+        @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
+          if(listenerOwner!=MainActivity.this.player||droppedFrames<=0)return;
+          int count=videoDropReportCount.incrementAndGet();
+          if(!VideoFrameDropDiagnosticPolicy.shouldRecord(count))return;
+          final String expectedMediaId=currentMediaId;
+          final String detail="reports="+count+" droppedFrames="+droppedFrames+" elapsedMs="+elapsedMs;
+          uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("VIDEO_DROPPED_FRAMES",detail);});
         }
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded)return;

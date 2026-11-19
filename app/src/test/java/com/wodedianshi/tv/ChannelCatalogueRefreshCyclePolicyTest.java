@@ -1,0 +1,41 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+import java.util.Arrays;
+import java.util.Collections;
+import static org.junit.Assert.*;
+
+public class ChannelCatalogueRefreshCyclePolicyTest {
+    @Test public void scanCompletesAtEndEvenIfActivationMustWaitForRegionalFeed() {
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 12, 30));
+        assertTrue(ChannelCatalogueRefreshCyclePolicy.isScanComplete(24, 6, 30));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.canActivate(true, false));
+        assertTrue(ChannelCatalogueRefreshCyclePolicy.canActivate(true, true));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.canActivate(false, true));
+    }
+
+    @Test public void emptyOrInvalidRangesNeverComplete() {
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 1, 0));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(-1, 1, 10));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(10, 1, 10));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 11, 10));
+    }
+
+    @Test public void fingerprintTracksOrderedScanList() {
+        String a = ChannelCatalogueRefreshCyclePolicy.fingerprint(
+                Arrays.asList("https://a/live", "https://b/live", "https://a/live"));
+        String b = ChannelCatalogueRefreshCyclePolicy.fingerprint(
+                Arrays.asList("https://b/live", "https://a/live"));
+        assertNotEquals(a, b);
+    }
+
+    @Test public void fingerprintChangesWhenCandidateSetChanges() {
+        String a = ChannelCatalogueRefreshCyclePolicy.fingerprint(
+                Arrays.asList("https://a/live", "https://b/live"));
+        String b = ChannelCatalogueRefreshCyclePolicy.fingerprint(
+                Arrays.asList("https://a/live", "https://c/live"));
+        assertNotEquals(a, b);
+        assertEquals(ChannelCatalogueRefreshCyclePolicy.fingerprint(Collections.emptyList()),
+                ChannelCatalogueRefreshCyclePolicy.fingerprint(null));
+    }
+}

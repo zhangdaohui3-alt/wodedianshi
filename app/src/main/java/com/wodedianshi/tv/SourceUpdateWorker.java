@@ -12,7 +12,7 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_PROBES_PER_RUN = 24;
+  private static final int MAX_PROBES_PER_RUN = 36;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
@@ -48,6 +48,13 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/categories/documentary.m3u",
        "https://iptv-org.github.io/iptv/categories/weather.m3u",
        "https://iptv-org.github.io/iptv/categories/education.m3u",
+       "https://iptv-org.github.io/iptv/categories/sports.m3u",
+       "https://iptv-org.github.io/iptv/categories/series.m3u",
+       "https://iptv-org.github.io/iptv/categories/animation.m3u",
+       "https://iptv-org.github.io/iptv/categories/comedy.m3u",
+       "https://iptv-org.github.io/iptv/categories/family.m3u",
+       "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
+       "https://iptv-org.github.io/iptv/categories/culture.m3u",
        // These directories explicitly describe their entries as free/official/public.
        // Every URL must still pass the real playlist and media-segment probe.
        "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
@@ -57,22 +64,90 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/index.m3u"
      };
     try{
-      JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
+      JSONArray activeSnapshot=new JSONArray(prefs.getString("channels","[]"));
+      ArrayList<Entry> candidates=new ArrayList<>();
+      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
+      JSONObject previousStage=readCatalogueStage();
+      boolean stagedCandidatesAvailable=previousStage!=null
+          &&previousStage.optJSONArray("candidateEntries")!=null
+          &&previousStage.optJSONArray("candidateEntries").length()>0;
+      int feedIndex=0,chinaFeedsOk=0;
+      if(stagedCandidatesAvailable){
+        // Resume from the exact staged feed snapshot. Re-downloading and reparsing
+        // every public playlist on every WorkManager retry made a 24k-entry scan
+        // spend most of its time repeating discovery instead of probing URLs.
+        JSONArray stagedEntries=previousStage.optJSONArray("candidateEntries");
+        for(int i=0;i<stagedEntries.length();i++){
+          JSONObject item=stagedEntries.optJSONObject(i);if(item==null)continue;
+          String url=item.optString("url","");if(url.isEmpty())continue;
+          candidates.add(new Entry(item.optString("name",""),url,item.optString("group","")));
+        }
+        feedsOk=previousStage.optInt("feedsOk",0);
+        chinaFeedsOk=previousStage.optBoolean("chinaFeedAvailable",false)?1:0;
+        reportProgress("恢复暂存",0,candidates.size(),
+            "继续上次完整目录扫描：已恢复 "+candidates.size()+" 条候选线路，无需重新下载全部目录");
+        if(chinaFeedsOk==0&&isRequiredRegionalFeedAvailable())chinaFeedsOk=1;
+      }else{
+        for(String feed:feeds){
+          if(isStopped())return Result.retry();
+          reportProgress("读取目录",feedIndex+1,feeds.length,
+              "正在读取频道目录 "+(feedIndex+1)+"/"+feeds.length+"："+feed.substring(feed.lastIndexOf('/')+1));
+          if(prefs.getBoolean("source_update_playback_active",false)){
+            saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+            return Result.retry();
+          }
+          HttpURLConnection c=null;
+          try{
+            c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
+            c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
+            int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+            String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
+            String normalized=data.replace("\uFEFF","").trim();
+            if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
+            ArrayList<Entry> feedCandidates=new ArrayList<>();
+            parsePlaylist(data,feedCandidates);
+            int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+            for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+            feedsOk++;
+            if(feedIndex<3)chinaFeedsOk++;
+            reportProgress("读取目录",feedIndex+1,feeds.length,
+                "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
+          }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
+          finally{if(c!=null)c.disconnect();feedIndex++;}
+        }
+        // De-duplicate once when creating a scan cycle; all retries reuse this
+        // exact ordered list so the cursor cannot skip or revisit entries.
+        LinkedHashMap<String,Entry> uniqueDiscovery=new LinkedHashMap<>();
+        for(Entry entry:candidates)uniqueDiscovery.putIfAbsent(StableKey.url(entry.url),entry);
+        candidates.clear();
+        candidates.addAll(uniqueDiscovery.values());
+      }
+      ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
+      for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
+      String catalogueFingerprint=ChannelCatalogueRefreshCyclePolicy.fingerprint(discoveryScanUrls);
+      boolean continuingCycle=stagedCandidatesAvailable
+          &&previousStage.optJSONArray("originalIdentities")!=null
+          &&previousStage.has("channels")
+          &&catalogueFingerprint.equals(previousStage.optString("fingerprint",""));
+      JSONArray saved=continuingCycle
+          ?new JSONArray(previousStage.optString("channels","[]"))
+          :new JSONArray(activeSnapshot.toString());
+      JSONArray baselineIdentitiesJson=continuingCycle
+          ?previousStage.optJSONArray("originalIdentities"):null;
+      if(baselineIdentitiesJson==null)baselineIdentitiesJson=buildIdentityArray(activeSnapshot);
+      HashSet<String> originalIdentities=readIdentitySet(baselineIdentitiesJson);
+      JSONObject measuredScores=new JSONObject(continuingCycle
+          ?previousStage.optString("scores",prefs.getString("source_probe_scores_v1","{}"))
+          :prefs.getString("source_probe_scores_v1","{}"));
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
-      JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
-        JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
-        knownUrls.add(c.optString("url"));
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        byIdentity.put(identity(channel.optString("name"),channel.optString("group"),channel.optString("url")),channel);
+        JSONArray sources=channel.optJSONArray("sources");
+        if(sources!=null)for(int j=0;j<sources.length();j++)knownUrls.add(sources.optString(j));
+        knownUrls.add(channel.optString("url"));
       }
-      HashSet<String> originalIdentities=new HashSet<>(byIdentity.keySet());
-      ArrayList<Entry> candidates=new ArrayList<>();
-      // Include the user's already-saved backup URLs in the rotating health-check
-      // pool. Previously only URLs rediscovered in public playlists were probed,
-      // so a saved backup could silently die without ever losing its old score.
       ArrayList<Entry> savedPool=new ArrayList<>();
       HashSet<String> savedPoolUrls=new HashSet<>();
       for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
@@ -81,53 +156,30 @@ public class SourceUpdateWorker extends Worker {
         LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
         JSONArray sources=channel.optJSONArray("sources");
         if(sources!=null)for(int j=0;j<sources.length();j++){
-          String u=sources.optString(j,"");
-          if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
+          String url=sources.optString(j,"");
+          if(url.startsWith("http://")||url.startsWith("https://"))channelUrls.add(url);
         }
         String primary=channel.optString("url","");
         if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
-        for(String u:channelUrls){
+        for(String url:channelUrls){
           if(savedPool.size()>=20000)break;
-          // A shared URL only needs one network probe, even if several channel
-          // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
+          if(savedPoolUrls.add(url))savedPool.add(new Entry(channelName,url,channelGroup,true));
         }
       }
-      int feedIndex=0;
-      for(String feed:feeds){
-        if(isStopped())return Result.retry();
-        reportProgress("读取目录",feedIndex+1,feeds.length,
-            "正在读取频道目录 "+(feedIndex+1)+"/"+feeds.length+"："+feed.substring(feed.lastIndexOf('/')+1));
-        if(prefs.getBoolean("source_update_playback_active",false)){
-          saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
-          return Result.retry();
-        }
-        HttpURLConnection c=null;
-        try{
-          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
-          c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
-          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\uFEFF","").trim();
-          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
-          ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates);
-          int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
-          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
-          feedsOk++;
-          reportProgress("读取目录",feedIndex+1,feeds.length,
-              "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
-        }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();feedIndex++;}
+      if(candidates.isEmpty()){
+        saveStatus(prefs,"本轮没有读取到可用的频道目录；暂存资料和正式频道库均保持不变",0);
+        reportProgress("等待目录",0,0,"未取得有效目录，原频道库继续使用，稍后自动重试");
+        return Result.retry();
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
-      ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
-      for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
       int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, prefs.getString("source_saved_scan_after_key",""), prefs.getInt("source_saved_scan_cursor",0));
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
-      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
+      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls,
+          continuingCycle?prefs.getString("source_scan_after_key",""):"",
+          continuingCycle?prefs.getInt("source_scan_cursor",0):0);
+      boolean previousScanComplete=continuingCycle&&previousStage.optBoolean("scanComplete",false);
+      int discoveryWindow=previousScanComplete?0:Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -213,13 +265,62 @@ public class SourceUpdateWorker extends Worker {
         JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
         if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
       }
+      // Do not expose a partially scanned directory as the active catalogue.
+      // Keep the prepared candidate and accumulated probe scores in an AtomicFile
+      // until the discovery cursor reaches the end of this exact feed snapshot.
+      boolean scanComplete=previousScanComplete
+          ||ChannelCatalogueRefreshCyclePolicy.isScanComplete(discoveryScanStart,discoveryScanned,candidates.size());
+      boolean discoveryCycleComplete=ChannelCatalogueRefreshCyclePolicy.canActivate(scanComplete,chinaFeedsOk>0);
+      if(!discoveryCycleComplete){
+        JSONObject stageState=new JSONObject();
+        stageState.put("fingerprint",catalogueFingerprint);
+        stageState.put("channels",saved.toString());
+        stageState.put("originalIdentities",baselineIdentitiesJson);
+        stageState.put("scores",measuredScores.toString());
+        stageState.put("scanComplete",scanComplete);
+        stageState.put("chinaFeedAvailable",chinaFeedsOk>0);
+        stageState.put("feedsOk",feedsOk);
+        JSONArray stagedEntries=new JSONArray();
+        for(Entry entry:candidates){
+          JSONObject item=new JSONObject();
+          item.put("name",entry.name);item.put("url",entry.url);item.put("group",entry.group);
+          stagedEntries.put(item);
+        }
+        stageState.put("candidateEntries",stagedEntries);
+        if(!writeCatalogueStage(stageState)){
+          saveStatus(prefs,"频道资料暂存失败，正式频道库未改变；稍后重试",0);
+          reportProgress("暂存失败",discoveryScanStart+Math.max(0,discoveryScanned),
+              candidates.size(),"候选资料暂存失败，原频道库保持不变");
+          return Result.retry();
+        }
+        String progressMessage=scanComplete
+            ?"全部 "+candidates.size()+" 条候选线路已完成轮转检测，但中国区域目录暂不可用；资料继续暂存，正式频道库保持旧版本"
+            :"已完成 "+Math.min(candidates.size(),discoveryScanStart+discoveryScanned)
+                +"/"+candidates.size()+" 条候选线路的轮转检测；新资料仍在暂存，正式频道库继续使用旧版本";
+        boolean progressSaved=prefs.edit()
+            .putInt("source_scan_cursor",(discoveryScanStart+discoveryScanned)%candidates.size())
+            .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+            .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+            .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
+            .putString("source_update_time",now())
+            .putString("source_update_result",progressMessage+(errors.length()>0?" 部分目录暂不可用，后续轮次继续补齐。":""))
+            .commit();
+        if(!progressSaved){
+          saveStatus(prefs,"暂存进度记录失败；候选资料仍保存在临时文件，正式频道库未改变",0);
+          return Result.retry();
+        }
+        reportProgress("资料暂存",Math.min(candidates.size(),discoveryScanStart+discoveryScanned),
+            candidates.size(),progressMessage);
+        return Result.retry();
+      }
+
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       // Build the commit against the newest active snapshot, not the stale copy
       // read before network discovery. UI persistence uses the same lock and
       // generation counter, so favorites/last-channel state and user edits survive.
-      reportProgress("完整性校验",1,2,"线路检测完成，正在与最新保存的频道库合并并校验");
+      reportProgress("完整性校验",1,2,"完整目录扫描已完成，正在与最新保存的频道库合并并校验");
       synchronized(ChannelCatalogueStore.LOCK){
         JSONArray latestActive=new JSONArray(prefs.getString("channels","[]"));
         ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> currentRecords=readCatalogueRecords(latestActive);
@@ -227,17 +328,25 @@ public class SourceUpdateWorker extends Worker {
         List<ChannelCatalogueMergePolicy.ChannelRecord> mergedRecords=
             ChannelCatalogueMergePolicy.merge(currentRecords,candidateRecords,originalIdentities);
         if(mergedRecords==null||mergedRecords.isEmpty()){
-          saveStatus(prefs,"候选频道资料未通过完整性校验，已保留原频道库；请稍后重试",0);
-          return Result.retry();
+          boolean statusSaved=prefs.edit()
+              .putInt("source_scan_cursor",0)
+              .putString("source_scan_after_key","")
+              .putString("source_update_time",now())
+              .putString("source_update_result","完整目录扫描已完成，但没有发现可加入的有效线路；原频道库保持不变")
+              .commit();
+          clearCatalogueStage();
+          reportProgress("完成",2,2,"扫描完成，没有发现可加入的有效线路；原频道库保持不变");
+          return statusSaved?Result.success():Result.retry();
         }
         JSONArray committedChannels=writeCatalogueRecords(mergedRecords);
+        // The startup snapshot is the complete, validated catalogue, not a first-page preview.
         Set<String> updatedFavorites=ChannelCatalogueMergePolicy.migrateFavoriteKeys(
             prefs.getStringSet("fav",Collections.emptySet()),currentRecords,mergedRecords);
         long nextGeneration=prefs.getLong("channel_catalogue_generation",0L)+1L;
         boolean committed=prefs.edit()
-            .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+            .putInt("source_scan_cursor",0)
             .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
-            .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+            .putString("source_scan_after_key","")
             .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
             .putString("source_probe_scores_v1",measuredScores.toString())
             .putString("channels",committedChannels.toString())
@@ -252,9 +361,78 @@ public class SourceUpdateWorker extends Worker {
           return Result.retry();
         }
       }
-      reportProgress("完成",2,2,"本轮频道资料已校验并整体保存；旧频道数据未在整理过程中被清空");
-      return discoveryUnavailable?Result.retry():Result.success();
+      clearCatalogueStage();
+      reportProgress("完成",2,2,"完整目录扫描已完成；新频道资料和线路质量已整体切换，旧资料未在整理过程中被清空");
+      return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private JSONArray buildIdentityArray(JSONArray channels)throws JSONException{
+    JSONArray identities=new JSONArray();
+    HashSet<String> unique=new HashSet<>();
+    for(int i=0;i<channels.length();i++){
+      JSONObject channel=channels.optJSONObject(i);if(channel==null)continue;
+      String value=identity(channel.optString("name",""),channel.optString("group",""),channel.optString("url",""));
+      if(!value.isEmpty()&&unique.add(value))identities.put(value);
+    }
+    return identities;
+  }
+  private HashSet<String> readIdentitySet(JSONArray identities){
+    HashSet<String> result=new HashSet<>();
+    if(identities!=null)for(int i=0;i<identities.length();i++){
+      String value=identities.optString(i,"");if(!value.isEmpty())result.add(value);
+    }
+    return result;
+  }
+  private android.util.AtomicFile catalogueStageFile(){
+    return new android.util.AtomicFile(new File(getApplicationContext().getFilesDir(),"channel_catalogue_refresh_stage.json"));
+  }
+  private JSONObject readCatalogueStage(){
+    android.util.AtomicFile file=catalogueStageFile();
+    if(!file.getBaseFile().exists())return null;
+    try(InputStream in=file.openRead()){
+      return new JSONObject(read(in,64*1024*1024));
+    }catch(Exception ignored){return null;}
+  }
+  private boolean writeCatalogueStage(JSONObject state){
+    android.util.AtomicFile file=catalogueStageFile();
+    FileOutputStream out=null;
+    try{
+      out=file.startWrite();
+      out.write(state.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      file.finishWrite(out);
+      return true;
+    }catch(Exception error){
+      if(out!=null)file.failWrite(out);
+      return false;
+    }
+  }
+  private boolean isRequiredRegionalFeedAvailable(){
+    String[] required={
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+        "https://iptv-org.github.io/iptv/countries/cn.m3u"
+    };
+    for(String address:required){
+      HttpURLConnection connection=null;
+      try{
+        connection=(HttpURLConnection)new URL(address).openConnection();
+        connection.setConnectTimeout(2500);connection.setReadTimeout(3500);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent","MyTV/1.19 Android TV");
+        int code=connection.getResponseCode();
+        if(code<200||code>=300)continue;
+        try(InputStream in=connection.getInputStream()){
+          byte[] sample=new byte[8192];int count=in.read(sample);
+          if(count>0&&new String(sample,0,count,java.nio.charset.StandardCharsets.UTF_8)
+              .replace("\uFEFF","").trim().startsWith("#EXTM3U"))return true;
+        }
+      }catch(Exception ignored){
+      }finally{if(connection!=null)connection.disconnect();}
+    }
+    return false;
+  }
+  private void clearCatalogueStage(){
+    try{catalogueStageFile().delete();}catch(Exception ignored){}
   }
   private ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> readCatalogueRecords(JSONArray array){
     ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> records=new ArrayList<>();
