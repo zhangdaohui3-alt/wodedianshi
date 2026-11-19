@@ -195,6 +195,13 @@ public final class RoomCatalogueWriter {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
                 dao.clearCatalogueBuildRows();
+                long publishedAt = System.currentTimeMillis();
+                db.appStateDao().put(new AppStateEntity(
+                        "source_full_rebuild_completed_at",
+                        Long.toString(publishedAt), publishedAt));
+                db.appStateDao().put(new AppStateEntity(
+                        "source_update_last_success_at",
+                        Long.toString(publishedAt), publishedAt));
                 db.appStateDao().remove("source_full_rebuild_active");
             }
         });
