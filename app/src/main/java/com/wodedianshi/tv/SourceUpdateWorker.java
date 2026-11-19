@@ -332,15 +332,7 @@ public class SourceUpdateWorker extends Worker {
           return statusSaved?Result.success():Result.retry();
         }
         JSONArray committedChannels=writeCatalogueRecords(mergedRecords);
-        JSONArray startupPreview=new JSONArray();
-        for(int i=0;i<committedChannels.length()&&i<60;i++){
-          JSONObject channel=committedChannels.optJSONObject(i);if(channel==null)continue;
-          JSONObject previewItem=new JSONObject();
-          previewItem.put("name",channel.optString("name",""));
-          previewItem.put("url",channel.optString("url",""));
-          previewItem.put("group",channel.optString("group",""));
-          startupPreview.put(previewItem);
-        }
+        // The startup snapshot is the complete, validated catalogue, not a first-page preview.
         Set<String> updatedFavorites=ChannelCatalogueMergePolicy.migrateFavoriteKeys(
             prefs.getStringSet("fav",Collections.emptySet()),currentRecords,mergedRecords);
         long nextGeneration=prefs.getLong("channel_catalogue_generation",0L)+1L;
@@ -351,7 +343,7 @@ public class SourceUpdateWorker extends Worker {
             .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
             .putString("source_probe_scores_v1",measuredScores.toString())
             .putString("channels",committedChannels.toString())
-            .putString("startup_channels",startupPreview.toString())
+            .putString("startup_channels",committedChannels.toString())
             .putStringSet("fav",updatedFavorites)
             .putLong("channel_catalogue_generation",nextGeneration)
             .putString("source_update_time",now())
