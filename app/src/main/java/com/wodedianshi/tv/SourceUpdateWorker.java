@@ -69,8 +69,12 @@ public class SourceUpdateWorker extends Worker {
        "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
        "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u",
        "https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u",
-       // The large worldwide index is last so it cannot starve regional/category feeds.
-       "https://iptv-org.github.io/iptv/index.m3u"
+       // The large worldwide index is late so it cannot starve regional/category feeds.
+       "https://iptv-org.github.io/iptv/index.m3u",
+       // Additional independent aggregator: contains county/local stations and
+       // EXT BURL backup entries. It is last so its large mixed-region list cannot
+       // delay the dedicated China, HMT, US, and category feeds above.
+       "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u"
      };
     try{
       // Snapshot the user's current catalogue before discovery/probing. The Activity
