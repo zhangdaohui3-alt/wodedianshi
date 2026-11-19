@@ -56,6 +56,15 @@ public class LegacyChannelIdPolicyTest {
     }
 
     @Test
+    public void genericChannelKeepsIdentityAcrossPathChangesOnSameHost() {
+        assertEquals(
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福建综合", "https://a.test/old/live.m3u8", "", "地方"),
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福建综合", "https://a.test/new/live.m3u8", "", "地方"));
+    }
+
+    @Test
     public void genericChannelWithoutTvgIdRemainsSourceScoped() {
         assertNotEquals(
                 LegacyChannelIdPolicy.stableIdentityKey("福建综合", "https://a.test/live", ""),
