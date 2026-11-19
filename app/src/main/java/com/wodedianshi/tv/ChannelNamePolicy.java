@@ -117,6 +117,12 @@ final class ChannelNamePolicy {
         String province = provinceForLocalChannel(metadata);
         if (province.isEmpty()) return "";
         String normalized = normalize(metadata);
+        // Municipalities are both province-level regions and city identities.
+        if (("北京".equals(province) || "天津".equals(province)
+                || "上海".equals(province) || "重庆".equals(province))
+                && containsAlias(metadata, province, normalized)) {
+            return normalize(province);
+        }
         java.util.LinkedHashSet<String> matches = new java.util.LinkedHashSet<>();
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             if (!province.equals(aliases[0])) continue;
