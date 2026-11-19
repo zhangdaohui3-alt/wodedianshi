@@ -120,10 +120,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String ROOM_STATE_LAST_CHANNEL_URL="last_channel_url";
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
+  private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
+  private static final String ROOM_STATE_SOURCE_QOE="source_qoe_v1";
   private volatile String roomLastChannelIdentity="";
   private volatile String roomLastChannelUrl="";
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
+  private volatile String roomSourceProbeJson="{}";
+  private volatile String roomSourceQoeJson="{}";
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
@@ -286,20 +290,32 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Previous releases are intentionally not migrated. Remove old business-data keys.
         boolean hadLegacyBusinessData=startupPrefs.contains("channels")
             ||startupPrefs.contains("fav")
-            ||startupPrefs.contains("source_update_pending_channels")
             ||startupPrefs.contains("last_channel_identity")
             ||startupPrefs.contains("last_channel_url")
             ||startupPrefs.contains("vod_favorites_v1")
-            ||startupPrefs.contains("vod_history_v1");
+            ||startupPrefs.contains("vod_history_v1")
+            ||startupPrefs.contains("source_probe_scores_v1")
+            ||startupPrefs.contains("source_qoe_v1")
+            ||startupPrefs.contains("source_update_result")
+            ||startupPrefs.contains("source_update_time");
         if(hadLegacyBusinessData){
-          boolean cleared=startupPrefs.edit()
+          android.content.SharedPreferences.Editor cleanup=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
               .remove("source_update_pending_channels")
               .remove("source_update_pending_base")
               .remove("source_update_pending_base_fingerprint")
               .remove("last_channel_identity").remove("last_channel_url")
-              .remove("vod_favorites_v1").remove("vod_history_v1")
-              .commit();
+              .remove("vod_favorites_v1").remove("vod_history_v1");
+          for(String key:startupPrefs.getAll().keySet()){
+            if(key.startsWith("source_probe_")||key.startsWith("source_qoe_")
+                ||key.startsWith("source_scan_")||key.startsWith("source_saved_scan_")
+                ||key.startsWith("source_feed_")||key.startsWith("source_initial_discovery_")
+                ||key.startsWith("source_update_last_success")
+                ||"source_update_time".equals(key)||"source_update_result".equals(key)){
+              cleanup.remove(key);
+            }
+          }
+          boolean cleared=cleanup.commit();
           android.util.Log.i("MyTVRoom","discarded legacy non-authoritative business data committed="+cleared);
         }
         recordPreviousProcessExitReason();
@@ -673,6 +689,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
+    roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
+    roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
   }
 
   private void queueRoomAppStateWrite(String key,String value){
@@ -1166,12 +1186,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     },worker);
   }
   private void showSourceUpdateStatus(){
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String time=p.getString("source_update_time","尚未更新");
-    String result=p.getString("source_update_result","尚无更新记录");
-    new AlertDialog.Builder(this).setTitle("频道源更新状态")
-      .setMessage("后台自动更新："+(p.getBoolean("auto_source_update",true)?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
-      .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
+    final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+    try{
+      worker.execute(()->{
+        String time=com.wodedianshi.tv.db.AppStateStore.get(
+            getApplicationContext(),"source_update_time","尚未更新");
+        String result=com.wodedianshi.tv.db.AppStateStore.get(
+            getApplicationContext(),"source_update_result","尚无更新记录");
+        runOnUiThread(()->{
+          if(isFinishing()||isDestroyed())return;
+          new AlertDialog.Builder(this).setTitle("频道源更新状态")
+            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
+            .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
+        });
+      });
+    }catch(RuntimeException rejected){toast("暂时无法读取更新状态，请稍后再试");}
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
@@ -5951,8 +5980,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
     try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
+      org.json.JSONObject all=new org.json.JSONObject(roomSourceQoeJson);
       String key=StableKey.url(url);
       String legacyKey=StableKey.legacyUrl(url);
       org.json.JSONObject m=all.optJSONObject(key);
@@ -5978,16 +6006,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         m.put("lastStable",System.currentTimeMillis());
       }
       m.put("updated",System.currentTimeMillis());all.put(key,m);
-      p.edit().putString("source_qoe_v1",all.toString()).apply();
+      roomSourceQoeJson=all.toString();
+      queueRoomAppStateWrite(ROOM_STATE_SOURCE_QOE,roomSourceQoeJson);
+      synchronized(sourceScoreCacheLock){
+        cachedQoeScoreJson=all;cachedQoeScoreRaw=roomSourceQoeJson;
+      }
     }catch(Exception ignored){}
   }
   private HashMap<String,Double> observedSourceScores(List<String> urls){
     HashMap<String,Double> scores=new HashMap<>();
     if(urls==null||urls.isEmpty())return scores;
     try{
-      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-      String probeRaw=prefs.getString("source_probe_scores_v1","{}");
-      String qoeRaw=prefs.getString("source_qoe_v1","{}");
+      String probeRaw=roomSourceProbeJson;
+      String qoeRaw=roomSourceQoeJson;
       org.json.JSONObject measured,allQoe;
       synchronized(sourceScoreCacheLock){
         if(cachedProbeScoreJson==null||cachedQoeScoreJson==null
