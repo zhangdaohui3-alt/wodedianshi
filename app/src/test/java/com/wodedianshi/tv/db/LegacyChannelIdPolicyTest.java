@@ -30,6 +30,39 @@ public class LegacyChannelIdPolicyTest {
     }
 
     @Test
+    public void verifiedTvgIdKeepsChannelIdWhenPrimarySourceChanges() {
+        String firstKey = LegacyChannelIdPolicy.stableIdentityKey(
+                "福建综合", "https://old.example/live.m3u8", "FJTV.FUZHOU");
+        String secondKey = LegacyChannelIdPolicy.stableIdentityKey(
+                "福建综合", "https://new.example/live.m3u8", " fjtv.fuzhou ");
+        assertEquals(firstKey, secondKey);
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(firstKey, 0),
+                LegacyChannelIdPolicy.idForStableIdentity(secondKey, 0));
+    }
+
+    @Test
+    public void cctvAndSatelliteIdsDoNotDependOnSourceHost() {
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("CCTV-1", "https://a.test/live", ""), 0),
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("CCTV-1", "https://b.test/live", ""), 0));
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("湖南卫视", "https://a.test/live", ""), 0),
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("湖南卫视", "https://b.test/live", ""), 0));
+    }
+
+    @Test
+    public void genericChannelWithoutTvgIdRemainsSourceScoped() {
+        assertNotEquals(
+                LegacyChannelIdPolicy.stableIdentityKey("福建综合", "https://a.test/live", ""),
+                LegacyChannelIdPolicy.stableIdentityKey("福建综合", "https://b.test/live", ""));
+    }
+
+    @Test
     public void delimiterInNameCannotCollideWithDifferentNameAndUrl() {
         assertNotEquals(
                 LegacyChannelIdPolicy.identityKey("A|B", "C"),
