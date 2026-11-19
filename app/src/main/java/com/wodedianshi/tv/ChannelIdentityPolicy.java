@@ -40,17 +40,18 @@ final class ChannelIdentityPolicy {
         String guideName = tvgName == null ? "" : tvgName.trim();
         String metadata = (displayName + " " + guideName).trim();
         String province = ChannelNamePolicy.provinceForLocalChannel(metadata);
-        if (province.isEmpty() || !ChannelNamePolicy.hasSpecificLocalCity(metadata)) return "";
+        String city = ChannelNamePolicy.localCityForChannel(metadata);
+        if (province.isEmpty() || city.isEmpty()) return "";
 
         String label = hasMeaningfulStationLabel(displayName) ? displayName : guideName;
         String normalizedLabel = normalizeLocalStationLabel(label);
-        if (normalizedLabel.length() < 3) return "";
-        return "local:" + province + "|" + normalizedLabel;
+        if (normalizedLabel.length() < 4) return "";
+        return "local:" + province + "|" + city + "|" + normalizedLabel;
     }
 
     private static boolean hasMeaningfulStationLabel(String value) {
         String normalized = normalizeLocalStationLabel(value);
-        return normalized.length() >= 3
+        return normalized.length() >= 4
                 && !normalized.equals("频道")
                 && !normalized.equals("直播频道")
                 && !normalized.equals("高清频道")
