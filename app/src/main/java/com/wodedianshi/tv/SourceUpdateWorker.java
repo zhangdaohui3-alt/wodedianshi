@@ -435,17 +435,16 @@ public class SourceUpdateWorker extends Worker {
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
-      if(initialFeedsExhausted&&saved.length()==0){
+      if(initialFeedsExhausted&&!initialHasValidatedSource){
+        // Every feed and every current candidate has had its probe turn. Do not
+        // retry an exhausted, unpublishable build forever merely because the TV
+        // Activity happens to remain open; discard staging and retain the live DB.
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
         com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_full_rebuild_active");
-        saveStatus(prefs,"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集",0);
-        return Result.failure();
-      }
-      if(initialFeedsExhausted&&!initialHasValidatedSource&&!foregroundAtStart
-          &&getRunAttemptCount()>=6){
-        com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
-        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_full_rebuild_active");
-        saveStatus(prefs,"全量候选源暂时均未通过媒体预检；未替换旧目录，后续可重新采集",0);
+        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_initial_has_validated_source");
+        saveStatus(prefs,saved.length()==0
+            ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
+            :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
         return Result.failure();
       }
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
