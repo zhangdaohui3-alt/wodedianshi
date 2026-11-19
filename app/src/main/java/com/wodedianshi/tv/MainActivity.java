@@ -118,12 +118,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Durable business state is loaded from Room on the startup worker.
   private static final String ROOM_STATE_LAST_CHANNEL_IDENTITY="last_channel_identity";
   private static final String ROOM_STATE_LAST_CHANNEL_URL="last_channel_url";
+  private static final String ROOM_STATE_LAST_CHANNEL_NAME="last_channel_name";
+  private static final String ROOM_STATE_LAST_CHANNEL_GROUP="last_channel_group";
+  private static final String ROOM_STATE_LAST_CHANNEL_TVG_ID="last_channel_tvg_id";
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
   private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
   private static final String ROOM_STATE_SOURCE_QOE="source_qoe_v1";
   private volatile String roomLastChannelIdentity="";
   private volatile String roomLastChannelUrl="";
+  private volatile String roomLastChannelName="";
+  private volatile String roomLastChannelGroup="";
+  private volatile String roomLastChannelTvgId="";
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
   private volatile String roomSourceProbeJson="{}";
@@ -674,6 +680,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_LAST_CHANNEL_IDENTITY,"");
     roomLastChannelUrl=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_LAST_CHANNEL_URL,"");
+    roomLastChannelName=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_NAME,"");
+    roomLastChannelGroup=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_GROUP,"");
+    roomLastChannelTvgId=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_TVG_ID,"");
     roomVodFavoritesJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
@@ -912,8 +924,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // a dead endpoint and make every next launch start from that failed URL.
     roomLastChannelIdentity=identity(c);
     roomLastChannelUrl=c.url==null?"":c.url;
+    roomLastChannelName=c.name==null?"":c.name;
+    roomLastChannelGroup=c.group==null?"":c.group;
+    roomLastChannelTvgId=c.tvgId==null?"":c.tvgId;
     queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,roomLastChannelIdentity);
     queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,roomLastChannelUrl);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_NAME,roomLastChannelName);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_GROUP,roomLastChannelGroup);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,roomLastChannelTvgId);
   }
   private void restoreLastChannel(){
     String savedIdentity=roomLastChannelIdentity;
@@ -939,11 +957,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}
       }
     }
+    // If a generic station's primary host changed and it has no trustworthy TVG id,
+    // restore only when its saved display name + category identifies exactly one
+    // channel. Ambiguous same-name stations are deliberately not guessed.
+    if(found<0&&!roomLastChannelName.isEmpty()){
+      int unique=-1;
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(!canonicalChannelName(c.name).equals(canonicalChannelName(roomLastChannelName)))continue;
+        if(!normalizeResumeGroup(c.group).equals(normalizeResumeGroup(roomLastChannelGroup)))continue;
+        if(!roomLastChannelTvgId.isEmpty()
+            &&!normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(roomLastChannelTvgId)))continue;
+        if(unique>=0){unique=-2;break;}
+        unique=i;
+      }
+      if(unique>=0)found=unique;
+    }
     if(found<0)return;
     // Never resume a source merely because it was the last attempted one. It may
     // have timed out before the app closed. Start from the channel's primary source.
     channels.get(found).activeSource=0;
     play(found);
+  }
+  private String normalizeResumeGroup(String value){
+    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
+  }
+  private String normalizeResumeTvgId(String value){
+    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
   }
   // Defensive guard for dynamically reparented video/player views. A ViewGroup
   // can only measure children with its own LayoutParams subtype; a stale
