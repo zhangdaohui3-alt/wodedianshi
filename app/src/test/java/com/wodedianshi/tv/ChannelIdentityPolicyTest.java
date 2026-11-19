@@ -34,18 +34,18 @@ public class ChannelIdentityPolicyTest {
         String first = ChannelIdentityPolicy.identity("", "PROVIDER_A_SHENZHEN", "host:a", local);
         String second = ChannelIdentityPolicy.identity("", "PROVIDER_B_SHENZHEN", "host:b",
                 ChannelIdentityPolicy.localStationIdentity("深圳都市频道 高清", ""));
-        assertEquals("local:广东|深圳都市频道", local);
+        assertEquals("local:广东|深圳|深圳都市频道", local);
         assertEquals(first, second);
     }
 
     @Test public void localStationMergeRequiresAnUnambiguousCityAndSpecificLabel() {
         assertEquals("", ChannelIdentityPolicy.localStationIdentity("福州综合频道", ""));
         assertEquals("", ChannelIdentityPolicy.localStationIdentity("福建新闻综合", ""));
-        assertEquals("local:福建|福建福州综合频道",
+        assertEquals("local:福建|福州|福建福州综合频道",
                 ChannelIdentityPolicy.localStationIdentity("福建福州综合频道", ""));
         assertNotEquals(
-                ChannelIdentityPolicy.localStationIdentity("深圳都市频道", ""),
-                ChannelIdentityPolicy.localStationIdentity("广州都市频道", ""));
+                ChannelIdentityPolicy.localStationIdentity("深圳新闻频道", ""),
+                ChannelIdentityPolicy.localStationIdentity("广州新闻频道", ""));
     }
 
     @Test public void keepsProviderNamespacePunctuation() {
