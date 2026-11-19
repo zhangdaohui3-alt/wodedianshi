@@ -414,40 +414,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });
     });
   }
-  // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
-  // including for users whose channel list was already saved by an older build.
-  private void loadBundledHdBackups(){
-    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    // The bundled playlist is an upgrade migration, not startup work. The old
-    // implementation reparsed the entire M3U and resorted every channel on
-    // every launch, making app entry progressively slower as the list grew.
-    final int bundledVersion=3;
-    if(prefs.getInt("bundled_channels_version",0)>=bundledVersion)return;
-    boolean loaded=false;
-    try(InputStream in=getAssets().open("default_channels.m3u")){
-      parse(read(in));
-      loaded=true;
-    }catch(Exception ignored){}
-    boolean changed=false;
-    synchronized(channels){
-      for(Channel c:channels){
-        if(c.backups==null||c.backups.size()<2)continue;
-        String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
-        ArrayList<String> ordered=new ArrayList<>(c.backups);
-        // Score each endpoint once. Parsing the same SharedPreferences JSON from
-        // inside the comparator multiplied disk/string/JSON work by O(n log n).
-        HashMap<String,Double> scores=observedSourceScores(ordered);
-        ordered.sort((a,b)->Double.compare(scores.get(b),scores.get(a)));
-        if(!ordered.equals(c.backups)){
-          c.backups.clear();c.backups.addAll(ordered);
-          int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;
-          changed=true;
-        }
-      }
-    }
-    if(changed){persist();}
-    if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
-  }
   private int sourceQualityScore(String source){
     return SourceQualityScorer.labelScore(source);
   }
@@ -3638,7 +3604,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
-          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();queueRoomFavoriteSync(channelKey,favorites.contains(channelKey));refresh();}
+          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
           else if(w==1){
             if(sourceUrls.isEmpty())return;
             String[] opts=new String[sourceUrls.size()];
@@ -4458,13 +4424,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
-  private void queueRoomFavoriteSync(String legacyKey,boolean favorite){
-    if(legacyKey==null||legacyKey.isEmpty())return;
-    try{
-      worker.execute(()->{
-        try{
-          com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
-              getApplicationContext(),legacyKey,favorite);
+  private void 
         }catch(Throwable failure){
           android.util.Log.w("MyTVRoomSync","favorite shadow update skipped",failure);
         }
@@ -4474,11 +4434,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
-  private void queueRoomActiveSourceSync(int channelIndex,String sourceUrl){
-    final String legacyKey;
-    synchronized(channels){
-      if(channelIndex<0||channelIndex>=channels.size()||channels.get(channelIndex)==null)return;
-      legacyKey=channels.get(channelIndex).key();
+  private void 
     }
     if(legacyKey.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
     try{
@@ -4503,7 +4459,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
     else{favorites.add(c.key());toast("已加入收藏："+c.name);}
     persist();
-    queueRoomFavoriteSync(c.key(),favorites.contains(c.key()));
+    
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
   }
@@ -4928,7 +4884,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(bad.isEmpty()){toast("当前播放源地址为空");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{persist();setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
           return;
         }
@@ -4940,7 +4896,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,url);startCurrentSource();
+        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
@@ -4978,7 +4934,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
-    queueRoomActiveSourceSync(selected,c.backups.get(next));
+    
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
@@ -5407,7 +5363,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     automaticSwitchCount++;
     c.activeSource=next;
-    queueRoomActiveSourceSync(selected,c.backups.get(next));
+    
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
@@ -5443,7 +5399,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
     if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(selected,target.backups.get(target.activeSource));
+      
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
@@ -5463,7 +5419,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
     if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
+      
     startCurrentSource();
   }
   // Explicit backup selection must not be reset to the channel's default/last-good source.
@@ -5484,7 +5440,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     persist();
     if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
+      
     startCurrentSource();
   }
   private void startCurrentSource(){
