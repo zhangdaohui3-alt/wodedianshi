@@ -125,7 +125,12 @@ public final class RoomCatalogueReader {
         // callers can retain the previous complete local directory instead.
         CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
+        CatalogueMigrationEntity finalCheckpoint =
+                dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if (finalCheckpoint == null || finalCheckpoint.completedAt != catalogueVersion) {
+            throw new IllegalStateException("Room catalogue changed while its snapshot was being read");
+        }
         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
-                favorites, loaded);
+                favorites, loaded, catalogueVersion);
     }
 }
