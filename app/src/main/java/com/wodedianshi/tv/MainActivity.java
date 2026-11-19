@@ -295,6 +295,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Previous releases are intentionally not migrated. Remove old business-data keys.
         boolean hadLegacyBusinessData=startupPrefs.contains("channels")
             ||startupPrefs.contains("fav")
+            ||startupPrefs.contains("source_update_pending_channels")
             ||startupPrefs.contains("last_channel_identity")
             ||startupPrefs.contains("last_channel_url")
             ||startupPrefs.contains("vod_favorites_v1")
@@ -6628,6 +6629,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
+  private void reloadRoomSourceMetrics(){
+    String probe=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
+    String qoe=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
+    synchronized(sourceScoreCacheLock){
+      roomSourceProbeJson=probe;
+      roomSourceQoeJson=qoe;
+      cachedProbeScoreRaw=null;
+      cachedQoeScoreRaw=null;
+      cachedProbeScoreJson=null;
+      cachedQoeScoreJson=null;
+    }
+  }
+
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     if(!catalogueSnapshotTrusted){
@@ -6641,6 +6657,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       worker.execute(()->{
         try{
+          reloadRoomSourceMetrics();
           ArrayList<Channel> refreshed=new ArrayList<>();
           com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
