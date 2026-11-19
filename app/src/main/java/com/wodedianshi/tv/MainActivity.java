@@ -3014,8 +3014,22 @@ public class MainActivity extends Activity {
       else{String[] pair=data[w-1].split("\\|");loadGeoPlaylist(country+" · "+region+" · "+pair[0],"https://iptv-org.github.io/iptv/cities/"+pair[1]+".m3u");}
     });
   }
+  private String geoSnapshotKey(String address){
+    return "geo_snapshot_"+Integer.toHexString(address.hashCode());
+  }
   private void loadGeoPlaylist(String label,String address){
-    info.setText("正在载入 "+label+" 频道目录…");
+    // Each country/subdivision/city has its own last-known-good membership snapshot.
+    // Channel records themselves live in the complete local catalogue snapshot.
+    final String snapshotKey=geoSnapshotKey(address);
+    Set<String> cached=getSharedPreferences("mytv",0).getStringSet(snapshotKey,null);
+    if(cached!=null&&!cached.isEmpty()){
+      activeGeoChannelKeys=new HashSet<>(cached);
+      info.setText(label+"：已从本地完整快照恢复 "+cached.size()+" 个频道，正在后台检查更新…");
+      refresh();
+    }else{
+      activeGeoChannelKeys=null;
+      info.setText("首次载入 "+label+" 频道目录…");
+    }
     worker.execute(()->{HttpURLConnection c=null;try{
       c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.0 Android");
       int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
@@ -3026,10 +3040,13 @@ public class MainActivity extends Activity {
         try{parse(data);}finally{parsingGeoChannelKeys=null;}
       }
       final int matched=destinationKeys.size();
+      // Replace this location's snapshot only after a successful HTTP response and parse.
+      final Set<String> committedKeys=new HashSet<>(destinationKeys);
       runOnUiThread(()->{
-        activeGeoChannelKeys=new HashSet<>(destinationKeys);
+        activeGeoChannelKeys=committedKeys;
+        getSharedPreferences("mytv",0).edit().putStringSet(snapshotKey,new HashSet<>(committedKeys)).apply();
         activeCategory="全部";favoriteMode=false;persist();refresh();
-        info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+        info.setText(label+"：已完成本地快照更新，共 "+matched+" 个频道。其他地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
   }
