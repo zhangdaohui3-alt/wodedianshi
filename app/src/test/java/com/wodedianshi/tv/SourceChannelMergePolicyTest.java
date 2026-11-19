@@ -40,6 +40,17 @@ public class SourceChannelMergePolicyTest {
                 "https://mid.example/live.m3u8"), result);
     }
 
+    @Test public void preservesExactActiveUrlWhenDeduplicatingEquivalentEndpoint() {
+        List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
+                Arrays.asList("https://cdn.example:443/live.m3u8",
+                        "https://CDN.example/live.m3u8"),
+                "https://other.example/live.m3u8", 8, BEST_FIRST,
+                "https://cdn.example:443/live.m3u8",
+                "https://CDN.example/live.m3u8");
+        assertEquals(Arrays.asList("https://CDN.example/live.m3u8",
+                "https://other.example/live.m3u8"), result);
+    }
+
     @Test public void neverEvictsTheUsersActiveSourceAtCapacity() {
         List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
                 Arrays.asList("https://best.example/live.m3u8",
