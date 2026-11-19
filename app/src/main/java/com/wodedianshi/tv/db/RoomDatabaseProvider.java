@@ -56,6 +56,18 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    // Version 6 stores last-channel and VOD business state in Room, not preferences.
+    private static final Migration MIGRATION_5_6 = new Migration(5, 6) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS app_state ("
+                    + "key TEXT NOT NULL, "
+                    + "stateValue TEXT NOT NULL, "
+                    + "updatedAt INTEGER NOT NULL, "
+                    + "PRIMARY KEY(key))");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -93,7 +105,7 @@ public final class RoomDatabaseProvider {
                 AppDatabase.class,
                 databaseName
         ).addMigrations(
-                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5
+                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6
         ).build();
     }
 }
