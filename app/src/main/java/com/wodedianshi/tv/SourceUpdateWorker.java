@@ -85,8 +85,8 @@ public class SourceUpdateWorker extends Worker {
       JSONArray saved=new JSONArray(savedChannelsJson);
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
-      JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
+      JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
+      JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
@@ -128,9 +128,9 @@ public class SourceUpdateWorker extends Worker {
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
         if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=8)break;
         if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
-        if(initialDiscoveryChain&&prefs.getBoolean(initialFeedDoneKey(feedIndex),false))continue;
+        if(initialDiscoveryChain&&roomBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
-        int feedCursor=prefs.getInt(feedCursorKey(feedIndex),0);
+        int feedCursor=roomInt(feedCursorKey(feedIndex),0);
         int[] parsedCount={0};
         boolean feedReadSucceeded=false;
         if(isStopped())return Result.retry();
@@ -180,14 +180,14 @@ public class SourceUpdateWorker extends Worker {
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
-      int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, prefs.getString("source_saved_scan_after_key",""), prefs.getInt("source_saved_scan_cursor",0));
+      int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
+      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, roomString("source_scan_after_key",""), roomInt("source_scan_cursor",0));
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       String discoveryFingerprint=discoveryFingerprint(candidates);
-      String previousDiscoveryFingerprint=prefs.getString("source_feed_batch_fingerprint","");
+      String previousDiscoveryFingerprint=roomString("source_feed_batch_fingerprint","");
       int initialDiscoveryScanned=discoveryFingerprint.equals(previousDiscoveryFingerprint)
-          ?prefs.getInt("source_feed_batch_scanned",0):0;
+          ?roomInt("source_feed_batch_scanned",0):0;
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -337,11 +337,11 @@ public class SourceUpdateWorker extends Worker {
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
       boolean initialDiscoveryComplete=initialDiscoveryChain&&feedBatchComplete
           &&areInitialChinaFeedsComplete(prefs,feedBatches);
-      android.content.SharedPreferences.Editor update=prefs.edit()
+      com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
-          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
-          .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
+          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
+          .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
@@ -399,7 +399,7 @@ public class SourceUpdateWorker extends Worker {
   }
   private boolean areInitialChinaFeedsComplete(SharedPreferences prefs,List<FeedBatch> batches){
     for(int i=0;i<8;i++){
-      boolean done=prefs.getBoolean(initialFeedDoneKey(i),false);
+      boolean done=roomBoolean(initialFeedDoneKey(i),false);
       if(!done){
         for(FeedBatch batch:batches){
           if(batch.index==i&&batch.success&&batch.parsed<MAX_DISCOVERY_PER_FEED){done=true;break;}
@@ -832,5 +832,19 @@ public class SourceUpdateWorker extends Worker {
     return ChannelIdentityPolicy.identity(v,tvgId,fallback);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
-  private void saveStatus(SharedPreferences p,String result,int added){p.edit().putString("source_update_time",now()).putString("source_update_result",result).apply();}
+  private String roomString(String key,String fallback){
+    return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
+  }
+  private int roomInt(String key,int fallback){
+    try{return Integer.parseInt(roomString(key,Integer.toString(fallback)));}
+    catch(Exception ignored){return fallback;}
+  }
+  private boolean roomBoolean(String key,boolean fallback){
+    String value=roomString(key,Boolean.toString(fallback));
+    return Boolean.parseBoolean(value);
+  }
+  private void saveStatus(SharedPreferences p,String result,int added){
+    com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_time",now());
+    com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_result",result);
+  }
 }
