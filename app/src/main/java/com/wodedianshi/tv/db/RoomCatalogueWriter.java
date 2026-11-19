@@ -158,7 +158,9 @@ public final class RoomCatalogueWriter {
         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
         for (int row = 0; row < snapshot.length(); row++) {
             JSONObject item = snapshot.optJSONObject(row);
-            if (item == null) continue;
+            if (item == null) {
+                throw new IllegalStateException("Background catalogue snapshot contains an invalid row at index " + row);
+            }
             ChannelSnapshot channel = new ChannelSnapshot();
             channel.name = item.optString("name", "").trim();
             channel.url = item.optString("url", "").trim();
@@ -182,6 +184,17 @@ public final class RoomCatalogueWriter {
             }
             channel.backupSourceScopes.putAll(readOwnership(item.optJSONArray("backupSourceScopes")));
             rows.add(channel);
+        }
+        // Validate the decoded row count as well as the JSON array count. Otherwise
+        // skipping a malformed JSON element here could turn a full snapshot into a
+        // shorter list that still passes the non-shrinking background policy.
+        if (rows.size() != snapshot.length()) {
+            throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
+        }
+        int savedCount = database.channelDao().countChannels();
+        if (savedCount > 0 && rows.size() < savedCount) {
+            throw new IllegalStateException("Refusing to replace " + savedCount
+                    + " saved channels with " + rows.size() + " decoded rows");
         }
         return writeRecords(context, rows, favoriteKeys);
     }
