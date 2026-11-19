@@ -458,7 +458,8 @@ public class SourceUpdateWorker extends Worker {
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
             "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
       }
-      return (discoveryUnavailable&&!(initialDiscoveryChain&&candidates.size()>0))
+      return (discoveryUnavailable&&!initialDiscoveryComplete
+              &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
           ?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
