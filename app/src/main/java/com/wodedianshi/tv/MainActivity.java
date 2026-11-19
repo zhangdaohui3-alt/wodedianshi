@@ -199,9 +199,6 @@ public class MainActivity extends Activity {
     if(changed)persist();
     if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
   }
-  private int sourceQualityScore(String source){
-    return SourceQualityScorer.labelScore(source);
-  }
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   // Mouse hover and D-pad focus are independent states. Hover never steals or clears focus.
   private boolean isCurrentPlayingRow(View view){
@@ -2636,7 +2633,7 @@ public class MainActivity extends Activity {
       customActions.addView(customUrl,new LinearLayout.LayoutParams(0,dp(52),1));
       list.addView(customActions,new LinearLayout.LayoutParams(-1,dp(56)));
     }
-    final int maxRows=60;int shown=0,totalMatches=0;
+    final int maxRows=60;int totalMatches=0;
     ArrayList<Integer> visibleIndexes=new ArrayList<>();
     synchronized(channels){
       for(int i=0;i<channels.size();i++){
@@ -2667,7 +2664,7 @@ public class MainActivity extends Activity {
       for(int row=0;row<visibleIndexes.size();row++){
         if(row<pageStart||row>=pageStart+maxRows)continue;
         int ix=visibleIndexes.get(row);
-        Channel c=channels.get(ix);shown++;
+        Channel c=channels.get(ix);
         Button b=new Button(this);b.setTag(ix);
         String title=isCctvChannel(c)?displayChannelName(c.name):c.name;
         String group=isCctvChannel(c)?"":(c.group.isEmpty()?"":" · "+c.group);
@@ -4007,7 +4004,7 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private double observedSourceScore(String url){
-    int label=sourceQualityScore(url);
+    int label=SourceQualityScorer.labelScore(url);
     try{
       String key=StableKey.url(url);
       String legacyKey=StableKey.legacyUrl(url);
