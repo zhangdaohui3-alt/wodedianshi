@@ -12,7 +12,7 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
-  private static final int MAX_PROBES_PER_RUN = 24;
+  private static final int MAX_PROBES_PER_RUN = 36;
   private static final int MAX_SOURCES_PER_CHANNEL = 5;
   // Bound memory while ensuring later regional feeds are not starved by the global index.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
@@ -60,46 +60,65 @@ public class SourceUpdateWorker extends Worker {
       JSONArray activeSnapshot=new JSONArray(prefs.getString("channels","[]"));
       ArrayList<Entry> candidates=new ArrayList<>();
       JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
+      JSONObject previousStage=readCatalogueStage();
+      boolean stagedCandidatesAvailable=previousStage!=null
+          &&previousStage.optJSONArray("candidateEntries")!=null
+          &&!previousStage.optJSONArray("candidateEntries").isNull(0);
       int feedIndex=0,chinaFeedsOk=0;
-      for(String feed:feeds){
-        if(isStopped())return Result.retry();
-        reportProgress("读取目录",feedIndex+1,feeds.length,
-            "正在读取频道目录 "+(feedIndex+1)+"/"+feeds.length+"："+feed.substring(feed.lastIndexOf('/')+1));
-        if(prefs.getBoolean("source_update_playback_active",false)){
-          saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
-          return Result.retry();
+      if(stagedCandidatesAvailable){
+        // Resume from the exact staged feed snapshot. Re-downloading and reparsing
+        // every public playlist on every WorkManager retry made a 24k-entry scan
+        // spend most of its time repeating discovery instead of probing URLs.
+        JSONArray stagedEntries=previousStage.optJSONArray("candidateEntries");
+        for(int i=0;i<stagedEntries.length();i++){
+          JSONObject item=stagedEntries.optJSONObject(i);if(item==null)continue;
+          String url=item.optString("url","");if(url.isEmpty())continue;
+          candidates.add(new Entry(item.optString("name",""),url,item.optString("group","")));
         }
-        HttpURLConnection c=null;
-        try{
-          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
-          c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
-          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
-          String normalized=data.replace("\uFEFF","").trim();
-          if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
-          ArrayList<Entry> feedCandidates=new ArrayList<>();
-          parsePlaylist(data,feedCandidates);
-          int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
-          for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
-          feedsOk++;
-          if(feedIndex<3)chinaFeedsOk++;
+        feedsOk=previousStage.optInt("feedsOk",0);
+        chinaFeedsOk=previousStage.optBoolean("chinaFeedAvailable",false)?1:0;
+        reportProgress("恢复暂存",0,candidates.size(),
+            "继续上次完整目录扫描：已恢复 "+candidates.size()+" 条候选线路，无需重新下载全部目录");
+        if(chinaFeedsOk==0&&isRequiredRegionalFeedAvailable())chinaFeedsOk=1;
+      }else{
+        for(String feed:feeds){
+          if(isStopped())return Result.retry();
           reportProgress("读取目录",feedIndex+1,feeds.length,
-              "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
-        }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
-        finally{if(c!=null)c.disconnect();feedIndex++;}
+              "正在读取频道目录 "+(feedIndex+1)+"/"+feeds.length+"："+feed.substring(feed.lastIndexOf('/')+1));
+          if(prefs.getBoolean("source_update_playback_active",false)){
+            saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
+            return Result.retry();
+          }
+          HttpURLConnection c=null;
+          try{
+            c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
+            c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
+            int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
+            String data;try(InputStream in=c.getInputStream()){data=read(in,15*1024*1024);}
+            String normalized=data.replace("\uFEFF","").trim();
+            if(!normalized.startsWith("#EXTM3U"))throw new IOException("目录格式无效");
+            ArrayList<Entry> feedCandidates=new ArrayList<>();
+            parsePlaylist(data,feedCandidates);
+            int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
+            for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
+            feedsOk++;
+            if(feedIndex<3)chinaFeedsOk++;
+            reportProgress("读取目录",feedIndex+1,feeds.length,
+                "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
+          }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
+          finally{if(c!=null)c.disconnect();feedIndex++;}
+        }
+        // De-duplicate once when creating a scan cycle; all retries reuse this
+        // exact ordered list so the cursor cannot skip or revisit entries.
+        LinkedHashMap<String,Entry> uniqueDiscovery=new LinkedHashMap<>();
+        for(Entry entry:candidates)uniqueDiscovery.putIfAbsent(StableKey.url(entry.url),entry);
+        candidates.clear();
+        candidates.addAll(uniqueDiscovery.values());
       }
-      // Duplicate playlist entries distort cursor wrap detection and can cause
-      // the same endpoint to consume several probe slots. Keep the first normalized
-      // occurrence so each scan position represents one unique stream URL.
-      LinkedHashMap<String,Entry> uniqueDiscovery=new LinkedHashMap<>();
-      for(Entry entry:candidates)uniqueDiscovery.putIfAbsent(StableKey.url(entry.url),entry);
-      candidates.clear();
-      candidates.addAll(uniqueDiscovery.values());
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
       String catalogueFingerprint=ChannelCatalogueRefreshCyclePolicy.fingerprint(discoveryScanUrls);
-      JSONObject previousStage=readCatalogueStage();
-      boolean continuingCycle=previousStage!=null
+      boolean continuingCycle=stagedCandidatesAvailable
           &&previousStage.optJSONArray("originalIdentities")!=null
           &&previousStage.has("channels")
           &&catalogueFingerprint.equals(previousStage.optString("fingerprint",""));
@@ -252,6 +271,15 @@ public class SourceUpdateWorker extends Worker {
         stageState.put("originalIdentities",baselineIdentitiesJson);
         stageState.put("scores",measuredScores.toString());
         stageState.put("scanComplete",scanComplete);
+        stageState.put("chinaFeedAvailable",chinaFeedsOk>0);
+        stageState.put("feedsOk",feedsOk);
+        JSONArray stagedEntries=new JSONArray();
+        for(Entry entry:candidates){
+          JSONObject item=new JSONObject();
+          item.put("name",entry.name);item.put("url",entry.url);item.put("group",entry.group);
+          stagedEntries.put(item);
+        }
+        stageState.put("candidateEntries",stagedEntries);
         if(!writeCatalogueStage(stageState)){
           saveStatus(prefs,"频道资料暂存失败，正式频道库未改变；稍后重试",0);
           reportProgress("暂存失败",discoveryScanStart+Math.max(0,discoveryScanned),
@@ -369,6 +397,31 @@ public class SourceUpdateWorker extends Worker {
       if(out!=null)file.failWrite(out);
       return false;
     }
+  }
+  private boolean isRequiredRegionalFeedAvailable(){
+    String[] required={
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
+        "https://iptv-org.github.io/iptv/countries/cn.m3u"
+    };
+    for(String address:required){
+      HttpURLConnection connection=null;
+      try{
+        connection=(HttpURLConnection)new URL(address).openConnection();
+        connection.setConnectTimeout(2500);connection.setReadTimeout(3500);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent","MyTV/1.19 Android TV");
+        int code=connection.getResponseCode();
+        if(code<200||code>=300)continue;
+        try(InputStream in=connection.getInputStream()){
+          byte[] sample=new byte[8192];int count=in.read(sample);
+          if(count>0&&new String(sample,0,count,java.nio.charset.StandardCharsets.UTF_8)
+              .replace("\\uFEFF","").trim().startsWith("#EXTM3U"))return true;
+        }
+      }catch(Exception ignored){
+      }finally{if(connection!=null)connection.disconnect();}
+    }
+    return false;
   }
   private void clearCatalogueStage(){
     try{catalogueStageFile().delete();}catch(Exception ignored){}
