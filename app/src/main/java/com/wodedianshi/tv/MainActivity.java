@@ -429,20 +429,25 @@ public class MainActivity extends Activity {
       return false;
     }
   }
+  // Persist every channel, category/group and source in the last-known-good startup snapshot.
+  // This is intentionally a complete catalogue snapshot rather than a 60-row preview.
   private void writeStartupChannelPreview(){
     try{
-      org.json.JSONArray preview=new org.json.JSONArray();
+      org.json.JSONArray snapshot=new org.json.JSONArray();
       synchronized(channels){
-        int count=Math.min(60,channels.size());
-        for(int i=0;i<count;i++){
-          Channel channel=channels.get(i);
+        for(Channel channel:channels){
           org.json.JSONObject item=new org.json.JSONObject();
           item.put("name",channel.name);item.put("url",channel.url);item.put("group",channel.group);
-          preview.put(item);
+          item.put("activeSource",channel.activeSource);
+          org.json.JSONArray sources=new org.json.JSONArray();
+          for(String source:channel.backups)sources.put(source);
+          item.put("sources",sources);
+          snapshot.put(item);
         }
       }
-      getSharedPreferences("mytv",0).edit().putString("startup_channels",preview.toString()).apply();
-    }catch(Exception e){android.util.Log.w("MyTVStartup","preview save failed",e);}
+      getSharedPreferences("mytv",0).edit().putString("startup_channels",snapshot.toString()).apply();
+      android.util.Log.i("MyTVStartup","complete_snapshot_saved channels="+snapshot.length());
+    }catch(Exception e){android.util.Log.w("MyTVStartup","complete snapshot save failed",e);}
   }
   private void restore(){
     synchronized(ChannelCatalogueStore.LOCK){
