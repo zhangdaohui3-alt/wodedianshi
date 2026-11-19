@@ -141,6 +141,8 @@ public class MainActivity extends Activity {
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
+    // Paint a tiny local snapshot before the full catalogue is restored in the worker.
+    restoreStartupChannelPreview();
     remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
       @Override public void onLockStateChanged(boolean locked, String reason) {
         if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
@@ -367,9 +369,80 @@ public class MainActivity extends Activity {
   private boolean isDecoderFallbackEnabled(){
     return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
+  // Render the first page from a compact local snapshot while the full catalogue
+  // is parsed on the worker thread. Preview rows remain disabled until full restore.
+  private boolean restoreStartupChannelPreview(){
+    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    String raw=p.getString("startup_channels","[]");
+    try{
+      ArrayList<Channel> previewChannels=new ArrayList<>();
+      if(!raw.isEmpty()&&!"[]".equals(raw)){
+        org.json.JSONArray a=new org.json.JSONArray(raw);
+        int count=Math.min(60,a.length());
+        for(int i=0;i<count;i++){
+          org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
+          String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
+          if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))
+            previewChannels.add(new Channel(name,url,group));
+        }
+      }
+      // One-time upgrade path for installs that predate the compact snapshot.
+      if(previewChannels.isEmpty()){
+        String full=p.getString("channels","[]");
+        if(!full.isEmpty()&&!"[]".equals(full)){
+          android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(full));
+          reader.beginArray();
+          int scanned=0;
+          while(reader.hasNext()&&scanned<60){
+            scanned++;
+            String name="",url="",group="";
+            reader.beginObject();
+            while(reader.hasNext()){
+              String key=reader.nextName();
+              if("name".equals(key))name=reader.nextString();
+              else if("url".equals(key))url=reader.nextString();
+              else if("group".equals(key))group=reader.nextString();
+              else reader.skipValue();
+            }
+            reader.endObject();
+            if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))
+              previewChannels.add(new Channel(name,url,group));
+          }
+          reader.close();
+        }
+      }
+      if(previewChannels.isEmpty())return false;
+      synchronized(channels){channels.clear();channels.addAll(previewChannels);}
+      favorites.addAll(p.getStringSet("fav",new HashSet<>()));
+      rebuildChannelIndexes();
+      refresh();
+      if(info!=null)info.setText("已快速显示本地频道 · 正在后台恢复完整频道资料");
+      android.util.Log.i("MyTVStartup","preview_channels="+previewChannels.size());
+      return true;
+    }catch(Exception e){
+      android.util.Log.w("MyTVStartup","startup preview unavailable",e);
+      return false;
+    }
+  }
+  private void writeStartupChannelPreview(){
+    try{
+      org.json.JSONArray preview=new org.json.JSONArray();
+      synchronized(channels){
+        int count=Math.min(60,channels.size());
+        for(int i=0;i<count;i++){
+          Channel channel=channels.get(i);
+          org.json.JSONObject item=new org.json.JSONObject();
+          item.put("name",channel.name);item.put("url",channel.url);item.put("group",channel.group);
+          preview.put(item);
+        }
+      }
+      getSharedPreferences("mytv",0).edit().putString("startup_channels",preview.toString()).apply();
+    }catch(Exception e){android.util.Log.w("MyTVStartup","preview save failed",e);}
+  }
   private void restore(){
     synchronized(ChannelCatalogueStore.LOCK){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    synchronized(channels){channels.clear();}
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
@@ -389,6 +462,7 @@ public class MainActivity extends Activity {
     loadedCatalogueGeneration=p.getLong("channel_catalogue_generation",0L);
     restoredCatalogueIdentities.clear();
     for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));
+    writeStartupChannelPreview();
     }
   }
   private void rebuildChannelIndexes(){
@@ -589,11 +663,16 @@ public class MainActivity extends Activity {
           if(changed)rebuildChannelIndexes();
         }
         org.json.JSONArray a=new org.json.JSONArray();
+        org.json.JSONArray startupPreview=new org.json.JSONArray();
         synchronized(channels){
-          for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+          for(Channel c:channels){
+            org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);
+            if(startupPreview.length()<60){org.json.JSONObject item=new org.json.JSONObject();item.put("name",c.name);item.put("url",c.url);item.put("group",c.group);startupPreview.put(item);}
+          }
         }
         long nextGeneration=generation+1L;
         prefs.edit().putString("channels",a.toString())
+            .putString("startup_channels",startupPreview.toString())
             .putStringSet("fav",new HashSet<>(favorites))
             .putLong("channel_catalogue_generation",nextGeneration).apply();
         loadedCatalogueGeneration=nextGeneration;
