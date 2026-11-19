@@ -86,6 +86,8 @@ public class ChannelNamePolicyTest {
         assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("浙江台州新闻频道"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("玉林电视台"));
         assertEquals("广西", ChannelNamePolicy.provinceForLocalChannel("广西玉林电视台"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("朝阳电视台"));
+        assertEquals("辽宁", ChannelNamePolicy.provinceForLocalChannel("辽宁朝阳电视台"));
     }
 
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
