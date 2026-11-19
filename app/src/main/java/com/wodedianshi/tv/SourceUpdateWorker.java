@@ -490,7 +490,7 @@ public class SourceUpdateWorker extends Worker {
   private String discoveryFingerprint(List<Entry> entries){
     StringBuilder value=new StringBuilder(entries.size()*48);
     for(Entry entry:entries)value.append(SourceSelectionPolicy.endpointKey(entry.url)).append('\n');
-    return Integer.toHexString(value.toString().hashCode())+":"+entries.size();
+    return CatalogueFingerprint.sha256(value.toString())+":"+entries.size();
   }
   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
       throws JSONException {
