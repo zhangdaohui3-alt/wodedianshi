@@ -77,7 +77,7 @@ final class ChannelNamePolicy {
     // These names exist in more than one province. Without an explicit province
     // marker in the metadata, a city-only station name must not be guessed.
     private static final String[] AMBIGUOUS_LOCAL_CITY_ALIASES = {
-        "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU", "台州", "玉林", "苏州", "福州"
+        "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU", "CHAOYANG", "台州", "玉林", "苏州", "福州", "朝阳"
     };
 
     static String provinceForLocalChannel(String metadata) {
