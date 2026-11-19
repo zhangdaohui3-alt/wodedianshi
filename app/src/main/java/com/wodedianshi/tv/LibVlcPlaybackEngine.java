@@ -284,8 +284,9 @@ public final class LibVlcPlaybackEngine {
         });
     }
 
-    public void release() {
+    public boolean release() {
         // Mark the engine dead and detach the app callback before touching JNI.
+        boolean nativeReleaseSucceeded = true;
         // A callback already in flight may finish, but MainActivity also checks
         // the engine instance and playback generation before acting on it.
         released = true;
@@ -323,6 +324,7 @@ public final class LibVlcPlaybackEngine {
                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_BEGIN");
                 player.release();
             } catch (RuntimeException | LinkageError error) {
+                nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_FAILED_" + error.getClass().getSimpleName());
             }
         }
@@ -334,13 +336,15 @@ public final class LibVlcPlaybackEngine {
                 recordNativeStage("VLC_LIBVLC_RELEASE_BEGIN");
                 instance.release();
             } catch (RuntimeException | LinkageError error) {
+                nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_LIBVLC_RELEASE_FAILED_" + error.getClass().getSimpleName());
             }
         }
         try {
             if (videoLayout != null) runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
         } catch (RuntimeException ignored) { }
-        recordNativeStage("VLC_RELEASE_COMPLETED");
+        recordNativeStage(nativeReleaseSucceeded ? "VLC_RELEASE_COMPLETED" : "VLC_RELEASE_INCOMPLETE");
+        return nativeReleaseSucceeded;
     }
 
     // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves
