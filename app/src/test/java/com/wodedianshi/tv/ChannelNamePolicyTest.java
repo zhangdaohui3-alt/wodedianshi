@@ -76,6 +76,17 @@ public class ChannelNamePolicyTest {
         assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("江苏 Suzhou TV"));
     }
 
+    @Test public void recognizesChineseCityNamesAndKeepsAmbiguousNamesConservative() {
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("福州综合频道"));
+        assertEquals("广东", ChannelNamePolicy.provinceForLocalChannel("深圳都市频道"));
+        assertEquals("湖北", ChannelNamePolicy.provinceForLocalChannel("襄阳新闻综合"));
+        assertEquals("新疆", ChannelNamePolicy.provinceForLocalChannel("喀什电视台"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("台州新闻频道"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("浙江台州新闻频道"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("玉林电视台"));
+        assertEquals("广西", ChannelNamePolicy.provinceForLocalChannel("广西玉林电视台"));
+    }
+
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
