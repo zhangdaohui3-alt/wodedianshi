@@ -23,14 +23,23 @@ public final class SourceChannelMergePolicy {
             int limit, Comparator<String> bestFirst, String primaryUrl, String activeUrl) {
         ArrayList<String> result = new ArrayList<>();
         if (limit <= 0) return result;
-        HashSet<String> endpoints = new HashSet<>();
+        java.util.HashMap<String, Integer> endpointIndexes = new java.util.HashMap<>();
         if (current != null) {
             for (String url : current) {
                 if (!isHttpUrl(url)) continue;
                 String key = SourceSelectionPolicy.endpointKey(url);
-                if (endpoints.add(key)) result.add(url);
+                Integer existingIndex = endpointIndexes.get(key);
+                if (existingIndex == null) {
+                    endpointIndexes.put(key, result.size());
+                    result.add(url);
+                } else if (url.equals(primaryUrl) || url.equals(activeUrl)) {
+                    // If two equivalent URL spellings exist, keep the exact signed/
+                    // selected URL that the user or channel has already chosen.
+                    result.set(existingIndex, url);
+                }
             }
         }
+        HashSet<String> endpoints = new HashSet<>(endpointIndexes.keySet());
         if (!isHttpUrl(candidate)) return result;
         String candidateKey = SourceSelectionPolicy.endpointKey(candidate);
         if (endpoints.contains(candidateKey)) return result;
