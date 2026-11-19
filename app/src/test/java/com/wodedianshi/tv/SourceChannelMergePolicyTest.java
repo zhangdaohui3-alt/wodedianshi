@@ -40,6 +40,30 @@ public class SourceChannelMergePolicyTest {
                 "https://mid.example/live.m3u8"), result);
     }
 
+    @Test public void neverEvictsTheUsersActiveSourceAtCapacity() {
+        List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
+                Arrays.asList("https://best.example/live.m3u8",
+                        "https://active-weak.example/live.m3u8"),
+                "https://mid.example/live.m3u8", 2, BEST_FIRST,
+                "https://best.example/live.m3u8",
+                "https://active-weak.example/live.m3u8");
+        assertEquals(Arrays.asList("https://best.example/live.m3u8",
+                "https://active-weak.example/live.m3u8"), result);
+    }
+
+    @Test public void neverEvictsStablePrimaryWhenActiveSourceIsDifferent() {
+        List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
+                Arrays.asList("https://primary-weak.example/live.m3u8",
+                        "https://active-mid.example/live.m3u8",
+                        "https://weak.example/live.m3u8"),
+                "https://best.example/live.m3u8", 3, BEST_FIRST,
+                "https://primary-weak.example/live.m3u8",
+                "https://active-mid.example/live.m3u8");
+        assertEquals(Arrays.asList("https://primary-weak.example/live.m3u8",
+                "https://active-mid.example/live.m3u8",
+                "https://best.example/live.m3u8"), result);
+    }
+
     @Test public void keepsExistingSourcesWhenNewSharedEndpointIsWorse() {
         List<String> result = SourceChannelMergePolicy.attachSharedEndpoint(
                 Arrays.asList("https://best.example/live.m3u8",
