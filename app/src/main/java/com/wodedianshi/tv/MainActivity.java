@@ -3997,7 +3997,7 @@ public class MainActivity extends Activity {
         @Override public void onAudioUnderrun(AnalyticsListener.EventTime eventTime,int bufferSize,long bufferSizeMs,long elapsedSinceLastFeedMs){
           if(listenerOwner!=MainActivity.this.player)return;
           int count=audioUnderrunCount.incrementAndGet();
-          if(count!=1&&count%5!=0)return;
+          if(!AudioUnderrunDiagnosticPolicy.shouldRecord(count))return;
           final String expectedMediaId=currentMediaId;
           final String detail="count="+count+" bufferSize="+bufferSize+" bufferSizeMs="+bufferSizeMs+" elapsedSinceLastFeedMs="+elapsedSinceLastFeedMs;
           uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("AUDIO_UNDERRUN",detail);});
@@ -4005,7 +4005,7 @@ public class MainActivity extends Activity {
         @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
           if(listenerOwner!=MainActivity.this.player||droppedFrames<=0)return;
           int count=videoDropReportCount.incrementAndGet();
-          if(count!=1&&count%5!=0)return;
+          if(!VideoFrameDropDiagnosticPolicy.shouldRecord(count))return;
           final String expectedMediaId=currentMediaId;
           final String detail="reports="+count+" droppedFrames="+droppedFrames+" elapsedMs="+elapsedMs;
           uiHandler.post(()->{if(expectedMediaId.equals(currentMediaId))saveLiveDiagnostic("VIDEO_DROPPED_FRAMES",detail);});
