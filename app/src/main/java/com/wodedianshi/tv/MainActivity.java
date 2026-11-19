@@ -371,13 +371,15 @@ public class MainActivity extends Activity {
     if(raw.isEmpty()||"[]".equals(raw))return false;
     try{
       org.json.JSONArray a=new org.json.JSONArray(raw);
+      ArrayList<Channel> previewChannels=new ArrayList<>();
       int count=Math.min(60,a.length());
       for(int i=0;i<count;i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
         String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
-        if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))channels.add(new Channel(name,url,group));
+        if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))previewChannels.add(new Channel(name,url,group));
       }
-      if(channels.isEmpty())return false;
+      if(previewChannels.isEmpty())return false;
+      channels.addAll(previewChannels);
       favorites.addAll(p.getStringSet("fav",new HashSet<>()));
       rebuildChannelIndexes();
       refresh();
