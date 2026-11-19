@@ -88,6 +88,17 @@ public class SourceUpdateWorker extends Worker {
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
+          com.wodedianshi.tv.db.AppStateEditor resetBuildState=
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
+          for(int feed=0;feed<feeds.length;feed++){
+            resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+          }
+          resetBuildState.remove("source_feed_batch_fingerprint")
+              .remove("source_feed_batch_scanned")
+              .remove("source_scan_after_key").remove("source_scan_cursor")
+              .remove("source_initial_discovery_fingerprint")
+              .remove("source_initial_discovery_scanned")
+              .apply();
           com.wodedianshi.tv.db.AppStateStore.put(
               getApplicationContext(),"source_full_rebuild_active","true");
         }
@@ -398,7 +409,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&initialDiscoveryComplete){
         update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
             .remove("source_full_rebuild_active");
-        if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
+        if(saved.length()>0)
           update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
