@@ -1988,7 +1988,7 @@ public class MainActivity extends Activity {
             return root.getJSONObject("response").getJSONArray("docs");
           }));
         }
-        long pageDeadline=android.os.SystemClock.elapsedRealtime()+14000L;
+        long pageDeadline=android.os.SystemClock.elapsedRealtime()+10000L;
         int pagesRemaining=pageTasks.size();
         while(pagesRemaining>0&&submitted<180&&!Thread.currentThread().isInterrupted()){
           long remaining=pageDeadline-android.os.SystemClock.elapsedRealtime();
@@ -2009,7 +2009,7 @@ public class MainActivity extends Activity {
           }catch(Exception ignored){}
         }
         for(Future<org.json.JSONArray> task:pageTasks)if(!task.isDone())task.cancel(true);
-        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+16000L;
+        long metadataDeadline=android.os.SystemClock.elapsedRealtime()+12000L;
         int lastProgressCount=0;
         while(completed<submitted&&found.size()<80&&!Thread.currentThread().isInterrupted()){
           long remaining=metadataDeadline-android.os.SystemClock.elapsedRealtime();
