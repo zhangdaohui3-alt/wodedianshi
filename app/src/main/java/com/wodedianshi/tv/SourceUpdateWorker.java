@@ -961,7 +961,8 @@ public class SourceUpdateWorker extends Worker {
       String host=u.getHost();
       if(host!=null&&!host.isEmpty())fallback=base+"|host:"+host.toLowerCase(Locale.ROOT);
     }catch(Exception ignored){fallback=base+"|url:"+(url==null?"":url.trim());}
-    return ChannelIdentityPolicy.identity(v,tvgId,fallback);
+    String localIdentity=ChannelIdentityPolicy.localStationIdentity(name,tvgName);
+    return ChannelIdentityPolicy.identity(v,tvgId,fallback,localIdentity);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
   private String roomString(String key,String fallback){
