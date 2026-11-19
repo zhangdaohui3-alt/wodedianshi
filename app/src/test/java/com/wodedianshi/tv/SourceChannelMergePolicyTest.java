@@ -7,7 +7,7 @@ import static org.junit.Assert.assertEquals;
 
 public class SourceChannelMergePolicyTest {
     private static final java.util.Comparator<String> BEST_FIRST =
-            (a, b) -> Integer.compare(score(a), score(b));
+            (a, b) -> Integer.compare(score(b), score(a));
 
     private static int score(String url) {
         if (url.contains("best")) return 100;
