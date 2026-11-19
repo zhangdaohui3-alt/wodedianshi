@@ -2,6 +2,8 @@ package com.wodedianshi.tv.db;
 
 import android.content.Context;
 import androidx.room.Room;
+import androidx.room.migration.Migration;
+import androidx.sqlite.db.SupportSQLiteDatabase;
 
 /**
  * Provides the one authoritative catalogue database.
@@ -12,6 +14,18 @@ import androidx.room.Room;
  */
 public final class RoomDatabaseProvider {
     private static volatile AppDatabase instance;
+
+    private static final Migration MIGRATION_6_7 = new Migration(6, 7) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS catalogue_build_rows ("
+                    + "rowId TEXT NOT NULL, sortOrder INTEGER NOT NULL, "
+                    + "recordJson TEXT NOT NULL, PRIMARY KEY(rowId))");
+            database.execSQL("CREATE INDEX IF NOT EXISTS "
+                    + "index_catalogue_build_rows_sortOrder "
+                    + "ON catalogue_build_rows(sortOrder)");
+        }
+    };
 
     private RoomDatabaseProvider() {}
 
@@ -25,7 +39,7 @@ public final class RoomDatabaseProvider {
                             context.getApplicationContext(),
                             AppDatabase.class,
                             "mytv_catalogue_clean_v1.db"
-                    ).build();
+                    ).addMigrations(MIGRATION_6_7).build();
                     instance = local;
                 }
             }
