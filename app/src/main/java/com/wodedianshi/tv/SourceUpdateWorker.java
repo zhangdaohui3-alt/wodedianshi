@@ -57,43 +57,10 @@ public class SourceUpdateWorker extends Worker {
        "https://iptv-org.github.io/iptv/index.m3u"
      };
     try{
-      JSONArray saved=new JSONArray(prefs.getString("channels","[]"));
-      LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
-      HashSet<String> knownUrls=new HashSet<>();
-      JSONObject measuredScores=new JSONObject(prefs.getString("source_probe_scores_v1","{}"));
-      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
-      for(int i=0;i<saved.length();i++){
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),c.optString("url")),c);
-        JSONArray src=c.optJSONArray("sources");
-        if(src!=null)for(int j=0;j<src.length();j++)knownUrls.add(src.optString(j));
-        knownUrls.add(c.optString("url"));
-      }
-      HashSet<String> originalIdentities=new HashSet<>(byIdentity.keySet());
+      JSONArray activeSnapshot=new JSONArray(prefs.getString("channels","[]"));
       ArrayList<Entry> candidates=new ArrayList<>();
-      // Include the user's already-saved backup URLs in the rotating health-check
-      // pool. Previously only URLs rediscovered in public playlists were probed,
-      // so a saved backup could silently die without ever losing its old score.
-      ArrayList<Entry> savedPool=new ArrayList<>();
-      HashSet<String> savedPoolUrls=new HashSet<>();
-      for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
-        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
-        String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
-        LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
-        JSONArray sources=channel.optJSONArray("sources");
-        if(sources!=null)for(int j=0;j<sources.length();j++){
-          String u=sources.optString(j,"");
-          if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
-        }
-        String primary=channel.optString("url","");
-        if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
-        for(String u:channelUrls){
-          if(savedPool.size()>=20000)break;
-          // A shared URL only needs one network probe, even if several channel
-          // entries reference it. Keep the first channel identity for diagnostics.
-          if(savedPoolUrls.add(u))savedPool.add(new Entry(channelName,u,channelGroup,true));
-        }
-      }
-      int feedIndex=0;
+      JSONObject observedQoe=new JSONObject(prefs.getString("source_qoe_v1","{}"));
+      int feedIndex=0,chinaFeedsOk=0;
       for(String feed:feeds){
         if(isStopped())return Result.retry();
         reportProgress("读取目录",feedIndex+1,feeds.length,
@@ -115,18 +82,67 @@ public class SourceUpdateWorker extends Worker {
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
           for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
           feedsOk++;
+          if(feedIndex<3)chinaFeedsOk++;
           reportProgress("读取目录",feedIndex+1,feeds.length,
               "已读取 "+feedsOk+" 个目录，正在继续整理频道资料");
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();feedIndex++;}
       }
-      ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
-      for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
+      String catalogueFingerprint=ChannelCatalogueRefreshCyclePolicy.fingerprint(discoveryScanUrls);
+      JSONObject previousStage=readCatalogueStage();
+      boolean continuingCycle=previousStage!=null
+          &&catalogueFingerprint.equals(previousStage.optString("fingerprint",""));
+      JSONArray saved=continuingCycle
+          ?new JSONArray(previousStage.optString("channels","[]"))
+          :new JSONArray(activeSnapshot.toString());
+      JSONArray baselineIdentitiesJson=continuingCycle
+          ?previousStage.optJSONArray("originalIdentities"):null;
+      if(baselineIdentitiesJson==null)baselineIdentitiesJson=buildIdentityArray(activeSnapshot);
+      HashSet<String> originalIdentities=readIdentitySet(baselineIdentitiesJson);
+      JSONObject measuredScores=new JSONObject(continuingCycle
+          ?previousStage.optString("scores",prefs.getString("source_probe_scores_v1","{}"))
+          :prefs.getString("source_probe_scores_v1","{}"));
+      LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
+      HashSet<String> knownUrls=new HashSet<>();
+      for(int i=0;i<saved.length();i++){
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        byIdentity.put(identity(channel.optString("name"),channel.optString("group"),channel.optString("url")),channel);
+        JSONArray sources=channel.optJSONArray("sources");
+        if(sources!=null)for(int j=0;j<sources.length();j++)knownUrls.add(sources.optString(j));
+        knownUrls.add(channel.optString("url"));
+      }
+      ArrayList<Entry> savedPool=new ArrayList<>();
+      HashSet<String> savedPoolUrls=new HashSet<>();
+      for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
+        LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
+        JSONArray sources=channel.optJSONArray("sources");
+        if(sources!=null)for(int j=0;j<sources.length();j++){
+          String url=sources.optString(j,"");
+          if(url.startsWith("http://")||url.startsWith("https://"))channelUrls.add(url);
+        }
+        String primary=channel.optString("url","");
+        if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
+        for(String url:channelUrls){
+          if(savedPool.size()>=20000)break;
+          if(savedPoolUrls.add(url))savedPool.add(new Entry(channelName,url,channelGroup,true));
+        }
+      }
+      if(candidates.isEmpty()){
+        saveStatus(prefs,"本轮没有读取到可用的频道目录；暂存资料和正式频道库均保持不变",0);
+        reportProgress("等待目录",0,0,"未取得有效目录，原频道库继续使用，稍后自动重试");
+        return Result.retry();
+      }
+      ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
+      for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, prefs.getString("source_saved_scan_after_key",""), prefs.getInt("source_saved_scan_cursor",0));
       int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, prefs.getString("source_scan_after_key",""), prefs.getInt("source_scan_cursor",0));
+      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls,
+          continuingCycle?prefs.getString("source_scan_after_key",""):"",
+          continuingCycle?prefs.getInt("source_scan_cursor",0):0);
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
