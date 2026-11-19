@@ -123,17 +123,23 @@ final class ChannelNamePolicy {
                 && containsAlias(metadata, province, normalized)) {
             return normalize(province);
         }
-        java.util.LinkedHashSet<String> matches = new java.util.LinkedHashSet<>();
+        java.util.LinkedHashSet<String> chineseMatches = new java.util.LinkedHashSet<>();
+        java.util.LinkedHashSet<String> englishMatches = new java.util.LinkedHashSet<>();
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             if (!province.equals(aliases[0])) continue;
             for (int i = 1; i < aliases.length; i++) {
-                if (containsAlias(metadata, aliases[i], normalized)) {
-                    matches.add(normalize(aliases[i]));
-                }
+                if (!containsAlias(metadata, aliases[i], normalized)) continue;
+                String alias = normalize(aliases[i]);
+                if (alias.matches(".*[\\u4E00-\\u9FFF].*")) chineseMatches.add(alias);
+                else englishMatches.add(alias);
             }
         }
-        // More than one city in the same metadata is not a reliable city key.
-        return matches.size() == 1 ? matches.iterator().next() : "";
+        // Prefer a single Chinese city token when feeds include both Chinese and
+        // English aliases for that same city. Multiple distinct city tokens stay
+        // ambiguous; English-only metadata is accepted only when unique.
+        if (chineseMatches.size() == 1) return chineseMatches.iterator().next();
+        if (!chineseMatches.isEmpty()) return "";
+        return englishMatches.size() == 1 ? englishMatches.iterator().next() : "";
     }
 
     static boolean hasSpecificLocalCity(String metadata) {
