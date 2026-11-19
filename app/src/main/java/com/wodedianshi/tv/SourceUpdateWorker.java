@@ -152,7 +152,8 @@ public class SourceUpdateWorker extends Worker {
       int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls,
           continuingCycle?prefs.getString("source_scan_after_key",""):"",
           continuingCycle?prefs.getInt("source_scan_cursor",0):0);
-      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
+      boolean previousScanComplete=continuingCycle&&previousStage.optBoolean("scanComplete",false);
+      int discoveryWindow=previousScanComplete?0:Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -241,22 +242,26 @@ public class SourceUpdateWorker extends Worker {
       // Do not expose a partially scanned directory as the active catalogue.
       // Keep the prepared candidate and accumulated probe scores in an AtomicFile
       // until the discovery cursor reaches the end of this exact feed snapshot.
-      boolean discoveryCycleComplete=ChannelCatalogueRefreshCyclePolicy.isComplete(
-          discoveryScanStart,discoveryScanned,candidates.size(),chinaFeedsOk>0);
+      boolean scanComplete=previousScanComplete
+          ||ChannelCatalogueRefreshCyclePolicy.isScanComplete(discoveryScanStart,discoveryScanned,candidates.size());
+      boolean discoveryCycleComplete=ChannelCatalogueRefreshCyclePolicy.canActivate(scanComplete,chinaFeedsOk>0);
       if(!discoveryCycleComplete){
         JSONObject stageState=new JSONObject();
         stageState.put("fingerprint",catalogueFingerprint);
         stageState.put("channels",saved.toString());
         stageState.put("originalIdentities",baselineIdentitiesJson);
         stageState.put("scores",measuredScores.toString());
+        stageState.put("scanComplete",scanComplete);
         if(!writeCatalogueStage(stageState)){
           saveStatus(prefs,"频道资料暂存失败，正式频道库未改变；稍后重试",0);
           reportProgress("暂存失败",discoveryScanStart+Math.max(0,discoveryScanned),
               candidates.size(),"候选资料暂存失败，原频道库保持不变");
           return Result.retry();
         }
-        String progressMessage="已完成 "+Math.min(candidates.size(),discoveryScanStart+discoveryScanned)
-            +"/"+candidates.size()+" 条候选线路的轮转检测；新资料仍在暂存，正式频道库继续使用旧版本";
+        String progressMessage=scanComplete
+            ?"全部 "+candidates.size()+" 条候选线路已完成轮转检测，但中国区域目录暂不可用；资料继续暂存，正式频道库保持旧版本"
+            :"已完成 "+Math.min(candidates.size(),discoveryScanStart+discoveryScanned)
+                +"/"+candidates.size()+" 条候选线路的轮转检测；新资料仍在暂存，正式频道库继续使用旧版本";
         boolean progressSaved=prefs.edit()
             .putInt("source_scan_cursor",(discoveryScanStart+discoveryScanned)%candidates.size())
             .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
