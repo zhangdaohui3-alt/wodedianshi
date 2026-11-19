@@ -252,12 +252,18 @@ public class SourceUpdateWorker extends Worker {
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
       int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, roomString("source_scan_after_key",""), roomInt("source_scan_cursor",0));
-      int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       String discoveryFingerprint=discoveryFingerprint(candidates);
       String previousDiscoveryFingerprint=roomString("source_feed_batch_fingerprint","");
-      int initialDiscoveryScanned=discoveryFingerprint.equals(previousDiscoveryFingerprint)
-          ?roomInt("source_feed_batch_scanned",0):0;
+      int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
+          discoveryFingerprint,previousDiscoveryFingerprint,
+          roomInt("source_feed_batch_scanned",0),candidates.size());
+      // Resume by exact position inside an unchanged batch. URL-based cursors are
+      // unsafe because distinct channel identities can share one endpoint; choosing
+      // the last duplicate URL can skip entries that were not yet scanned.
+      int discoveryScanStart=DiscoveryBatchPolicy.startIndex(
+          initialDiscoveryScanned,candidates.size());
+      int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
+          initialDiscoveryScanned,candidates.size()),MAX_PROBES_PER_RUN-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
