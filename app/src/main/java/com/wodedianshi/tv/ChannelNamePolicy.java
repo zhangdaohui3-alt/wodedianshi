@@ -84,17 +84,19 @@ final class ChannelNamePolicy {
         String normalized = normalize(metadata);
         if (normalized.isEmpty()) return "";
         String matchedProvince = "";
+        boolean explicitProvince = false;
         for (String[] aliases : LOCAL_CITY_ALIASES) {
             // Some feeds expose only the province in group-title rather than a city.
             if (containsAlias(metadata, aliases[0], normalized)) {
                 if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
                 matchedProvince = aliases[0];
+                explicitProvince = true;
             }
             for (int i = 1; i < aliases.length; i++) {
                 String alias = normalize(aliases[i]);
                 if (!containsAlias(metadata, aliases[i], normalized)) continue;
                 for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
-                    if (alias.equals(ambiguous)) return "";
+                    if (alias.equals(ambiguous) && !explicitProvince) return "";
                 }
                 if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
                 matchedProvince = aliases[0];
