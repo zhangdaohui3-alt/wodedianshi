@@ -125,7 +125,8 @@ public class SourceUpdateWorker extends Worker {
       // so a saved backup could silently die without ever losing its old score.
       ArrayList<Entry> savedPool=new ArrayList<>();
       HashSet<String> savedPoolUrls=new HashSet<>();
-      // A foreground China-first pass validates newly discovered domestic candidates only.
+      // A foreground full rebuild probes the staged discovery candidates; it does not
+      // import old catalogue sources. Routine background maintenance also checks saved URLs.
       // Avoid allocating up to 20,000 additional saved-source Entry objects while the
       // TV UI is open; the full rotating health-check pool is retained for background runs.
       if(!foregroundAtStart){
