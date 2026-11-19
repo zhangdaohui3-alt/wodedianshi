@@ -196,9 +196,13 @@ public interface ChannelDao {
             + "WHERE channelId = channels.id AND url = :sourceUrl)")
     int setActiveSourceByLegacyKeyAndUrl(String legacyKey, String sourceUrl);
 
-    @Query("UPDATE catalogue_migrations SET favoritesCount = (SELECT COUNT(*) FROM favorites) "
+    @Query("UPDATE catalogue_migrations SET favoritesCount = (SELECT COUNT(*) FROM favorites), "
+            + "completedAt = :completedAt WHERE migrationKey = :migrationKey")
+    int refreshFavoriteCheckpointCount(String migrationKey, long completedAt);
+
+    @Query("UPDATE catalogue_migrations SET completedAt = :completedAt "
             + "WHERE migrationKey = :migrationKey")
-    int refreshFavoriteCheckpointCount(String migrationKey);
+    int touchCatalogueCheckpoint(String migrationKey, long completedAt);
 
     @Query("DELETE FROM favorites WHERE channelId IN "
             + "(SELECT id FROM channels WHERE legacyKey = :legacyKey)")

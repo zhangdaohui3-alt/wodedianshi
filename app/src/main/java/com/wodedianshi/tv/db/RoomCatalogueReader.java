@@ -75,10 +75,13 @@ public final class RoomCatalogueReader {
         public final List<ChannelRecord> channels;
         public final Set<String> favorites;
         public final int channelCount;
-        Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount) {
+        public final long catalogueVersion;
+        Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount,
+                long catalogueVersion) {
             this.channels = channels;
             this.favorites = favorites;
             this.channelCount = channelCount;
+            this.catalogueVersion = catalogueVersion;
         }
     }
 
@@ -98,6 +101,10 @@ public final class RoomCatalogueReader {
         MasterCatalogueRepository repository = new MasterCatalogueRepository(context);
         if (!repository.isSnapshotReady()) return null;
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
+        CatalogueMigrationEntity initialCheckpoint =
+                dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if (initialCheckpoint == null) return null;
+        final long catalogueVersion = initialCheckpoint.completedAt;
         ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
         int total = dao.countChannels();
         int loaded = 0;
@@ -118,7 +125,12 @@ public final class RoomCatalogueReader {
         // callers can retain the previous complete local directory instead.
         CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
+        CatalogueMigrationEntity finalCheckpoint =
+                dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if (finalCheckpoint == null || finalCheckpoint.completedAt != catalogueVersion) {
+            throw new IllegalStateException("Room catalogue changed while its snapshot was being read");
+        }
         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
-                favorites, loaded);
+                favorites, loaded, catalogueVersion);
     }
 }

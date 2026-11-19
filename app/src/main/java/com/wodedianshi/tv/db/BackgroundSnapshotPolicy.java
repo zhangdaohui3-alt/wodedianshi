@@ -1,14 +1,17 @@
 package com.wodedianshi.tv.db;
 
-/** Safety gate for background refreshes that must preserve the existing directory. */
+/**
+ * Validates the shape of a fully collected catalogue snapshot.
+ *
+ * The number of rows may legitimately grow or shrink after deduplication,
+ * channel validation and removal of dead entries. A positive row count alone
+ * is not the completeness check; RoomCatalogueWriter validates every row and
+ * commits the exact snapshot atomically.
+ */
 public final class BackgroundSnapshotPolicy {
     private BackgroundSnapshotPolicy() {}
 
-    /**
-     * Source refreshes only enrich a complete Room snapshot; they are never allowed
-     * to shrink it. A genuinely empty first-run database may accept its first seed.
-     */
     public static boolean isComplete(int existingChannels, int incomingChannels) {
-        return existingChannels <= 0 || incomingChannels >= existingChannels;
+        return incomingChannels > 0;
     }
 }

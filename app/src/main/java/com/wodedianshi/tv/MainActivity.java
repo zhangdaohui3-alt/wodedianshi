@@ -115,6 +115,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // SharedPreferences persistence now runs on a background writer; synchronize
   // the wrapper so UI favorite toggles cannot race its detached snapshot.
   private final Set<String> favorites = Collections.synchronizedSet(new HashSet<String>());
+  // Durable business state is loaded from Room on the startup worker.
+  private static final String ROOM_STATE_LAST_CHANNEL_IDENTITY="last_channel_identity";
+  private static final String ROOM_STATE_LAST_CHANNEL_URL="last_channel_url";
+  private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
+  private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
+  private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
+  private static final String ROOM_STATE_SOURCE_QOE="source_qoe_v1";
+  private volatile String roomLastChannelIdentity="";
+  private volatile String roomLastChannelUrl="";
+  private volatile String roomVodFavoritesJson="[]";
+  private volatile String roomVodHistoryJson="[]";
+  private volatile String roomSourceProbeJson="{}";
+  private volatile String roomSourceQoeJson="{}";
+  private volatile long roomSourceUpdateLastSuccessAt=0L;
+  private volatile long roomChinaSupplementLastSuccess=0L;
+  private volatile int roomChinaCachedCount=0;
+  private volatile boolean roomChinaDirectoryCommitted=false;
+  private volatile long roomGlobalSupplementLastSuccess=0L;
+  private final Map<String,Long> roomVodCacheTimes=Collections.synchronizedMap(new HashMap<String,Long>());
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
@@ -123,7 +142,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Catalogue snapshots and JSON encoding must never run on the UI thread. One
   // serial writer coalesces bursts of remote-control actions into the newest state.
   private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
-  private final ExecutorService catalogueReconcileWorker = Executors.newSingleThreadExecutor();
   private final Object cataloguePersistLock = new Object();
   // Serializes disk commits with background-candidate preference publication.
   // UI persistence requests use cataloguePersistLock only, never this I/O lock.
@@ -275,19 +293,52 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long prefsWarmStarted = android.os.SystemClock.elapsedRealtime();
       try {
         android.content.SharedPreferences startupPrefs=getSharedPreferences("mytv",0);
-        // Old channel JSON and favorites are explicitly disposable. Remove only
-        // catalogue-era keys while preserving playback, parental-lock and UI settings.
-        boolean hadLegacyCatalogue=startupPrefs.contains("channels")
+        // Previous releases are intentionally not migrated. Remove old business-data keys.
+        boolean hadLegacyBusinessData=startupPrefs.contains("channels")
             ||startupPrefs.contains("fav")
-            ||startupPrefs.contains("source_update_pending_channels");
-        if(hadLegacyCatalogue){
-          boolean cleared=startupPrefs.edit()
+            ||startupPrefs.contains("last_channel_identity")
+            ||startupPrefs.contains("last_channel_url")
+            ||startupPrefs.contains("vod_favorites_v1")
+            ||startupPrefs.contains("vod_history_v1")
+            ||startupPrefs.contains("source_probe_scores_v1")
+            ||startupPrefs.contains("source_qoe_v1")
+            ||startupPrefs.contains("source_update_result")
+            ||startupPrefs.contains("source_update_time")
+            ||startupPrefs.contains("source_last_good_v1")
+            ||startupPrefs.contains("source_cooldowns_v1");
+        for(String legacyKey:startupPrefs.getAll().keySet()){
+          if(legacyKey.startsWith("vod_cache_")||legacyKey.startsWith("china_supplement_")
+              ||legacyKey.startsWith("china_directory_")||legacyKey.startsWith("global_supplement_")
+              ||legacyKey.startsWith("source_probe_")||legacyKey.startsWith("source_qoe_")
+              ||legacyKey.startsWith("source_scan_")||legacyKey.startsWith("source_saved_scan_")
+              ||legacyKey.startsWith("source_feed_")||legacyKey.startsWith("source_initial_discovery_")
+              ||legacyKey.startsWith("source_update_last_success")||legacyKey.startsWith("geo_snapshot_")){
+            hadLegacyBusinessData=true;
+            break;
+          }
+        }
+        if(hadLegacyBusinessData){
+          android.content.SharedPreferences.Editor cleanup=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
               .remove("source_update_pending_channels")
               .remove("source_update_pending_base")
               .remove("source_update_pending_base_fingerprint")
-              .commit();
-          android.util.Log.i("MyTVRoom","discarded legacy channel cache committed="+cleared);
+              .remove("last_channel_identity").remove("last_channel_url")
+              .remove("vod_favorites_v1").remove("vod_history_v1")
+              .remove("source_last_good_v1").remove("source_cooldowns_v1");
+          for(String key:startupPrefs.getAll().keySet()){
+            if(key.startsWith("source_probe_")||key.startsWith("source_qoe_")
+                ||key.startsWith("source_scan_")||key.startsWith("source_saved_scan_")
+                ||key.startsWith("source_feed_")||key.startsWith("source_initial_discovery_")
+                ||key.startsWith("source_update_last_success")||key.startsWith("vod_cache_")
+                ||key.startsWith("china_supplement_")||key.startsWith("china_directory_")
+                ||key.startsWith("global_supplement_")||key.startsWith("geo_snapshot_")
+                ||"source_update_time".equals(key)||"source_update_result".equals(key)){
+              cleanup.remove(key);
+            }
+          }
+          boolean cleared=cleanup.commit();
+          android.util.Log.i("MyTVRoom","discarded legacy non-authoritative business data committed="+cleared);
         }
         recordPreviousProcessExitReason();
         setSourceUpdatePlaybackActive(false);
@@ -366,40 +417,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
         });
     });
-  }
-  // Apply newly bundled, explicitly identified 1080p sources once on upgrade,
-  // including for users whose channel list was already saved by an older build.
-  private void loadBundledHdBackups(){
-    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    // The bundled playlist is an upgrade migration, not startup work. The old
-    // implementation reparsed the entire M3U and resorted every channel on
-    // every launch, making app entry progressively slower as the list grew.
-    final int bundledVersion=3;
-    if(prefs.getInt("bundled_channels_version",0)>=bundledVersion)return;
-    boolean loaded=false;
-    try(InputStream in=getAssets().open("default_channels.m3u")){
-      parse(read(in));
-      loaded=true;
-    }catch(Exception ignored){}
-    boolean changed=false;
-    synchronized(channels){
-      for(Channel c:channels){
-        if(c.backups==null||c.backups.size()<2)continue;
-        String active=(c.activeSource>=0&&c.activeSource<c.backups.size())?c.backups.get(c.activeSource):c.url;
-        ArrayList<String> ordered=new ArrayList<>(c.backups);
-        // Score each endpoint once. Parsing the same SharedPreferences JSON from
-        // inside the comparator multiplied disk/string/JSON work by O(n log n).
-        HashMap<String,Double> scores=observedSourceScores(ordered);
-        ordered.sort((a,b)->Double.compare(scores.get(b),scores.get(a)));
-        if(!ordered.equals(c.backups)){
-          c.backups.clear();c.backups.addAll(ordered);
-          int index=c.backups.indexOf(active);c.activeSource=index>=0?index:0;
-          changed=true;
-        }
-      }
-    }
-    if(changed){persist();}
-    if(loaded)prefs.edit().putBoolean("source_quality_order_v2",true).putInt("bundled_channels_version",bundledVersion).apply();
   }
   private int sourceQualityScore(String source){
     return SourceQualityScorer.labelScore(source);
@@ -571,111 +588,41 @@ public class MainActivity extends androidx.activity.ComponentActivity {
    * from the bundled playlist; previous SharedPreferences channel snapshots are
    * intentionally ignored. First boot may take longer while the seed is built.
    */
+  /**
+   * Room is the sole persistent channel catalogue. A fresh database is seeded
+   * from the bundled playlist; no legacy JSON or sidecar file cache is read.
+   * Every later launch restores the complete, validated Room snapshot.
+   */
   private void restore(){
     catalogueSnapshotTrusted=false;
+    loadRoomAppState();
     final long restoreStarted=android.os.SystemClock.elapsedRealtime();
-    // A verified local directory is the first startup source. It is deliberately
-    // loaded before Room reconciliation and never depends on network availability.
-    try{
-      DirectoryCacheStore.Snapshot cached=new DirectoryCacheStore(getFilesDir())
-          .load(DirectoryCacheStore.Directory.ALL,null);
-      if(cached!=null){
-        ChannelDirectorySnapshotCodec.Snapshot decoded=
-            ChannelDirectorySnapshotCodec.decode(cached.payload);
-        synchronized(channels){channels.clear();for(com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row:decoded.channels){
-          Channel channel=new Channel(row.name,row.url,row.group);
-          channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
-          channel.backups.clear();channel.backups.addAll(row.sources);
-          channel.sourceScopes.addAll(row.sourceScopes);
-          for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet())
-            channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-          channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-          channels.add(channel);
-        }}
-        synchronized(favorites){favorites.clear();favorites.addAll(decoded.favorites);}
-        rebuildChannelIndexes();
-        catalogueSnapshotTrusted=true;
-        logCatalogueMemory("local_cache_ready",channels.size(),countChannelSources(),
-            android.os.SystemClock.elapsedRealtime()-restoreStarted);
-        android.util.Log.i("MyTVCache","offline directory snapshot restored channels="+channels.size());
-        scheduleRoomCatalogueReconciliation();
-        return;
-      }
-    }catch(Throwable cacheFailure){
-      android.util.Log.w("MyTVCache","local directory cache rejected; falling back to Room",cacheFailure);
-    }
     synchronized(channels){channels.clear();}
     synchronized(favorites){favorites.clear();}
     try{
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
-          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
-            synchronized(channels){
-              for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-                Channel channel=new Channel(row.name,row.url,row.group);
-                channel.tvgId=row.tvgId;
-                channel.tvgName=row.tvgName;
-                channel.backups.clear();
-                channel.backups.addAll(row.sources);
-                channel.sourceScopes.addAll(row.sourceScopes);
-                for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-                  channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-                }
-                channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-                channels.add(channel);
-              }
-            }
-          });
-
+          readRoomCatalogueIntoMemory();
       if(roomSnapshot==null){
-        android.util.Log.i("MyTVRoom","fresh Room catalogue detected; building native seed");
+        android.util.Log.i("MyTVRoom","fresh authoritative Room database; seeding bundled channels");
         try(InputStream in=getAssets().open("default_channels.m3u")){
           String bundled=read(in);
           parse(bundled);
         }
         rebuildChannelIndexes();
         ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> seed=
-            new ArrayList<>(channels.size());
-        synchronized(channels){
-          for(Channel channel:channels){
-            if(channel==null)continue;
-            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-            row.name=channel.name;row.url=channel.url;row.group=channel.group;
-            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
-            row.activeSource=channel.activeSource;
-            if(channel.backups!=null)row.sources.addAll(channel.backups);
-            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-            if(channel.backupSourceScopes!=null){
-              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
-                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-              }
-            }
-            seed.add(row);
-          }
-        }
+            snapshotChannelRows();
+        if(seed.isEmpty())throw new IllegalStateException("Bundled channel seed contains no usable channels");
         int seeded=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
-            getApplicationContext(),seed,new HashSet<>());
-        if(seeded<=0)throw new IllegalStateException("Bundled channel seed contains no usable channels");
-        android.util.Log.i("MyTVRoom","native first-run seed committed channels="+seeded);
-        synchronized(channels){channels.clear();}
-        roomSnapshot=com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
-          synchronized(channels){
-            for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-              Channel channel=new Channel(row.name,row.url,row.group);
-              channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
-              channel.backups.clear();channel.backups.addAll(row.sources);
-              channel.sourceScopes.addAll(row.sourceScopes);
-              for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-                channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-              }
-              channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-              channels.add(channel);
-            }
-          }
-        });
+            getApplicationContext(),seed,Collections.emptySet());
+        if(seeded<=0||seeded!=seed.size()){
+          throw new IllegalStateException("Room seed validation failed: expected "
+              +seed.size()+" rows, wrote "+seeded);
+        }
+        android.util.Log.i("MyTVRoom","first-run Room seed committed channels="+seeded);
+        roomSnapshot=readRoomCatalogueIntoMemory();
       }
       if(roomSnapshot==null||roomSnapshot.channelCount<=0){
-        throw new IllegalStateException("Room catalogue initialization did not produce a valid snapshot");
+        throw new IllegalStateException("Room catalogue initialization did not produce a complete snapshot");
       }
       synchronized(favorites){
         favorites.clear();
@@ -683,10 +630,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       rebuildChannelIndexes();
       catalogueSnapshotTrusted=true;
-      writeLocalDirectorySnapshot("room_restore");
-      int sourceCount=0;
-      synchronized(channels){for(Channel channel:channels)sourceCount+=channel.backups.size();}
-      logCatalogueMemory("room_restore_ready",channels.size(),sourceCount,
+      int sourceCount=countChannelSources();
+      logCatalogueMemory("room_restore_ready",roomSnapshot.channelCount,sourceCount,
           android.os.SystemClock.elapsedRealtime()-restoreStarted);
       android.util.Log.i("MyTVRoom","Room-only restore complete channels="
           +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
@@ -697,14 +642,98 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       android.util.Log.e("MyTVRoom","Room-only startup initialization failed",failure);
       saveLiveDiagnostic("ROOM_STARTUP_ERROR",
           failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
-      throw new IllegalStateException("频道目录初始化失败，请检查网络和内置频道目录后重试",failure);
+      throw new IllegalStateException("频道目录初始化失败，未载入不完整目录，请重试",failure);
     }
   }
+
+  /** Read all Room pages and publish them to the in-memory UI model only on success. */
+  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueIntoMemory(){
+    synchronized(channels){channels.clear();}
+    return com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+      synchronized(channels){
+        for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+          Channel channel=new Channel(row.name,row.url,row.group);
+          channel.tvgId=row.tvgId;
+          channel.tvgName=row.tvgName;
+          channel.backups.clear();
+          channel.backups.addAll(row.sources);
+          channel.sourceScopes.addAll(row.sourceScopes);
+          for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+            channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+          }
+          channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+          channels.add(channel);
+        }
+      }
+    });
+  }
+
+  private void loadRoomAppState(){
+    roomLastChannelIdentity=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_IDENTITY,"");
+    roomLastChannelUrl=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_URL,"");
+    roomVodFavoritesJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
+    roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
+    roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
+    roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
+    roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
+    roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
+    roomChinaCachedCount=parseRoomInt("china_directory_cached_count",0);
+    roomChinaDirectoryCommitted=Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),"china_directory_room_committed","false"));
+    roomGlobalSupplementLastSuccess=parseRoomLong("global_supplement_last_success",0L);
+    SourceMemoryStore.initialize(getApplicationContext());
+  }
+
+  private long parseRoomLong(String key,long fallback){
+    try{return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Long.toString(fallback)));}
+    catch(Exception ignored){return fallback;}
+  }
+  private int parseRoomInt(String key,int fallback){
+    try{return Integer.parseInt(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Integer.toString(fallback)));}
+    catch(Exception ignored){return fallback;}
+  }
+
+  private void queueRoomAppStateWrite(String key,String value){
+    if(key==null||value==null)return;
+    try{
+      cataloguePersistWorker.execute(()->{
+        try{
+          com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),key,value);
+        }catch(Throwable failure){
+          android.util.Log.e("MyTVRoomState","failed to persist "+key,failure);
+        }
+      });
+    }catch(RuntimeException rejected){
+      android.util.Log.e("MyTVRoomState","state write queue rejected key="+key,rejected);
+    }
+  }
+
+  private void saveRoomVodFavorites(String json){
+    roomVodFavoritesJson=json==null?"[]":json;
+    queueRoomAppStateWrite(ROOM_STATE_VOD_FAVORITES,roomVodFavoritesJson);
+  }
+
+  private void saveRoomVodHistory(String json){
+    roomVodHistoryJson=json==null?"[]":json;
+    queueRoomAppStateWrite(ROOM_STATE_VOD_HISTORY,roomVodHistoryJson);
+  }
+
   private int countChannelSources(){
-    int count=0;synchronized(channels){for(Channel channel:channels)
-      if(channel!=null&&channel.backups!=null)count+=channel.backups.size();}
+    int count=0;
+    synchronized(channels){
+      for(Channel channel:channels){
+        if(channel!=null&&channel.backups!=null)count+=channel.backups.size();
+      }
+    }
     return count;
   }
+
   private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> snapshotChannelRows(){
     ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>();
     synchronized(channels){for(Channel channel:channels){
@@ -722,80 +751,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }}
     return rows;
   }
-  private void writeLocalDirectorySnapshot(String reason){
-    ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
-    HashSet<String> favoriteSnapshot;synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
-    writeLocalDirectorySnapshotFromRows(rows,favoriteSnapshot,reason);
-  }
-  private void writeLocalDirectorySnapshotFromRows(
-      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows,
-      Set<String> favoriteSnapshot,String reason){
-    try{
-      byte[] payload=ChannelDirectorySnapshotCodec.encode(rows,favoriteSnapshot);
-      new DirectoryCacheStore(getFilesDir()).save(DirectoryCacheStore.Directory.ALL,
-          "room-catalogue-v1",payload,System.currentTimeMillis());
-      android.util.Log.i("MyTVCache","local snapshot committed reason="+reason
-          +" channels="+rows.size()+" bytes="+payload.length);
-    }catch(Throwable cacheFailure){
-      // Room remains authoritative; a cache write failure must not roll back a
-      // successful database transaction or publish a partial local snapshot.
-      android.util.Log.e("MyTVCache","local snapshot write failed reason="+reason,cacheFailure);
-    }
-  }
-  private void scheduleRoomCatalogueReconciliation(){
-    final long generationAtStart=catalogueMutationGeneration;
-    try{catalogueReconcileWorker.execute(()->{
-      final ArrayList<Channel> restored=new ArrayList<>();
-      try{
-        com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot room=
-            com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
-              for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-                Channel channel=new Channel(row.name,row.url,row.group);
-                channel.tvgId=row.tvgId;channel.tvgName=row.tvgName;
-                channel.backups.clear();channel.backups.addAll(row.sources);
-                channel.sourceScopes.addAll(row.sourceScopes);
-                for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet())
-                  channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-                channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-                restored.add(channel);
-              }
-            });
-        if(room==null||room.channelCount<=0)throw new IllegalStateException("Room reconciliation returned no complete catalogue");
-        synchronized(cataloguePersistLock){
-          if(catalogueMutationGeneration!=generationAtStart){
-            android.util.Log.i("MyTVCache","Room reconciliation skipped after newer user mutation");
-            return;
-          }
-        }
-        synchronized(channels){
-          String selectedIdentity=selected>=0&&selected<channels.size()
-              ?identity(channels.get(selected)):null;
-          channels.clear();channels.addAll(restored);
-          if(selectedIdentity!=null){
-            selected=-1;
-            for(int i=0;i<channels.size();i++)if(selectedIdentity.equals(identity(channels.get(i)))){
-              selected=i;break;
-            }
-          }
-        }
-        synchronized(favorites){favorites.clear();favorites.addAll(room.favorites);}
-        rebuildChannelIndexes();
-        writeLocalDirectorySnapshot("room_reconcile");
-        runOnUiThread(()->{
-          if(isFinishing()||isDestroyed())return;
-          refresh();
-          if(info!=null)info.setText("已载入 "+channels.size()+" 个已保存频道");
-        });
-        android.util.Log.i("MyTVCache","Room reconciliation complete channels="+room.channelCount);
-      }catch(Throwable failure){
-        // Keep the already displayed verified local cache. Never clear it because
-        // the database is temporarily unavailable or its read was incomplete.
-        android.util.Log.w("MyTVCache","Room reconciliation failed; keeping local cache",failure);
-      }
-    });}catch(RuntimeException rejected){
-      android.util.Log.w("MyTVCache","Room reconciliation queue rejected",rejected);
-    }
-  }
+
   private void rebuildChannelIndexes(){
     synchronized(channels){
       // If the user starts playback from the first progressively revealed page,
@@ -952,15 +908,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Persist the channel, not the last attempted source. startCurrentSource() calls
     // this before playback succeeds, so last_source_url could permanently remember
     // a dead endpoint and make every next launch start from that failed URL.
-    getSharedPreferences("mytv",0).edit()
-        .putString("last_channel_identity",identity(c))
-        .putString("last_channel_url",c.url).apply();
+    roomLastChannelIdentity=identity(c);
+    roomLastChannelUrl=c.url==null?"":c.url;
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,roomLastChannelIdentity);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,roomLastChannelUrl);
   }
   private void restoreLastChannel(){
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String savedIdentity=p.getString("last_channel_identity","");
+    String savedIdentity=roomLastChannelIdentity;
     if(savedIdentity.isEmpty())return;
-    String savedUrl=p.getString("last_channel_url","");
+    String savedUrl=roomLastChannelUrl;
     int found=-1;
     for(int i=0;i<channels.size();i++){
       Channel c=channels.get(i);
@@ -1110,7 +1066,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
           getApplicationContext(),rows,favoriteSnapshot);
       if(written<=0)throw new IllegalStateException("Room wrote zero channel rows");
-      writeLocalDirectorySnapshotFromRows(rows,favoriteSnapshot,"room_persist");
       saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM",
           "saved "+written+" channels, "+sourceCount+" source routes and "+favoriteSnapshot.size()+" favorites");
       logCatalogueMemory("room_persist_done",written,sourceCount,
@@ -1179,7 +1134,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Run the one-time China-first discovery through the complete first candidate
     // pass. Later launches use the 24-hour periodic worker instead of repeating it.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
-        enabled,prefs.getLong("source_update_last_success_at",0L))){
+        enabled,roomSourceUpdateLastSuccessAt)){
       // The first discovery is part of first-run setup, not a routine background
       // refresh. Let it run while the catalogue screen is open; playback-active
       // protection inside the Worker still pauses it if the user starts watching.
@@ -1235,12 +1190,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     },worker);
   }
   private void showSourceUpdateStatus(){
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String time=p.getString("source_update_time","尚未更新");
-    String result=p.getString("source_update_result","尚无更新记录");
-    new AlertDialog.Builder(this).setTitle("频道源更新状态")
-      .setMessage("后台自动更新："+(p.getBoolean("auto_source_update",true)?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
-      .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
+    final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+    try{
+      worker.execute(()->{
+        String time=com.wodedianshi.tv.db.AppStateStore.get(
+            getApplicationContext(),"source_update_time","尚未更新");
+        String result=com.wodedianshi.tv.db.AppStateStore.get(
+            getApplicationContext(),"source_update_result","尚无更新记录");
+        runOnUiThread(()->{
+          if(isFinishing()||isDestroyed())return;
+          new AlertDialog.Builder(this).setTitle("频道源更新状态")
+            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
+            .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
+        });
+      });
+    }catch(RuntimeException rejected){toast("暂时无法读取更新状态，请稍后再试");}
   }
   private void decoderSettingsDialog(){
     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
@@ -1508,16 +1472,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
-    long saved=getSharedPreferences("mytv",0).getLong(vodCacheTimeKey(category),0L);
-    return VodCachePolicy.isFresh(saved,System.currentTimeMillis(),6L*60L*60L*1000L);
+    Long saved=roomVodCacheTimes.get(vodCacheKey(category));
+    return VodCachePolicy.isFresh(saved==null?0L:saved,System.currentTimeMillis(),6L*60L*60L*1000L);
   }
   private void invalidateVodCacheFreshness(String category){
-    getSharedPreferences("mytv",0).edit().putLong(vodCacheTimeKey(category),0L).apply();
+    roomVodCacheTimes.put(vodCacheKey(category),0L);
+    queueRoomAppStateWrite(vodCacheTimeKey(category),"0");
   }
   private ArrayList<VodItem> readVodCache(String category){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
-      String raw=getSharedPreferences("mytv",0).getString(vodCacheKey(category),"");
+      String raw=com.wodedianshi.tv.db.AppStateStore.get(
+          getApplicationContext(),vodCacheKey(category),"");
+      long savedAt=parseRoomLong(vodCacheTimeKey(category),0L);
+      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
       if(raw.isEmpty())return items;
       org.json.JSONArray a=new org.json.JSONArray(raw);
       for(int i=0;i<a.length();i++){
@@ -1569,11 +1537,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       for(VodItem item:items){
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
       }
-      android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
-          .putString(vodCacheKey(category),a.toString());
-      // Partial batches are displayed immediately but must never suppress a future
-      // full search for six hours. Only a completed aggregate gets a fresh timestamp.
-      edit.putLong(vodCacheTimeKey(category),complete?System.currentTimeMillis():0L).apply();
+      // Cache rows and freshness metadata commit together in Room.
+      long savedAt=complete?System.currentTimeMillis():0L;
+      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
+      try{
+        cataloguePersistWorker.execute(()->{
+          try{
+            new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                .putString(vodCacheKey(category),a.toString())
+                .putLong(vodCacheTimeKey(category),savedAt)
+                .apply();
+          }catch(Throwable failure){
+            android.util.Log.e("MyTVVodCache","Room cache write failed for "+category,failure);
+          }
+        });
+      }catch(RuntimeException rejected){
+        android.util.Log.e("MyTVVodCache","Room cache write queue rejected for "+category,rejected);
+      }
     }catch(Exception ignored){}
   }
   // Mouse-wheel events are often dispatched to the card/image under the pointer,
@@ -1977,7 +1957,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private ArrayList<VodItem> readVodFavorites(){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
-      org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_FAVORITES_KEY,"[]"));
+      org.json.JSONArray a=new org.json.JSONArray(roomVodFavoritesJson);
       for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");if(!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));}
     }catch(Exception ignored){}
     return items;
@@ -1994,7 +1974,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       for(VodItem saved:items){if(item.identifier.equals(saved.identifier)){removed=true;continue;}org.json.JSONObject o=new org.json.JSONObject();o.put("title",saved.title);o.put("id",saved.identifier);o.put("url",saved.url);o.put("license",saved.license);out.put(o);}
       if(!removed){org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);out.put(o);}
-      getSharedPreferences("mytv",0).edit().putString(VOD_FAVORITES_KEY,out.toString()).apply();
+      saveRoomVodFavorites(out.toString());
     }catch(Exception ignored){}
   }
   private void loadVodFavorites(LinearLayout panel){
@@ -2006,7 +1986,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
     ArrayList<org.json.JSONObject> list=new ArrayList<>();
-    try{org.json.JSONArray a=new org.json.JSONArray(getSharedPreferences("mytv",0).getString(VOD_HISTORY_KEY,"[]"));for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
+    try{org.json.JSONArray a=new org.json.JSONArray(roomVodHistoryJson);for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
     return list;
   }
   private void saveVodHistory(VodItem item,long position,long duration){
@@ -2015,7 +1995,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       ArrayList<org.json.JSONObject> old=readVodHistory();org.json.JSONArray out=new org.json.JSONArray();
       org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
       for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
-      getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,out.toString()).apply();
+      saveRoomVodHistory(out.toString());
     }catch(Exception ignored){}
   }
   private void loadVodHistory(LinearLayout panel){
@@ -2042,7 +2022,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
       row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
-      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);getSharedPreferences("mytv",0).edit().putString(VOD_HISTORY_KEY,a.toString()).apply();loadVodHistory(status,results);}).show();return true;});
+      row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);saveRoomVodHistory(a.toString());loadVodHistory(status,results);}).show();return true;});
       return row;
     }
   }
@@ -2050,7 +2030,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<org.json.JSONObject> history=readVodHistory();results.removeAllViews();
     LinearLayout tools=new LinearLayout(this);tools.setOrientation(0);
     Button clear=new Button(this);clear.setText("清空播放记录");clear.setAllCaps(false);styleTvButton(clear,Color.rgb(125,48,48));tools.addView(clear,new LinearLayout.LayoutParams(-2,dp(44)));
-    clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清空播放记录？").setMessage("将删除所有点播记录和续播进度。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->{getSharedPreferences("mytv",0).edit().remove(VOD_HISTORY_KEY).apply();loadVodHistory(status,results);}).show());
+    clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清空播放记录？").setMessage("将删除所有点播记录和续播进度。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->{saveRoomVodHistory("[]");loadVodHistory(status,results);}).show());
     results.addView(tools);
     status.setText(history.isEmpty()?"还没有点播记录。观看过的影片会自动保存在这里。":"最近观看 · "+history.size()+" 部（点击继续观看，长按删除）");
     GridView grid=ensureVodGrid(results,1);grid.setAdapter(new VodHistoryAdapter(history,status,results));grid.setSelection(0);
@@ -3628,7 +3608,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
-          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();queueRoomFavoriteSync(channelKey,favorites.contains(channelKey));refresh();}
+          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
           else if(w==1){
             if(sourceUrls.isEmpty())return;
             String[] opts=new String[sourceUrls.size()];
@@ -3847,11 +3827,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadChinaChannels(){
     if(chinaLoading){android.util.Log.i("MyTVDirectory","China directory refresh already running; keep showing cached catalogue");return;}
-    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
     // Cache-first: opening CCTV/satellite/local categories must not redownload
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
     final long now=System.currentTimeMillis();
-    final long last=cachePrefs.getLong("china_supplement_last_success",0L);
+    final long last=roomChinaSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
     // Cache readiness is deliberately separate from catalogue completeness.
     // Once at least the twelve core CCTV identities are in Room, reuse them on
@@ -3872,7 +3851,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
       final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
       if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels
-          &&cachePrefs.getBoolean("china_directory_room_committed",false)){
+          &&roomChinaDirectoryCommitted){
         runOnUiThread(()->{
           chinaLoading=false;
           if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("已使用已保存的国内频道（"+cachedRecognizedChinaCount+" 个），后台按计划补充；约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后再次检查。");
@@ -3910,11 +3889,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final boolean usefulChinaDirectory=roomSaved
           &&recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
-        cachePrefs.edit()
-            .putLong("china_supplement_last_success",System.currentTimeMillis())
-            .putInt("china_directory_cached_count",recognizedChinaCount)
-            .putBoolean("china_directory_room_committed",true)
-            .apply();
+        roomChinaSupplementLastSuccess=System.currentTimeMillis();
+        roomChinaCachedCount=recognizedChinaCount;
+        roomChinaDirectoryCommitted=true;
+        queueRoomAppStateWrite("china_supplement_last_success",Long.toString(roomChinaSupplementLastSuccess));
+        queueRoomAppStateWrite("china_directory_cached_count",Integer.toString(roomChinaCachedCount));
+        queueRoomAppStateWrite("china_directory_room_committed","true");
       }
       runOnUiThread(()->{
         chinaLoading=false;
@@ -4029,11 +4009,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
-    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
     // Match the domestic directory's cache-first behavior. Reopening 全球频道
     // should not redownload the full international index on every visit.
     final long now=System.currentTimeMillis();
-    final long last=cachePrefs.getLong("global_supplement_last_success",0L);
+    final long last=roomGlobalSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
     final int cachedGlobalCount=countChannelsForScope("global");
     final int minimumUsefulGlobalChannels=60;
@@ -4066,7 +4045,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(total>0)persist();
           final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
           if(usefulGlobalDirectory){
-            cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
+            roomGlobalSupplementLastSuccess=System.currentTimeMillis();
+            queueRoomAppStateWrite("global_supplement_last_success",Long.toString(roomGlobalSupplementLastSuccess));
           }
           runOnUiThread(()->{
             globalLoading=false;
@@ -4156,7 +4136,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         int added=parse(data);
         if(!persist())throw new IllegalStateException("频道配置保存失败");
-        
+
         runOnUiThread(()->{
           if(isFinishing())return;
           refresh();
@@ -4429,71 +4409,48 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
-  // Room receives these user mutations directly. Resolve exactly the same
-  // stable content identity scheme, including duplicate
-  // rows, before queuing a small Room update off the UI thread.
-  private String roomChannelIdAt(int channelIndex){
-    synchronized(channels){
-      if(channelIndex<0||channelIndex>=channels.size())return "";
-      Channel target=channels.get(channelIndex);
-      if(target==null||target.name==null||target.url==null)return "";
-      int occurrence=0;
-      for(int i=0;i<channelIndex;i++){
-        Channel prior=channels.get(i);
-        if(prior!=null&&java.util.Objects.equals(prior.name,target.name)
-            &&java.util.Objects.equals(prior.url,target.url))occurrence++;
+  // A favorite toggle changes one Room relation, not the channel catalogue.
+  // Serialize it with full catalogue writes so a queued older snapshot cannot
+  // overwrite the user's latest favorite state.
+  private void queueFavoriteMutation(String legacyKey,boolean favorite){
+    synchronized(cataloguePersistLock){
+      catalogueMutationGeneration++;
+      try{
+        cataloguePersistWorker.execute(()->{
+          try{
+            com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
+                getApplicationContext(),legacyKey,favorite);
+            saveLiveDiagnostic("FAVORITE_ROOM_MUTATION",
+                (favorite?"added ":"removed ")+legacyKey);
+          }catch(Throwable failure){
+            android.util.Log.e("MyTVCatalogue","Room favorite mutation failed",failure);
+            saveLiveDiagnostic("FAVORITE_ROOM_MUTATION_ERROR",
+                failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
+            // Recover through the normal complete-snapshot writer on a different
+            // executor; never block this single-thread Room mutation queue.
+            try{worker.execute(this::persist);}
+            catch(RuntimeException rejected){
+              android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",rejected);
+            }
+          }
+        });
+      }catch(RuntimeException rejected){
+        android.util.Log.e("MyTVCatalogue","favorite mutation queue was rejected",rejected);
+        try{worker.execute(this::persist);}
+        catch(RuntimeException fallbackRejected){
+          android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",fallbackRejected);
+        }
       }
-      return com.wodedianshi.tv.db.LegacyChannelIdPolicy.idFor(
-          target.name,target.url,occurrence);
     }
   }
-
-  private void queueRoomFavoriteSync(String legacyKey,boolean favorite){
-    if(legacyKey==null||legacyKey.isEmpty())return;
-    try{
-      worker.execute(()->{
-        try{
-          com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
-              getApplicationContext(),legacyKey,favorite);
-        }catch(Throwable failure){
-          android.util.Log.w("MyTVRoomSync","favorite shadow update skipped",failure);
-        }
-      });
-    }catch(RuntimeException rejected){
-      android.util.Log.w("MyTVRoomSync","favorite shadow update queue rejected",rejected);
-    }
-  }
-
-  private void queueRoomActiveSourceSync(int channelIndex,String sourceUrl){
-    final String legacyKey;
-    synchronized(channels){
-      if(channelIndex<0||channelIndex>=channels.size()||channels.get(channelIndex)==null)return;
-      legacyKey=channels.get(channelIndex).key();
-    }
-    if(legacyKey.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
-    try{
-      worker.execute(()->{
-        try{
-          boolean updated=com.wodedianshi.tv.db.RoomCatalogueMutations.setActiveSourceUrl(
-              getApplicationContext(),legacyKey,sourceUrl);
-          if(!updated)android.util.Log.d("MyTVRoomSync",
-              "active source not mirrored (scoped catalogue row/source not imported yet)");
-        }catch(Throwable failure){
-          android.util.Log.w("MyTVRoomSync","active source scoped sync skipped",failure);
-        }
-      });
-    }catch(RuntimeException rejected){
-      android.util.Log.w("MyTVRoomSync","active source sync queue rejected",rejected);
-    }
-  }
-
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
-    if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
-    else{favorites.add(c.key());toast("已加入收藏："+c.name);}
-    persist();
-    queueRoomFavoriteSync(c.key(),favorites.contains(c.key()));
+    boolean favorite=!favorites.contains(c.key());
+    if(favorite){favorites.add(c.key());toast("已加入收藏："+c.name);}
+    else{favorites.remove(c.key());toast("已取消收藏："+c.name);}
+    queueFavoriteMutation(c.key(),favorite);
+
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
   }
@@ -4918,7 +4875,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(bad.isEmpty()){toast("当前播放源地址为空");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{persist();setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
           return;
         }
@@ -4930,7 +4887,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();queueRoomActiveSourceSync(selected,url);startCurrentSource();
+        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
@@ -4968,7 +4925,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
-    queueRoomActiveSourceSync(selected,c.backups.get(next));
+
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
@@ -5397,7 +5354,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     automaticSwitchCount++;
     c.activeSource=next;
-    queueRoomActiveSourceSync(selected,c.backups.get(next));
+
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
@@ -5432,8 +5389,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(selected,target.backups.get(target.activeSource));
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
@@ -5452,8 +5407,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
     startCurrentSource();
   }
   // Explicit backup selection must not be reset to the channel's default/last-good source.
@@ -5473,8 +5426,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     persist();
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      queueRoomActiveSourceSync(ix,target.backups.get(target.activeSource));
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -6020,8 +5971,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
     try{
-      android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      org.json.JSONObject all=new org.json.JSONObject(p.getString("source_qoe_v1","{}"));
+      org.json.JSONObject all=new org.json.JSONObject(roomSourceQoeJson);
       String key=StableKey.url(url);
       String legacyKey=StableKey.legacyUrl(url);
       org.json.JSONObject m=all.optJSONObject(key);
@@ -6047,16 +5997,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         m.put("lastStable",System.currentTimeMillis());
       }
       m.put("updated",System.currentTimeMillis());all.put(key,m);
-      p.edit().putString("source_qoe_v1",all.toString()).apply();
+      roomSourceQoeJson=all.toString();
+      queueRoomAppStateWrite(ROOM_STATE_SOURCE_QOE,roomSourceQoeJson);
+      synchronized(sourceScoreCacheLock){
+        cachedQoeScoreJson=all;cachedQoeScoreRaw=roomSourceQoeJson;
+      }
     }catch(Exception ignored){}
   }
   private HashMap<String,Double> observedSourceScores(List<String> urls){
     HashMap<String,Double> scores=new HashMap<>();
     if(urls==null||urls.isEmpty())return scores;
     try{
-      android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-      String probeRaw=prefs.getString("source_probe_scores_v1","{}");
-      String qoeRaw=prefs.getString("source_qoe_v1","{}");
+      String probeRaw=roomSourceProbeJson;
+      String qoeRaw=roomSourceQoeJson;
       org.json.JSONObject measured,allQoe;
       synchronized(sourceScoreCacheLock){
         if(cachedProbeScoreJson==null||cachedQoeScoreJson==null
@@ -6117,7 +6070,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     persist();
     // Source order is part of the Room shadow: activeSource is a priority index.
     // Re-import the committed snapshot so the relation order and index stay aligned.
-    
+
   }
   private void toggleNetworkSpeed(){
     boolean enabled=!getSharedPreferences("mytv",0).getBoolean("show_network_speed",false);
@@ -6580,40 +6533,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Incremented for every persistence request; a reload may publish only if no
   // catalogue edit/save was requested while its background parse was running.
   private volatile long catalogueMutationGeneration=0L;
-  // A staged refresh is additive maintenance, never permission to discard the last-saved
-  // directory. Match every cached channel through at least one of its original source
-  // identities; the Worker may reorder/promote a backup, but it must retain an old route.
-  private boolean backgroundRefreshPreservesCachedChannels(List<Channel> refreshed){
-    synchronized(channels){
-      if(channels.isEmpty())return true;
-      if(refreshed==null||refreshed.isEmpty())return false;
-      HashSet<String> refreshedSourceIdentities=new HashSet<>();
-      for(Channel candidate:refreshed){
-        if(candidate==null)continue;
-        if(candidate.url!=null&&!candidate.url.isEmpty())
-          refreshedSourceIdentities.add(identity(candidate.name,candidate.group,candidate.url));
-        if(candidate.backups!=null)for(String source:candidate.backups){
-          if(source!=null&&!source.isEmpty())
-            refreshedSourceIdentities.add(identity(candidate.name,candidate.group,source));
-        }
-      }
-      for(Channel cached:channels){
-        if(cached==null)continue;
-        boolean retained=cached.url!=null&&!cached.url.isEmpty()
-            &&refreshedSourceIdentities.contains(identity(cached.name,cached.group,cached.url));
-        if(!retained&&cached.backups!=null)for(String source:cached.backups){
-          if(source!=null&&!source.isEmpty()
-              &&refreshedSourceIdentities.contains(identity(cached.name,cached.group,source))){
-            retained=true;break;
-          }
-        }
-        if(!retained){
-          android.util.Log.w("MyTVStartup","background refresh rejected: cached channel would be lost name="
-              +String.valueOf(cached.name)+" group="+String.valueOf(cached.group));
-          return false;
-        }
-      }
-      return true;
+  private void reloadRoomSourceMetrics(){
+    String probe=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
+    String qoe=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
+    roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
+    synchronized(sourceScoreCacheLock){
+      roomSourceProbeJson=probe;
+      roomSourceQoeJson=qoe;
+      cachedProbeScoreRaw=null;
+      cachedQoeScoreRaw=null;
+      cachedProbeScoreJson=null;
+      cachedQoeScoreJson=null;
     }
   }
 
@@ -6630,6 +6562,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       worker.execute(()->{
         try{
+          reloadRoomSourceMetrics();
           ArrayList<Channel> refreshed=new ArrayList<>();
           com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
@@ -6652,11 +6585,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
           if(generation!=backgroundCatalogueReloadGeneration)return;
-          if(!backgroundRefreshPreservesCachedChannels(refreshed)){
-            saveLiveDiagnostic("BACKGROUND_CATALOGUE_REJECTED",
-                "Room snapshot omitted a previously cached channel/source identity; current list retained");
-            return;
-          }
+          // Room has already accepted this complete snapshot atomically. Its
+          // cleaned catalogue may legitimately contain fewer channels than the
+          // previous in-memory view, so do not re-impose a stale additive-only rule.
           uiHandler.post(()->{
             String selectedIdentity="";
             String selectedName="";
@@ -6723,5 +6654,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();catalogueReconcileWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
 }
