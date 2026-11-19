@@ -302,7 +302,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             ||startupPrefs.contains("source_probe_scores_v1")
             ||startupPrefs.contains("source_qoe_v1")
             ||startupPrefs.contains("source_update_result")
-            ||startupPrefs.contains("source_update_time");
+            ||startupPrefs.contains("source_update_time")
+            ||startupPrefs.contains("source_last_good_v1")
+            ||startupPrefs.contains("source_cooldowns_v1")
+            ||startupPrefs.getAll().keySet().stream().anyMatch(key->key.startsWith("vod_cache_")
+                ||key.startsWith("china_supplement_")||key.startsWith("china_directory_")
+                ||key.startsWith("global_supplement_"));
         if(hadLegacyBusinessData){
           android.content.SharedPreferences.Editor cleanup=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
@@ -310,12 +315,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               .remove("source_update_pending_base")
               .remove("source_update_pending_base_fingerprint")
               .remove("last_channel_identity").remove("last_channel_url")
-              .remove("vod_favorites_v1").remove("vod_history_v1");
+              .remove("vod_favorites_v1").remove("vod_history_v1")
+              .remove("source_last_good_v1").remove("source_cooldowns_v1");
           for(String key:startupPrefs.getAll().keySet()){
             if(key.startsWith("source_probe_")||key.startsWith("source_qoe_")
                 ||key.startsWith("source_scan_")||key.startsWith("source_saved_scan_")
                 ||key.startsWith("source_feed_")||key.startsWith("source_initial_discovery_")
-                ||key.startsWith("source_update_last_success")
+                ||key.startsWith("source_update_last_success")||key.startsWith("vod_cache_")
+                ||key.startsWith("china_supplement_")||key.startsWith("china_directory_")
+                ||key.startsWith("global_supplement_")
                 ||"source_update_time".equals(key)||"source_update_result".equals(key)){
               cleanup.remove(key);
             }
@@ -1557,10 +1565,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // batches remain visible but are never marked fresh for six hours.
       long savedAt=complete?System.currentTimeMillis():0L;
       roomVodCacheTimes.put(vodCacheKey(category),savedAt);
-      new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-          .putString(vodCacheKey(category),a.toString())
-          .putLong(vodCacheTimeKey(category),savedAt)
-          .apply();
+      try{
+        cataloguePersistWorker.execute(()->{
+          try{
+            new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                .putString(vodCacheKey(category),a.toString())
+                .putLong(vodCacheTimeKey(category),savedAt)
+                .apply();
+          }catch(Throwable failure){
+            android.util.Log.e("MyTVVodCache","Room cache write failed for "+category,failure);
+          }
+        });
+      }catch(RuntimeException rejected){
+        android.util.Log.e("MyTVVodCache","Room cache write queue rejected for "+category,rejected);
+      }
     }catch(Exception ignored){}
   }
   // Mouse-wheel events are often dispatched to the card/image under the pointer,
