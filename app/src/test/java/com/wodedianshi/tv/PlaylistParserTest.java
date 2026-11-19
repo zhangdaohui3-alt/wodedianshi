@@ -107,12 +107,12 @@ public class PlaylistParserTest {
     }
 
     @Test public void parsesExtBurlAlternatesAsAdditionalSourcesForSameChannel() {
-        String m3u = "#EXTM3U\\n"
-                + "#EXTINF:-1 tvg-id=\\\"CCTV1\\\" tvg-name=\\\"CCTV One\\\" group-title=\\\"央视\\\",中央电视台综合频道\\n"
-                + "https://primary.example/live.m3u8\\n"
-                + "#EXTBURL:https://backup.example/live.m3u8\\n"
-                + "#EXTBURL:https://backup2.example/live.m3u8\\n"
-                + "#EXTINF:-1,湖南卫视\\nhttps://hunan.example/live.m3u8";
+        String m3u = "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-id=\\\"CCTV1\\\" tvg-name=\\\"CCTV One\\\" group-title=\\\"央视\\\",中央电视台综合频道\n"
+                + "https://primary.example/live.m3u8\n"
+                + "#EXTBURL:https://backup.example/live.m3u8\n"
+                + "#EXTBURL:https://backup2.example/live.m3u8\n"
+                + "#EXTINF:-1,湖南卫视\nhttps://hunan.example/live.m3u8";
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
         assertEquals(4, items.size());
         assertEquals("https://primary.example/live.m3u8", items.get(0).url);
@@ -126,10 +126,10 @@ public class PlaylistParserTest {
     }
 
     @Test public void pagedParserDoesNotSkipExtBurlWhenPageEndsAtPrimaryUrl() throws IOException {
-        String m3u = "#EXTM3U\\n"
-                + "#EXTINF:-1,频道A\\nhttps://primary.example/live.m3u8\\n"
-                + "#EXTBURL:https://backup.example/live.m3u8\\n"
-                + "#EXTINF:-1,频道B\\nhttps://next.example/live.m3u8";
+        String m3u = "#EXTM3U\n"
+                + "#EXTINF:-1,频道A\nhttps://primary.example/live.m3u8\n"
+                + "#EXTBURL:https://backup.example/live.m3u8\n"
+                + "#EXTINF:-1,频道B\nhttps://next.example/live.m3u8";
         ArrayList<PlaylistParser.ChannelSource> first = new ArrayList<>();
         ArrayList<PlaylistParser.ChannelSource> second = new ArrayList<>();
         try (StringReader reader = new StringReader(m3u)) {
@@ -144,9 +144,9 @@ public class PlaylistParserTest {
     }
 
     @Test public void ignoresOrphanAndNonHttpExtBurlLines() {
-        String m3u = "#EXTBURL:https://orphan.example/live.m3u8\\n"
-                + "#EXTINF:-1,频道A\\nhttps://primary.example/live.m3u8\\n"
-                + "#EXTBURL:rtmp://backup.example/live\\n"
+        String m3u = "#EXTBURL:https://orphan.example/live.m3u8\n"
+                + "#EXTINF:-1,频道A\nhttps://primary.example/live.m3u8\n"
+                + "#EXTBURL:rtmp://backup.example/live\n"
                 + "#EXTBURL:https://backup.example/live.m3u8";
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
         assertEquals(2, items.size());
