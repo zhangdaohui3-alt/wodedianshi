@@ -28,6 +28,7 @@ public final class RoomCatalogueWriter {
     public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
+        if (snapshot.isEmpty()) throw new IllegalArgumentException("refusing to commit an empty catalogue");
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
         // A missing checkpoint means a genuinely fresh database. Seed it directly
@@ -95,8 +96,11 @@ public final class RoomCatalogueWriter {
                 written[0]++;
             }
 
-            if (!snapshot.isEmpty() && written[0] == 0) {
-                throw new IllegalStateException("Room catalogue update produced no valid channel rows");
+            // A catalogue snapshot is an all-or-nothing unit. Skipping even one
+            // malformed row would otherwise commit a silently truncated directory.
+            if (written[0] != snapshot.size()) {
+                throw new IllegalStateException("Room catalogue snapshot was incomplete: expected "
+                        + snapshot.size() + " valid rows, wrote " + written[0]);
             }
 
             // A worker refresh preserves the latest favorites from inside this same
