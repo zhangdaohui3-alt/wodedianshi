@@ -128,6 +128,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile String roomVodHistoryJson="[]";
   private volatile String roomSourceProbeJson="{}";
   private volatile String roomSourceQoeJson="{}";
+  private volatile long roomChinaSupplementLastSuccess=0L;
+  private volatile int roomChinaCachedCount=0;
+  private volatile boolean roomChinaDirectoryCommitted=false;
+  private volatile long roomGlobalSupplementLastSuccess=0L;
+  private final Map<String,Long> roomVodCacheTimes=Collections.synchronizedMap(new HashMap<String,Long>());
   private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
@@ -693,6 +698,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
     roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
+    roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
+    roomChinaCachedCount=parseRoomInt("china_directory_cached_count",0);
+    roomChinaDirectoryCommitted=Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),"china_directory_room_committed","false"));
+    roomGlobalSupplementLastSuccess=parseRoomLong("global_supplement_last_success",0L);
+    SourceMemoryStore.initialize(getApplicationContext());
+  }
+
+  private long parseRoomLong(String key,long fallback){
+    try{return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Long.toString(fallback)));}
+    catch(Exception ignored){return fallback;}
+  }
+  private int parseRoomInt(String key,int fallback){
+    try{return Integer.parseInt(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Integer.toString(fallback)));}
+    catch(Exception ignored){return fallback;}
   }
 
   private void queueRoomAppStateWrite(String key,String value){
@@ -1468,16 +1488,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
   private boolean isVodCacheFresh(String category){
-    long saved=getSharedPreferences("mytv",0).getLong(vodCacheTimeKey(category),0L);
-    return VodCachePolicy.isFresh(saved,System.currentTimeMillis(),6L*60L*60L*1000L);
+    Long saved=roomVodCacheTimes.get(vodCacheKey(category));
+    return VodCachePolicy.isFresh(saved==null?0L:saved,System.currentTimeMillis(),6L*60L*60L*1000L);
   }
   private void invalidateVodCacheFreshness(String category){
-    getSharedPreferences("mytv",0).edit().putLong(vodCacheTimeKey(category),0L).apply();
+    roomVodCacheTimes.put(vodCacheKey(category),0L);
+    queueRoomAppStateWrite(vodCacheTimeKey(category),"0");
   }
   private ArrayList<VodItem> readVodCache(String category){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
-      String raw=getSharedPreferences("mytv",0).getString(vodCacheKey(category),"");
+      String raw=com.wodedianshi.tv.db.AppStateStore.get(
+          getApplicationContext(),vodCacheKey(category),"");
+      long savedAt=parseRoomLong(vodCacheTimeKey(category),0L);
+      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
       if(raw.isEmpty())return items;
       org.json.JSONArray a=new org.json.JSONArray(raw);
       for(int i=0;i<a.length();i++){
@@ -1529,11 +1553,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       for(VodItem item:items){
         org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
       }
-      android.content.SharedPreferences.Editor edit=getSharedPreferences("mytv",0).edit()
-          .putString(vodCacheKey(category),a.toString());
-      // Partial batches are displayed immediately but must never suppress a future
-      // full search for six hours. Only a completed aggregate gets a fresh timestamp.
-      edit.putLong(vodCacheTimeKey(category),complete?System.currentTimeMillis():0L).apply();
+      // Cache rows and freshness metadata commit together in Room. Partial
+      // batches remain visible but are never marked fresh for six hours.
+      long savedAt=complete?System.currentTimeMillis():0L;
+      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
+      new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+          .putString(vodCacheKey(category),a.toString())
+          .putLong(vodCacheTimeKey(category),savedAt)
+          .apply();
     }catch(Exception ignored){}
   }
   // Mouse-wheel events are often dispatched to the card/image under the pointer,
@@ -3807,11 +3834,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadChinaChannels(){
     if(chinaLoading){android.util.Log.i("MyTVDirectory","China directory refresh already running; keep showing cached catalogue");return;}
-    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
     // Cache-first: opening CCTV/satellite/local categories must not redownload
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
     final long now=System.currentTimeMillis();
-    final long last=cachePrefs.getLong("china_supplement_last_success",0L);
+    final long last=roomChinaSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
     // Cache readiness is deliberately separate from catalogue completeness.
     // Once at least the twelve core CCTV identities are in Room, reuse them on
@@ -3832,7 +3858,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
       final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
       if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels
-          &&cachePrefs.getBoolean("china_directory_room_committed",false)){
+          &&roomChinaDirectoryCommitted){
         runOnUiThread(()->{
           chinaLoading=false;
           if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("已使用已保存的国内频道（"+cachedRecognizedChinaCount+" 个），后台按计划补充；约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后再次检查。");
@@ -3870,11 +3896,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final boolean usefulChinaDirectory=roomSaved
           &&recognizedChinaCount>=minimumUsefulChinaChannels;
       if(usefulChinaDirectory){
-        cachePrefs.edit()
-            .putLong("china_supplement_last_success",System.currentTimeMillis())
-            .putInt("china_directory_cached_count",recognizedChinaCount)
-            .putBoolean("china_directory_room_committed",true)
-            .apply();
+        roomChinaSupplementLastSuccess=System.currentTimeMillis();
+        roomChinaCachedCount=recognizedChinaCount;
+        roomChinaDirectoryCommitted=true;
+        queueRoomAppStateWrite("china_supplement_last_success",Long.toString(roomChinaSupplementLastSuccess));
+        queueRoomAppStateWrite("china_directory_cached_count",Integer.toString(roomChinaCachedCount));
+        queueRoomAppStateWrite("china_directory_room_committed","true");
       }
       runOnUiThread(()->{
         chinaLoading=false;
@@ -3989,11 +4016,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
-    android.content.SharedPreferences cachePrefs=getSharedPreferences("mytv",0);
     // Match the domestic directory's cache-first behavior. Reopening 全球频道
     // should not redownload the full international index on every visit.
     final long now=System.currentTimeMillis();
-    final long last=cachePrefs.getLong("global_supplement_last_success",0L);
+    final long last=roomGlobalSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
     final int cachedGlobalCount=countChannelsForScope("global");
     final int minimumUsefulGlobalChannels=60;
@@ -4026,7 +4052,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(total>0)persist();
           final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
           if(usefulGlobalDirectory){
-            cachePrefs.edit().putLong("global_supplement_last_success",System.currentTimeMillis()).apply();
+            roomGlobalSupplementLastSuccess=System.currentTimeMillis();
+            queueRoomAppStateWrite("global_supplement_last_success",Long.toString(roomGlobalSupplementLastSuccess));
           }
           runOnUiThread(()->{
             globalLoading=false;
