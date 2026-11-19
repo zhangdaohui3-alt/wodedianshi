@@ -48,6 +48,12 @@ final class ChannelCatalogueMergePolicy {
      */
     static List<ChannelRecord> merge(List<ChannelRecord> current,
                                      List<ChannelRecord> candidate) {
+        return merge(current, candidate, null);
+    }
+
+    static List<ChannelRecord> merge(List<ChannelRecord> current,
+                                     List<ChannelRecord> candidate,
+                                     java.util.Set<String> originalIdentities) {
         if (candidate == null || candidate.isEmpty()) return null;
 
         LinkedHashMap<String, ChannelRecord> merged = new LinkedHashMap<>();
@@ -68,6 +74,12 @@ final class ChannelCatalogueMergePolicy {
 
             ChannelRecord existing = merged.get(incoming.identity);
             if (existing == null) {
+                // A channel present in the worker's starting snapshot but absent
+                // from the latest active snapshot was deliberately removed by the
+                // user while discovery was running. Do not resurrect it.
+                if (originalIdentities != null && originalIdentities.contains(incoming.identity)) {
+                    continue;
+                }
                 ArrayList<String> sources = new ArrayList<>(candidateUrls);
                 String primary = isHttp(incoming.primaryUrl) ? incoming.primaryUrl : sources.get(0);
                 if (!sources.contains(primary)) sources.add(0, primary);
