@@ -388,7 +388,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           refresh();
           if(info!=null)info.setText(!restoreSucceeded
               ?"频道目录初始化失败，请稍后重试"
-              :channels.isEmpty()?"频道列表为空，请检查内置频道目录":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+              :channels.isEmpty()?"首次频道目录初始化中：正在完整抓取、分类和整理频道，请保持网络连接":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
           if(queuedCategory!=null&&categoryMenuItems!=null){
             categoryMenuItems.post(()->{
               if(isFinishing()||categoryMenuItems==null)return;
@@ -595,14 +595,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
   /**
-   * Room is the only runtime catalogue. A fresh installation seeds it directly
-   * from the bundled playlist; previous SharedPreferences channel snapshots are
-   * intentionally ignored. First boot may take longer while the seed is built.
-   */
-  /**
-   * Room is the sole persistent channel catalogue. A fresh database is seeded
-   * from the bundled playlist; no legacy JSON or sidecar file cache is read.
-   * Every later launch restores the complete, validated Room snapshot.
+   * Room is the sole persistent channel catalogue. A fresh installation receives
+   * an empty, validated initialization checkpoint; the first full discovery
+   * publishes the first real catalogue only after every configured feed is handled.
+   * Later launches restore the last complete Room snapshot without waiting for feeds.
    */
   private void restore(){
     catalogueSnapshotTrusted=false;
@@ -614,26 +610,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
           readRoomCatalogueIntoMemory();
       if(roomSnapshot==null){
-        android.util.Log.i("MyTVRoom","fresh authoritative Room database; seeding bundled channels");
-        try(InputStream in=getAssets().open("default_channels.m3u")){
-          String bundled=read(in);
-          parse(bundled);
-        }
-        rebuildChannelIndexes();
-        ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> seed=
-            snapshotChannelRows();
-        if(seed.isEmpty())throw new IllegalStateException("Bundled channel seed contains no usable channels");
-        int seeded=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
-            getApplicationContext(),seed,Collections.emptySet());
-        if(seeded<=0||seeded!=seed.size()){
-          throw new IllegalStateException("Room seed validation failed: expected "
-              +seed.size()+" rows, wrote "+seeded);
-        }
-        android.util.Log.i("MyTVRoom","first-run Room seed committed channels="+seeded);
+        // A first install starts with a valid empty Room checkpoint, not a tiny
+        // bundled playlist masquerading as the completed channel catalogue.
+        // The full China-first discovery worker owns the first real publication.
+        android.util.Log.i("MyTVRoom","fresh Room database; creating empty initialization checkpoint");
+        com.wodedianshi.tv.db.RoomCatalogueWriter.initializeEmptyCatalogue(getApplicationContext());
         roomSnapshot=readRoomCatalogueIntoMemory();
       }
-      if(roomSnapshot==null||roomSnapshot.channelCount<=0){
-        throw new IllegalStateException("Room catalogue initialization did not produce a complete snapshot");
+      if(roomSnapshot==null){
+        throw new IllegalStateException("Room catalogue initialization did not produce a valid checkpoint");
       }
       synchronized(favorites){
         favorites.clear();
