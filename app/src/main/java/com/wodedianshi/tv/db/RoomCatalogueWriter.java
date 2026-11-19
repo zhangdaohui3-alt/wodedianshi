@@ -27,15 +27,26 @@ public final class RoomCatalogueWriter {
     /** Apply an exact snapshot without dropping and recreating the whole database. */
     public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys) {
+        return writeRecords(context, snapshot, favoriteKeys, -1L);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty()) throw new IllegalArgumentException("refusing to commit an empty catalogue");
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
         // A missing checkpoint means a genuinely fresh database. Seed it directly
         // from the bundled/current catalogue; no legacy JSON import is required.
-        CatalogueMigrationEntity checkpoint = dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
         final int[] written = {0};
         db.runInTransaction(() -> {
+            CatalogueMigrationEntity checkpoint =
+                    dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+            if (expectedCatalogueVersion >= 0L
+                    && (checkpoint == null || checkpoint.completedAt != expectedCatalogueVersion)) {
+                throw new IllegalStateException(
+                        "Room catalogue changed during source scan; stale snapshot rejected");
+            }
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
             HashSet<String> presentChannelIds = new HashSet<>();
@@ -135,9 +146,11 @@ public final class RoomCatalogueWriter {
                 dao.deleteCategoryById(staleCategoryId);
             }
 
+            long completedAt = Math.max(System.currentTimeMillis(),
+                    checkpoint == null ? 1L : checkpoint.completedAt + 1L);
             dao.insertMigration(new CatalogueMigrationEntity(
                     MasterCatalogueRepository.MIGRATION_KEY, dao.countChannels(), dao.countBackupSources(),
-                    dao.countFavorites(), dao.countCategories(), System.currentTimeMillis(),
+                    dao.countFavorites(), dao.countCategories(), completedAt,
                     checkpoint == null ? "room_native_seed_v1" : checkpoint.catalogueFingerprint));
         });
         return written[0];
@@ -145,6 +158,12 @@ public final class RoomCatalogueWriter {
 
     /** Source updater snapshots are complete Room-derived catalogues too. */
     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
+        return writeSnapshot(context, snapshot, -1L);
+    }
+
+    /** Commit only if no user/catalogue mutation has happened since the worker read Room. */
+    public static int writeSnapshot(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion) throws Exception {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
         // Channel count is deliberately not compared with the previous catalogue:
@@ -191,7 +210,7 @@ public final class RoomCatalogueWriter {
         if (rows.size() != snapshot.length()) {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
-        return writeRecords(context, rows, favoriteKeys);
+        return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
