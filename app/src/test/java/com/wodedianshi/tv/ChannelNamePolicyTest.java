@@ -35,6 +35,17 @@ public class ChannelNamePolicyTest {
                 "HD", "", "CCTV-4", "CCTV"));
     }
 
+    @Test public void keepsCctvUltraHdAndAsiaVariantsDistinctFromCctv4() {
+        assertEquals("CCTV-4K", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4K (1080p)", "", "CCTV4K.cn@HD", "General"));
+        assertEquals("CCTV-8K", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-8K", "", "CCTV8K.cn@HD", "General"));
+        assertEquals("CCTV-4 Asia", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4 Asia (720p)", "", "CCTV4Asia.cn@SD", "General"));
+        assertEquals("CCTV-4", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4 (1080p)", "", "CCTV4.cn@HD", "General"));
+    }
+
     @Test public void recognizesSatelliteGroupsWithoutMisclassifyingGenericTv() {
         assertTrue(ChannelNamePolicy.isSatellite("Hunan TV", "China"));
         assertTrue(ChannelNamePolicy.isSatellite("湖南卫视", ""));
