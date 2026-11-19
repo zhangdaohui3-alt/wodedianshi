@@ -67,10 +67,10 @@ public class ChannelCatalogueMergePolicyTest {
                 channel("cctv1", "https://new/live",
                         Arrays.asList("https://new/live", "https://old/live", "https://active/live"), 2);
         java.util.Set<String> favorites = ChannelCatalogueMergePolicy.migrateFavoriteKeys(
-                Collections.singleton("CCTV-1|https://old/live"),
+                Collections.singleton("cctv1|https://old/live"),
                 Collections.singletonList(before), Collections.singletonList(after));
-        assertFalse(favorites.contains("CCTV-1|https://old/live"));
-        assertTrue(favorites.contains("CCTV-1|https://new/live"));
+        assertFalse(favorites.contains("cctv1|https://old/live"));
+        assertTrue(favorites.contains("cctv1|https://new/live"));
     }
 
     @Test public void rejectsEmptyOrInvalidCandidateWithoutChangingSnapshot() {
