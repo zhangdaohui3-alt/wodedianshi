@@ -1536,9 +1536,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Pause happened before construction; now that the VOD window is visible,
       // release both live decoder backends before starting catalogue work.
       releaseLivePlayerSafely();
-      releaseLibVlcEngine();
-      if(dialog.isShowing()&&currentVodPanel==panel)
-        loadVodCatalogue("电影",panel,status,results);
+      // LibVLC release runs off the UI thread because some Android 9 TV
+      // firmware blocks during decoder teardown. Do not expose playable VOD
+      // cards until the live backend has actually released its audio session.
+      releaseLibVlcEngine(()->{
+        if(dialog.isShowing()&&currentVodPanel==panel)
+          loadVodCatalogue("电影",panel,status,results);
+      });
     });
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
@@ -6001,14 +6005,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
   private void releaseLibVlcEngine(){
+    releaseLibVlcEngine(null);
+  }
+  private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
-    if(old!=null){
-      try{libVlcWorker.execute(()->{try{old.release();}catch(Throwable failure){
-        saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
-      }});}catch(RuntimeException rejected){saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());}
-    }
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
+    if(old==null){
+      if(afterRelease!=null)afterRelease.run();
+      return;
+    }
+    Runnable teardown=()->{
+      try{old.release();}catch(Throwable failure){
+        saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
+      }finally{
+        if(afterRelease!=null)uiHandler.post(afterRelease);
+      }
+    };
+    try{libVlcWorker.execute(teardown);}
+    catch(RuntimeException rejected){
+      saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());
+      // Preserve decoder teardown even if the worker is shutting down.
+      try{new Thread(teardown,"MyTV-VLC-Release").start();}
+      catch(RuntimeException threadRejected){
+        saveLiveDiagnostic("VLC_RELEASE_FALLBACK_ERROR",threadRejected.getClass().getSimpleName());
+        if(afterRelease!=null)uiHandler.post(afterRelease);
+      }
+    }
   }
   private String currentSourceUrl(){
     if(selected<0||selected>=channels.size())return "";
