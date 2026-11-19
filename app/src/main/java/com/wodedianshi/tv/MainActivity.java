@@ -1195,9 +1195,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         .setInputData(new Data.Builder().putBoolean("manual",true)
             .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
         .build();
-    WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
+    WorkManager manager=WorkManager.getInstance(this);
+    if(needsInitialFullRebuild){
+      // The startup and manual entry points must share one unique chain: two
+      // simultaneous first-run rebuilds would race on the same Room staging rows
+      // and feed cursors. KEEP reuses an already-running startup rebuild.
+      manager.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,request);
+      toast("已提交首次全量频道整理；整理期间旧频道照常使用");
+      return;
+    }
+    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
     toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
+    manager.getWorkInfoById(request.getId()).addListener(()->{
       try{
         WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
         if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
