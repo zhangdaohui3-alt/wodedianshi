@@ -94,6 +94,9 @@ public interface ChannelDao {
     @Query("SELECT channelId FROM favorites")
     List<String> getFavoriteChannelIds();
 
+    @Query("SELECT addedAt FROM favorites WHERE channelId = :channelId LIMIT 1")
+    Long getFavoriteAddedAt(String channelId);
+
     @Transaction
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
     List<ChannelWithSources> getChannelsByCategory(String categoryId);
