@@ -71,6 +71,8 @@ public class MainActivity extends Activity {
   private TextView info;
   private EditText search;
   private int livePageIndex=0;
+  // Count from the latest rendered filter pass; paging must not rescan the full catalogue.
+  private int renderedLiveMatchCount=0;
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
@@ -548,7 +550,7 @@ public class MainActivity extends Activity {
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(getCurrentLiveMatchCount()+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int pages=Math.max(1,(renderedLiveMatchCount+59)/60);if(livePageIndex+1<pages){livePageIndex++;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
@@ -2662,6 +2664,7 @@ public class MainActivity extends Activity {
         });
       }
       totalMatches=visibleIndexes.size();
+      renderedLiveMatchCount=totalMatches;
       int selectedPosition=selected>=0?visibleIndexes.indexOf(selected):-1;
       if(selectedPosition>=0)livePageIndex=selectedPosition/maxRows;
       int pageCount=Math.max(1,(visibleIndexes.size()+maxRows-1)/maxRows);
@@ -2701,24 +2704,6 @@ public class MainActivity extends Activity {
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
-  }
-  private int getCurrentLiveMatchCount(){
-    if(channels==null)return 0;
-    String q=search==null?"":search.getText().toString().toLowerCase(Locale.ROOT);
-    int count=0;
-    synchronized(channels){
-      for(Channel c:channels){
-        if(activeGeoChannelKeys!=null&&!activeGeoChannelKeys.contains(c.key()))continue;
-        if(favoriteMode&&!favorites.contains(c.key()))continue;
-        if(localRegionFilterActive&&activeCategory.equals("地方")){
-          if(!matchesLocalRegion(c))continue;
-        }else if(!activeCategory.equals("全部")&&!activeCategory.equals("收藏")&&!categoryMatch(c,activeCategory))continue;
-        if(!c.name.toLowerCase(Locale.ROOT).contains(q)&&!c.group.toLowerCase(Locale.ROOT).contains(q)
-            &&!displayChannelName(c.name).toLowerCase(Locale.ROOT).contains(q))continue;
-        count++;
-      }
-    }
-    return count;
   }
   private void updateLivePaging(int total){
     int pages=Math.max(1,(total+59)/60);
