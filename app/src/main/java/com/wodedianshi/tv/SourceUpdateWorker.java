@@ -152,8 +152,11 @@ public class SourceUpdateWorker extends Worker {
       }
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
-        if(foregroundAtStart&&feedIndex>=8)break;
-        if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
+        // A one-time full rebuild must eventually cover every configured feed,
+        // even while the TV screen is open. It still probes only 24 URLs/run and
+        // pauses immediately if playback starts. Routine refreshes keep stricter limits.
+        if(!initialDiscoveryChain&&foregroundAtStart&&feedIndex>=8)break;
+        if(!initialDiscoveryChain&&!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         if(initialDiscoveryChain&&roomBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
         int feedCursor=roomInt(feedCursorKey(feedIndex),0);
