@@ -20,12 +20,12 @@ public class ChannelCatalogueRefreshCyclePolicyTest {
         assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 11, 10, true));
     }
 
-    @Test public void fingerprintIgnoresOrderAndDuplicates() {
+    @Test public void fingerprintTracksOrderedScanList() {
         String a = ChannelCatalogueRefreshCyclePolicy.fingerprint(
                 Arrays.asList("https://a/live", "https://b/live", "https://a/live"));
         String b = ChannelCatalogueRefreshCyclePolicy.fingerprint(
                 Arrays.asList("https://b/live", "https://a/live"));
-        assertEquals(a, b);
+        assertNotEquals(a, b);
     }
 
     @Test public void fingerprintChangesWhenCandidateSetChanges() {
