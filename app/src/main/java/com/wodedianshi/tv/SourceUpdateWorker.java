@@ -80,9 +80,21 @@ public class SourceUpdateWorker extends Worker {
         saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
         return Result.retry();
       }
-      String channelsSnapshot=roomSnapshotToArray(roomSnapshot).toString();
-      String savedChannelsJson=channelsSnapshot;
-      JSONArray saved=new JSONArray(savedChannelsJson);
+      JSONArray saved;
+      if(initialDiscoveryChain){
+        String buildActive=com.wodedianshi.tv.db.AppStateStore.get(
+            getApplicationContext(),"source_full_rebuild_active","false");
+        if(!"true".equals(buildActive)){
+          // Start from an empty isolated Room staging set. The live catalogue is
+          // intentionally not read as input and remains untouched until publish.
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
+          com.wodedianshi.tv.db.AppStateStore.put(
+              getApplicationContext(),"source_full_rebuild_active","true");
+        }
+        saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext());
+      }else{
+        saved=roomSnapshotToArray(roomSnapshot);
+      }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       HashSet<String> knownUrls=new HashSet<>();
       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
@@ -126,7 +138,7 @@ public class SourceUpdateWorker extends Worker {
       }
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       for(int feedIndex=0;feedIndex<feeds.length;feedIndex++){
-        if((foregroundAtStart||initialDiscoveryChain)&&feedIndex>=8)break;
+        if(foregroundAtStart&&feedIndex>=8)break;
         if(!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         if(initialDiscoveryChain&&roomBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
@@ -324,19 +336,33 @@ public class SourceUpdateWorker extends Worker {
         return Result.retry();
       }
       if(isStopped())return Result.retry();
-      // Write the validated snapshot directly to the single Room catalogue.
-      // The JSON object above is only this worker's in-memory discovery model;
-      // Room receives normalized channel/source rows and remains the durable store.
-      int roomRowsWritten = com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
-          getApplicationContext(), saved, roomSnapshot.catalogueVersion);
-      if (saved.length() > 0 && roomRowsWritten == 0) {
-        throw new IllegalStateException("Room catalogue update produced no channel rows");
-      }
-      // No JSON hand-off: the validated directory is committed directly to Room.
       int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
       boolean initialDiscoveryComplete=initialDiscoveryChain&&feedBatchComplete
-          &&areInitialChinaFeedsComplete(prefs,feedBatches);
+          &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+      int roomRowsWritten=0;
+      if(initialDiscoveryChain){
+        // Persist only to the isolated staging table between batches. A partial
+        // collection can never replace or contaminate the currently playable Room catalogue.
+        int stagedRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
+            getApplicationContext(),saved);
+        if(initialDiscoveryComplete){
+          if(stagedRows<=0)throw new IllegalStateException(
+              "Full catalogue rebuild completed without any validated channels; live catalogue retained");
+          roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
+              getApplicationContext(),saved,roomSnapshot.catalogueVersion);
+          if(roomRowsWritten!=stagedRows)throw new IllegalStateException(
+              "Published Room rows do not match the staged full catalogue");
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
+        }
+      }else{
+        // Routine updates remain incremental against the current authoritative Room snapshot.
+        roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
+            getApplicationContext(),saved,roomSnapshot.catalogueVersion);
+      }
+      if(!initialDiscoveryChain&&saved.length()>0&&roomRowsWritten==0){
+        throw new IllegalStateException("Room catalogue update produced no channel rows");
+      }
       com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
           .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
@@ -370,7 +396,8 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_feed_batch_scanned",nextBatchScanned);
       }
       if(initialDiscoveryChain&&initialDiscoveryComplete){
-        update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned");
+        update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
+            .remove("source_full_rebuild_active");
         if(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid))
           update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
@@ -380,8 +407,7 @@ public class SourceUpdateWorker extends Worker {
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
-      if(initialDiscoveryChain&&!initialDiscoveryComplete
-          &&(candidates.size()>0||feedsFailed>0)){
+      if(initialDiscoveryChain&&!initialDiscoveryComplete){
         androidx.work.OneTimeWorkRequest continuation=
             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
                 .setConstraints(new androidx.work.Constraints.Builder()
@@ -397,12 +423,15 @@ public class SourceUpdateWorker extends Worker {
           ?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
-  private boolean areInitialChinaFeedsComplete(SharedPreferences prefs,List<FeedBatch> batches){
-    for(int i=0;i<8;i++){
+  private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
+          List<FeedBatch> batches,int feedCount){
+    for(int i=0;i<feedCount;i++){
       boolean done=roomBoolean(initialFeedDoneKey(i),false);
       if(!done){
         for(FeedBatch batch:batches){
-          if(batch.index==i&&batch.success&&batch.parsed<MAX_DISCOVERY_PER_FEED){done=true;break;}
+          if(batch.index==i&&batch.success&&batch.parsed<MAX_DISCOVERY_PER_FEED){
+            done=true;break;
+          }
         }
       }
       if(!done)return false;
