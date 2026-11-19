@@ -13,6 +13,12 @@ public interface AppStateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void put(AppStateEntity value);
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void putAll(java.util.List<AppStateEntity> values);
+
+    @Query("DELETE FROM app_state WHERE key IN (:keys)")
+    void removeAll(java.util.List<String> keys);
+
     @Query("DELETE FROM app_state WHERE key = :key")
     void remove(String key);
 }
