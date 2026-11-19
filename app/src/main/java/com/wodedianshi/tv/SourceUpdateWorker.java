@@ -122,6 +122,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_has_validated_source")
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
+              .putInt("source_initial_next_feed_index",0)
               .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
               .apply();
           com.wodedianshi.tv.db.AppStateStore.put(
