@@ -95,7 +95,7 @@ public final class RoomCatalogueWriter {
                 ChannelEntity old = favorite.channel;
                 String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
                 String stableKey = LegacyChannelIdPolicy.stableIdentityKey(
-                        old.name, oldUrl, old.tvgId, old.groupName);
+                        old.name, oldUrl, old.tvgId, old.groupName, old.tvgName);
                 Long addedAt = dao.getFavoriteAddedAt(old.id);
                 long timestamp = addedAt == null ? System.currentTimeMillis() : addedAt;
                 if (previousFavoriteTimes.containsKey(stableKey)) {
@@ -131,7 +131,7 @@ public final class RoomCatalogueWriter {
                 if (ordered.urls.isEmpty()) continue;
 
                 String stableIdentity = LegacyChannelIdPolicy.stableIdentityKey(
-                        name, primary, item.tvgId, group);
+                        name, primary, item.tvgId, group, item.tvgName);
                 int occurrence = occurrences.containsKey(stableIdentity)
                         ? occurrences.get(stableIdentity) : 0;
                 occurrences.put(stableIdentity, occurrence + 1);
