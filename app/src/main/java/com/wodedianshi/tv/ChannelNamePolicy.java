@@ -136,8 +136,16 @@ final class ChannelNamePolicy {
         if (!satellite.isEmpty()) return satellite;
         String value = metadata.toUpperCase(Locale.ROOT)
                 .replaceAll("[\\s_—–·•]", "");
+        // Match special variants before the generic numeric form: otherwise
+        // CCTV-4K and CCTV-4 Asia collapse into the ordinary CCTV-4 identity.
+        java.util.regex.Matcher ultraHd = Pattern.compile(
+                "(?:CCTV|中央电视台|央视)[-]?(4K|8K)").matcher(value);
+        if (ultraHd.find()) return "CCTV-" + ultraHd.group(1);
+        java.util.regex.Matcher asia = Pattern.compile(
+                "(?:CCTV|中央电视台|央视)[-]?4(?:ASIA|亚洲)").matcher(value);
+        if (asia.find()) return "CCTV-4 Asia";
         java.util.regex.Matcher matcher = Pattern.compile(
-                "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)")
+                "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS)")
                 .matcher(value);
         if (matcher.find()) return "CCTV-" + matcher.group(1);
         return "";
