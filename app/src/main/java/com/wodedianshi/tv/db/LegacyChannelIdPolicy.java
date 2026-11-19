@@ -20,9 +20,41 @@ public final class LegacyChannelIdPolicy {
         return safeName.length() + ":" + safeName + safeUrl.length() + ":" + safeUrl;
     }
 
+
+    /**
+     * A source-independent identity for broadcasters with a trustworthy TVG id,
+     * plus the well-known national CCTV/satellite names. Generic local stations
+     * without a stable provider id remain host/URL-scoped to avoid false merges.
+     */
+    public static String stableIdentityKey(String name, String primaryUrl, String tvgId) {
+        String safeId = tvgId == null ? "" : tvgId.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", "");
+        if (safeId.length() >= 4 && safeId.matches(".*[a-z\\u4e00-\\u9fff].*")) {
+            return "tvgid:" + safeId;
+        }
+        String canonical = name == null ? "" : name.trim().replaceAll("\\s+", "");
+        String upper = canonical.toUpperCase(java.util.Locale.ROOT);
+        if (upper.matches("CCTV[-_ ]?\\d+([+]?|KIDS)?")) {
+            return "broadcaster:" + upper.replace('_', '-').replace(" ", "");
+        }
+        if (canonical.endsWith("卫视")) {
+            return "broadcaster:" + canonical.toLowerCase(java.util.Locale.ROOT);
+        }
+        return identityKey(name, primaryUrl);
+    }
+
+    public static String idForStableIdentity(String stableIdentity, int occurrence) {
+        String identity = (stableIdentity == null ? "" : stableIdentity)
+                + ":" + Math.max(0, occurrence);
+        return digest(identity);
+    }
+
     public static String idFor(String name, String primaryUrl, int occurrence) {
         int ordinal = Math.max(0, occurrence);
-        String identity = identityKey(name, primaryUrl) + ":" + ordinal;
+        return digest(identityKey(name, primaryUrl) + ":" + ordinal);
+    }
+
+    private static String digest(String identity) {
         final byte[] digest;
         try {
             digest = MessageDigest.getInstance("SHA-256")
@@ -30,7 +62,6 @@ public final class LegacyChannelIdPolicy {
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is unavailable", impossible);
         }
-
         StringBuilder hex = new StringBuilder(digest.length * 2);
         for (byte value : digest) {
             int unsigned = value & 0xff;
