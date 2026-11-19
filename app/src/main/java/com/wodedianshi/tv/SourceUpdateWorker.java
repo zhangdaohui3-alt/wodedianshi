@@ -419,8 +419,11 @@ public class SourceUpdateWorker extends Worker {
         update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
             .remove("source_initial_has_validated_source")
             .remove("source_full_rebuild_active");
-        if(saved.length()>0)
-          update.putLong("source_update_last_success_at",System.currentTimeMillis());
+        if(saved.length()>0){
+          long completedAt=System.currentTimeMillis();
+          update.putLong("source_update_last_success_at",completedAt)
+              .putLong("source_full_rebuild_completed_at",completedAt);
+        }
       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }
