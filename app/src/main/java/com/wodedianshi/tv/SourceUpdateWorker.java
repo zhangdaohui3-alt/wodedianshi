@@ -96,6 +96,8 @@ public class SourceUpdateWorker extends Worker {
           resetBuildState.remove("source_feed_batch_fingerprint")
               .remove("source_feed_batch_scanned")
               .remove("source_scan_after_key").remove("source_scan_cursor")
+              .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
+              .remove("source_initial_has_validated_source")
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .apply();
@@ -126,7 +128,7 @@ public class SourceUpdateWorker extends Worker {
       // A foreground China-first pass validates newly discovered domestic candidates only.
       // Avoid allocating up to 20,000 additional saved-source Entry objects while the
       // TV UI is open; the full rotating health-check pool is retained for background runs.
-      if(!foregroundAtStart&&!initialDiscoveryChain){
+      if(!foregroundAtStart){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
           String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
@@ -250,8 +252,8 @@ public class SourceUpdateWorker extends Worker {
         // Keep the URL as a fallback, but rank it below sources that still pass validation.
         measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
         measuredScores.remove(legacyScoreKey(e.url));
-        if(!measured.valid)continue;
-        if(!e.savedSource)discoveryProbesValid++;
+        if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
+        if(!measured.valid&&!initialDiscoveryChain)continue;
         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
         if(target!=null){
           String canonical=ChannelNamePolicy.canonicalBroadcasterName(
@@ -349,8 +351,11 @@ public class SourceUpdateWorker extends Worker {
       if(isStopped())return Result.retry();
       int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
-      boolean initialDiscoveryComplete=initialDiscoveryChain&&feedBatchComplete
+      boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+      boolean initialHasValidatedSource=initialDiscoveryChain
+          &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
+      boolean initialDiscoveryComplete=initialFeedsExhausted&&initialHasValidatedSource;
       int roomRowsWritten=0;
       if(initialDiscoveryChain){
         // Persist only to the isolated staging table between batches. A partial
@@ -407,8 +412,12 @@ public class SourceUpdateWorker extends Worker {
         update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
             .putInt("source_feed_batch_scanned",nextBatchScanned);
       }
+      if(initialDiscoveryChain&&initialHasValidatedSource){
+        update.putBoolean("source_initial_has_validated_source",true);
+      }
       if(initialDiscoveryChain&&initialDiscoveryComplete){
         update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
+            .remove("source_initial_has_validated_source")
             .remove("source_full_rebuild_active");
         if(saved.length()>0)
           update.putLong("source_update_last_success_at",System.currentTimeMillis());
@@ -419,6 +428,19 @@ public class SourceUpdateWorker extends Worker {
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
+      if(initialFeedsExhausted&&saved.length()==0){
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
+        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_full_rebuild_active");
+        saveStatus(prefs,"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集",0);
+        return Result.failure();
+      }
+      if(initialFeedsExhausted&&!initialHasValidatedSource&&!foregroundAtStart
+          &&getRunAttemptCount()>=6){
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
+        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_full_rebuild_active");
+        saveStatus(prefs,"全量候选源暂时均未通过媒体预检；未替换旧目录，后续可重新采集",0);
+        return Result.failure();
+      }
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
         androidx.work.OneTimeWorkRequest continuation=
             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
