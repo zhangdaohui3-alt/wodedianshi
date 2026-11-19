@@ -77,12 +77,31 @@ public final class PlaylistParser {
         boolean groupTitlePresent = false;
         String tvgId = "";
         String tvgName = "";
+        ChannelSource lastEntry = null;
         int emitted = 0;
         int skipped = 0;
         String rawLine;
         while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
             String line = rawLine.replace("\uFEFF", "").trim();
             if (line.isEmpty()) continue;
+            if (line.startsWith("#EXTBURL:")) {
+                // Some maintained IPTV aggregators publish backup URLs as a
+                // non-standard tag immediately after the primary channel URL.
+                // Emit them as separate candidates with the same channel identity
+                // so the normal merge/quality policy can attach them as backups.
+                String backupUrl = line.substring("#EXTBURL:".length()).trim();
+                if (lastEntry != null && isHttpUrl(backupUrl)) {
+                    ChannelSource backup = new ChannelSource(lastEntry.name, backupUrl,
+                            lastEntry.group, lastEntry.tvgId, lastEntry.tvgName);
+                    if (skipped < skipEntries) {
+                        skipped++;
+                    } else {
+                        consumer.accept(backup);
+                        emitted++;
+                    }
+                }
+                continue;
+            }
             if (line.startsWith("#EXTGRP:")) {
                 String extGroup = line.substring(8).trim();
                 if (name != null) {
@@ -93,6 +112,7 @@ public final class PlaylistParser {
                 continue;
             }
             if (line.startsWith("#EXTINF")) {
+                lastEntry = null;
                 int comma = firstCommaOutsideQuotes(line);
                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
                 if (name.isEmpty()) {
@@ -115,10 +135,11 @@ public final class PlaylistParser {
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
                 if (name != null && !name.trim().isEmpty()) {
+                    lastEntry = new ChannelSource(name, line, group, tvgId, tvgName);
                     if (skipped < skipEntries) {
                         skipped++;
                     } else {
-                        consumer.accept(new ChannelSource(name, line, group, tvgId, tvgName));
+                        consumer.accept(lastEntry);
                         emitted++;
                     }
                 }
@@ -130,6 +151,10 @@ public final class PlaylistParser {
             }
         }
         return emitted;
+    }
+
+    private static boolean isHttpUrl(String value) {
+        return value != null && (value.startsWith("http://") || value.startsWith("https://"));
     }
 
     private static int firstCommaOutsideQuotes(String line) {
