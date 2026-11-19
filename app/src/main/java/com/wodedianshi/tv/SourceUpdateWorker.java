@@ -309,10 +309,45 @@ public class SourceUpdateWorker extends Worker {
           if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
           if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
         }
-        // A known URL may appear in a second directory. Record that provenance
-        // without duplicating the backup or probing the same address twice.
+        // A URL can already be known globally because another channel uses it.
+        // That must not prevent attaching the same endpoint to this channel identity.
+        // Deduplicate within this channel, and only record provenance for a URL that
+        // actually survives this channel's source-count and quality-retention policy.
         if(knownUrls.contains(endpoint)&&target!=null){
-          addBackupSourceScope(target,e.url,e.scope);
+          JSONArray currentSources=target.optJSONArray("sources");
+          ArrayList<String> currentUrls=new ArrayList<>();
+          if(currentSources!=null){
+            for(int i=0;i<currentSources.length();i++)currentUrls.add(currentSources.optString(i,""));
+          }else{
+            String primary=target.optString("url","");
+            if(!primary.isEmpty())currentUrls.add(primary);
+          }
+          ArrayList<String> retainedUrls=new ArrayList<>(
+              SourceChannelMergePolicy.attachSharedEndpoint(currentUrls,e.url,
+                  MAX_SOURCES_PER_CHANNEL,
+                  (a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),
+                      combinedScore(a,measuredScores,observedQoe))));
+          boolean changed=currentUrls.size()!=retainedUrls.size();
+          if(!changed){
+            for(int i=0;i<currentUrls.size();i++){
+              if(!currentUrls.get(i).equals(retainedUrls.get(i))){changed=true;break;}
+            }
+          }
+          if(changed){
+            JSONArray updatedSources=new JSONArray();
+            for(String retainedUrl:retainedUrls)updatedSources.put(retainedUrl);
+            target.put("sources",updatedSources);
+            added++;
+          }
+          String retainedEndpointUrl="";
+          for(String retainedUrl:retainedUrls){
+            if(endpoint.equals(SourceSelectionPolicy.endpointKey(retainedUrl))){
+              retainedEndpointUrl=retainedUrl;break;
+            }
+          }
+          if(!retainedEndpointUrl.isEmpty()){
+            addBackupSourceScope(target,retainedEndpointUrl,e.scope);
+          }
           continue;
         }
         // The same stream URL may legitimately label two distinct channels. Avoid
