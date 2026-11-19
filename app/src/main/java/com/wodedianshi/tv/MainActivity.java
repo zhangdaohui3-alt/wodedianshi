@@ -4082,7 +4082,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         int added=parse(data);
         if(!persist())throw new IllegalStateException("频道配置保存失败");
-        
+
         runOnUiThread(()->{
           if(isFinishing())return;
           refresh();
@@ -4380,7 +4380,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(favorites.contains(c.key())){favorites.remove(c.key());toast("已取消收藏："+c.name);}
     else{favorites.add(c.key());toast("已加入收藏："+c.name);}
     persist();
-    
+
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();
   }
@@ -4855,7 +4855,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
-    
+
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
@@ -5284,7 +5284,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     automaticSwitchCount++;
     c.activeSource=next;
-    
+
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
     startCurrentSource();
   }
@@ -5319,8 +5319,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      
     info.setText(reason+"，自动切换到下一频道："+target.name);
     startCurrentSource();
   }
@@ -5339,8 +5337,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      
     startCurrentSource();
   }
   // Explicit backup selection must not be reset to the channel's default/last-good source.
@@ -5360,8 +5356,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     updateLiveChannelPresentation();
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     persist();
-    if(target.activeSource>=0&&target.activeSource<target.backups.size())
-      
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -6006,7 +6000,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     persist();
     // Source order is part of the Room shadow: activeSource is a priority index.
     // Re-import the committed snapshot so the relation order and index stay aligned.
-    
+
   }
   private void toggleNetworkSpeed(){
     boolean enabled=!getSharedPreferences("mytv",0).getBoolean("show_network_speed",false);
