@@ -435,6 +435,10 @@ public class MainActivity extends Activity {
   }
   private void restore(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+    // The UI-thread preview is only a temporary display snapshot. Replace it before
+    // rebuilding from the full saved catalogue, otherwise preview entries could win
+    // duplicate resolution and discard their original backup-source lists.
+    synchronized(channels){channels.clear();}
     favorites.addAll(p.getStringSet("fav",new HashSet<>()));
     try {
       org.json.JSONArray a=new org.json.JSONArray(p.getString("channels","[]"));
