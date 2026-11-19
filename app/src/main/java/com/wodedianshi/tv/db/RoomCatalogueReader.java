@@ -75,10 +75,13 @@ public final class RoomCatalogueReader {
         public final List<ChannelRecord> channels;
         public final Set<String> favorites;
         public final int channelCount;
-        Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount) {
+        public final long catalogueVersion;
+        Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount,
+                long catalogueVersion) {
             this.channels = channels;
             this.favorites = favorites;
             this.channelCount = channelCount;
+            this.catalogueVersion = catalogueVersion;
         }
     }
 
