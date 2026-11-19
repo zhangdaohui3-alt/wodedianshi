@@ -378,12 +378,17 @@ public class MainActivity extends Activity {
       ArrayList<Channel> previewChannels=new ArrayList<>();
       if(!raw.isEmpty()&&!"[]".equals(raw)){
         org.json.JSONArray a=new org.json.JSONArray(raw);
-        int count=Math.min(60,a.length());
+        int count=a.length();
         for(int i=0;i<count;i++){
           org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
           String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
           if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))
-            previewChannels.add(new Channel(name,url,group));
+            Channel channel=new Channel(name,url,group);
+          org.json.JSONArray sources=o.optJSONArray("sources");
+          if(sources!=null){channel.backups.clear();for(int j=0;j<sources.length();j++){String source=sources.optString(j,"");if(source.startsWith("http://")||source.startsWith("https://"))channel.backups.add(source);}}
+          if(channel.backups.isEmpty())channel.backups.add(url);
+          channel.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),channel.backups.size()-1));
+          previewChannels.add(channel);
         }
       }
       // One-time upgrade path for installs that predate the compact snapshot.
@@ -393,7 +398,7 @@ public class MainActivity extends Activity {
           android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(full));
           reader.beginArray();
           int scanned=0;
-          while(reader.hasNext()&&scanned<60){
+          while(reader.hasNext()){
             scanned++;
             String name="",url="",group="";
             reader.beginObject();
@@ -663,16 +668,16 @@ public class MainActivity extends Activity {
           if(changed)rebuildChannelIndexes();
         }
         org.json.JSONArray a=new org.json.JSONArray();
-        org.json.JSONArray startupPreview=new org.json.JSONArray();
+        
         synchronized(channels){
           for(Channel c:channels){
             org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);
-            if(startupPreview.length()<60){org.json.JSONObject item=new org.json.JSONObject();item.put("name",c.name);item.put("url",c.url);item.put("group",c.group);startupPreview.put(item);}
+
           }
         }
         long nextGeneration=generation+1L;
         prefs.edit().putString("channels",a.toString())
-            .putString("startup_channels",startupPreview.toString())
+            .putString("startup_channels",a.toString())
             .putStringSet("fav",new HashSet<>(favorites))
             .putLong("channel_catalogue_generation",nextGeneration).apply();
         loadedCatalogueGeneration=nextGeneration;
