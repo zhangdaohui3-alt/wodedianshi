@@ -96,9 +96,15 @@ public class SourceUpdateWorker extends Worker {
           saveStatus(prefs,"全量频道目录已完成发布，无需重复重建",0);
           return Result.success();
         }
-        if(!"true".equals(buildActive)){
+        String configuredFeedFingerprint=discoveryFeedsFingerprint(feeds);
+        String savedFeedFingerprint=roomString("source_full_rebuild_feed_fingerprint","");
+        boolean rebuildProgressMustReset=!"true".equals(buildActive)
+            ||!configuredFeedFingerprint.equals(savedFeedFingerprint);
+        if(rebuildProgressMustReset){
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
+          // Feed progress is tied to the exact ordered URL list: an app update that
+          // adds, removes, or reorders feeds must not inherit stale per-index cursors.
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
           com.wodedianshi.tv.db.AppStateEditor resetBuildState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
@@ -112,6 +118,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_has_validated_source")
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
+              .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
               .apply();
           com.wodedianshi.tv.db.AppStateStore.put(
               getApplicationContext(),"source_full_rebuild_active","true");
@@ -509,6 +516,11 @@ public class SourceUpdateWorker extends Worker {
       if(!done)return false;
     }
     return true;
+  }
+  private String discoveryFeedsFingerprint(String[] feeds){
+    StringBuilder value=new StringBuilder();
+    if(feeds!=null)for(String feed:feeds)appendFingerprintPart(value,feed);
+    return CatalogueFingerprint.sha256(value.toString());
   }
   private String discoveryFingerprint(List<Entry> entries){
     StringBuilder value=new StringBuilder(entries.size()*96);
