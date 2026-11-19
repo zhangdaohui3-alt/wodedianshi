@@ -53,7 +53,25 @@ public final class RoomCatalogueWriter {
             HashSet<String> presentChannelIds = new HashSet<>();
             HashSet<String> presentCategoryIds = new HashSet<>();
             HashSet<String> desiredFavoriteIds = new HashSet<>();
+            HashMap<String, Long> preservedFavoriteTimes = new HashMap<>();
             HashMap<String, Integer> occurrences = new HashMap<>();
+            HashMap<String, String> newIdsByStableIdentity = new HashMap<>();
+            HashSet<String> ambiguousStableIdentities = new HashSet<>();
+            // Capture favorites before stale channel rows are deleted. A full rebuild
+            // may legitimately change a channel's primary URL, so its old Room id
+            // cannot be used as the only favorite-preservation key.
+            List<ChannelWithSources> previousFavorites = dao.getFavoriteChannels();
+            HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
+            for (ChannelWithSources favorite : previousFavorites) {
+                if (favorite == null || favorite.channel == null) continue;
+                ChannelEntity old = favorite.channel;
+                String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
+                String stableKey = LegacyChannelIdPolicy.stableIdentityKey(
+                        old.name, oldUrl, old.tvgId);
+                Long addedAt = dao.getFavoriteAddedAt(old.id);
+                previousFavoriteTimes.put(stableKey,
+                        addedAt == null ? System.currentTimeMillis() : addedAt);
+            }
             HashMap<String, Integer> categoryOrders = new HashMap<>();
 
             for (int row = 0; row < snapshot.size(); row++) {
@@ -74,10 +92,20 @@ public final class RoomCatalogueWriter {
                 dao.updateCategoryFields(categoryId, category.name, categoryOrder);
                 presentCategoryIds.add(categoryId);
 
-                String identity = LegacyChannelIdPolicy.identityKey(name, primary);
-                int occurrence = occurrences.containsKey(identity) ? occurrences.get(identity) : 0;
-                occurrences.put(identity, occurrence + 1);
-                String id = LegacyChannelIdPolicy.idFor(name, primary, occurrence);
+                String stableIdentity = LegacyChannelIdPolicy.stableIdentityKey(
+                        name, primary, item.tvgId);
+                int occurrence = occurrences.containsKey(stableIdentity)
+                        ? occurrences.get(stableIdentity) : 0;
+                occurrences.put(stableIdentity, occurrence + 1);
+                String id = LegacyChannelIdPolicy.idForStableIdentity(stableIdentity, occurrence);
+                if (!ambiguousStableIdentities.contains(stableIdentity)) {
+                    if (newIdsByStableIdentity.containsKey(stableIdentity)) {
+                        newIdsByStableIdentity.remove(stableIdentity);
+                        ambiguousStableIdentities.add(stableIdentity);
+                    } else {
+                        newIdsByStableIdentity.put(stableIdentity, id);
+                    }
+                }
                 String legacyKey = name + "|" + primary;
 
                 LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
@@ -119,8 +147,16 @@ public final class RoomCatalogueWriter {
             // transaction. This avoids racing a user favorite toggle between a
             // pre-transaction read and the catalogue commit.
             if (favoriteKeys == null) {
+                // Retain unchanged IDs directly, then remap favorites whose primary
+                // stream changed using a conservative stable TVG/broadcaster identity.
                 desiredFavoriteIds.addAll(dao.getFavoriteChannelIds());
                 desiredFavoriteIds.retainAll(presentChannelIds);
+                for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
+                    String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
+                    if (newId == null || !presentChannelIds.contains(newId)) continue;
+                    desiredFavoriteIds.add(newId);
+                    preservedFavoriteTimes.put(newId, oldFavorite.getValue());
+                }
             }
 
             // Remove only rows absent from the complete snapshot. FK cascades then
@@ -136,7 +172,9 @@ public final class RoomCatalogueWriter {
             currentFavoriteIds.retainAll(desiredFavoriteIds);
             for (String favoriteId : desiredFavoriteIds) {
                 if (!currentFavoriteIds.contains(favoriteId)) {
-                    dao.addFavorite(new FavoriteEntity(favoriteId, System.currentTimeMillis()));
+                    Long originalAddedAt = preservedFavoriteTimes.get(favoriteId);
+                    dao.addFavorite(new FavoriteEntity(favoriteId,
+                            originalAddedAt == null ? System.currentTimeMillis() : originalAddedAt));
                 }
             }
 
@@ -161,6 +199,14 @@ public final class RoomCatalogueWriter {
             }
         });
         return written[0];
+    }
+
+    private static String legacyPrimaryUrl(String legacyKey, String name, String fallback) {
+        String prefix = (name == null ? "" : name) + "|";
+        if (legacyKey != null && legacyKey.startsWith(prefix)) {
+            return legacyKey.substring(prefix.length());
+        }
+        return fallback == null ? "" : fallback;
     }
 
     /** Source updater snapshots are complete Room-derived catalogues too. */
