@@ -141,8 +141,7 @@ public class MainActivity extends Activity {
     // Render the shell immediately. Parsing a large saved playlist and rebuilding
     // channel indexes can be expensive on older TV boxes, so do it off the UI thread.
     makeUi();
-    // Paint a tiny local snapshot before the full catalogue is restored in the worker.
-    restoreStartupChannelPreview();
+    // The last-known-good complete catalogue is restored from local storage on the worker thread.
     remoteParentLockManager = new ParentRemoteLockManager(this, new ParentRemoteLockManager.Listener() {
       @Override public void onLockStateChanged(boolean locked, String reason) {
         if (locked) { if(remoteLockUiActive)enforceRemoteParentLock(reason); }
@@ -369,88 +368,6 @@ public class MainActivity extends Activity {
   private boolean isDecoderFallbackEnabled(){
     return getSharedPreferences("mytv",0).getInt("decoder_mode",0)==1;
   }
-  // Render the first page from a compact local snapshot while the full catalogue
-  // is parsed on the worker thread. Preview rows remain disabled until full restore.
-  private boolean restoreStartupChannelPreview(){
-    android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    String raw=p.getString("channels","[]");
-    if(raw.isEmpty()||"[]".equals(raw))raw=p.getString("startup_channels","[]");
-    try{
-      ArrayList<Channel> previewChannels=new ArrayList<>();
-      if(!raw.isEmpty()&&!"[]".equals(raw)){
-        org.json.JSONArray a=new org.json.JSONArray(raw);
-        int count=a.length();
-        for(int i=0;i<count;i++){
-          org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
-          String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
-          if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))
-            Channel channel=new Channel(name,url,group);
-          org.json.JSONArray sources=o.optJSONArray("sources");
-          if(sources!=null){channel.backups.clear();for(int j=0;j<sources.length();j++){String source=sources.optString(j,"");if(source.startsWith("http://")||source.startsWith("https://"))channel.backups.add(source);}}
-          if(channel.backups.isEmpty())channel.backups.add(url);
-          channel.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),channel.backups.size()-1));
-          previewChannels.add(channel);
-        }
-      }
-      // One-time upgrade path for installs that predate the compact snapshot.
-      if(previewChannels.isEmpty()){
-        String full=p.getString("channels","[]");
-        if(!full.isEmpty()&&!"[]".equals(full)){
-          android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(full));
-          reader.beginArray();
-          int scanned=0;
-          while(reader.hasNext()){
-            scanned++;
-            String name="",url="",group="";
-            reader.beginObject();
-            while(reader.hasNext()){
-              String key=reader.nextName();
-              if("name".equals(key))name=reader.nextString();
-              else if("url".equals(key))url=reader.nextString();
-              else if("group".equals(key))group=reader.nextString();
-              else reader.skipValue();
-            }
-            reader.endObject();
-            if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))
-              previewChannels.add(new Channel(name,url,group));
-          }
-          reader.close();
-        }
-      }
-      if(previewChannels.isEmpty())return false;
-      synchronized(channels){channels.clear();channels.addAll(previewChannels);}
-      favorites.addAll(p.getStringSet("fav",new HashSet<>()));
-      rebuildChannelIndexes();
-      refresh();
-      if(info!=null)info.setText("已快速显示本地频道 · 正在后台恢复完整频道资料");
-      android.util.Log.i("MyTVStartup","preview_channels="+previewChannels.size());
-      return true;
-    }catch(Exception e){
-      android.util.Log.w("MyTVStartup","startup preview unavailable",e);
-      return false;
-    }
-  }
-  // Persist every channel, category/group and source in the last-known-good startup snapshot.
-  // This is intentionally a complete catalogue snapshot rather than a 60-row preview.
-  private void writeStartupChannelPreview(){
-    try{
-      org.json.JSONArray snapshot=new org.json.JSONArray();
-      synchronized(channels){
-        for(Channel channel:channels){
-          org.json.JSONObject item=new org.json.JSONObject();
-          item.put("name",channel.name);item.put("url",channel.url);item.put("group",channel.group);
-          item.put("activeSource",channel.activeSource);
-          org.json.JSONArray sources=new org.json.JSONArray();
-          for(String source:channel.backups)sources.put(source);
-          item.put("sources",sources);
-          snapshot.put(item);
-        }
-      }
-      // "channels" is the single authoritative complete snapshot. Do not duplicate
-      // the full JSON in SharedPreferences under a second key.
-      android.util.Log.i("MyTVStartup","complete_snapshot_ready channels="+snapshot.length());
-    }catch(Exception e){android.util.Log.w("MyTVStartup","complete snapshot save failed",e);}
-  }
   private void restore(){
     synchronized(ChannelCatalogueStore.LOCK){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
@@ -474,7 +391,6 @@ public class MainActivity extends Activity {
     loadedCatalogueGeneration=p.getLong("channel_catalogue_generation",0L);
     restoredCatalogueIdentities.clear();
     for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));
-    writeStartupChannelPreview();
     }
   }
   private void rebuildChannelIndexes(){
