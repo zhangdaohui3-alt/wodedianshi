@@ -93,6 +93,8 @@ public class SourceUpdateWorker extends Worker {
       String catalogueFingerprint=ChannelCatalogueRefreshCyclePolicy.fingerprint(discoveryScanUrls);
       JSONObject previousStage=readCatalogueStage();
       boolean continuingCycle=previousStage!=null
+          &&previousStage.optJSONArray("originalIdentities")!=null
+          &&previousStage.has("channels")
           &&catalogueFingerprint.equals(previousStage.optString("fingerprint",""));
       JSONArray saved=continuingCycle
           ?new JSONArray(previousStage.optString("channels","[]"))
@@ -229,13 +231,49 @@ public class SourceUpdateWorker extends Worker {
         JSONArray ranked=new JSONArray();for(String u:ordered)ranked.put(u);
         if(ranked.length()>0){channel.put("sources",ranked);channel.put("url",ranked.optString(0));channel.put("activeSource",0);}
       }
+      // Do not expose a partially scanned directory as the active catalogue.
+      // Keep the prepared candidate and accumulated probe scores in an AtomicFile
+      // until the discovery cursor reaches the end of this exact feed snapshot.
+      boolean discoveryCycleComplete=ChannelCatalogueRefreshCyclePolicy.isComplete(
+          discoveryScanStart,discoveryScanned,candidates.size(),chinaFeedsOk>0);
+      if(!discoveryCycleComplete){
+        JSONObject stageState=new JSONObject();
+        stageState.put("fingerprint",catalogueFingerprint);
+        stageState.put("channels",saved.toString());
+        stageState.put("originalIdentities",baselineIdentitiesJson);
+        stageState.put("scores",measuredScores.toString());
+        if(!writeCatalogueStage(stageState)){
+          saveStatus(prefs,"频道资料暂存失败，正式频道库未改变；稍后重试",0);
+          reportProgress("暂存失败",discoveryScanStart+Math.max(0,discoveryScanned),
+              candidates.size(),"候选资料暂存失败，原频道库保持不变");
+          return Result.retry();
+        }
+        String progressMessage="已完成 "+Math.min(candidates.size(),discoveryScanStart+discoveryScanned)
+            +"/"+candidates.size()+" 条候选线路的轮转检测；新资料仍在暂存，正式频道库继续使用旧版本";
+        boolean progressSaved=prefs.edit()
+            .putInt("source_scan_cursor",(discoveryScanStart+discoveryScanned)%candidates.size())
+            .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+            .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+            .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
+            .putString("source_update_time",now())
+            .putString("source_update_result",progressMessage+(errors.length()>0?" 部分目录暂不可用，后续轮次继续补齐。":""))
+            .commit();
+        if(!progressSaved){
+          saveStatus(prefs,"暂存进度记录失败；候选资料仍保存在临时文件，正式频道库未改变",0);
+          return Result.retry();
+        }
+        reportProgress("资料暂存",Math.min(candidates.size(),discoveryScanStart+discoveryScanned),
+            candidates.size(),progressMessage);
+        return Result.retry();
+      }
+
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       // Build the commit against the newest active snapshot, not the stale copy
       // read before network discovery. UI persistence uses the same lock and
       // generation counter, so favorites/last-channel state and user edits survive.
-      reportProgress("完整性校验",1,2,"线路检测完成，正在与最新保存的频道库合并并校验");
+      reportProgress("完整性校验",1,2,"完整目录扫描已完成，正在与最新保存的频道库合并并校验");
       synchronized(ChannelCatalogueStore.LOCK){
         JSONArray latestActive=new JSONArray(prefs.getString("channels","[]"));
         ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> currentRecords=readCatalogueRecords(latestActive);
@@ -251,9 +289,9 @@ public class SourceUpdateWorker extends Worker {
             prefs.getStringSet("fav",Collections.emptySet()),currentRecords,mergedRecords);
         long nextGeneration=prefs.getLong("channel_catalogue_generation",0L)+1L;
         boolean committed=prefs.edit()
-            .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+            .putInt("source_scan_cursor",0)
             .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
-            .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):prefs.getString("source_scan_after_key",""))
+            .putString("source_scan_after_key","")
             .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):prefs.getString("source_saved_scan_after_key",""))
             .putString("source_probe_scores_v1",measuredScores.toString())
             .putString("channels",committedChannels.toString())
@@ -268,9 +306,53 @@ public class SourceUpdateWorker extends Worker {
           return Result.retry();
         }
       }
-      reportProgress("完成",2,2,"本轮频道资料已校验并整体保存；旧频道数据未在整理过程中被清空");
-      return discoveryUnavailable?Result.retry():Result.success();
+      clearCatalogueStage();
+      reportProgress("完成",2,2,"完整目录扫描已完成；新频道资料和线路质量已整体切换，旧资料未在整理过程中被清空");
+      return Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private JSONArray buildIdentityArray(JSONArray channels)throws JSONException{
+    JSONArray identities=new JSONArray();
+    HashSet<String> unique=new HashSet<>();
+    for(int i=0;i<channels.length();i++){
+      JSONObject channel=channels.optJSONObject(i);if(channel==null)continue;
+      String value=identity(channel.optString("name",""),channel.optString("group",""),channel.optString("url",""));
+      if(!value.isEmpty()&&unique.add(value))identities.put(value);
+    }
+    return identities;
+  }
+  private HashSet<String> readIdentitySet(JSONArray identities){
+    HashSet<String> result=new HashSet<>();
+    if(identities!=null)for(int i=0;i<identities.length();i++){
+      String value=identities.optString(i,"");if(!value.isEmpty())result.add(value);
+    }
+    return result;
+  }
+  private android.util.AtomicFile catalogueStageFile(){
+    return new android.util.AtomicFile(new File(getApplicationContext().getFilesDir(),"channel_catalogue_refresh_stage.json"));
+  }
+  private JSONObject readCatalogueStage(){
+    android.util.AtomicFile file=catalogueStageFile();
+    if(!file.getBaseFile().exists())return null;
+    try(InputStream in=file.openRead()){
+      return new JSONObject(read(in,64*1024*1024));
+    }catch(Exception ignored){return null;}
+  }
+  private boolean writeCatalogueStage(JSONObject state){
+    android.util.AtomicFile file=catalogueStageFile();
+    FileOutputStream out=null;
+    try{
+      out=file.startWrite();
+      out.write(state.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      file.finishWrite(out);
+      return true;
+    }catch(Exception error){
+      if(out!=null)file.failWrite(out);
+      return false;
+    }
+  }
+  private void clearCatalogueStage(){
+    try{catalogueStageFile().delete();}catch(Exception ignored){}
   }
   private ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> readCatalogueRecords(JSONArray array){
     ArrayList<ChannelCatalogueMergePolicy.ChannelRecord> records=new ArrayList<>();
