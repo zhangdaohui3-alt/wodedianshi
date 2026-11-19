@@ -38,6 +38,13 @@ public class ChannelIdentityPolicyTest {
         assertEquals(first, second);
     }
 
+    @Test public void recognizesMunicipalitiesAsTheirOwnCityIdentity() {
+        assertEquals("local:北京|北京|北京新闻频道",
+                ChannelIdentityPolicy.localStationIdentity("北京新闻频道", ""));
+        assertEquals("local:上海|上海|上海纪实频道",
+                ChannelIdentityPolicy.localStationIdentity("上海纪实频道", ""));
+    }
+
     @Test public void localStationMergeRequiresAnUnambiguousCityAndSpecificLabel() {
         assertEquals("", ChannelIdentityPolicy.localStationIdentity("福州综合频道", ""));
         assertEquals("", ChannelIdentityPolicy.localStationIdentity("福建新闻综合", ""));
