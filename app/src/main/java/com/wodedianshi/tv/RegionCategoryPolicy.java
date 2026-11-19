@@ -11,9 +11,13 @@ final class RegionCategoryPolicy {
 
     private RegionCategoryPolicy() {}
 
-    /** Keeps HMT channels in China even when they arrive inside a global master index. */
+    /** Keeps Chinese regional and national channels in China when found in global indexes. */
     static String catalogueScope(String name, String group, String requestedScope) {
-        if ("global".equals(requestedScope) && isHongKongMacauTaiwan(name, group)) return "china";
+        if (!"global".equals(requestedScope)) return requestedScope;
+        if (isHongKongMacauTaiwan(name, group)) return "china";
+        String metadata = (name == null ? "" : name) + " " + (group == null ? "" : group);
+        if (!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()) return "china";
+        if (!ChannelNamePolicy.canonicalBroadcasterName(name, "", "", group).isEmpty()) return "china";
         return requestedScope;
     }
 
