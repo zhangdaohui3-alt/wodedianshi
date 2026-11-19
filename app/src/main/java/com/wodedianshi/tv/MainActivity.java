@@ -303,7 +303,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             ||startupPrefs.contains("source_probe_scores_v1")
             ||startupPrefs.contains("source_qoe_v1")
             ||startupPrefs.contains("source_update_result")
-            ||startupPrefs.contains("source_update_time");
+            ||startupPrefs.contains("source_update_time")
+            ||startupPrefs.contains("source_last_good_v1")
+            ||startupPrefs.contains("source_cooldowns_v1");
+        for(String legacyKey:startupPrefs.getAll().keySet()){
+          if(legacyKey.startsWith("vod_cache_")||legacyKey.startsWith("china_supplement_")
+              ||legacyKey.startsWith("china_directory_")||legacyKey.startsWith("global_supplement_")
+              ||legacyKey.startsWith("source_probe_")||legacyKey.startsWith("source_qoe_")
+              ||legacyKey.startsWith("source_scan_")||legacyKey.startsWith("source_saved_scan_")
+              ||legacyKey.startsWith("source_feed_")||legacyKey.startsWith("source_initial_discovery_")
+              ||legacyKey.startsWith("source_update_last_success")||legacyKey.startsWith("geo_snapshot_")){
+            hadLegacyBusinessData=true;
+            break;
+          }
+        }
         if(hadLegacyBusinessData){
           android.content.SharedPreferences.Editor cleanup=startupPrefs.edit()
               .remove("channels").remove("fav").remove("defaults_loaded")
@@ -311,12 +324,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               .remove("source_update_pending_base")
               .remove("source_update_pending_base_fingerprint")
               .remove("last_channel_identity").remove("last_channel_url")
-              .remove("vod_favorites_v1").remove("vod_history_v1");
+              .remove("vod_favorites_v1").remove("vod_history_v1")
+              .remove("source_last_good_v1").remove("source_cooldowns_v1");
           for(String key:startupPrefs.getAll().keySet()){
             if(key.startsWith("source_probe_")||key.startsWith("source_qoe_")
                 ||key.startsWith("source_scan_")||key.startsWith("source_saved_scan_")
                 ||key.startsWith("source_feed_")||key.startsWith("source_initial_discovery_")
-                ||key.startsWith("source_update_last_success")
+                ||key.startsWith("source_update_last_success")||key.startsWith("vod_cache_")
+                ||key.startsWith("china_supplement_")||key.startsWith("china_directory_")
+                ||key.startsWith("global_supplement_")||key.startsWith("geo_snapshot_")
                 ||"source_update_time".equals(key)||"source_update_result".equals(key)){
               cleanup.remove(key);
             }
