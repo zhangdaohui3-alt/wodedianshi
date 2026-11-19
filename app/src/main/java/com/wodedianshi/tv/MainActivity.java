@@ -5566,7 +5566,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final String expectedMediaId=currentMediaId;
       final int expectedChannel=selected;
       releaseLibVlcEngine(()->{
-        if(activityStarted&&!isFinishing()&&!isDestroyed()
+        if(activityStarted&&!isFinishing()&&!isDestroyed()&&currentVodPanel==null
             &&selected==expectedChannel&&expectedMediaId.equals(currentMediaId))
           startCurrentSourceInternal();
       });
