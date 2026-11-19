@@ -56,6 +56,36 @@ public class LegacyChannelIdPolicyTest {
     }
 
     @Test
+    public void recognizedCityStationKeepsRoomIdentityAcrossDifferentHosts() {
+        String first = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://old.example/live.m3u8", "", "地方", "");
+        String second = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://new.example/live.m3u8", "", "新闻", "");
+        assertEquals("local:广东|深圳|深圳都市频道", first);
+        assertEquals(first, second);
+    }
+
+    @Test
+    public void bilingualCityStationUsesChineseGuideNameForStableRoomIdentity() {
+        String first = LegacyChannelIdPolicy.stableIdentityKey(
+                "Shenzhen City Channel", "https://old.example/live.m3u8",
+                "provider.old", "Local", "深圳都市频道");
+        String second = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://new.example/live.m3u8",
+                "provider.new", "地方", "");
+        assertEquals(first, second);
+    }
+
+    @Test
+    public void ambiguousCityNameRemainsHostScopedForRoomIdentity() {
+        assertNotEquals(
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福州综合频道", "https://a.example/live.m3u8", "", "地方", ""),
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福州综合频道", "https://b.example/live.m3u8", "", "地方", ""));
+    }
+
+    @Test
     public void genericChannelKeepsIdentityAcrossPathChangesOnSameHost() {
         assertEquals(
                 LegacyChannelIdPolicy.stableIdentityKey(
