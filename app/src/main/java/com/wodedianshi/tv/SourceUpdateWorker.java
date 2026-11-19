@@ -63,7 +63,7 @@ public class SourceUpdateWorker extends Worker {
       JSONObject previousStage=readCatalogueStage();
       boolean stagedCandidatesAvailable=previousStage!=null
           &&previousStage.optJSONArray("candidateEntries")!=null
-          &&!previousStage.optJSONArray("candidateEntries").isNull(0);
+          &&previousStage.optJSONArray("candidateEntries").length()>0;
       int feedIndex=0,chinaFeedsOk=0;
       if(stagedCandidatesAvailable){
         // Resume from the exact staged feed snapshot. Re-downloading and reparsing
@@ -416,7 +416,7 @@ public class SourceUpdateWorker extends Worker {
         try(InputStream in=connection.getInputStream()){
           byte[] sample=new byte[8192];int count=in.read(sample);
           if(count>0&&new String(sample,0,count,java.nio.charset.StandardCharsets.UTF_8)
-              .replace("\\uFEFF","").trim().startsWith("#EXTM3U"))return true;
+              .replace("\uFEFF","").trim().startsWith("#EXTM3U"))return true;
         }
       }catch(Exception ignored){
       }finally{if(connection!=null)connection.disconnect();}
