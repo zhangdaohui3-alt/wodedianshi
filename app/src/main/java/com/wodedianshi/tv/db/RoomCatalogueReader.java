@@ -101,6 +101,10 @@ public final class RoomCatalogueReader {
         MasterCatalogueRepository repository = new MasterCatalogueRepository(context);
         if (!repository.isSnapshotReady()) return null;
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
+        CatalogueMigrationEntity initialCheckpoint =
+                dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if (initialCheckpoint == null) return null;
+        final long catalogueVersion = initialCheckpoint.completedAt;
         ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
         int total = dao.countChannels();
         int loaded = 0;
