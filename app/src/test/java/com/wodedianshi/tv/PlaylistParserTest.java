@@ -106,6 +106,53 @@ public class PlaylistParserTest {
         assertEquals("已解析频道", items.get(0).name);
     }
 
+    @Test public void parsesExtBurlAlternatesAsAdditionalSourcesForSameChannel() {
+        String m3u = "#EXTM3U\\n"
+                + "#EXTINF:-1 tvg-id=\\\"CCTV1\\\" tvg-name=\\\"CCTV One\\\" group-title=\\\"央视\\\",中央电视台综合频道\\n"
+                + "https://primary.example/live.m3u8\\n"
+                + "#EXTBURL:https://backup.example/live.m3u8\\n"
+                + "#EXTBURL:https://backup2.example/live.m3u8\\n"
+                + "#EXTINF:-1,湖南卫视\\nhttps://hunan.example/live.m3u8";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(4, items.size());
+        assertEquals("https://primary.example/live.m3u8", items.get(0).url);
+        assertEquals("https://backup.example/live.m3u8", items.get(1).url);
+        assertEquals("https://backup2.example/live.m3u8", items.get(2).url);
+        assertEquals("中央电视台综合频道", items.get(1).name);
+        assertEquals("央视", items.get(1).group);
+        assertEquals("CCTV1", items.get(1).tvgId);
+        assertEquals("CCTV One", items.get(1).tvgName);
+        assertEquals("湖南卫视", items.get(3).name);
+    }
+
+    @Test public void pagedParserDoesNotSkipExtBurlWhenPageEndsAtPrimaryUrl() throws IOException {
+        String m3u = "#EXTM3U\\n"
+                + "#EXTINF:-1,频道A\\nhttps://primary.example/live.m3u8\\n"
+                + "#EXTBURL:https://backup.example/live.m3u8\\n"
+                + "#EXTINF:-1,频道B\\nhttps://next.example/live.m3u8";
+        ArrayList<PlaylistParser.ChannelSource> first = new ArrayList<>();
+        ArrayList<PlaylistParser.ChannelSource> second = new ArrayList<>();
+        try (StringReader reader = new StringReader(m3u)) {
+            assertEquals(1, PlaylistParser.parseEach(reader, 0, 1, first::add));
+        }
+        try (StringReader reader = new StringReader(m3u)) {
+            assertEquals(1, PlaylistParser.parseEach(reader, 1, 1, second::add));
+        }
+        assertEquals("https://primary.example/live.m3u8", first.get(0).url);
+        assertEquals("https://backup.example/live.m3u8", second.get(0).url);
+        assertEquals("频道A", second.get(0).name);
+    }
+
+    @Test public void ignoresOrphanAndNonHttpExtBurlLines() {
+        String m3u = "#EXTBURL:https://orphan.example/live.m3u8\\n"
+                + "#EXTINF:-1,频道A\\nhttps://primary.example/live.m3u8\\n"
+                + "#EXTBURL:rtmp://backup.example/live\\n"
+                + "#EXTBURL:https://backup.example/live.m3u8";
+        List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(m3u, 10);
+        assertEquals(2, items.size());
+        assertEquals("https://backup.example/live.m3u8", items.get(1).url);
+    }
+
     @Test public void usesTvgNameWhenDisplayNameIsMissing() {
         List<PlaylistParser.ChannelSource> items = PlaylistParser.parse(
                 "#EXTINF:-1 tvg-name=\"湖南卫视\",\nhttps://example.com/hunan", 10);
