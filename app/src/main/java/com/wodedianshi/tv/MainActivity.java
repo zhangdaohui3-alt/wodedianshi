@@ -368,20 +368,45 @@ public class MainActivity extends Activity {
   private boolean restoreStartupChannelPreview(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     String raw=p.getString("startup_channels","[]");
-    if(raw.isEmpty()||"[]".equals(raw))return false;
     try{
-      org.json.JSONArray a=new org.json.JSONArray(raw);
       ArrayList<Channel> previewChannels=new ArrayList<>();
-      int count=Math.min(60,a.length());
-      for(int i=0;i<count;i++){
-        org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
-        String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
-        if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))previewChannels.add(new Channel(name,url,group));
+      if(!raw.isEmpty()&&!"[]".equals(raw)){
+        org.json.JSONArray a=new org.json.JSONArray(raw);
+        int count=Math.min(60,a.length());
+        for(int i=0;i<count;i++){
+          org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
+          String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
+          if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))previewChannels.add(new Channel(name,url,group));
+        }
+      }
+      // One-time upgrade path: older versions have only the full catalogue. Stream
+      // its first 60 JSON objects instead of deserializing the entire saved playlist.
+      if(previewChannels.isEmpty()){
+        String full=p.getString("channels","[]");
+        if(!full.isEmpty()&&!"[]".equals(full)){
+          android.util.JsonReader reader=new android.util.JsonReader(new java.io.StringReader(full));
+          reader.beginArray();
+          while(reader.hasNext()&&previewChannels.size()<60){
+            String name="",url="",group="";
+            reader.beginObject();
+            while(reader.hasNext()){
+              String key=reader.nextName();
+              if("name".equals(key))name=reader.nextString();
+              else if("url".equals(key))url=reader.nextString();
+              else if("group".equals(key))group=reader.nextString();
+              else reader.skipValue();
+            }
+            reader.endObject();
+            if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://")))previewChannels.add(new Channel(name,url,group));
+          }
+          reader.close();
+        }
       }
       if(previewChannels.isEmpty())return false;
       channels.addAll(previewChannels);
       favorites.addAll(p.getStringSet("fav",new HashSet<>()));
       rebuildChannelIndexes();
+      writeStartupChannelPreview();
       refresh();
       if(info!=null)info.setText("已快速显示本地频道 · 正在后台校准完整频道列表");
       android.util.Log.i("MyTVStartup","preview_channels="+channels.size());
