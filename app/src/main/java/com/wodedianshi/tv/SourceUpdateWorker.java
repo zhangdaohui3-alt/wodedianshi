@@ -174,6 +174,7 @@ public class SourceUpdateWorker extends Worker {
         int feedCursor=roomInt(feedCursorKey(feedIndex),0);
         int[] parsedCount={0};
         boolean feedReadSucceeded=false;
+        boolean feedPermanentlyUnavailable=false;
         if(isStopped())return Result.retry();
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
@@ -211,10 +212,17 @@ public class SourceUpdateWorker extends Worker {
             for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
             if(!feedCandidates.isEmpty())feedsWithEntries++;
           }
+          String failure=String.valueOf(e.getMessage());
+          // Removed feed endpoints should not hold a complete rebuild open forever.
+          // Treat only definitive 404/410 responses as exhausted; transient/network,
+          // rate-limit, and authorization failures remain retryable.
+          feedPermanentlyUnavailable=initialDiscoveryChain
+              &&(failure.contains("HTTP 404")||failure.contains("HTTP 410"));
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
           if(c!=null)c.disconnect();
-          feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],feedReadSucceeded));
+          feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
+              feedReadSucceeded||feedPermanentlyUnavailable));
         }
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
