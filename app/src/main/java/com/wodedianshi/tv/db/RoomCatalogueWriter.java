@@ -33,8 +33,28 @@ public final class RoomCatalogueWriter {
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit) {
+        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+                clearBuildRowsOnCommit, false);
+    }
+
+    /**
+     * Establishes a valid zero-row Room checkpoint for a brand-new installation.
+     * This is not a published channel catalogue: it only allows the first full
+     * discovery worker to persist progress without inventing bundled channels.
+     */
+    public static void initializeEmptyCatalogue(Context context) {
+        if (context == null) throw new IllegalArgumentException("context is null");
+        writeRecords(context, java.util.Collections.emptyList(),
+                java.util.Collections.emptySet(), -1L, false, true);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
-        if (snapshot.isEmpty()) throw new IllegalArgumentException("refusing to commit an empty catalogue");
+        if (snapshot.isEmpty() && !allowEmptyInitialization) {
+            throw new IllegalArgumentException("refusing to commit an empty catalogue");
+        }
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
         // A missing checkpoint means a genuinely fresh database. Seed it directly
@@ -43,6 +63,12 @@ public final class RoomCatalogueWriter {
         db.runInTransaction(() -> {
             CatalogueMigrationEntity checkpoint =
                     dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+            if (allowEmptyInitialization && (checkpoint != null || dao.countChannels() != 0
+                    || dao.countBackupSources() != 0 || dao.countFavorites() != 0
+                    || dao.countCategories() != 0)) {
+                throw new IllegalStateException(
+                        "Empty Room initialization is allowed only for a genuinely fresh database");
+            }
             if (expectedCatalogueVersion >= 0L
                     && (checkpoint == null || checkpoint.completedAt != expectedCatalogueVersion)) {
                 throw new IllegalStateException(
