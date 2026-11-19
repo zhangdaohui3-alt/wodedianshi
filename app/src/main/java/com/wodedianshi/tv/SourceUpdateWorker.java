@@ -88,6 +88,13 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");}
         finally{if(c!=null)c.disconnect();feedIndex++;}
       }
+      // Duplicate playlist entries distort cursor wrap detection and can cause
+      // the same endpoint to consume several probe slots. Keep the first normalized
+      // occurrence so each scan position represents one unique stream URL.
+      LinkedHashMap<String,Entry> uniqueDiscovery=new LinkedHashMap<>();
+      for(Entry entry:candidates)uniqueDiscovery.putIfAbsent(StableKey.url(entry.url),entry);
+      candidates.clear();
+      candidates.addAll(uniqueDiscovery.values());
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
       String catalogueFingerprint=ChannelCatalogueRefreshCyclePolicy.fingerprint(discoveryScanUrls);
