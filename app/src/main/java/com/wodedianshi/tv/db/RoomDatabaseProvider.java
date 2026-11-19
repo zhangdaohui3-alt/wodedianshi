@@ -64,7 +64,7 @@ public final class RoomDatabaseProvider {
             synchronized (RoomDatabaseProvider.class) {
                 local = instance;
                 if (local == null) {
-                    local = build(context, "mytv_catalogue.db");
+                    local = build(context, "mytv_catalogue_authoritative.db");
                     instance = local;
                 }
             }
