@@ -308,7 +308,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             ||startupPrefs.contains("source_cooldowns_v1");
         for(String legacyKey:startupPrefs.getAll().keySet()){
           if(legacyKey.startsWith("vod_cache_")||legacyKey.startsWith("china_supplement_")
-              ||legacyKey.startsWith("china_directory_")||legacyKey.startsWith("global_supplement_")){
+              ||legacyKey.startsWith("china_directory_")||legacyKey.startsWith("global_supplement_")
+              ||legacyKey.startsWith("source_probe_")||legacyKey.startsWith("source_qoe_")
+              ||legacyKey.startsWith("source_scan_")||legacyKey.startsWith("source_saved_scan_")
+              ||legacyKey.startsWith("source_feed_")||legacyKey.startsWith("source_initial_discovery_")
+              ||legacyKey.startsWith("source_update_last_success")){
             hadLegacyBusinessData=true;
             break;
           }
