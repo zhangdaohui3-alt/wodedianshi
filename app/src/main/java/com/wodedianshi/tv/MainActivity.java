@@ -4355,25 +4355,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
-  // Room receives these user mutations directly. Resolve exactly the same
-  // stable content identity scheme, including duplicate
-  // rows, before queuing a small Room update off the UI thread.
-  private String roomChannelIdAt(int channelIndex){
-    synchronized(channels){
-      if(channelIndex<0||channelIndex>=channels.size())return "";
-      Channel target=channels.get(channelIndex);
-      if(target==null||target.name==null||target.url==null)return "";
-      int occurrence=0;
-      for(int i=0;i<channelIndex;i++){
-        Channel prior=channels.get(i);
-        if(prior!=null&&java.util.Objects.equals(prior.name,target.name)
-            &&java.util.Objects.equals(prior.url,target.url))occurrence++;
-      }
-      return com.wodedianshi.tv.db.LegacyChannelIdPolicy.idFor(
-          target.name,target.url,occurrence);
-    }
-  }
-
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
