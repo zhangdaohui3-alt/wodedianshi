@@ -91,16 +91,30 @@ final class ChannelCatalogueMergePolicy {
                 merged.put(incoming.identity, new ChannelRecord(incoming.identity,
                         incoming.name, incoming.group, primary, sources, Math.max(0, active)));
             } else {
-                ArrayList<String> sources = new ArrayList<>(existing.sources);
-                for (String url : candidateUrls) {
-                    if (sources.size() >= MAX_SOURCES_PER_CHANNEL) break;
-                    if (!sources.contains(url)) sources.add(url);
-                }
+                // Candidate order reflects the latest measured quality ranking.
+                // Preserve the exact currently active URL, even when it is no
+                // longer the first-ranked source.
                 String activeUrl = existing.activeUrl();
+                String preferredPrimary = isHttp(incoming.primaryUrl)
+                        ? incoming.primaryUrl : existing.primaryUrl;
+                LinkedHashSet<String> ordered = new LinkedHashSet<>();
+                for (String url : candidateUrls) ordered.add(url);
+                for (String url : existing.sources) ordered.add(url);
+                ordered.add(preferredPrimary);
+                ArrayList<String> sources = new ArrayList<>(ordered);
+                if (sources.size() > MAX_SOURCES_PER_CHANNEL) {
+                    sources = new ArrayList<>(sources.subList(0, MAX_SOURCES_PER_CHANNEL));
+                }
+                if (!sources.contains(preferredPrimary)) {
+                    sources.set(sources.size() - 1, preferredPrimary);
+                }
+                if (activeUrl != null && !sources.contains(activeUrl)) {
+                    sources.set(sources.size() - 1, activeUrl);
+                }
                 int active = indexOf(sources, activeUrl);
-                if (active < 0) active = indexOf(sources, existing.primaryUrl);
+                if (active < 0) active = indexOf(sources, preferredPrimary);
                 merged.put(existing.identity, new ChannelRecord(existing.identity,
-                        existing.name, existing.group, existing.primaryUrl, sources,
+                        existing.name, existing.group, preferredPrimary, sources,
                         Math.max(0, active)));
             }
             acceptedCandidateRecords++;
