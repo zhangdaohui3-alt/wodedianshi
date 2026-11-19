@@ -18,7 +18,6 @@ public final class SourceMemoryStore {
     private static JSONObject lastGood = new JSONObject();
     private static JSONObject cooldowns = new JSONObject();
     private static volatile boolean initialized = false;
-    private static volatile Context appContext;
 
     private SourceMemoryStore() {}
 
@@ -29,7 +28,6 @@ public final class SourceMemoryStore {
         String savedGood = AppStateStore.get(application, LAST_GOOD, "{}");
         String savedCooldowns = AppStateStore.get(application, COOLDOWNS, "{}");
         synchronized (LOCK) {
-            appContext = application;
             try { lastGood = new JSONObject(savedGood); }
             catch (Exception malformed) { lastGood = new JSONObject(); }
             try { cooldowns = new JSONObject(savedCooldowns); }
@@ -56,7 +54,7 @@ public final class SourceMemoryStore {
                 || url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
         String snapshot;
         synchronized (LOCK) {
-            if (!initialized) initialize(context);
+            if (!initialized) return;
             try {
                 JSONObject entry = new JSONObject();
                 entry.put("url", url);
@@ -99,7 +97,7 @@ public final class SourceMemoryStore {
         if (context == null || url == null || url.isEmpty() || durationMs <= 0L) return;
         String snapshot;
         synchronized (LOCK) {
-            if (!initialized) initialize(context);
+            if (!initialized) return;
             try {
                 long now = System.currentTimeMillis();
                 Iterator<String> it = cooldowns.keys();
