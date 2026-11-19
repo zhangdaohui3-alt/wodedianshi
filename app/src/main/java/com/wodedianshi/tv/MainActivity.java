@@ -1500,12 +1500,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Initial catalogue loading is deferred until after dialog.show().
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
-      if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+      boolean shouldResumeLive=resumeLiveAfterVod&&selected>=0&&selected<channels.size()
+          &&!isChildLockCurrentlyActive();
+      if(shouldResumeLive){
         // Recreate the live player only after VOD releases its decoder resources.
+        // startCurrentSource() sets the playback-active lease before async decoder
+        // preparation; do not immediately clear it just because the new player has
+        // not reached STATE_READY yet.
         startCurrentSource();
+      }else{
+        setSourceUpdatePlaybackActive(
+            (player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       }
       resumeLiveAfterVod=false;
-      setSourceUpdatePlaybackActive((player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
     });
     dialog.setOnShowListener(d->{
