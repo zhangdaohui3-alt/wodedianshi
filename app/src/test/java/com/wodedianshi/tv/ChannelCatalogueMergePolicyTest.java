@@ -59,6 +59,20 @@ public class ChannelCatalogueMergePolicyTest {
         assertEquals(5, result.get(0).sources.stream().distinct().count());
     }
 
+    @Test public void migratesFavoriteKeyWhenPrimarySourceIsReordered() {
+        ChannelCatalogueMergePolicy.ChannelRecord before =
+                channel("cctv1", "https://old/live",
+                        Arrays.asList("https://old/live", "https://active/live"), 1);
+        ChannelCatalogueMergePolicy.ChannelRecord after =
+                channel("cctv1", "https://new/live",
+                        Arrays.asList("https://new/live", "https://old/live", "https://active/live"), 2);
+        java.util.Set<String> favorites = ChannelCatalogueMergePolicy.migrateFavoriteKeys(
+                Collections.singleton("CCTV-1|https://old/live"),
+                Collections.singletonList(before), Collections.singletonList(after));
+        assertFalse(favorites.contains("CCTV-1|https://old/live"));
+        assertTrue(favorites.contains("CCTV-1|https://new/live"));
+    }
+
     @Test public void rejectsEmptyOrInvalidCandidateWithoutChangingSnapshot() {
         assertNull(ChannelCatalogueMergePolicy.merge(
                 Collections.singletonList(channel("old", "https://old/live",
