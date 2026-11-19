@@ -141,7 +141,7 @@ public class SourceUpdateWorker extends Worker {
       // import old catalogue sources. Routine background maintenance also checks saved URLs.
       // Avoid allocating up to 20,000 additional saved-source Entry objects while the
       // TV UI is open; the full rotating health-check pool is retained for background runs.
-      if(!foregroundAtStart){
+      if(!foregroundAtStart&&!initialDiscoveryChain){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
           String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
@@ -230,7 +230,10 @@ public class SourceUpdateWorker extends Worker {
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
       int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
-      int savedWindow=Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      // During a full rebuild every probe slot belongs to newly discovered feed
+      // candidates. Staged rows already retain their measured scores; repeatedly
+      // health-checking them here would starve unseen entries and slow completion.
+      int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
       int discoveryScanStart=SourceSelectionPolicy.nextScanStart(discoveryScanUrls, roomString("source_scan_after_key",""), roomInt("source_scan_cursor",0));
       int discoveryWindow=Math.min(candidates.size(),MAX_PROBES_PER_RUN-savedWindow);
       String discoveryFingerprint=discoveryFingerprint(candidates);
