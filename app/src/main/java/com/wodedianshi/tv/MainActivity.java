@@ -66,6 +66,7 @@ public class MainActivity extends Activity {
   private UUID manualSourceUpdateId;
   private Button hoveredVodCategoryButton;
   private volatile boolean startupDataReady=false;
+  private long geoLoadGeneration=0L;
   private View hoveredVodCard;
   private LinearLayout list;
   private TextView info;
@@ -530,7 +531,8 @@ public class MainActivity extends Activity {
     channels.get(found).activeSource=0;
     play(found);
   }
-  private void persist(){
+  private void persist(){persist(null,null);}
+  private boolean persist(String snapshotPrefKey,Set<String> snapshotKeys){
     synchronized(ChannelCatalogueStore.LOCK){
       try {
         android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
@@ -599,14 +601,19 @@ public class MainActivity extends Activity {
           }
         }
         long nextGeneration=generation+1L;
-        prefs.edit().putString("channels",a.toString())
-
+        android.content.SharedPreferences.Editor editor=prefs.edit().putString("channels",a.toString())
             .putStringSet("fav",new HashSet<>(favorites))
-            .putLong("channel_catalogue_generation",nextGeneration).apply();
+            .putLong("channel_catalogue_generation",nextGeneration);
+        if(snapshotPrefKey!=null&&snapshotKeys!=null)editor.putStringSet(snapshotPrefKey,new HashSet<>(snapshotKeys));
+        boolean saved;
+        if(snapshotPrefKey!=null)saved=editor.commit();
+        else{editor.apply();saved=true;}
+        if(!saved)return false;
         loadedCatalogueGeneration=nextGeneration;
         restoredCatalogueIdentities.clear();
         synchronized(channels){for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));}
-      } catch(Exception ignored) {}
+        return true;
+      } catch(Exception ignored) {return false;}
     }
   }
   private String activeCategory="全部";
@@ -618,7 +625,7 @@ public class MainActivity extends Activity {
     // satellite and local areas. Keep one clear "地方" entry.
     String[] names={"收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}if(name.equals("点播")){vodDialog();return;}geoLoadGeneration++;activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("国家地区"))showCountryDialog();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视")||name.equals("地方"))loadChinaChannels();if(name.equals("地方"))showProvinceDialog();for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}refresh();focusFirstChannelInMenu();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady){toast("正在恢复频道数据，请稍候");return;}new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else configureRemoteParentLock();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -3015,9 +3022,10 @@ public class MainActivity extends Activity {
     });
   }
   private String geoSnapshotKey(String address){
-    return "geo_snapshot_"+Integer.toHexString(address.hashCode());
+    return GeoSnapshotPolicy.snapshotKey(address);
   }
   private void loadGeoPlaylist(String label,String address){
+    final long requestGeneration=++geoLoadGeneration;
     // Each country/subdivision/city has its own last-known-good membership snapshot.
     // Channel records themselves live in the complete local catalogue snapshot.
     final String snapshotKey=geoSnapshotKey(address);
@@ -3042,13 +3050,30 @@ public class MainActivity extends Activity {
         try{parse(data);}finally{parsingGeoChannelKeys=null;}
       }
       final int matched=destinationKeys.size();
-      // Replace this location's snapshot only after a successful HTTP response and parse.
+      // An HTTP 200 response containing no valid channels is not a new snapshot.
+      // Keep the previous city snapshot instead of replacing it with an empty set.
+      if(!GeoSnapshotPolicy.shouldReplaceSnapshot(matched)){
+        runOnUiThread(()->{
+          if(requestGeneration!=geoLoadGeneration)return;
+          info.setText(label+"：目录没有解析出有效频道，已保留上次本地快照；请稍后重试。");
+        });
+        return;
+      }
       final Set<String> committedKeys=new HashSet<>(destinationKeys);
       runOnUiThread(()->{
-        activeGeoChannelKeys=committedKeys;
-        getSharedPreferences("mytv",0).edit().putStringSet(snapshotKey,new HashSet<>(committedKeys)).apply();
-        activeCategory="全部";favoriteMode=false;persist();refresh();
-        info.setText(label+"：已完成本地快照更新，共 "+matched+" 个频道。其他地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+        if(requestGeneration!=geoLoadGeneration)return;
+        activeCategory="全部";favoriteMode=false;
+        // Commit the full channel catalogue and this location's membership index
+        // in one SharedPreferences transaction. Publish the new view only on success.
+        if(persist(snapshotKey,committedKeys)){
+          activeGeoChannelKeys=new HashSet<>(committedKeys);
+          refresh();
+          info.setText(label+"：已完成本地快照更新，共 "+matched+" 个频道。其他地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+        }else{
+          activeGeoChannelKeys=cached==null?new HashSet<>():new HashSet<>(cached);
+          refresh();
+          info.setText(label+"：本地保存失败，旧目录快照仍保留；请稍后重试。");
+        }
       });
     }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
   }
