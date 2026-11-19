@@ -3530,6 +3530,10 @@ public class MainActivity extends Activity {
   private boolean audioTrackSelected=false;
   private volatile boolean audioPositionAdvancing=false;
   private volatile boolean audioSinkErrorObserved=false;
+  // Counts audio output underruns for the current live-source attempt.
+  private final java.util.concurrent.atomic.AtomicInteger audioUnderrunCount=new java.util.concurrent.atomic.AtomicInteger();
+  // Counts dropped-frame report callbacks for the current live-source attempt.
+  private final java.util.concurrent.atomic.AtomicInteger videoDropReportCount=new java.util.concurrent.atomic.AtomicInteger();
   private boolean videoTrackPresent=false;
   private boolean videoTrackSupported=false;
   private boolean videoTrackSelected=false;
@@ -3758,7 +3762,7 @@ public class MainActivity extends Activity {
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
-    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;audioTrackCheckCompleted=false;videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
+    audioTrackPresent=false;audioTrackSupported=false;audioTrackSelected=false;audioPositionAdvancing=false;audioSinkErrorObserved=false;audioTrackCheckCompleted=false;audioUnderrunCount.set(0);videoDropReportCount.set(0);videoTrackPresent=false;videoTrackSupported=false;videoTrackSelected=false;
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -3821,6 +3825,24 @@ public class MainActivity extends Activity {
             saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
           }
         }
+        @Override public void onVideoDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentEvent(eventTime))saveLiveDiagnostic("LIVE_VIDEO_DECODER",
+              "name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onAudioDecoderInitialized(AnalyticsListener.EventTime eventTime,String decoderName,long initializedTimestampMs,long initializationDurationMs){
+          if(isCurrentEvent(eventTime))saveLiveDiagnostic("LIVE_AUDIO_DECODER",
+              "name="+safeDiagnosticDetail(decoderName)+" initMs="+initializationDurationMs);
+        }
+        @Override public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentEvent(eventTime)&&format!=null)saveLiveDiagnostic("LIVE_VIDEO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)
+                  +" size="+format.width+"x"+format.height+" fps="+format.frameRate);
+        }
+        @Override public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime,Format format,androidx.media3.exoplayer.DecoderReuseEvaluation evaluation){
+          if(isCurrentEvent(eventTime)&&format!=null)saveLiveDiagnostic("LIVE_AUDIO_FORMAT",
+              "mime="+format.sampleMimeType+" codecs="+safeDiagnosticDetail(format.codecs)
+                  +" sampleRate="+format.sampleRate+" channels="+format.channelCount);
+        }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
           if(isCurrentEvent(eventTime))audioPositionAdvancing=true;
         }
@@ -3860,6 +3882,30 @@ public class MainActivity extends Activity {
               }
             });
           }
+        }
+        @Override public void onAudioUnderrun(AnalyticsListener.EventTime eventTime,int bufferSize,long bufferSizeMs,long elapsedSinceLastFeedMs){
+          // Underruns can recover on their own. Record a bounded diagnostic signal,
+          // but never fail over on a single underrun.
+          if(!isCurrentEvent(eventTime))return;
+          int count=audioUnderrunCount.incrementAndGet();
+          if(!AudioUnderrunDiagnosticPolicy.shouldRecord(count))return;
+          final String underrunMediaId=currentMediaId;
+          final String detail="count="+count+" bufferSize="+bufferSize
+              +" bufferSizeMs="+bufferSizeMs+" elapsedSinceLastFeedMs="+elapsedSinceLastFeedMs;
+          uiHandler.post(()->{
+            if(underrunMediaId.equals(currentMediaId))
+              saveLiveDiagnostic("AUDIO_UNDERRUN",detail);
+          });
+        }
+        @Override public void onDroppedVideoFrames(AnalyticsListener.EventTime eventTime,int droppedFrames,long elapsedMs){
+          if(!isCurrentEvent(eventTime)||droppedFrames<=0)return;
+          int reportCount=videoDropReportCount.incrementAndGet();
+          if(!VideoFrameDropDiagnosticPolicy.shouldRecord(reportCount))return;
+          final String dropMediaId=currentMediaId;
+          final String detail="reports="+reportCount+" droppedFrames="+droppedFrames+" elapsedMs="+elapsedMs;
+          uiHandler.post(()->{
+            if(dropMediaId.equals(currentMediaId))saveLiveDiagnostic("VIDEO_DROPPED_FRAMES",detail);
+          });
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
