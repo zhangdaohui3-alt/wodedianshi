@@ -16,9 +16,9 @@ public class ChannelCatalogueRefreshCyclePolicyTest {
 
     @Test public void emptyOrInvalidRangesNeverComplete() {
         assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 1, 0));
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(-1, 1, 10, true));
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(10, 1, 10, true));
-        assertFalse(ChannelCatalogueRefreshCyclePolicy.isComplete(0, 11, 10, true));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(-1, 1, 10));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(10, 1, 10));
+        assertFalse(ChannelCatalogueRefreshCyclePolicy.isScanComplete(0, 11, 10));
     }
 
     @Test public void fingerprintTracksOrderedScanList() {
