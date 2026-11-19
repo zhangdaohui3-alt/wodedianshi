@@ -71,6 +71,10 @@ public class MainActivity extends Activity {
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
   private final ArrayList<Channel> channels = new ArrayList<>();
+  // Detect catalogue commits made by the background updater while this Activity
+  // was alive. The baseline also prevents deleted user channels being resurrected.
+  private long loadedCatalogueGeneration=0L;
+  private final HashSet<String> restoredCatalogueIdentities=new HashSet<>();
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -378,6 +382,9 @@ public class MainActivity extends Activity {
       }
       p.edit().putBoolean("defaults_loaded",true).apply();
     }
+    loadedCatalogueGeneration=p.getLong("channel_catalogue_generation",0L);
+    restoredCatalogueIdentities.clear();
+    for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));
   }
   private void rebuildChannelIndexes(){
     synchronized(channels){
@@ -517,11 +524,62 @@ public class MainActivity extends Activity {
     play(found);
   }
   private void persist(){
-    try {
-      org.json.JSONArray a=new org.json.JSONArray();
-      for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
-      getSharedPreferences("mytv",0).edit().putString("channels",a.toString()).putStringSet("fav",new HashSet<>(favorites)).apply();
-    } catch(Exception ignored) {}
+    synchronized(ChannelCatalogueStore.LOCK){
+      try {
+        android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+        long generation=prefs.getLong("channel_catalogue_generation",0L);
+        // A worker may have committed new backups/channels while this Activity
+        // was stopped or browsing. Fold those catalogue-only changes into the
+        // current in-memory list before writing, while retaining user deletions
+        // and the exact source currently selected by the user.
+        if(generation!=loadedCatalogueGeneration){
+          org.json.JSONArray latest=new org.json.JSONArray(prefs.getString("channels","[]"));
+          HashMap<String,Channel> inMemory=new HashMap<>();
+          synchronized(channels){for(Channel c:channels)inMemory.put(identity(c.name,c.group,c.url),c);}
+          boolean changed=false;
+          for(int i=0;i<latest.length();i++){
+            org.json.JSONObject o=latest.optJSONObject(i);if(o==null)continue;
+            String name=o.optString("name",""),url=o.optString("url",""),group=o.optString("group","");
+            if(name.isEmpty()||url.isEmpty())continue;
+            String key=identity(name,group,url);Channel local=inMemory.get(key);
+            if(local==null){
+              // Only identities absent from the original restore are genuinely
+              // new background discoveries. A missing baseline identity is a
+              // user deletion and must not be reintroduced.
+              if(!restoredCatalogueIdentities.contains(key)){
+                Channel added=new Channel(name,url,group);
+                org.json.JSONArray sources=o.optJSONArray("sources");
+                if(sources!=null){added.backups.clear();for(int j=0;j<sources.length();j++){String u=sources.optString(j,"");if(u.startsWith("http://")||u.startsWith("https://"))added.backups.add(u);}}
+                if(added.backups.isEmpty())added.backups.add(url);
+                added.activeSource=Math.max(0,Math.min(o.optInt("activeSource",0),added.backups.size()-1));
+                channels.add(added);inMemory.put(key,added);changed=true;
+              }
+            }else{
+              String active=(local.activeSource>=0&&local.activeSource<local.backups.size())?local.backups.get(local.activeSource):local.url;
+              org.json.JSONArray sources=o.optJSONArray("sources");
+              if(sources!=null)for(int j=0;j<sources.length()&&local.backups.size()<5;j++){
+                String u=sources.optString(j,"");
+                if((u.startsWith("http://")||u.startsWith("https://"))&&!local.backups.contains(u)){local.backups.add(u);changed=true;}
+              }
+              int activeIndex=local.backups.indexOf(active);
+              if(activeIndex>=0)local.activeSource=activeIndex;
+            }
+          }
+          if(changed)rebuildChannelIndexes();
+        }
+        org.json.JSONArray a=new org.json.JSONArray();
+        synchronized(channels){
+          for(Channel c:channels){org.json.JSONObject o=new org.json.JSONObject();o.put("name",c.name);o.put("url",c.url);o.put("group",c.group);o.put("activeSource",c.activeSource);org.json.JSONArray src=new org.json.JSONArray();for(String u:c.backups)src.put(u);o.put("sources",src);a.put(o);}
+        }
+        long nextGeneration=generation+1L;
+        prefs.edit().putString("channels",a.toString())
+            .putStringSet("fav",new HashSet<>(favorites))
+            .putLong("channel_catalogue_generation",nextGeneration).apply();
+        loadedCatalogueGeneration=nextGeneration;
+        restoredCatalogueIdentities.clear();
+        synchronized(channels){for(Channel c:channels)restoredCatalogueIdentities.add(identity(c.name,c.group,c.url));}
+      } catch(Exception ignored) {}
+    }
   }
   private String activeCategory="全部";
   private void makeUi(){
