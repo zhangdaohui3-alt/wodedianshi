@@ -235,6 +235,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
+      HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(prefs.getBoolean("source_update_playback_active",false)){
           saveStatus(prefs,"检测到节目正在播放，已暂停后续线路检测以保护播放带宽",0);
@@ -244,18 +245,23 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        if(!visitedUrls.add(SourceSelectionPolicy.endpointKey(e.url)))continue;
-        checked++;
-        ProbeResult measured=probe(e.url,probeDeadline);
-        if(probeDeadlineReached(probeDeadline)){
-          // A source interrupted by the global deadline is inconclusive, not a failed source.
-          if(e.savedSource)savedScanned--;else discoveryScanned--;
-          break;
+        String endpoint=SourceSelectionPolicy.endpointKey(e.url);
+        ProbeResult measured=measuredByEndpoint.get(endpoint);
+        if(measured==null){
+          if(!visitedUrls.add(endpoint))continue;
+          checked++;
+          measured=probe(e.url,probeDeadline);
+          if(probeDeadlineReached(probeDeadline)){
+            // A source interrupted by the global deadline is inconclusive, not a failed source.
+            if(e.savedSource)savedScanned--;else discoveryScanned--;
+            break;
+          }
+          measuredByEndpoint.put(endpoint,measured);
+          // A previously good source that now fails its probe must lose its old high score.
+          // Keep the URL as a fallback, but rank it below sources that still pass validation.
+          measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
+          measuredScores.remove(legacyScoreKey(e.url));
         }
-        // A previously good source that now fails its probe must lose its old high score.
-        // Keep the URL as a fallback, but rank it below sources that still pass validation.
-        measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
-        measuredScores.remove(legacyScoreKey(e.url));
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
         if(!measured.valid&&!initialDiscoveryChain)continue;
         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
@@ -268,10 +274,12 @@ public class SourceUpdateWorker extends Worker {
         }
         // A known URL may appear in a second directory. Record that provenance
         // without duplicating the backup or probing the same address twice.
-        if(knownUrls.contains(SourceSelectionPolicy.endpointKey(e.url))){
-          if(target!=null)addBackupSourceScope(target,e.url,e.scope);
+        if(knownUrls.contains(endpoint)&&target!=null){
+          addBackupSourceScope(target,e.url,e.scope);
           continue;
         }
+        // The same stream URL may legitimately label two distinct channels. Avoid
+        // duplicating the URL within one channel, but do not drop the second channel row.
         if(target==null){
           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
           target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
