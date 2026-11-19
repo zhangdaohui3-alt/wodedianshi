@@ -561,10 +561,26 @@ public class MainActivity extends Activity {
               }
             }else{
               String active=(local.activeSource>=0&&local.activeSource<local.backups.size())?local.backups.get(local.activeSource):local.url;
+              String oldKey=local.key();
+              java.util.LinkedHashSet<String> orderedSources=new java.util.LinkedHashSet<>();
               org.json.JSONArray sources=o.optJSONArray("sources");
-              if(sources!=null)for(int j=0;j<sources.length()&&local.backups.size()<5;j++){
+              if(sources!=null)for(int j=0;j<sources.length();j++){
                 String u=sources.optString(j,"");
-                if((u.startsWith("http://")||u.startsWith("https://"))&&!local.backups.contains(u)){local.backups.add(u);changed=true;}
+                if(u.startsWith("http://")||u.startsWith("https://"))orderedSources.add(u);
+              }
+              String preferredPrimary=url.startsWith("http://")||url.startsWith("https://")?url:local.url;
+              if(!preferredPrimary.isEmpty()){
+                ArrayList<String> reordered=new ArrayList<>();reordered.add(preferredPrimary);
+                for(String u:orderedSources)if(!u.equals(preferredPrimary))reordered.add(u);
+                for(String u:local.backups)if(!reordered.contains(u))reordered.add(u);
+                if(reordered.size()>5)reordered=new ArrayList<>(reordered.subList(0,5));
+                if(!reordered.contains(active)&&!active.isEmpty())reordered.set(reordered.size()-1,active);
+                if(!local.url.equals(preferredPrimary)){
+                  local.url=preferredPrimary;
+                  if(favorites.remove(oldKey))favorites.add(local.key());
+                  changed=true;
+                }
+                if(!local.backups.equals(reordered)){local.backups.clear();local.backups.addAll(reordered);changed=true;}
               }
               int activeIndex=local.backups.indexOf(active);
               if(activeIndex>=0)local.activeSource=activeIndex;
