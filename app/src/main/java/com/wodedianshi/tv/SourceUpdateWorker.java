@@ -418,7 +418,7 @@ public class SourceUpdateWorker extends Worker {
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
       update.apply();
-      if(initialDiscoveryChain&&!initialDiscoveryComplete){
+      if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
         androidx.work.OneTimeWorkRequest continuation=
             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
                 .setConstraints(new androidx.work.Constraints.Builder()
@@ -430,7 +430,7 @@ public class SourceUpdateWorker extends Worker {
             "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
       }
       return (discoveryUnavailable&&!(initialDiscoveryChain&&candidates.size()>0))
-          ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty()&&feedsFailed>0)
+          ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
           ?Result.retry():Result.success();
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
