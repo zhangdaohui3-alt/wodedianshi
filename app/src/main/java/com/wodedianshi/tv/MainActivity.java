@@ -6051,20 +6051,29 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(old==null)return;
     libVlcReleaseInProgress=true;
     Runnable teardown=()->{
-      try{old.release();}catch(Throwable failure){
+      boolean released=false;
+      try{
+        released=old.release();
+      }catch(Throwable failure){
         saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
-      }finally{
-        uiHandler.post(this::finishLibVlcRelease);
       }
+      if(!released){
+        // Fail closed: Media3 must not acquire the shared output when native VLC
+        // teardown failed or could not be confirmed. Keep the barrier and queued
+        // callbacks intact; restarting the Activity is safer than dual decoders.
+        saveLiveDiagnostic("VLC_RELEASE_BARRIER_RETAINED","native teardown not confirmed");
+        return;
+      }
+      uiHandler.post(this::finishLibVlcRelease);
     };
     try{libVlcWorker.execute(teardown);}
     catch(RuntimeException rejected){
       saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());
       // Preserve decoder teardown even if the worker is shutting down.
       try{new Thread(teardown,"MyTV-VLC-Release").start();}
-      catch(RuntimeException threadRejected){
+      catch(Throwable threadRejected){
         saveLiveDiagnostic("VLC_RELEASE_FALLBACK_ERROR",threadRejected.getClass().getSimpleName());
-        uiHandler.post(this::finishLibVlcRelease);
+        // No native release ran. Never open the barrier or resume queued tunes.
       }
     }
   }
