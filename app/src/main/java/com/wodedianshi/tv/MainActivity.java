@@ -39,6 +39,9 @@ import java.util.concurrent.TimeUnit;
 
 @UnstableApi
 public class MainActivity extends Activity {
+  // Compile channel-name matchers once; identity and sorting call these on large catalogues.
+  private static final java.util.regex.Pattern CHANNEL_NAME_CLEANUP = java.util.regex.Pattern.compile("[\\s_—–·•]");
+  private static final java.util.regex.Pattern CCTV_CHANNEL_NAME = java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)");
   private ExoPlayer player;
   private boolean decoderInventoryRecorded=false;
   private PlayerView video;
@@ -405,8 +408,8 @@ public class MainActivity extends Activity {
     }
   }
   private String canonicalChannelName(String name){
-    String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
-    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
+    String value=name==null?"":CHANNEL_NAME_CLEANUP.matcher(name.trim().toUpperCase(Locale.ROOT)).replaceAll("");
+    java.util.regex.Matcher m=CCTV_CHANNEL_NAME.matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
     String[] chinese={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
     for(int i=1;i<chinese.length;i++)if(value.matches(".*中央(?:电视台)?"+chinese[i]+"套.*"))return "CCTV-"+i;
