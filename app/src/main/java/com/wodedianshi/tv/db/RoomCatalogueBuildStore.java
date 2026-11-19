@@ -34,19 +34,29 @@ public final class RoomCatalogueBuildStore {
         if (context == null || snapshot == null) {
             throw new IllegalArgumentException("context/snapshot is null");
         }
-        ArrayList<CatalogueBuildRowEntity> rows = new ArrayList<>(snapshot.length());
+        ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
+        // A rebuild may span hundreds of WorkManager runs. Compare against the
+        // existing staging rows and write only changed JSON records instead of
+        // deleting/reinserting the entire growing catalogue after every batch.
+        java.util.HashMap<String, String> existingJson = new java.util.HashMap<>();
+        for (CatalogueBuildRowEntity row : dao.getCatalogueBuildRows()) {
+            existingJson.put(row.rowId, row.recordJson);
+        }
+        ArrayList<CatalogueBuildRowEntity> changedRows = new ArrayList<>();
         for (int i = 0; i < snapshot.length(); i++) {
             JSONObject record = snapshot.optJSONObject(i);
             if (record == null || record.optString("name", "").trim().isEmpty()
                     || record.optString("url", "").trim().isEmpty()) {
                 throw new JSONException("Invalid full-rebuild row at index " + i);
             }
-            rows.add(new CatalogueBuildRowEntity(
-                    String.format(java.util.Locale.ROOT, "row-%08d", i),
-                    i, record.toString()));
+            String rowId = String.format(java.util.Locale.ROOT, "row-%08d", i);
+            String recordJson = record.toString();
+            if (!recordJson.equals(existingJson.get(rowId))) {
+                changedRows.add(new CatalogueBuildRowEntity(rowId, i, recordJson));
+            }
         }
-        RoomDatabaseProvider.get(context).channelDao().replaceCatalogueBuildRows(rows);
-        return rows.size();
+        dao.mergeCatalogueBuildRows(changedRows, snapshot.length());
+        return snapshot.length();
     }
 
     public static void clear(Context context) {
