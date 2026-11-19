@@ -9,15 +9,17 @@ import java.util.List;
 final class ChannelCatalogueRefreshCyclePolicy {
     private ChannelCatalogueRefreshCyclePolicy() {}
 
-    static boolean isComplete(int startIndex, int scannedCount, int candidateCount,
-                              boolean requiredRegionalFeedAvailable) {
-        return requiredRegionalFeedAvailable
-                && candidateCount > 0
+    static boolean isScanComplete(int startIndex, int scannedCount, int candidateCount) {
+        return candidateCount > 0
                 && startIndex >= 0
                 && startIndex < candidateCount
                 && scannedCount > 0
                 && scannedCount <= candidateCount
                 && startIndex + scannedCount >= candidateCount;
+    }
+
+    static boolean canActivate(boolean scanComplete, boolean requiredRegionalFeedAvailable) {
+        return scanComplete && requiredRegionalFeedAvailable;
     }
 
     /**
