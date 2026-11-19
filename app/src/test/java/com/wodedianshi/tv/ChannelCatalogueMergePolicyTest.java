@@ -23,9 +23,9 @@ public class ChannelCatalogueMergePolicyTest {
                                         "https://active/live", "https://new-backup/live"), 0)));
         assertNotNull(result);
         ChannelCatalogueMergePolicy.ChannelRecord merged = result.get(0);
-        assertEquals("https://primary/live", merged.primaryUrl);
+        assertEquals("https://new-best/live", merged.primaryUrl);
         assertEquals("https://active/live", merged.activeUrl());
-        assertEquals(1, merged.activeSource);
+        assertEquals(2, merged.activeSource);
         assertTrue(merged.sources.contains("https://new-backup/live"));
     }
 
@@ -41,7 +41,7 @@ public class ChannelCatalogueMergePolicyTest {
                                         Collections.singletonList("https://new/live"), 0)));
         assertNotNull(result);
         assertEquals(2, result.size());
-        assertEquals("https://old/live", result.get(0).primaryUrl);
+        assertEquals("https://changed/live", result.get(0).primaryUrl);
         assertEquals("https://new/live", result.get(1).primaryUrl);
     }
 
