@@ -15,6 +15,8 @@ public class SourceFeedScopePolicyTest {
         assertEquals("china", SourceFeedScopePolicy.scopeForFeed(
                 "https://iptv-org.github.io/iptv/countries/cn.m3u"));
         assertEquals("china", SourceFeedScopePolicy.scopeForFeed(
+                "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u"));
+        assertEquals("china", SourceFeedScopePolicy.scopeForFeed(
                 "https://iptv-org.github.io/iptv/countries/hk.m3u"));
         assertEquals("china", SourceFeedScopePolicy.scopeForFeed(
                 "https://iptv-org.github.io/iptv/countries/mo.m3u"));
