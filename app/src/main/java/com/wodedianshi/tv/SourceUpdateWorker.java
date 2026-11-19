@@ -15,11 +15,12 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
   private static final int MAX_SOURCES_PER_CHANNEL = 8;
-  // Bound memory while ensuring later regional feeds are not starved by the global index.
+  // The full rebuild reads one feed page per worker run and spends its 24-probe
+  // budget on that page. This prevents large China playlists from being starved
+  // by small pages interleaved from every worldwide feed.
   private static final int MAX_DISCOVERY_CANDIDATES = 24000;
-  // Four rotating entries per feed cover the eight China/HMT feeds in two 24-probe
-  // batches. The cursor advances only after the whole batch has been probed.
   private static final int MAX_DISCOVERY_PER_FEED = 4;
+  private static final int MAX_INITIAL_DISCOVERY_PER_FEED = MAX_PROBES_PER_RUN;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -46,7 +47,8 @@ public class SourceUpdateWorker extends Worker {
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv_status.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province_status.m3u8",
-       "https://iptv-org.github.io/iptv/countries/cn.m3u",
+       // Mainland China playlist includes CCTV, provincial satellite and hundreds of local stations.
+       "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u",
        "https://iptv-org.github.io/iptv/countries/hk.m3u",
        "https://iptv-org.github.io/iptv/countries/mo.m3u",
        "https://iptv-org.github.io/iptv/countries/tw.m3u",
@@ -202,8 +204,10 @@ public class SourceUpdateWorker extends Worker {
             String header=reader.readLine();
             if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
               throw new IOException("目录格式无效");
+            int feedPageSize=initialDiscoveryChain
+                ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
             parsedCount[0]=parsePlaylist(reader,feedCandidates,scopeForFeed(feed),
-                feedCursor,MAX_DISCOVERY_PER_FEED);
+                feedCursor,feedPageSize);
           }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES-candidates.size();
@@ -231,6 +235,9 @@ public class SourceUpdateWorker extends Worker {
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
               feedReadSucceeded||feedPermanentlyUnavailable));
         }
+        // First build is China-first: finish each configured feed page before
+        // moving to the next feed, then continue with HMT and worldwide sources.
+        if(initialDiscoveryChain)break;
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -437,7 +444,7 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
-          if(initialDiscoveryChain&&batch.parsed<MAX_DISCOVERY_PER_FEED){
+          if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
           }else if(batch.parsed>0){
@@ -508,7 +515,8 @@ public class SourceUpdateWorker extends Worker {
       boolean done=roomBoolean(initialFeedDoneKey(i),false);
       if(!done){
         for(FeedBatch batch:batches){
-          if(batch.index==i&&batch.success&&batch.parsed<MAX_DISCOVERY_PER_FEED){
+          if(batch.index==i&&batch.success
+              &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             done=true;break;
           }
         }
