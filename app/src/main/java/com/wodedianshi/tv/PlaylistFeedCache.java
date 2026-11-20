@@ -52,6 +52,7 @@ public final class PlaylistFeedCache {
 
         if (hasValidCache && System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS) {
+            pruneOldEntries(directory, cached);
             return cached;
         }
 
@@ -75,6 +76,7 @@ public final class PlaylistFeedCache {
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
+                pruneOldEntries(directory, cached);
                 return cached;
             }
             if (status < 200 || status >= 300) {
