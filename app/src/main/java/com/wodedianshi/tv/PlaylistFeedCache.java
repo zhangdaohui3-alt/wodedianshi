@@ -162,21 +162,45 @@ public final class PlaylistFeedCache {
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
         if (files == null || files.length == 0) return;
         long total = 0L;
-        for (File file : files) total += Math.max(0L, file.length());
+        for (File file : files) total += cacheEntrySize(file);
         if (total <= MAX_CACHE_BYTES) return;
         java.util.Arrays.sort(files, (left, right) ->
                 Long.compare(left.lastModified(), right.lastModified()));
         for (File file : files) {
             if (total <= MAX_CACHE_BYTES) break;
             if (file.equals(keep)) continue;
-            long size = Math.max(0L, file.length());
+            long size = cacheEntrySize(file);
             if (!file.delete()) continue;
-            total -= size;
-            String name = file.getName();
-            File metadata = new File(directory,
-                    name.substring(0, name.length() - ".m3u".length()) + ".properties");
-            if (metadata.exists()) metadata.delete();
+            total -= Math.max(0L, file.length());
+            deleteSidecar(file, ".index-data");
+            deleteSidecar(file, ".index-offsets");
+            deleteSidecar(file, ".index-data.tmp");
+            deleteSidecar(file, ".index-offsets.tmp");
+            deleteSidecar(file, ".properties");
+            deleteSidecar(file, ".properties.tmp");
+            total = Math.max(0L, total - Math.max(0L, size - file.length()));
         }
+    }
+
+    private static long cacheEntrySize(File playlist) {
+        long total = Math.max(0L, playlist.length());
+        total += sidecarLength(playlist, ".index-data");
+        total += sidecarLength(playlist, ".index-offsets");
+        total += sidecarLength(playlist, ".properties");
+        total += sidecarLength(playlist, ".index-data.tmp");
+        total += sidecarLength(playlist, ".index-offsets.tmp");
+        total += sidecarLength(playlist, ".properties.tmp");
+        return total;
+    }
+
+    private static long sidecarLength(File playlist, String suffix) {
+        File sidecar = new File(playlist.getAbsolutePath() + suffix);
+        return sidecar.isFile() ? Math.max(0L, sidecar.length()) : 0L;
+    }
+
+    private static void deleteSidecar(File playlist, String suffix) {
+        File sidecar = new File(playlist.getAbsolutePath() + suffix);
+        if (sidecar.exists()) sidecar.delete();
     }
 
     private static boolean isPlaylistFile(File file) {
