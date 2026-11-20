@@ -50,7 +50,7 @@ public final class PlaylistFeedCache {
         }
         String key = sha256((initialDiscovery ? "initial|" : "routine|") + feedUrl);
         File cached = new File(directory, key + ".m3u");
-        File metadata = new File(directory, key + ".properties");
+        File metadata = new File(directory, key + ".m3u.properties");
         Properties old = readProperties(metadata);
         long cachedAt = parseLong(old.getProperty("cachedAt"), 0L);
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
@@ -66,7 +66,7 @@ public final class PlaylistFeedCache {
 
         HttpURLConnection connection = null;
         File temporary = new File(directory, key + ".m3u.tmp");
-        File metadataTemporary = new File(directory, key + ".properties.tmp");
+        File metadataTemporary = new File(directory, key + ".m3u.properties.tmp");
         try {
             connection = (HttpURLConnection) new URL(feedUrl).openConnection();
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
