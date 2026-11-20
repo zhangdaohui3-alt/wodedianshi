@@ -28,6 +28,7 @@ import java.util.Properties;
 public final class PlaylistFeedCache {
     private static final long MAX_AGE_MS = 30L * 60L * 1000L;
     private static final long MAX_BYTES = 96L * 1024L * 1024L;
+    private static final long MAX_CACHE_BYTES = 192L * 1024L * 1024L;
     private static final int CONNECT_TIMEOUT_MS = 8000;
     private static final int READ_TIMEOUT_MS = 20000;
 
@@ -116,11 +117,34 @@ public final class PlaylistFeedCache {
             if (responseEtag != null) fresh.setProperty("etag", responseEtag);
             if (responseModified != null) fresh.setProperty("lastModified", responseModified);
             writePropertiesAtomically(metadata, metadataTemporary, fresh);
+            pruneOldEntries(directory, cached);
             return cached;
         } finally {
             if (connection != null) connection.disconnect();
             if (temporary.exists()) temporary.delete();
             if (metadataTemporary.exists()) metadataTemporary.delete();
+        }
+    }
+
+    /** Keep the app's private cache bounded even when many feeds are configured. */
+    private static void pruneOldEntries(File directory, File keep) {
+        File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
+        if (files == null || files.length == 0) return;
+        long total = 0L;
+        for (File file : files) total += Math.max(0L, file.length());
+        if (total <= MAX_CACHE_BYTES) return;
+        java.util.Arrays.sort(files, (left, right) ->
+                Long.compare(left.lastModified(), right.lastModified()));
+        for (File file : files) {
+            if (total <= MAX_CACHE_BYTES) break;
+            if (file.equals(keep)) continue;
+            long size = Math.max(0L, file.length());
+            if (!file.delete()) continue;
+            total -= size;
+            String name = file.getName();
+            File metadata = new File(directory,
+                    name.substring(0, name.length() - ".m3u".length()) + ".properties");
+            if (metadata.exists()) metadata.delete();
         }
     }
 
