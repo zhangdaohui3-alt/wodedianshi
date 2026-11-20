@@ -26,7 +26,8 @@ import java.util.Properties;
  * downloaded and validated playlist replaces the previous cache file.
  */
 public final class PlaylistFeedCache {
-    private static final long MAX_AGE_MS = 30L * 60L * 1000L;
+    // Keep a stable feed snapshot long enough for multi-run full-catalogue pagination.
+    private static final long MAX_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final long MAX_BYTES = 96L * 1024L * 1024L;
     private static final long MAX_CACHE_BYTES = 192L * 1024L * 1024L;
     private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -38,7 +39,7 @@ public final class PlaylistFeedCache {
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
-        File directory = new File(context.getCacheDir(), "playlist-feed-cache");
+        File directory = new File(context.getFilesDir(), "playlist-feed-cache");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IOException("Cannot create playlist cache directory");
         }
