@@ -197,16 +197,14 @@ public class SourceUpdateWorker extends Worker {
           saveStatus(prefs,"检测到节目正在播放，已暂停抓源任务以保护播放带宽",0);
           return Result.retry();
         }
-        HttpURLConnection c=null;
         ArrayList<Entry> feedCandidates=new ArrayList<>();
         boolean feedCandidatesAdded=false;
         try{
-          c=(HttpURLConnection)new URL(feed).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(12000);
-          c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.19 Android TV");c.setRequestProperty("Accept","*/*");
-          int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          // Parse directly from the network stream. The parser stops at this feed's
-          // quota, avoiding a full 15 MiB String allocation for large global indexes.
-          try(InputStream in=c.getInputStream();
+          // WorkManager may resume the same large feed over many runs. Reuse a
+          // complete local snapshot so each continuation does not redownload
+          // the entire playlist prefix. The cache revalidates after 30 minutes.
+          File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed);
+          try(InputStream in=new FileInputStream(cachedFeed);
               BufferedReader reader=new BufferedReader(
                   new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8),8192)){
             String header=reader.readLine();
@@ -248,7 +246,6 @@ public class SourceUpdateWorker extends Worker {
               &&(failure.contains("HTTP 404")||failure.contains("HTTP 410"));
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
-          if(c!=null)c.disconnect();
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
               feedReadSucceeded||feedPermanentlyUnavailable));
         }
