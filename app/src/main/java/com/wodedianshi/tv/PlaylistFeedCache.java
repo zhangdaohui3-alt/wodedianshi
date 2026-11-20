@@ -35,16 +35,12 @@ public final class PlaylistFeedCache {
 
     private PlaylistFeedCache() { }
 
-    public static File obtain(Context context, String feedUrl) throws IOException {
-        return obtain(context, feedUrl, false);
-    }
-
     /**
-     * Preserve an already-started full-rebuild feed snapshot even past its normal
-     * freshness window. Its persisted cursor is meaningful only for that snapshot.
+     * Keep routine refreshes and the full-rebuild snapshot in separate cache slots.
+     * This prevents a routine update from replacing a file under an active rebuild cursor.
      */
-    public static File obtain(Context context, String feedUrl, boolean preserveExistingSnapshot)
-            throws IOException {
+    public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
+                              boolean preserveExistingSnapshot) throws IOException {
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
@@ -52,7 +48,7 @@ public final class PlaylistFeedCache {
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IOException("Cannot create playlist cache directory");
         }
-        String key = sha256(feedUrl);
+        String key = sha256((initialDiscovery ? "initial|" : "routine|") + feedUrl);
         File cached = new File(directory, key + ".m3u");
         File metadata = new File(directory, key + ".properties");
         Properties old = readProperties(metadata);
