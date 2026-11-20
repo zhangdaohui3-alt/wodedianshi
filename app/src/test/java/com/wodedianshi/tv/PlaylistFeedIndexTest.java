@@ -73,9 +73,9 @@ public class PlaylistFeedIndexTest {
 
 
     @Test public void alignedOffsetTruncationCannotMasqueradeAsEndOfFeed() throws Exception {
-        File feed = playlist("#EXTM3U\\n"
-                + "#EXTINF:-1,频道甲\\nhttps://a.example/live.m3u8\\n"
-                + "#EXTINF:-1,频道乙\\nhttps://b.example/live.m3u8\\n");
+        File feed = playlist("#EXTM3U\n"
+                + "#EXTINF:-1,频道甲\nhttps://a.example/live.m3u8\n"
+                + "#EXTINF:-1,频道乙\nhttps://b.example/live.m3u8\n");
         List<PlaylistParser.ChannelSource> initial = new ArrayList<>();
         assertEquals(2, PlaylistFeedIndex.readPage(feed, 0, 2, initial::add));
 
