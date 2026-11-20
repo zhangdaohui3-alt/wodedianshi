@@ -1,0 +1,55 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+
+public class PlaylistFeedIndexTest {
+    private File playlist(String value) throws Exception {
+        File file = File.createTempFile("mytv-feed-index-", ".m3u");
+        file.deleteOnExit();
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            output.write(value.getBytes(StandardCharsets.UTF_8));
+        }
+        return file;
+    }
+
+    @Test public void pagesSeekDirectlyAcrossPrimaryAndBackupEntries() throws Exception {
+        File feed = playlist("#EXTM3U\n"
+                + "#EXTINF:-1 tvg-id=\"CCTV1\" group-title=\"央视\",中央一套\n"
+                + "https://primary.example/live.m3u8\n"
+                + "#EXTBURL:https://backup.example/live.m3u8\n"
+                + "#EXTINF:-1,湖南卫视\nhttps://hunan.example/live.m3u8\n");
+
+        List<PlaylistParser.ChannelSource> first = new ArrayList<>();
+        List<PlaylistParser.ChannelSource> second = new ArrayList<>();
+        List<PlaylistParser.ChannelSource> third = new ArrayList<>();
+        assertEquals(1, PlaylistFeedIndex.readPage(feed, 0, 1, first::add));
+        assertEquals(1, PlaylistFeedIndex.readPage(feed, 1, 1, second::add));
+        assertEquals(1, PlaylistFeedIndex.readPage(feed, 2, 1, third::add));
+        assertEquals(0, PlaylistFeedIndex.readPage(feed, 3, 1, ignored -> { }));
+
+        assertEquals("https://primary.example/live.m3u8", first.get(0).url);
+        assertEquals("https://backup.example/live.m3u8", second.get(0).url);
+        assertEquals("中央一套", second.get(0).name);
+        assertEquals("央视", second.get(0).group);
+        assertEquals("CCTV1", second.get(0).tvgId);
+        assertEquals("湖南卫视", third.get(0).name);
+    }
+
+    @Test public void emptyAndExhaustedPagesReturnZeroWithoutSkippingEntries() throws Exception {
+        File feed = playlist("#EXTM3U\n"
+                + "#EXTINF:-1,频道甲\nhttps://a.example/live.m3u8\n"
+                + "#EXTINF:-1,频道乙\nhttps://b.example/live.m3u8\n");
+        List<PlaylistParser.ChannelSource> page = new ArrayList<>();
+        assertEquals(2, PlaylistFeedIndex.readPage(feed, 0, 10, page::add));
+        assertEquals(2, page.size());
+        assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
+    }
+}
