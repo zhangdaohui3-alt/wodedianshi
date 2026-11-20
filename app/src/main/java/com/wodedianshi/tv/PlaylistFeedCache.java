@@ -119,6 +119,9 @@ public final class PlaylistFeedCache {
                 throw new IOException("Downloaded resource is not a valid M3U playlist");
             }
 
+            // The index is tied to the exact cached body. Remove it before replacing
+            // that body so a later page can never seek into records from an older feed.
+            invalidateIndex(cached);
             // Publish the new snapshot only after the complete response passed validation.
             if (cached.exists() && !cached.delete()) {
                 throw new IOException("Cannot replace old playlist cache");
@@ -140,6 +143,17 @@ public final class PlaylistFeedCache {
             if (connection != null) connection.disconnect();
             if (temporary.exists()) temporary.delete();
             if (metadataTemporary.exists()) metadataTemporary.delete();
+        }
+    }
+
+    private static void invalidateIndex(File playlist) throws IOException {
+        File records = new File(playlist.getAbsolutePath() + ".index-data");
+        File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
+        if (records.exists() && !records.delete()) {
+            throw new IOException("Cannot invalidate stale playlist record index");
+        }
+        if (offsets.exists() && !offsets.delete()) {
+            throw new IOException("Cannot invalidate stale playlist offset index");
         }
     }
 
