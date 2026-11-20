@@ -30,6 +30,7 @@ public final class LibVlcPlaybackEngine {
         void onVideoOutput(int count);
         void onBuffering(float percent);
         void onFailure(String reason);
+        default void onAudioTrackState(int trackCount, int selectedTrackId) { }
         void onStopped();
         default void onEndReached() { }
     }
@@ -200,6 +201,38 @@ public final class LibVlcPlaybackEngine {
 
     public void resume() {
         if (isInitialized()) mediaPlayer.play();
+    }
+
+    /**
+     * Inspect and, when necessary, select the first available audio track.
+     * Call from the serialized LibVLC worker, never from the Android UI thread.
+     */
+    public void inspectAudioTrack() {
+        MediaPlayer current = mediaPlayer;
+        Listener callback = listener;
+        if (released || current == null || callback == null) return;
+        int trackCount = -1;
+        int selectedTrackId = -1;
+        try {
+            trackCount = current.getAudioTracksCount();
+            selectedTrackId = current.getAudioTrack();
+            if (trackCount > 0 && selectedTrackId < 0) {
+                MediaPlayer.TrackDescription[] tracks = current.getAudioTracks();
+                if (tracks != null) {
+                    for (MediaPlayer.TrackDescription track : tracks) {
+                        if (track != null && track.id != -1) {
+                            current.setAudioTrack(track.id);
+                            break;
+                        }
+                    }
+                }
+                selectedTrackId = current.getAudioTrack();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // Report unknown as unavailable; the caller will fail over safely.
+        }
+        callback = listener;
+        if (!released && callback != null) callback.onAudioTrackState(trackCount, selectedTrackId);
     }
 
     public boolean isPlaying() {
