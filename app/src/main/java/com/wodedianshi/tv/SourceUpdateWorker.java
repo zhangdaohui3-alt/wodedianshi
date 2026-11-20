@@ -203,7 +203,8 @@ public class SourceUpdateWorker extends Worker {
           // WorkManager may resume the same large feed over many runs. Reuse a
           // complete local snapshot so each continuation does not redownload
           // the entire playlist prefix. The cache revalidates after 24 hours so a multi-run rebuild keeps a stable feed snapshot.
-          File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed);
+          File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
+              initialDiscoveryChain&&feedCursor>0);
           try(InputStream in=new FileInputStream(cachedFeed);
               BufferedReader reader=new BufferedReader(
                   new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8),8192)){
