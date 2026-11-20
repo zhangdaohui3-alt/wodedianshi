@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * One-time random-access index for a cached M3U snapshot.
@@ -29,28 +31,62 @@ public final class PlaylistFeedIndex {
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
         if (!isUsableIndex(records, offsets)) {
+            deleteIndex(records, offsets);
             buildIndex(playlist, records, offsets);
         }
 
-        long count;
-        try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r")) {
-            count = offsetFile.length() / 8L;
-            if (startEntry >= count) return 0;
-            int emitted = (int) Math.min((long) maxEntries, count - startEntry);
-            try (RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
-                for (int i = 0; i < emitted; i++) {
-                    offsetFile.seek(((long) startEntry + i) * 8L);
-                    recordFile.seek(offsetFile.readLong());
-                    PlaylistParser.ChannelSource source = readRecord(recordFile);
-                    consumer.accept(source);
-                }
-            }
-            return emitted;
+        // Do not call the consumer until the whole page has been read. If a
+        // sidecar is truncated/corrupt halfway through, retrying after a rebuild
+        // must not emit a partial page twice into the catalogue candidate list.
+        List<PlaylistParser.ChannelSource> page;
+        try {
+            page = readIndexedPage(records, offsets, startEntry, maxEntries);
+        } catch (IOException corruptIndex) {
+            deleteIndex(records, offsets);
+            buildIndex(playlist, records, offsets);
+            // A second failure is a real I/O or source-data problem; let Worker
+            // retry with the same cursor rather than advancing past bad entries.
+            page = readIndexedPage(records, offsets, startEntry, maxEntries);
         }
+        for (PlaylistParser.ChannelSource source : page) {
+            consumer.accept(source);
+        }
+        return page.size();
+    }
+
+    private static List<PlaylistParser.ChannelSource> readIndexedPage(
+            File records, File offsets, int startEntry, int maxEntries) throws IOException {
+        List<PlaylistParser.ChannelSource> page = new ArrayList<>();
+        try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r");
+             RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
+            long count = offsetFile.length() / 8L;
+            if (startEntry >= count) return page;
+            int emitted = (int) Math.min((long) maxEntries, count - startEntry);
+            long recordsLength = recordFile.length();
+            for (int i = 0; i < emitted; i++) {
+                offsetFile.seek(((long) startEntry + i) * 8L);
+                long recordOffset = offsetFile.readLong();
+                if (recordOffset < 0L || recordOffset >= recordsLength) {
+                    throw new IOException("Playlist index offset is outside record data");
+                }
+                recordFile.seek(recordOffset);
+                page.add(readRecord(recordFile));
+            }
+        }
+        return page;
     }
 
     private static boolean isUsableIndex(File records, File offsets) {
         return records.isFile() && offsets.isFile() && offsets.length() % 8L == 0L;
+    }
+
+    private static void deleteIndex(File records, File offsets) throws IOException {
+        if (records.exists() && !records.delete()) {
+            throw new IOException("Cannot remove corrupt playlist record index");
+        }
+        if (offsets.exists() && !offsets.delete()) {
+            throw new IOException("Cannot remove corrupt playlist offset index");
+        }
     }
 
     private static void buildIndex(File playlist, File records, File offsets)
