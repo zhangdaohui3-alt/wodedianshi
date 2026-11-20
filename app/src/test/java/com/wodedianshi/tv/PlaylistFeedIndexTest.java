@@ -71,6 +71,26 @@ public class PlaylistFeedIndexTest {
         assertEquals("频道乙", afterTruncation.get(1).name);
     }
 
+
+    @Test public void alignedOffsetTruncationCannotMasqueradeAsEndOfFeed() throws Exception {
+        File feed = playlist("#EXTM3U\\n"
+                + "#EXTINF:-1,频道甲\\nhttps://a.example/live.m3u8\\n"
+                + "#EXTINF:-1,频道乙\\nhttps://b.example/live.m3u8\\n");
+        List<PlaylistParser.ChannelSource> initial = new ArrayList<>();
+        assertEquals(2, PlaylistFeedIndex.readPage(feed, 0, 2, initial::add));
+
+        File offsets = new File(feed.getAbsolutePath() + ".index-offsets");
+        // Header stores the true count (2). Keep only one complete offset entry:
+        // old indexes could mistake this aligned truncation for a legitimate EOF.
+        try (RandomAccessFile index = new RandomAccessFile(offsets, "rw")) {
+            index.setLength(20L);
+        }
+        List<PlaylistParser.ChannelSource> recovered = new ArrayList<>();
+        assertEquals(2, PlaylistFeedIndex.readPage(feed, 0, 2, recovered::add));
+        assertEquals("频道甲", recovered.get(0).name);
+        assertEquals("频道乙", recovered.get(1).name);
+    }
+
     @Test public void emptyAndExhaustedPagesReturnZeroWithoutSkippingEntries() throws Exception {
         File feed = playlist("#EXTM3U\n"
                 + "#EXTINF:-1,频道甲\nhttps://a.example/live.m3u8\n"
