@@ -650,14 +650,6 @@ public class SourceUpdateWorker extends Worker {
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
-  private int parsePlaylist(Reader reader,List<Entry> out,String sourceScope,
-                            int skipEntries,int maxEntries)throws IOException{
-    return PlaylistParser.parseEach(reader,skipEntries,maxEntries,source->{
-      String scope=RegionCategoryPolicy.catalogueScope(source.name,source.group,sourceScope);
-      out.add(new Entry(source.name,source.url,source.group,false,scope,
-          source.tvgId,source.tvgName));
-    });
-  }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String canonicalDisplayName(Entry entry){
