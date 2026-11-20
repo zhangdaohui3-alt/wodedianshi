@@ -205,17 +205,14 @@ public class SourceUpdateWorker extends Worker {
           // the entire playlist prefix. The cache revalidates after 24 hours so a multi-run rebuild keeps a stable feed snapshot.
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
               initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0);
-          try(InputStream in=new FileInputStream(cachedFeed);
-              BufferedReader reader=new BufferedReader(
-                  new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8),8192)){
-            String header=reader.readLine();
-            if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
-              throw new IOException("目录格式无效");
-            int feedPageSize=initialDiscoveryChain
-                ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
-            parsedCount[0]=parsePlaylist(reader,feedCandidates,scopeForFeed(feed),
-                feedCursor,feedPageSize);
-          }
+          int feedPageSize=initialDiscoveryChain
+              ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
+          parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
+            String scope=RegionCategoryPolicy.catalogueScope(
+                source.name,source.group,scopeForFeed(feed));
+            feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
+                source.tvgId,source.tvgName));
+          });
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
           if(feedCandidates.size()>remaining){
