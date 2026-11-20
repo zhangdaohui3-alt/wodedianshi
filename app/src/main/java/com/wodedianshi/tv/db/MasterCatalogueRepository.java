@@ -23,7 +23,12 @@ public final class MasterCatalogueRepository {
     public boolean isSnapshotReady() {
         CatalogueMigrationEntity checkpoint =
                 dao.getMigration(MIGRATION_KEY);
-        if (checkpoint == null || checkpoint.channelsCount <= 0) return false;
+        // A zero-row checkpoint is valid during first-install full discovery.
+        // It is deliberately distinct from a missing or inconsistent checkpoint.
+        if (checkpoint == null || checkpoint.channelsCount < 0
+                || checkpoint.backupSourcesCount < 0
+                || checkpoint.favoritesCount < 0
+                || checkpoint.categoriesCount < 0) return false;
         return dao.countChannels() == checkpoint.channelsCount
                 && dao.countBackupSources() == checkpoint.backupSourcesCount
                 && dao.countFavorites() == checkpoint.favoritesCount

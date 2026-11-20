@@ -30,6 +30,7 @@ public final class LibVlcPlaybackEngine {
         void onVideoOutput(int count);
         void onBuffering(float percent);
         void onFailure(String reason);
+        default void onAudioTrackState(int trackCount, int selectedTrackId) { }
         void onStopped();
         default void onEndReached() { }
     }
@@ -202,6 +203,38 @@ public final class LibVlcPlaybackEngine {
         if (isInitialized()) mediaPlayer.play();
     }
 
+    /**
+     * Inspect and, when necessary, select the first available audio track.
+     * Call from the serialized LibVLC worker, never from the Android UI thread.
+     */
+    public void inspectAudioTrack() {
+        MediaPlayer current = mediaPlayer;
+        Listener callback = listener;
+        if (released || current == null || callback == null) return;
+        int trackCount = -1;
+        int selectedTrackId = -1;
+        try {
+            trackCount = current.getAudioTracksCount();
+            selectedTrackId = current.getAudioTrack();
+            if (trackCount > 0 && selectedTrackId < 0) {
+                MediaPlayer.TrackDescription[] tracks = current.getAudioTracks();
+                if (tracks != null) {
+                    for (MediaPlayer.TrackDescription track : tracks) {
+                        if (track != null && track.id != -1) {
+                            current.setAudioTrack(track.id);
+                            break;
+                        }
+                    }
+                }
+                selectedTrackId = current.getAudioTrack();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // Report unknown as unavailable; the caller will fail over safely.
+        }
+        callback = listener;
+        if (!released && callback != null) callback.onAudioTrackState(trackCount, selectedTrackId);
+    }
+
     public boolean isPlaying() {
         return isInitialized() && mediaPlayer.isPlaying();
     }
@@ -284,8 +317,9 @@ public final class LibVlcPlaybackEngine {
         });
     }
 
-    public void release() {
+    public boolean release() {
         // Mark the engine dead and detach the app callback before touching JNI.
+        boolean nativeReleaseSucceeded = true;
         // A callback already in flight may finish, but MainActivity also checks
         // the engine instance and playback generation before acting on it.
         released = true;
@@ -323,6 +357,7 @@ public final class LibVlcPlaybackEngine {
                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_BEGIN");
                 player.release();
             } catch (RuntimeException | LinkageError error) {
+                nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_FAILED_" + error.getClass().getSimpleName());
             }
         }
@@ -334,13 +369,15 @@ public final class LibVlcPlaybackEngine {
                 recordNativeStage("VLC_LIBVLC_RELEASE_BEGIN");
                 instance.release();
             } catch (RuntimeException | LinkageError error) {
+                nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_LIBVLC_RELEASE_FAILED_" + error.getClass().getSimpleName());
             }
         }
         try {
             if (videoLayout != null) runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
         } catch (RuntimeException ignored) { }
-        recordNativeStage("VLC_RELEASE_COMPLETED");
+        recordNativeStage(nativeReleaseSucceeded ? "VLC_RELEASE_COMPLETED" : "VLC_RELEASE_INCOMPLETE");
+        return nativeReleaseSucceeded;
     }
 
     // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves

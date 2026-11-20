@@ -29,6 +29,44 @@ public class ChannelIdentityPolicyTest {
                 ChannelIdentityPolicy.identity("", "", "福建综合|地方|host:b.example"));
     }
 
+    @Test public void mergesSameRecognizedCityStationAcrossHostsAndProviderIds() {
+        String local = ChannelIdentityPolicy.localStationIdentity("深圳都市频道", "");
+        String first = ChannelIdentityPolicy.identity("", "PROVIDER_A_SHENZHEN", "host:a", local);
+        String second = ChannelIdentityPolicy.identity("", "PROVIDER_B_SHENZHEN", "host:b",
+                ChannelIdentityPolicy.localStationIdentity("深圳都市频道 高清", ""));
+        assertEquals("local:广东|深圳|深圳都市频道", local);
+        assertEquals(first, second);
+    }
+
+    @Test public void bilingualMetadataKeepsOneCityAndRejectsMultipleCities() {
+        assertEquals("local:广东|深圳|深圳都市频道",
+                ChannelIdentityPolicy.localStationIdentity("深圳都市频道", "Shenzhen City Channel"));
+        assertEquals("", ChannelIdentityPolicy.localStationIdentity("深圳广州新闻频道", ""));
+    }
+
+    @Test public void prefersChineseGuideLabelForEnglishDisplayName() {
+        assertEquals("local:广东|深圳|深圳都市频道",
+                ChannelIdentityPolicy.localStationIdentity(
+                        "Shenzhen City Channel", "深圳都市频道"));
+    }
+
+    @Test public void recognizesMunicipalitiesAsTheirOwnCityIdentity() {
+        assertEquals("local:北京|北京|北京新闻频道",
+                ChannelIdentityPolicy.localStationIdentity("北京新闻频道", ""));
+        assertEquals("local:上海|上海|上海纪实频道",
+                ChannelIdentityPolicy.localStationIdentity("上海纪实频道", ""));
+    }
+
+    @Test public void localStationMergeRequiresAnUnambiguousCityAndSpecificLabel() {
+        assertEquals("", ChannelIdentityPolicy.localStationIdentity("福州综合频道", ""));
+        assertEquals("", ChannelIdentityPolicy.localStationIdentity("福建新闻综合", ""));
+        assertEquals("local:福建|福州|福建福州综合频道",
+                ChannelIdentityPolicy.localStationIdentity("福建福州综合频道", ""));
+        assertNotEquals(
+                ChannelIdentityPolicy.localStationIdentity("深圳新闻频道", ""),
+                ChannelIdentityPolicy.localStationIdentity("广州新闻频道", ""));
+    }
+
     @Test public void keepsProviderNamespacePunctuation() {
         assertEquals("fjtv.fuzhou", ChannelIdentityPolicy.normalizeTvgId(" FJTV.FUZHOU "));
         assertEquals("", ChannelIdentityPolicy.normalizeTvgId("123"));

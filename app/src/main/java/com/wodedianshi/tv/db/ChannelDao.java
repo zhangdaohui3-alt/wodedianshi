@@ -94,6 +94,9 @@ public interface ChannelDao {
     @Query("SELECT channelId FROM favorites")
     List<String> getFavoriteChannelIds();
 
+    @Query("SELECT addedAt FROM favorites WHERE channelId = :channelId LIMIT 1")
+    Long getFavoriteAddedAt(String channelId);
+
     @Transaction
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
     List<ChannelWithSources> getChannelsByCategory(String categoryId);
@@ -234,4 +237,29 @@ public interface ChannelDao {
 
     @Query("SELECT c.legacyKey FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
     List<String> getFavoriteLegacyKeys();
+
+    // Isolated full-rebuild staging. These rows are never visible to the live UI.
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void insertCatalogueBuildRows(List<CatalogueBuildRowEntity> rows);
+
+    @Query("SELECT * FROM catalogue_build_rows ORDER BY sortOrder, rowId")
+    List<CatalogueBuildRowEntity> getCatalogueBuildRows();
+
+    @Query("DELETE FROM catalogue_build_rows")
+    void clearCatalogueBuildRows();
+
+    @Query("DELETE FROM catalogue_build_rows WHERE sortOrder >= :size")
+    void deleteCatalogueBuildRowsFrom(int size);
+
+    @Transaction
+    default void replaceCatalogueBuildRows(List<CatalogueBuildRowEntity> rows) {
+        clearCatalogueBuildRows();
+        if (rows != null && !rows.isEmpty()) insertCatalogueBuildRows(rows);
+    }
+
+    @Transaction
+    default void mergeCatalogueBuildRows(List<CatalogueBuildRowEntity> changedRows, int size) {
+        if (changedRows != null && !changedRows.isEmpty()) insertCatalogueBuildRows(changedRows);
+        deleteCatalogueBuildRowsFrom(Math.max(0, size));
+    }
 }

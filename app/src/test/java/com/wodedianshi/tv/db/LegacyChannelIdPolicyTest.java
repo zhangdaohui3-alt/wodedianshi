@@ -30,6 +30,78 @@ public class LegacyChannelIdPolicyTest {
     }
 
     @Test
+    public void verifiedTvgIdKeepsChannelIdWhenPrimarySourceChanges() {
+        String firstKey = LegacyChannelIdPolicy.stableIdentityKey(
+                "福建综合", "https://old.example/live.m3u8", "FJTV.FUZHOU");
+        String secondKey = LegacyChannelIdPolicy.stableIdentityKey(
+                "福建综合", "https://new.example/live.m3u8", " fjtv.fuzhou ");
+        assertEquals(firstKey, secondKey);
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(firstKey, 0),
+                LegacyChannelIdPolicy.idForStableIdentity(secondKey, 0));
+    }
+
+    @Test
+    public void cctvAndSatelliteIdsDoNotDependOnSourceHost() {
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("CCTV-1", "https://a.test/live", ""), 0),
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("CCTV-1", "https://b.test/live", ""), 0));
+        assertEquals(
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("湖南卫视", "https://a.test/live", ""), 0),
+                LegacyChannelIdPolicy.idForStableIdentity(
+                        LegacyChannelIdPolicy.stableIdentityKey("湖南卫视", "https://b.test/live", ""), 0));
+    }
+
+    @Test
+    public void recognizedCityStationKeepsRoomIdentityAcrossDifferentHosts() {
+        String first = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://old.example/live.m3u8", "", "地方", "");
+        String second = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://new.example/live.m3u8", "", "新闻", "");
+        assertEquals("local:广东|深圳|深圳都市频道", first);
+        assertEquals(first, second);
+    }
+
+    @Test
+    public void bilingualCityStationUsesChineseGuideNameForStableRoomIdentity() {
+        String first = LegacyChannelIdPolicy.stableIdentityKey(
+                "Shenzhen City Channel", "https://old.example/live.m3u8",
+                "provider.old", "Local", "深圳都市频道");
+        String second = LegacyChannelIdPolicy.stableIdentityKey(
+                "深圳都市频道", "https://new.example/live.m3u8",
+                "provider.new", "地方", "");
+        assertEquals(first, second);
+    }
+
+    @Test
+    public void ambiguousCityNameRemainsHostScopedForRoomIdentity() {
+        assertNotEquals(
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福州综合频道", "https://a.example/live.m3u8", "", "地方", ""),
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福州综合频道", "https://b.example/live.m3u8", "", "地方", ""));
+    }
+
+    @Test
+    public void genericChannelKeepsIdentityAcrossPathChangesOnSameHost() {
+        assertEquals(
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福建综合", "https://a.test/old/live.m3u8", "", "地方"),
+                LegacyChannelIdPolicy.stableIdentityKey(
+                        "福建综合", "https://a.test/new/live.m3u8", "", "地方"));
+    }
+
+    @Test
+    public void genericChannelWithoutTvgIdRemainsSourceScoped() {
+        assertNotEquals(
+                LegacyChannelIdPolicy.stableIdentityKey("福建综合", "https://a.test/live", ""),
+                LegacyChannelIdPolicy.stableIdentityKey("福建综合", "https://b.test/live", ""));
+    }
+
+    @Test
     public void delimiterInNameCannotCollideWithDifferentNameAndUrl() {
         assertNotEquals(
                 LegacyChannelIdPolicy.identityKey("A|B", "C"),

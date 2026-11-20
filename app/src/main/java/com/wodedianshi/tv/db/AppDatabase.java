@@ -9,8 +9,9 @@ import androidx.room.RoomDatabase;
     BackupSourceEntity.class,
     FavoriteEntity.class,
     CatalogueMigrationEntity.class,
-    AppStateEntity.class
-}, version = 6, exportSchema = true)
+    AppStateEntity.class,
+    CatalogueBuildRowEntity.class
+}, version = 7, exportSchema = true)
 public abstract class AppDatabase extends RoomDatabase {
     public abstract ChannelDao channelDao();
     public abstract AppStateDao appStateDao();

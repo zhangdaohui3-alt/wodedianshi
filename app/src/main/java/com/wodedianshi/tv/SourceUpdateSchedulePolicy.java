@@ -1,17 +1,17 @@
 package com.wodedianshi.tv;
 
-/** Controls the one-time China-first catalogue discovery lifecycle. */
+/** Controls the one-time independent full-catalogue rebuild lifecycle. */
 public final class SourceUpdateSchedulePolicy {
     private SourceUpdateSchedulePolicy() {}
 
     /**
-     * Schedule initial discovery only when automatic updates are enabled and no
-     * configured feed has ever completed a successful read. Failed attempts do
-     * not set the success timestamp, so they remain eligible for retry.
+     * Schedule the independent full rebuild only when automatic updates are
+     * enabled and no full rebuild has been published. Older incremental-update
+     * timestamps must not suppress the first complete rebuild.
      */
     public static boolean shouldRunInitialDiscovery(boolean automaticUpdatesEnabled,
-                                                    long lastSuccessfulUpdateMillis) {
-        return automaticUpdatesEnabled && lastSuccessfulUpdateMillis <= 0L;
+                                                    long fullRebuildCompletedAtMillis) {
+        return automaticUpdatesEnabled && fullRebuildCompletedAtMillis <= 0L;
     }
 
     /** Automatic catalogue work must not compete with foreground TV playback or input. */
@@ -19,7 +19,7 @@ public final class SourceUpdateSchedulePolicy {
         return appForeground && !manual;
     }
 
-    /** A first-run scan is complete only after every candidate and feed was covered. */
+    /** A first-run rebuild is complete only after every candidate and feed was covered. */
     public static boolean isInitialDiscoveryComplete(int candidateCount, int scannedCount,
                                                       int failedFeedCount) {
         return candidateCount > 0 && scannedCount >= candidateCount && failedFeedCount == 0;

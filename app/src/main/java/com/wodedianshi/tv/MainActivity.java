@@ -47,8 +47,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private FrameLayout liveStage;
   private VLCVideoLayout vlcVideoLayout;
   private volatile LibVlcPlaybackEngine libVlcEngine;
+  // Serialize every new live tune behind asynchronous LibVLC teardown. The
+  // callbacks are UI-thread owned; stale tune generations self-discard.
+  private boolean libVlcReleaseInProgress=false;
+  private final ArrayList<Runnable> libVlcReleaseCallbacks=new ArrayList<>();
   private boolean usingLibVlc=false;
   private boolean libVlcVideoOutputReady=false;
+  private int libVlcAudioTrackCheckAttempts=0;
   // Require two consecutive healthy VLC watchdog checks before remembering a source.
   private int libVlcStableChecks=0;
   private boolean libVlcStableRecorded=false;
@@ -118,17 +123,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Durable business state is loaded from Room on the startup worker.
   private static final String ROOM_STATE_LAST_CHANNEL_IDENTITY="last_channel_identity";
   private static final String ROOM_STATE_LAST_CHANNEL_URL="last_channel_url";
+  private static final String ROOM_STATE_LAST_CHANNEL_NAME="last_channel_name";
+  private static final String ROOM_STATE_LAST_CHANNEL_GROUP="last_channel_group";
+  private static final String ROOM_STATE_LAST_CHANNEL_TVG_ID="last_channel_tvg_id";
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
   private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
   private static final String ROOM_STATE_SOURCE_QOE="source_qoe_v1";
   private volatile String roomLastChannelIdentity="";
   private volatile String roomLastChannelUrl="";
+  private volatile String roomLastChannelName="";
+  private volatile String roomLastChannelGroup="";
+  private volatile String roomLastChannelTvgId="";
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
   private volatile String roomSourceProbeJson="{}";
   private volatile String roomSourceQoeJson="{}";
   private volatile long roomSourceUpdateLastSuccessAt=0L;
+  private volatile long roomFullRebuildCompletedAt=0L;
   private volatile long roomChinaSupplementLastSuccess=0L;
   private volatile int roomChinaCachedCount=0;
   private volatile boolean roomChinaDirectoryCommitted=false;
@@ -377,7 +389,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           refresh();
           if(info!=null)info.setText(!restoreSucceeded
               ?"频道目录初始化失败，请稍后重试"
-              :channels.isEmpty()?"频道列表为空，请检查内置频道目录":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+              :channels.isEmpty()?"首次频道目录初始化中：正在完整抓取、分类和整理频道，请保持网络连接":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
           if(queuedCategory!=null&&categoryMenuItems!=null){
             categoryMenuItems.post(()->{
               if(isFinishing()||categoryMenuItems==null)return;
@@ -584,14 +596,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getSharedPreferences("mytv",0).getInt("decoder_mode",DecoderPolicy.DEFAULT_MODE));
   }
   /**
-   * Room is the only runtime catalogue. A fresh installation seeds it directly
-   * from the bundled playlist; previous SharedPreferences channel snapshots are
-   * intentionally ignored. First boot may take longer while the seed is built.
-   */
-  /**
-   * Room is the sole persistent channel catalogue. A fresh database is seeded
-   * from the bundled playlist; no legacy JSON or sidecar file cache is read.
-   * Every later launch restores the complete, validated Room snapshot.
+   * Room is the sole persistent channel catalogue. A fresh installation receives
+   * an empty, validated initialization checkpoint; the first full discovery
+   * publishes the first real catalogue only after every configured feed is handled.
+   * Later launches restore the last complete Room snapshot without waiting for feeds.
    */
   private void restore(){
     catalogueSnapshotTrusted=false;
@@ -603,26 +611,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
           readRoomCatalogueIntoMemory();
       if(roomSnapshot==null){
-        android.util.Log.i("MyTVRoom","fresh authoritative Room database; seeding bundled channels");
-        try(InputStream in=getAssets().open("default_channels.m3u")){
-          String bundled=read(in);
-          parse(bundled);
-        }
-        rebuildChannelIndexes();
-        ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> seed=
-            snapshotChannelRows();
-        if(seed.isEmpty())throw new IllegalStateException("Bundled channel seed contains no usable channels");
-        int seeded=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
-            getApplicationContext(),seed,Collections.emptySet());
-        if(seeded<=0||seeded!=seed.size()){
-          throw new IllegalStateException("Room seed validation failed: expected "
-              +seed.size()+" rows, wrote "+seeded);
-        }
-        android.util.Log.i("MyTVRoom","first-run Room seed committed channels="+seeded);
+        // A first install starts with a valid empty Room checkpoint, not a tiny
+        // bundled playlist masquerading as the completed channel catalogue.
+        // The full China-first discovery worker owns the first real publication.
+        android.util.Log.i("MyTVRoom","fresh Room database; creating empty initialization checkpoint");
+        com.wodedianshi.tv.db.RoomCatalogueWriter.initializeEmptyCatalogue(getApplicationContext());
         roomSnapshot=readRoomCatalogueIntoMemory();
       }
-      if(roomSnapshot==null||roomSnapshot.channelCount<=0){
-        throw new IllegalStateException("Room catalogue initialization did not produce a complete snapshot");
+      if(roomSnapshot==null){
+        throw new IllegalStateException("Room catalogue initialization did not produce a valid checkpoint");
       }
       synchronized(favorites){
         favorites.clear();
@@ -673,6 +670,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_LAST_CHANNEL_IDENTITY,"");
     roomLastChannelUrl=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_LAST_CHANNEL_URL,"");
+    roomLastChannelName=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_NAME,"");
+    roomLastChannelGroup=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_GROUP,"");
+    roomLastChannelTvgId=com.wodedianshi.tv.db.AppStateStore.get(
+        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_TVG_ID,"");
     roomVodFavoritesJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
@@ -682,6 +685,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
+    roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
     roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
     roomChinaCachedCount=parseRoomInt("china_directory_cached_count",0);
     roomChinaDirectoryCommitted=Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
@@ -910,8 +914,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // a dead endpoint and make every next launch start from that failed URL.
     roomLastChannelIdentity=identity(c);
     roomLastChannelUrl=c.url==null?"":c.url;
+    roomLastChannelName=c.name==null?"":c.name;
+    roomLastChannelGroup=c.group==null?"":c.group;
+    roomLastChannelTvgId=c.tvgId==null?"":c.tvgId;
     queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,roomLastChannelIdentity);
     queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,roomLastChannelUrl);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_NAME,roomLastChannelName);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_GROUP,roomLastChannelGroup);
+    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,roomLastChannelTvgId);
   }
   private void restoreLastChannel(){
     String savedIdentity=roomLastChannelIdentity;
@@ -937,11 +947,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}
       }
     }
+    // If a generic station's primary host changed and it has no trustworthy TVG id,
+    // restore only when its saved display name + category identifies exactly one
+    // channel. Ambiguous same-name stations are deliberately not guessed.
+    if(found<0&&!roomLastChannelName.isEmpty()){
+      int unique=-1;
+      for(int i=0;i<channels.size();i++){
+        Channel c=channels.get(i);
+        if(!canonicalChannelName(c.name).equals(canonicalChannelName(roomLastChannelName)))continue;
+        if(!normalizeResumeGroup(c.group).equals(normalizeResumeGroup(roomLastChannelGroup)))continue;
+        if(!roomLastChannelTvgId.isEmpty()
+            &&!normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(roomLastChannelTvgId)))continue;
+        if(unique>=0){unique=-2;break;}
+        unique=i;
+      }
+      if(unique>=0)found=unique;
+    }
     if(found<0)return;
     // Never resume a source merely because it was the last attempted one. It may
     // have timed out before the app closed. Start from the channel's primary source.
     channels.get(found).activeSource=0;
     play(found);
+  }
+  private String normalizeResumeGroup(String value){
+    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
+  }
+  private String normalizeResumeTvgId(String value){
+    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
   }
   // Defensive guard for dynamically reparented video/player views. A ViewGroup
   // can only measure children with its own LayoutParams subtype; a stale
@@ -1134,7 +1166,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Run the one-time China-first discovery through the complete first candidate
     // pass. Later launches use the 24-hour periodic worker instead of repeating it.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
-        enabled,roomSourceUpdateLastSuccessAt)){
+        enabled,roomFullRebuildCompletedAt)){
       // The first discovery is part of first-run setup, not a routine background
       // refresh. Let it run while the catalogue screen is open; playback-active
       // protection inside the Worker still pauses it if the user starts watching.
@@ -1154,11 +1186,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
         .observe(this,workInfos->{
           if(workInfos==null)return;
+          boolean allSucceeded=!workInfos.isEmpty();
           for(androidx.work.WorkInfo workInfo:workInfos){
-            if(workInfo.getState()==androidx.work.WorkInfo.State.SUCCEEDED){
-              reloadChannelsAfterBackgroundUpdateIfNeeded();
+            if(workInfo.getState()!=androidx.work.WorkInfo.State.SUCCEEDED){
+              allSucceeded=false;
               break;
             }
+          }
+          // A first batch may succeed while it has appended more work to the
+          // unique chain. Reload only after the entire discovery chain completes.
+          if(allSucceeded){
+            worker.execute(()->{
+              long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
+              runOnUiThread(()->{
+                roomFullRebuildCompletedAt=completed;
+                reloadChannelsAfterBackgroundUpdateIfNeeded();
+              });
+            });
           }
         });
   }
@@ -1175,14 +1219,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class).setConstraints(constraints).setInputData(new Data.Builder().putBoolean("manual",true).build()).build();
-    WorkManager.getInstance(this).enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
+    boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
+    OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+        .setConstraints(constraints)
+        .setInputData(new Data.Builder().putBoolean("manual",true)
+            .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
+        .build();
+    WorkManager manager=WorkManager.getInstance(this);
+    if(needsInitialFullRebuild){
+      // The startup and manual entry points must share one unique chain: two
+      // simultaneous first-run rebuilds would race on the same Room staging rows
+      // and feed cursors. KEEP reuses an already-running startup rebuild.
+      manager.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,request);
+      toast("已提交首次全量频道整理；整理期间旧频道照常使用");
+      return;
+    }
+    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
     toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    WorkManager.getInstance(this).getWorkInfoById(request.getId()).addListener(()->{
+    manager.getWorkInfoById(request.getId()).addListener(()->{
       try{
         WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
         if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          runOnUiThread(()->{reloadChannelsAfterBackgroundUpdateIfNeeded();showSourceUpdateStatus();});
+          long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
+          runOnUiThread(()->{
+            roomFullRebuildCompletedAt=completed;
+            if(!needsInitialFullRebuild||completed>0L){
+              reloadChannelsAfterBackgroundUpdateIfNeeded();
+            }
+            showSourceUpdateStatus();
+          });
         }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
           runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
         }
@@ -1200,7 +1265,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed())return;
           new AlertDialog.Builder(this).setTitle("频道源更新状态")
-            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：更新会保留已有频道和备用源；新地址会先做连通性检查。直播是否能播放仍可能受地区、版权和源站限制。")
+            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：首次全量整理期间继续使用旧目录，完成后整体替换；日常更新再增量维护。媒体预检只代表地址可访问，不代表播放稳定或获得播放授权。")
             .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
         });
       });
@@ -1425,12 +1490,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Initial catalogue loading is deferred until after dialog.show().
     dialog.setOnDismissListener(d->{
       cancelActiveVodCatalogue();
-      if(resumeLiveAfterVod&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+      // Activity stop also dismisses this dialog. In that path leave live
+      // restoration to onStart(); starting a decoder while onStop() is tearing
+      // it down creates a start/release race on Android TV.
+      boolean shouldResumeLive=activityStarted&&!isFinishing()&&resumeLiveAfterVod
+          &&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive();
+      if(shouldResumeLive){
         // Recreate the live player only after VOD releases its decoder resources.
+        // startCurrentSource() sets the playback-active lease before async decoder
+        // preparation; do not immediately clear it just because the new player has
+        // not reached STATE_READY yet.
         startCurrentSource();
+      }else{
+        setSourceUpdatePlaybackActive(
+            (player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       }
       resumeLiveAfterVod=false;
-      setSourceUpdatePlaybackActive((player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
       if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
     });
     dialog.setOnShowListener(d->{
@@ -1454,9 +1529,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Pause happened before construction; now that the VOD window is visible,
       // release both live decoder backends before starting catalogue work.
       releaseLivePlayerSafely();
-      releaseLibVlcEngine();
-      if(dialog.isShowing()&&currentVodPanel==panel)
-        loadVodCatalogue("电影",panel,status,results);
+      // LibVLC release runs off the UI thread because some Android 9 TV
+      // firmware blocks during decoder teardown. Do not expose playable VOD
+      // cards until the live backend has actually released its audio session.
+      releaseLibVlcEngine(()->{
+        if(dialog.isShowing()&&currentVodPanel==panel)
+          loadVodCatalogue("电影",panel,status,results);
+      });
     });
   }
   private void loadVodCatalogue(String category,LinearLayout panel){
@@ -5187,15 +5266,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
+        String reason=missingAudio?"音频轨道或输出不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
           advanceToNextSourceAutomatically("检测到当前源"+reason);
         }
-      }else if(missingAudio){
-        // Audio-only failure must not discard a source whose video is rendering.
-        // Keep the warning for diagnosis, but let the viewer continue watching.
-        saveLiveDiagnostic("AUDIO_TRACK_WARNING",
-            "video output is available; audio track/output is missing or not advancing");
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
@@ -5465,7 +5539,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startCurrentSourceInternal(){
     if(selected<0||selected>=channels.size())return;
-    releaseLibVlcEngine();
+    // LibVLC teardown can block on Android 9 vendor decoders. Never start a
+    // Media3 tune while that native audio/video session is still being released.
+    // Multiple rapid tune requests queue behind the same release; only the latest
+    // matching playback generation is allowed to continue.
+    if(libVlcEngine!=null||libVlcReleaseInProgress){
+      final String expectedMediaId=currentMediaId;
+      final int expectedChannel=selected;
+      releaseLibVlcEngine(()->{
+        if(activityStarted&&!isFinishing()&&!isDestroyed()&&currentVodPanel==null
+            &&selected==expectedChannel&&expectedMediaId.equals(currentMediaId))
+          startCurrentSourceInternal();
+      });
+      return;
+    }
     usingLibVlc=false;
     libVlcAttemptedForSource=false;
     if(video!=null)video.setVisibility(View.VISIBLE);
@@ -5739,6 +5826,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
     libVlcAttemptedForSource=true;
     libVlcVideoOutputReady=false;
+    libVlcAudioTrackCheckAttempts=0;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     final String url=currentSourceUrl();
@@ -5776,9 +5864,48 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
             saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+            // A visible VLC video output is not enough: a video-only stream can
+            // still leave the viewer without sound. Inspect audio tracks off the UI thread.
+            if(libVlcAudioTrackCheckAttempts==0){
+              libVlcAudioTrackCheckAttempts=1;
+              uiHandler.postDelayed(()->{
+                if(!isCurrent()||libVlcEngine!=engine)return;
+                libVlcWorker.execute(()->{
+                  if(libVlcEngine==engine)engine.inspectAudioTrack();
+                });
+              },5000L);
+            }
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
+          }
+        });}
+        public void onAudioTrackState(int trackCount,int selectedTrackId){uiHandler.post(()->{
+          if(!isCurrent())return;
+          saveLiveDiagnostic("VLC_AUDIO_TRACK_CHECK","tracks="+trackCount+" selected="+selectedTrackId);
+          if(trackCount<=0||selectedTrackId<0){
+            if(libVlcAudioTrackCheckAttempts<2){
+              // Track metadata can arrive after the first video-output event.
+              // Recheck once before discarding a potentially healthy live source.
+              libVlcAudioTrackCheckAttempts++;
+              saveLiveDiagnostic("VLC_AUDIO_TRACK_PENDING",
+                  "tracks="+trackCount+" selected="+selectedTrackId+"; retrying once");
+              uiHandler.postDelayed(()->{
+                if(!isCurrent()||libVlcEngine!=engine)return;
+                libVlcWorker.execute(()->{
+                  if(libVlcEngine==engine)engine.inspectAudioTrack();
+                });
+              },3000L);
+              return;
+            }
+            saveLiveDiagnostic("VLC_AUDIO_TRACK_MISSING",
+                "LibVLC produced video output but no selectable audio track after two checks");
+            cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+            releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+            advanceToNextSourceAutomatically("VLC 未检测到可用音轨，正在切换备用源");
+          }else{
+            saveLiveDiagnostic("VLC_AUDIO_TRACK_READY",
+                "LibVLC selected audio track "+selectedTrackId+"; audible output still requires device validation");
           }
         });}
         public void onBuffering(float percent){uiHandler.post(()->{
@@ -5919,14 +6046,57 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
   private void releaseLibVlcEngine(){
+    releaseLibVlcEngine(null);
+  }
+  private void finishLibVlcRelease(){
+    libVlcReleaseInProgress=false;
+    if(libVlcReleaseCallbacks.isEmpty())return;
+    ArrayList<Runnable> callbacks=new ArrayList<>(libVlcReleaseCallbacks);
+    libVlcReleaseCallbacks.clear();
+    for(Runnable callback:callbacks){
+      try{callback.run();}
+      catch(RuntimeException failure){
+        saveLiveDiagnostic("VLC_RELEASE_CALLBACK_ERROR",failure.getClass().getSimpleName());
+      }
+    }
+  }
+  private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
-    if(old!=null){
-      try{libVlcWorker.execute(()->{try{old.release();}catch(Throwable failure){
-        saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
-      }});}catch(RuntimeException rejected){saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());}
-    }
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
+    if(afterRelease!=null){
+      if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
+      else if(old==null){afterRelease.run();return;}
+      else libVlcReleaseCallbacks.add(afterRelease);
+    }
+    if(old==null)return;
+    libVlcReleaseInProgress=true;
+    Runnable teardown=()->{
+      boolean released=false;
+      try{
+        released=old.release();
+      }catch(Throwable failure){
+        saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
+      }
+      if(!released){
+        // Fail closed: Media3 must not acquire the shared output when native VLC
+        // teardown failed or could not be confirmed. Keep the barrier and queued
+        // callbacks intact; restarting the Activity is safer than dual decoders.
+        saveLiveDiagnostic("VLC_RELEASE_BARRIER_RETAINED","native teardown not confirmed");
+        return;
+      }
+      uiHandler.post(this::finishLibVlcRelease);
+    };
+    try{libVlcWorker.execute(teardown);}
+    catch(RuntimeException rejected){
+      saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());
+      // Preserve decoder teardown even if the worker is shutting down.
+      try{new Thread(teardown,"MyTV-VLC-Release").start();}
+      catch(Throwable threadRejected){
+        saveLiveDiagnostic("VLC_RELEASE_FALLBACK_ERROR",threadRejected.getClass().getSimpleName());
+        // No native release ran. Never open the barrier or resume queued tunes.
+      }
+    }
   }
   private String currentSourceUrl(){
     if(selected<0||selected>=channels.size())return "";
@@ -6464,6 +6634,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     super.onStart();
     activityStarted=true;
     setSourceUpdateActivityActive(true);
+    if(currentVodPanel!=null)setSourceUpdatePlaybackActive(true);
     if(startupDataReady){
       reloadChannelsAfterBackgroundUpdateIfNeeded();
     }
@@ -6476,7 +6647,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.postDelayed(childLockTicker,30000L);
     refreshChildLockState();
     updateNetworkSpeedMonitor();
-    if(resumePlaybackOnStart&&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
+    if(resumePlaybackOnStart&&currentVodPanel==null&&!resumeLiveAfterVod
+        &&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
       resumePlaybackOnStart=false;
       startupAutoResumePending=false;
       startCurrentSource();
@@ -6653,6 +6825,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}resumeLiveAfterVod=false;if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();setSourceUpdatePlaybackActive(false);super.onStop();saveLastChannel();resumePlaybackOnStart=selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdateActivityActive(false);}
+  protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
 }

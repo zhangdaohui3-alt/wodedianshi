@@ -28,7 +28,27 @@ public class RegionCategoryPolicyTest {
         assertEquals("china", RegionCategoryPolicy.catalogueScope("TDM", "MO", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope("PTS", "Taiwan", "global"));
         assertEquals("global", RegionCategoryPolicy.catalogueScope("BBC News", "United Kingdom", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("CCTV-1", "News", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("湖南卫视", "Entertainment", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("Xiamen News", "Local", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("综合频道", "福建地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("深圳都市频道", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("襄阳新闻综合", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("喀什电视台", "地方", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope("台州新闻频道", "地方", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope("浙江台州新闻频道", "地方", "global"));
         assertEquals("custom", RegionCategoryPolicy.catalogueScope("自定义频道", "自建频道", "custom"));
+    }
+
+    @Test public void mainlandAggregatorGroupsKeepCountyStationsInChinaCatalogue() {
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "上虞新闻综合", "中国大陆 · 新闻", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "固镇新闻", "中国大陆 · 新闻", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "旺苍新闻综合", "Mainland China · Local", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope(
+                "BBC News", "International · News", "global"));
     }
 
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {

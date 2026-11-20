@@ -35,6 +35,17 @@ public class ChannelNamePolicyTest {
                 "HD", "", "CCTV-4", "CCTV"));
     }
 
+    @Test public void keepsCctvUltraHdAndAsiaVariantsDistinctFromCctv4() {
+        assertEquals("CCTV-4K", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4K (1080p)", "", "CCTV4K.cn@HD", "General"));
+        assertEquals("CCTV-8K", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-8K", "", "CCTV8K.cn@HD", "General"));
+        assertEquals("CCTV-4 Asia", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4 Asia (720p)", "", "CCTV4Asia.cn@SD", "General"));
+        assertEquals("CCTV-4", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4 (1080p)", "", "CCTV4.cn@HD", "General"));
+    }
+
     @Test public void recognizesSatelliteGroupsWithoutMisclassifyingGenericTv() {
         assertTrue(ChannelNamePolicy.isSatellite("Hunan TV", "China"));
         assertTrue(ChannelNamePolicy.isSatellite("湖南卫视", ""));
@@ -58,6 +69,38 @@ public class ChannelNamePolicyTest {
         assertEquals("湖北", ChannelNamePolicy.provinceForLocalChannel("Xiangyang News"));
         assertEquals("广西", ChannelNamePolicy.provinceForLocalChannel("Nanning TV"));
         assertEquals("新疆", ChannelNamePolicy.provinceForLocalChannel("Kashgar TV"));
+    }
+
+    @Test public void explicitProvinceDisambiguatesCityOnlyAliases() {
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("福建 Fuzhou TV"));
+        assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("江苏 Suzhou TV"));
+    }
+
+    @Test public void recognizesChineseCityNamesAndKeepsAmbiguousNamesConservative() {
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("福州综合频道"));
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("福建福州综合频道"));
+        assertEquals("广东", ChannelNamePolicy.provinceForLocalChannel("深圳都市频道"));
+        assertEquals("湖北", ChannelNamePolicy.provinceForLocalChannel("襄阳新闻综合"));
+        assertEquals("新疆", ChannelNamePolicy.provinceForLocalChannel("喀什电视台"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("台州新闻频道"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("浙江台州新闻频道"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("玉林电视台"));
+        assertEquals("广西", ChannelNamePolicy.provinceForLocalChannel("广西玉林电视台"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("朝阳电视台"));
+        assertEquals("辽宁", ChannelNamePolicy.provinceForLocalChannel("辽宁朝阳电视台"));
+    }
+
+    @Test public void recognizesCountyLevelLocalStationNamesFromAggregatedFeeds() {
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("上虞新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("余姚新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("兰溪新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("庆元新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("开化新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("文成新闻综合"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("新昌新闻综合"));
+        assertEquals("安徽", ChannelNamePolicy.provinceForLocalChannel("固镇新闻"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("旺苍新闻综合"));
+        assertEquals("上虞", ChannelNamePolicy.localCityForChannel("上虞新闻综合"));
     }
 
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
