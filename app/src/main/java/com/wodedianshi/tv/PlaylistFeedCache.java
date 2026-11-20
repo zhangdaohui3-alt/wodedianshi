@@ -29,7 +29,7 @@ public final class PlaylistFeedCache {
     // Keep a stable feed snapshot long enough for multi-run full-catalogue pagination.
     private static final long MAX_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final long MAX_BYTES = 96L * 1024L * 1024L;
-    private static final long MAX_CACHE_BYTES = 192L * 1024L * 1024L;
+    private static final long MAX_CACHE_BYTES = 256L * 1024L * 1024L;
     private static final int CONNECT_TIMEOUT_MS = 8000;
     private static final int READ_TIMEOUT_MS = 20000;
 
