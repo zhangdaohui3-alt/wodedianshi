@@ -53,6 +53,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ArrayList<Runnable> libVlcReleaseCallbacks=new ArrayList<>();
   private boolean usingLibVlc=false;
   private boolean libVlcVideoOutputReady=false;
+  private boolean libVlcAudioTrackCheckRequested=false;
   // Require two consecutive healthy VLC watchdog checks before remembering a source.
   private int libVlcStableChecks=0;
   private boolean libVlcStableRecorded=false;
@@ -5265,7 +5266,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
+        String reason=missingAudio?"音频轨道或输出不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
           advanceToNextSourceAutomatically("检测到当前源"+reason);
         }
@@ -5830,6 +5831,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
     libVlcAttemptedForSource=true;
     libVlcVideoOutputReady=false;
+    libVlcAudioTrackCheckRequested=false;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     final String url=currentSourceUrl();
@@ -5867,9 +5869,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
             saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+            // A visible VLC video output is not enough: a video-only stream can
+            // still leave the viewer without sound. Inspect audio tracks off the UI thread.
+            if(!libVlcAudioTrackCheckRequested){
+              libVlcAudioTrackCheckRequested=true;
+              uiHandler.postDelayed(()->{
+                if(!isCurrent()||libVlcEngine!=engine)return;
+                libVlcWorker.execute(()->{
+                  if(libVlcEngine==engine)engine.inspectAudioTrack();
+                });
+              },5000L);
+            }
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
+          }
+        });}
+        public void onAudioTrackState(int trackCount,int selectedTrackId){uiHandler.post(()->{
+          if(!isCurrent())return;
+          saveLiveDiagnostic("VLC_AUDIO_TRACK_CHECK","tracks="+trackCount+" selected="+selectedTrackId);
+          if(trackCount<=0||selectedTrackId<0){
+            saveLiveDiagnostic("VLC_AUDIO_TRACK_MISSING",
+                "LibVLC produced video output but no selectable audio track");
+            cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
+            releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+            advanceToNextSourceAutomatically("VLC 未检测到可用音轨，正在切换备用源");
+          }else{
+            saveLiveDiagnostic("VLC_AUDIO_TRACK_READY",
+                "LibVLC selected audio track "+selectedTrackId+"; audible output still requires device validation");
           }
         });}
         public void onBuffering(float percent){uiHandler.post(()->{
