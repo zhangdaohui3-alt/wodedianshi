@@ -38,6 +38,12 @@ public final class PlaylistParser {
         void accept(ChannelSource entry);
     }
 
+    /** Recreate a parser record from the private on-disk playlist index. */
+    public static ChannelSource indexedSource(String name, String url, String group,
+                                              String tvgId, String tvgName) {
+        return new ChannelSource(name, url, group, tvgId, tvgName);
+    }
+
     public static List<ChannelSource> parse(String data, int maxEntries) {
         if (data == null || data.isEmpty() || maxEntries <= 0) return Collections.emptyList();
         ArrayList<ChannelSource> result = new ArrayList<>();
