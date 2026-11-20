@@ -36,6 +36,15 @@ public final class PlaylistFeedCache {
     private PlaylistFeedCache() { }
 
     public static File obtain(Context context, String feedUrl) throws IOException {
+        return obtain(context, feedUrl, false);
+    }
+
+    /**
+     * Preserve an already-started full-rebuild feed snapshot even past its normal
+     * freshness window. Its persisted cursor is meaningful only for that snapshot.
+     */
+    public static File obtain(Context context, String feedUrl, boolean preserveExistingSnapshot)
+            throws IOException {
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
@@ -51,8 +60,9 @@ public final class PlaylistFeedCache {
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
                 && isPlaylistFile(cached);
 
-        if (hasValidCache && System.currentTimeMillis() - cachedAt >= 0L
-                && System.currentTimeMillis() - cachedAt < MAX_AGE_MS) {
+        if (hasValidCache && (preserveExistingSnapshot
+                || (System.currentTimeMillis() - cachedAt >= 0L
+                && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
             cached.setLastModified(System.currentTimeMillis());
             pruneOldEntries(directory, cached);
             return cached;
