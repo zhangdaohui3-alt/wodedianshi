@@ -53,7 +53,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ArrayList<Runnable> libVlcReleaseCallbacks=new ArrayList<>();
   private boolean usingLibVlc=false;
   private boolean libVlcVideoOutputReady=false;
-  private boolean libVlcAudioTrackCheckRequested=false;
+  private int libVlcAudioTrackCheckAttempts=0;
   // Require two consecutive healthy VLC watchdog checks before remembering a source.
   private int libVlcStableChecks=0;
   private boolean libVlcStableRecorded=false;
@@ -5831,7 +5831,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
     libVlcAttemptedForSource=true;
     libVlcVideoOutputReady=false;
-    libVlcAudioTrackCheckRequested=false;
+    libVlcAudioTrackCheckAttempts=0;
     final String expectedMediaId=currentMediaId;
     final int expectedChannel=selected;
     final String url=currentSourceUrl();
@@ -5871,8 +5871,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
             // A visible VLC video output is not enough: a video-only stream can
             // still leave the viewer without sound. Inspect audio tracks off the UI thread.
-            if(!libVlcAudioTrackCheckRequested){
-              libVlcAudioTrackCheckRequested=true;
+            if(libVlcAudioTrackCheckAttempts==0){
+              libVlcAudioTrackCheckAttempts=1;
               uiHandler.postDelayed(()->{
                 if(!isCurrent()||libVlcEngine!=engine)return;
                 libVlcWorker.execute(()->{
@@ -5889,8 +5889,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(!isCurrent())return;
           saveLiveDiagnostic("VLC_AUDIO_TRACK_CHECK","tracks="+trackCount+" selected="+selectedTrackId);
           if(trackCount<=0||selectedTrackId<0){
+            if(libVlcAudioTrackCheckAttempts<2){
+              // Track metadata can arrive after the first video-output event.
+              // Recheck once before discarding a potentially healthy live source.
+              libVlcAudioTrackCheckAttempts++;
+              saveLiveDiagnostic("VLC_AUDIO_TRACK_PENDING",
+                  "tracks="+trackCount+" selected="+selectedTrackId+"; retrying once");
+              uiHandler.postDelayed(()->{
+                if(!isCurrent()||libVlcEngine!=engine)return;
+                libVlcWorker.execute(()->{
+                  if(libVlcEngine==engine)engine.inspectAudioTrack();
+                });
+              },3000L);
+              return;
+            }
             saveLiveDiagnostic("VLC_AUDIO_TRACK_MISSING",
-                "LibVLC produced video output but no selectable audio track");
+                "LibVLC produced video output but no selectable audio track after two checks");
             cancelLibVlcStartTimeout();cancelLibVlcWatchdog();
             releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
             advanceToNextSourceAutomatically("VLC 未检测到可用音轨，正在切换备用源");
