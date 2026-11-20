@@ -171,14 +171,13 @@ public final class PlaylistFeedCache {
             if (file.equals(keep)) continue;
             long size = cacheEntrySize(file);
             if (!file.delete()) continue;
-            total -= Math.max(0L, file.length());
             deleteSidecar(file, ".index-data");
             deleteSidecar(file, ".index-offsets");
             deleteSidecar(file, ".index-data.tmp");
             deleteSidecar(file, ".index-offsets.tmp");
             deleteSidecar(file, ".properties");
             deleteSidecar(file, ".properties.tmp");
-            total = Math.max(0L, total - Math.max(0L, size - file.length()));
+            total = Math.max(0L, total - size);
         }
     }
 
