@@ -80,7 +80,7 @@ public final class PlaylistFeedCache {
                 throw new IOException("Playlist HTTP " + status);
             }
 
-            long declaredLength = connection.getContentLengthLong();
+            long declaredLength = connection.getContentLength();
             if (declaredLength > MAX_BYTES) {
                 throw new IOException("Playlist exceeds cache size limit");
             }
