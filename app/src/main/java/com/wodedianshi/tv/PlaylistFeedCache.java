@@ -52,6 +52,7 @@ public final class PlaylistFeedCache {
 
         if (hasValidCache && System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS) {
+            cached.setLastModified(System.currentTimeMillis());
             pruneOldEntries(directory, cached);
             return cached;
         }
@@ -69,8 +70,14 @@ public final class PlaylistFeedCache {
             connection.setRequestProperty("Accept", "*/*");
             String etag = old.getProperty("etag", "");
             String modified = old.getProperty("lastModified", "");
-            if (!etag.isEmpty()) connection.setRequestProperty("If-None-Match", etag);
-            if (!modified.isEmpty()) connection.setRequestProperty("If-Modified-Since", modified);
+            // A validator is useful only when its matching cached body still exists.
+            // Android may evict cache files independently of the metadata sidecar.
+            if (hasValidCache && !etag.isEmpty()) {
+                connection.setRequestProperty("If-None-Match", etag);
+            }
+            if (hasValidCache && !modified.isEmpty()) {
+                connection.setRequestProperty("If-Modified-Since", modified);
+            }
 
             int status = connection.getResponseCode();
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
