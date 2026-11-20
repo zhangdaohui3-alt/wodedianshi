@@ -83,6 +83,7 @@ public final class PlaylistFeedCache {
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
+                cached.setLastModified(System.currentTimeMillis());
                 pruneOldEntries(directory, cached);
                 return cached;
             }
