@@ -5266,7 +5266,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        recordCurrentSourceFailure();
         String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
           advanceToNextSourceAutomatically("检测到当前源"+reason);
