@@ -5266,10 +5266,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
-        String reason=missingAudio?"音频轨道或输出不可用":"没有可用视频轨道";
+        recordCurrentSourceFailure();
+        String reason=missingAudio?"音视频轨道均不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
           advanceToNextSourceAutomatically("检测到当前源"+reason);
         }
+      }else if(missingAudio){
+        // Audio-only failure must not discard a source whose video is rendering.
+        // Keep the warning for diagnosis, but let the viewer continue watching.
+        saveLiveDiagnostic("AUDIO_TRACK_WARNING",
+            "video output is available; audio track/output is missing or not advancing");
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);

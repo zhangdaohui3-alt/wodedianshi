@@ -6,6 +6,6 @@ public final class TrackHealthPolicy {
 
     /** A television source without either usable audio or usable video is not healthy. */
     public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
-        return missingAudio || missingVideo;
+        return missingVideo;
     }
 }
