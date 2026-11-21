@@ -12,9 +12,9 @@ import java.util.regex.Pattern;
 
 /** Pure M3U parser shared by discovery and deterministic unit tests. */
 public final class PlaylistParser {
-    private static final Pattern TVG_NAME = Pattern.compile("tvg-name=\"([^\"]*)\"");
-    private static final Pattern TVG_ID = Pattern.compile("tvg-id=\"([^\"]*)\"");
-    private static final Pattern GROUP_TITLE = Pattern.compile("group-title=\"([^\"]*)\"");
+    private static final Pattern TVG_NAME = Pattern.compile("(?i)(?:^|\\s)tvg-name\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+    private static final Pattern TVG_ID = Pattern.compile("(?i)(?:^|\\s)tvg-id\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+    private static final Pattern GROUP_TITLE = Pattern.compile("(?i)(?:^|\\s)group-title\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
 
     private PlaylistParser() {}
 
@@ -123,19 +123,19 @@ public final class PlaylistParser {
                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
                 if (name.isEmpty()) {
                     Matcher matcher = TVG_NAME.matcher(line);
-                    if (matcher.find()) name = matcher.group(1).trim();
+                    if (matcher.find()) name = attributeValue(matcher).trim();
                 }
                 if (name.isEmpty()) name = "未命名频道";
                 Matcher idMatcher = TVG_ID.matcher(line);
-                tvgId = idMatcher.find() ? idMatcher.group(1).trim() : "";
+                tvgId = idMatcher.find() ? attributeValue(idMatcher).trim() : "";
                 Matcher tvgNameMatcher = TVG_NAME.matcher(line);
-                tvgName = tvgNameMatcher.find() ? tvgNameMatcher.group(1).trim() : "";
+                tvgName = tvgNameMatcher.find() ? attributeValue(tvgNameMatcher).trim() : "";
                 group = pendingGroup;
                 pendingGroup = "";
                 groupTitlePresent = false;
                 Matcher groupMatcher = GROUP_TITLE.matcher(line);
-                if (groupMatcher.find() && !groupMatcher.group(1).trim().isEmpty()) {
-                    group = groupMatcher.group(1).trim();
+                if (groupMatcher.find() && !attributeValue(groupMatcher).trim().isEmpty()) {
+                    group = attributeValue(groupMatcher).trim();
                     groupTitlePresent = true;
                 }
             } else if (!line.startsWith("#")
@@ -157,6 +157,11 @@ public final class PlaylistParser {
             }
         }
         return emitted;
+    }
+
+    private static String attributeValue(Matcher matcher) {
+        String quoted = matcher.group(1);
+        return quoted != null ? quoted : matcher.group(2);
     }
 
     private static boolean isHttpUrl(String value) {
