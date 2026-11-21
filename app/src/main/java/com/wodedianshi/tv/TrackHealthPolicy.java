@@ -4,7 +4,7 @@ package com.wodedianshi.tv;
 public final class TrackHealthPolicy {
     private TrackHealthPolicy() {}
 
-    /** A television source without either usable audio or usable video is not healthy. */
+    /** Missing video makes a live source unviewable; audio-only warnings are diagnostic. */
     public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
         return missingVideo;
     }
