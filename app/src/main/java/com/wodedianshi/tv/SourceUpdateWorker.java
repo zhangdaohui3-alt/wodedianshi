@@ -51,6 +51,9 @@ public class SourceUpdateWorker extends Worker {
        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province_status.m3u8",
        // Mainland China playlist includes CCTV, provincial satellite and hundreds of local stations.
        "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u",
+       // Independent mainland regional catalogue; its provenance is discovery-only,
+       // and individual streams still require reachability checks before publication.
+       "https://live.zbds.top/tv/iptv4.m3u",
        "https://iptv-org.github.io/iptv/countries/hk.m3u",
        "https://iptv-org.github.io/iptv/countries/mo.m3u",
        "https://iptv-org.github.io/iptv/countries/tw.m3u",
