@@ -6188,7 +6188,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void recordSourceMetric(String url,String event,long readyMs){
     if(url==null||url.isEmpty())return;
     try{
-      org.json.JSONObject all=new org.json.JSONObject(roomSourceQoeJson);
+      // Reuse the parsed QoE map across consecutive tune events. Parsing the
+      // entire accumulated source-history JSON on every attempt/first-frame
+      // adds UI-thread work proportional to catalogue history size.
+      org.json.JSONObject all;
+      synchronized(sourceScoreCacheLock){
+        if(cachedQoeScoreJson==null||!roomSourceQoeJson.equals(cachedQoeScoreRaw)){
+          try{cachedQoeScoreJson=new org.json.JSONObject(roomSourceQoeJson);}
+          catch(org.json.JSONException malformed){cachedQoeScoreJson=new org.json.JSONObject();}
+          cachedQoeScoreRaw=roomSourceQoeJson;
+        }
+        all=cachedQoeScoreJson;
+      }
       String key=StableKey.url(url);
       String legacyKey=StableKey.legacyUrl(url);
       org.json.JSONObject m=all.optJSONObject(key);
