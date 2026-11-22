@@ -224,7 +224,7 @@ public class SourceUpdateWorker extends Worker {
               ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
             String scope=RegionCategoryPolicy.catalogueScope(
-                source.name,source.group,scopeForFeed(feed));
+                source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           });
