@@ -234,6 +234,21 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"节目开始播放，频道整理已暂停且保留原进度",0);
             return Result.retry();
           }
+          // Keep per-feed discovery counts for diagnosing missing regional stations.
+          // Log metadata only; never expose individual stream URLs or credentials.
+          int localMetadataCandidates=0;
+          for(Entry candidate:feedCandidates){
+            String metadata=((candidate.name==null?"":candidate.name)+" "
+                +(candidate.group==null?"":candidate.group)).toLowerCase(Locale.ROOT);
+            if(metadata.contains("地方")||metadata.contains("local")
+                ||!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()){
+              localMetadataCandidates++;
+            }
+          }
+          android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
+              +" cursor="+feedCursor+" parsed="+parsedCount[0]
+              +" candidates="+feedCandidates.size()+" local_metadata="+localMetadataCandidates
+              +" feed_scope="+scopeForFeed(feed));
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
           if(feedCandidates.size()>remaining){
