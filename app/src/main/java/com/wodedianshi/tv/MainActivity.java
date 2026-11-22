@@ -5248,6 +5248,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // A stale HLS live-window position gets one in-place recovery before source failover.
   private boolean liveWindowRecoveryAttempted=false;
   private long sourceAttemptStartedAt=0L;
+  // Monotonic timing only; never persist endpoints in tune diagnostics.
+  private long sourceFirstLoadAt=0L;
   private long sourceReadyAt=0L;
   // Start the no-first-frame deadline only once a supported video track is selected.
   private long videoTrackSelectedAt=0L;
@@ -5595,6 +5597,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     watchdogLastPosition=-1L;
     watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
+    sourceFirstLoadAt=0L;
     sourceReadyAt=0L;
     lastVideoPipelineActivityAt=0L;
     sourceReadyRecorded=false;
@@ -5644,6 +5647,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(listenerOwner!=MainActivity.this.player||loadEventInfo==null||sourceFirstLoadCompleted
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           sourceFirstLoadCompleted=true;
+          sourceFirstLoadAt=android.os.SystemClock.elapsedRealtime();
           saveLiveDiagnostic("LOAD_FIRST_OK","uriHost="+(loadEventInfo.uri==null?"?":String.valueOf(loadEventInfo.uri.getHost()))+" bytes="+loadEventInfo.bytesLoaded);
         }
         @Override public void onAudioPositionAdvancing(AnalyticsListener.EventTime eventTime,long playoutStartSystemTimeMs){
@@ -5654,10 +5658,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
           sourceFirstFrameRecorded=true;
-          lastVideoPipelineActivityAt=android.os.SystemClock.elapsedRealtime();
+          long firstFrameAt=android.os.SystemClock.elapsedRealtime();
+          lastVideoPipelineActivityAt=firstFrameAt;
           String renderedUrl=currentSourceUrl();
-          recordSourceMetric(renderedUrl,"firstFrame",
-              android.os.SystemClock.elapsedRealtime()-sourceAttemptStartedAt);
+          long tuneMs=Math.max(0L,firstFrameAt-sourceAttemptStartedAt);
+          recordSourceMetric(renderedUrl,"firstFrame",tuneMs);
+          // First completed load is not necessarily the first byte. Keep the
+          // phases separate and never label this value as connection latency.
+          long firstLoadMs=sourceFirstLoadAt>0L
+              ?Math.max(0L,sourceFirstLoadAt-sourceAttemptStartedAt):-1L;
+          long afterLoadMs=sourceFirstLoadAt>0L&&firstFrameAt>=sourceFirstLoadAt
+              ?firstFrameAt-sourceFirstLoadAt:-1L;
+          saveLiveDiagnostic("LIVE_TUNE_TIMING","firstLoadCompletedMs="+firstLoadMs
+              +" firstFrameMs="+tuneMs+" postLoadMs="+afterLoadMs
+              +" engine=Media3 sourceIndex="+(selected>=0&&selected<channels.size()
+                  ?channels.get(selected).activeSource+1:0));
           if(selected>=0&&selected<channels.size()){
             Channel renderedChannel=channels.get(selected);
             SourceMemoryStore.saveLastGood(MainActivity.this,
