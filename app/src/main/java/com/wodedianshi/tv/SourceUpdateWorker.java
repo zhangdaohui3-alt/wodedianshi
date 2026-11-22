@@ -203,6 +203,12 @@ public class SourceUpdateWorker extends Worker {
           // WorkManager may resume the same large feed over many runs. Reuse a
           // complete local snapshot so each continuation does not redownload
           // the entire playlist prefix. The cache revalidates after 24 hours so a multi-run rebuild keeps a stable feed snapshot.
+          // A playback session can begin after the batch-level check above.
+          // Do not start a potentially large network download in that case.
+          if(isStopped()||prefs.getBoolean("source_update_playback_active",false)){
+            saveStatus(prefs,"节目播放优先，已推迟频道源下载",0);
+            return Result.retry();
+          }
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
               initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0);
           int feedPageSize=initialDiscoveryChain
@@ -213,6 +219,12 @@ public class SourceUpdateWorker extends Worker {
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           });
+          // Parsing a cached large playlist can overlap a newly started player.
+          // Do not enqueue its candidates for probing or advance any cursor.
+          if(isStopped()||prefs.getBoolean("source_update_playback_active",false)){
+            saveStatus(prefs,"节目开始播放，频道整理已暂停且保留原进度",0);
+            return Result.retry();
+          }
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
           if(feedCandidates.size()>remaining){
