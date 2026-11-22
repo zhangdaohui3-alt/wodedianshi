@@ -51,6 +51,17 @@ public class RegionCategoryPolicyTest {
                 "BBC News", "International · News", "global"));
     }
 
+    @Test public void globalFeedUsesEpgNameAndIdToRecognizeLocalStations() {
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "新闻综合", "News", "福建福州新闻综合", "", "global"));
+        assertEquals("china", RegionCategoryPolicy.catalogueScope(
+                "HD Channel", "News", "", "ChengduNews", "global"));
+        assertEquals("global", RegionCategoryPolicy.catalogueScope(
+                "News", "International", "", "BBCNews", "global"));
+        assertEquals("custom", RegionCategoryPolicy.catalogueScope(
+                "新闻综合", "News", "福建福州新闻综合", "", "custom"));
+    }
+
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
         assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
         assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
