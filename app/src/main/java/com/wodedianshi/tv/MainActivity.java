@@ -3601,6 +3601,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String key=c.key();
           if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
         }
+        // Diagnose empty local directories without mistaking a completed UI filter
+        // for a completed network discovery. Count candidates from the saved snapshot.
+        if("地方".equals(categorySnapshot) && visible.isEmpty()) {
+          int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
+          for(Channel candidate:sources) {
+            if(candidate==null)continue;
+            if(isSatelliteChannel(candidate)){satelliteExcluded++;continue;}
+            if(isLocalChannel(candidate))localCandidates++;
+            if(provinceSnapshot!=null && matchesProvinceLocal(candidate,provinceSnapshot))provinceCandidates++;
+          }
+          android.util.Log.w("MyTVDirectory","local_empty total="+sources.size()
+              +" local_candidates="+localCandidates+" province_candidates="+provinceCandidates
+              +" satellite_excluded="+satelliteExcluded+" province="+provinceSnapshot
+              +" city="+citySnapshot+" query_matches="+queryMatches
+              +" search_active="+(!query.isEmpty()));
+        }
         if(categorySnapshot.equals("央视")){
           visible.sort((a,b)->{
             int oa=cctvSortOrder(a),ob=cctvSortOrder(b);
