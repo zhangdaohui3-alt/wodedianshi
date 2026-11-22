@@ -237,17 +237,26 @@ public class SourceUpdateWorker extends Worker {
           // Keep per-feed discovery counts for diagnosing missing regional stations.
           // Log metadata only; never expose individual stream URLs or credentials.
           int localMetadataCandidates=0;
+          int provinceResolvedCandidates=0;
           for(Entry candidate:feedCandidates){
-            String metadata=((candidate.name==null?"":candidate.name)+" "
-                +(candidate.group==null?"":candidate.group)).toLowerCase(Locale.ROOT);
-            if(metadata.contains("地方")||metadata.contains("local")
-                ||!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()){
+            // Count the same metadata used by catalogueScope, including EPG
+            // aliases. Otherwise diagnostics can report zero local stations
+            // even when tvg-name/tvg-id identifies their province.
+            String metadata=(candidate.name==null?"":candidate.name)+" "
+                +(candidate.group==null?"":candidate.group)+" "
+                +(candidate.tvgName==null?"":candidate.tvgName)+" "
+                +(candidate.tvgId==null?"":candidate.tvgId);
+            String normalized=metadata.toLowerCase(Locale.ROOT);
+            boolean provinceResolved=!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty();
+            if(provinceResolved)provinceResolvedCandidates++;
+            if(provinceResolved||normalized.contains("地方")||normalized.contains("local")){
               localMetadataCandidates++;
             }
           }
           android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
               +" candidates="+feedCandidates.size()+" local_metadata="+localMetadataCandidates
+              +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+scopeForFeed(feed));
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
