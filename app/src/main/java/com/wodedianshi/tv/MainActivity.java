@@ -910,19 +910,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    // Persist the channel, not the last attempted source. startCurrentSource() calls
-    // this before playback succeeds, so last_source_url could permanently remember
-    // a dead endpoint and make every next launch start from that failed URL.
-    roomLastChannelIdentity=identity(c);
-    roomLastChannelUrl=c.url==null?"":c.url;
-    roomLastChannelName=c.name==null?"":c.name;
-    roomLastChannelGroup=c.group==null?"":c.group;
-    roomLastChannelTvgId=c.tvgId==null?"":c.tvgId;
-    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,roomLastChannelIdentity);
-    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,roomLastChannelUrl);
-    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_NAME,roomLastChannelName);
-    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_GROUP,roomLastChannelGroup);
-    queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,roomLastChannelTvgId);
+    // Source failover and same-channel recovery call this method repeatedly.
+    // Only queue Room writes when the actual saved channel changes, so channel
+    // switching does not enqueue five redundant database transactions per attempt.
+    String nextIdentity=identity(c);
+    String nextUrl=c.url==null?"":c.url;
+    String nextName=c.name==null?"":c.name;
+    String nextGroup=c.group==null?"":c.group;
+    String nextTvgId=c.tvgId==null?"":c.tvgId;
+    if(!nextIdentity.equals(roomLastChannelIdentity)){
+      roomLastChannelIdentity=nextIdentity;
+      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,nextIdentity);
+    }
+    if(!nextUrl.equals(roomLastChannelUrl)){
+      roomLastChannelUrl=nextUrl;
+      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,nextUrl);
+    }
+    if(!nextName.equals(roomLastChannelName)){
+      roomLastChannelName=nextName;
+      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_NAME,nextName);
+    }
+    if(!nextGroup.equals(roomLastChannelGroup)){
+      roomLastChannelGroup=nextGroup;
+      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_GROUP,nextGroup);
+    }
+    if(!nextTvgId.equals(roomLastChannelTvgId)){
+      roomLastChannelTvgId=nextTvgId;
+      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,nextTvgId);
+    }
   }
   private void restoreLastChannel(){
     String savedIdentity=roomLastChannelIdentity;
