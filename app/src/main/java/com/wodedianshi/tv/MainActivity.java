@@ -3419,6 +3419,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String metadata=regionalMetadata(c);
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
+    // The shared classifier also recognizes county stations (e.g. 上虞、固镇、
+    // 旺苍) which are not in the UI's prefecture-level city array.
+    // Accept its unambiguous province resolution before checking legacy tokens.
+    if(province.equals(explicit))return true;
     if(hasRegionalToken(metadata,province))return true;
     for(String city:citiesForProvince(province)){
       if(hasRegionalToken(metadata,city))return true;
