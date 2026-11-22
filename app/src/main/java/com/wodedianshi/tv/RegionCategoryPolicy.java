@@ -12,6 +12,14 @@ final class RegionCategoryPolicy {
     private RegionCategoryPolicy() {}
 
     /** Keeps Chinese regional and national channels in China when found in global indexes. */
+    static String catalogueScope(String name, String group, String tvgName,
+                                 String tvgId, String requestedScope) {
+        String combinedName = (name == null ? "" : name) + " "
+                + (tvgName == null ? "" : tvgName) + " "
+                + (tvgId == null ? "" : tvgId);
+        return catalogueScope(combinedName, group, requestedScope);
+    }
+
     static String catalogueScope(String name, String group, String requestedScope) {
         if (!"global".equals(requestedScope)) return requestedScope;
         if (isHongKongMacauTaiwan(name, group)) return "china";
