@@ -55,7 +55,7 @@ public class RegionCategoryPolicyTest {
         assertEquals("china", RegionCategoryPolicy.catalogueScope(
                 "新闻综合", "News", "福建福州新闻综合", "", "global"));
         assertEquals("china", RegionCategoryPolicy.catalogueScope(
-                "HD Channel", "News", "", "ChengduNews", "global"));
+                "HD Channel", "News", "", "Chengdu.News", "global"));
         assertEquals("global", RegionCategoryPolicy.catalogueScope(
                 "News", "International", "", "BBCNews", "global"));
         assertEquals("custom", RegionCategoryPolicy.catalogueScope(
