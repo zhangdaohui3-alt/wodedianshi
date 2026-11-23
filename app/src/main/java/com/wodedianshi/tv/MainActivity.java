@@ -3970,14 +3970,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     HashSet<String> cctv=new HashSet<>();
     HashSet<String> satellites=new HashSet<>();
     HashSet<String> local=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null)continue;
-        String key=identity(channel);
-        if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
-        if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
-        if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
-      }
+    // Same lock-scope discipline as the remote channel order: snapshot only.
+    // A long provincial name scan on the China worker must not stall DPAD/touch.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null)continue;
+      String key=identity(channel);
+      if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
+      if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
+      if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
     }
     android.util.Log.i("MyTVDirectory","china_cached_count total="+identities.size()
         +" cctv="+cctv.size()+" satellite="+satellites.size()+" local="+local.size()
@@ -4250,12 +4253,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private int countChannelsForScope(String scope){
+    // Called only on workers. Do not retain the catalogue lock while computing
+    // broadcaster identities: the previous UI call reached here and ANR sampled
+    // canonicalSatelliteName for thousands of records.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
     HashSet<String> identities=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null||!ChannelCatalogueScopePolicy.matches(channel.sourceScopes,scope))continue;
-        identities.add(identity(channel));
-      }
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null||!ChannelCatalogueScopePolicy.matches(channel.sourceScopes,scope))continue;
+      identities.add(identity(channel));
     }
     return identities.size();
   }
@@ -4266,17 +4273,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long now=System.currentTimeMillis();
     final long last=roomGlobalSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
-    final int cachedGlobalCount=countChannelsForScope("global");
     final int minimumUsefulGlobalChannels=60;
-    if(last>0L&&now-last<refreshInterval&&cachedGlobalCount>=minimumUsefulGlobalChannels){
-      info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
-      return;
-    }
     globalLoading=true;
-    info.setText("正在检查全球公开频道目录（已有频道仍可使用）…");
+    if(info!=null)info.setText("正在显示本地全球频道；后台检查缓存状态…");
     try{
       worker.execute(()->{
         try{
+          // Never count 6k+ canonical identities on the click/UI thread.
+          final int cachedGlobalCount=countChannelsForScope("global");
+          android.util.Log.i("MyTVDirectory","global_cached_count="+cachedGlobalCount
+              +" total="+channels.size());
+          if(last>0L&&now-last<refreshInterval
+              &&cachedGlobalCount>=minimumUsefulGlobalChannels){
+            runOnUiThread(()->{
+              globalLoading=false;
+              if(!isFinishing()&&!isDestroyed()&&info!=null)
+                info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "
+                    +Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+            });
+            return;
+          }
+          // Existing cached channels remain visible during supplemental discovery.
           StringBuilder errors=new StringBuilder();
           String[] feeds={
             "https://iptv-org.github.io/iptv/index.m3u",
