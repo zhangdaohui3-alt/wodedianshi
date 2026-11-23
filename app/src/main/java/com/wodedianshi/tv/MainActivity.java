@@ -3827,7 +3827,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
-          if(w==0){if(!favorites.add(channelKey))favorites.remove(channelKey);persist();refresh();}
+          if(w==0){
+            boolean nowFavorite;
+            synchronized(favorites){
+              nowFavorite=!favorites.contains(channelKey);
+              if(nowFavorite)favorites.add(channelKey);
+              else favorites.remove(channelKey);
+            }
+            // Favorite-only changes must not serialize and CAS-write the entire
+            // 6k+ channel directory; the fullscreen favorite path already uses
+            // the exact one-row Room mutation queue.
+            queueFavoriteMutation(channelKey,nowFavorite);
+            refresh();
+          }
           else if(w==1){
             if(sourceUrls.isEmpty())return;
             String[] opts=new String[sourceUrls.size()];
@@ -4891,6 +4903,38 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
   }
+  // Preserve an explicitly chosen URL without copying or rewriting the whole
+  // channel catalogue. This shares the serial Room writer queue with favorite
+  // mutations, so rapid DPAD/source changes cannot reorder the final user state.
+  private void queueActiveSourceMutation(String legacyKey,String sourceUrl){
+    if(legacyKey==null||legacyKey.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
+    synchronized(cataloguePersistLock){
+      catalogueMutationGeneration++;
+      try{
+        cataloguePersistWorker.execute(()->{
+          try{
+            boolean changed=com.wodedianshi.tv.db.RoomCatalogueMutations
+                .setActiveSourceUrl(getApplicationContext(),legacyKey,sourceUrl);
+            if(!changed){
+              // The URL may have been removed by a newer background catalogue.
+              // Never fall back to a full, potentially stale Room overwrite.
+              android.util.Log.w("MyTVCatalogue","selected URL absent in latest Room snapshot");
+              saveLiveDiagnostic("SOURCE_SELECTION_ROOM_MISS",
+                  "已选择播放源，但最新目录中找不到对应源；保留当前播放，不覆盖频道快照");
+            }
+          }catch(Throwable failure){
+            android.util.Log.e("MyTVCatalogue","Room source selection write failed",failure);
+            saveLiveDiagnostic("SOURCE_SELECTION_ROOM_ERROR",
+                failure.getClass().getSimpleName());
+          }
+        });
+      }catch(RuntimeException rejected){
+        android.util.Log.e("MyTVCatalogue","Room source selection queue rejected",rejected);
+        saveLiveDiagnostic("SOURCE_SELECTION_QUEUE_ERROR",rejected.getClass().getSimpleName());
+      }
+    }
+  }
+
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
@@ -5450,8 +5494,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(bad.isEmpty()){toast("当前播放源地址为空");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
-          else{persist();setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          else{setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
           return;
         }
         int index=indexes.get(which);
@@ -5462,7 +5506,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;persist();startCurrentSource();
+        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
@@ -5500,7 +5544,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
-
+    queueActiveSourceMutation(c.key(),c.backups.get(next));
     startCurrentSource();
     showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
@@ -6093,7 +6137,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
     updateLiveChannelSelection(previouslySelected);
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    persist();
+    queueActiveSourceMutation(target.key(),target.backups.get(target.activeSource));
     startCurrentSource();
   }
   private void startCurrentSource(){
