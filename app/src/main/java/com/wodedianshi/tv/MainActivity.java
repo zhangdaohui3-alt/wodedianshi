@@ -521,19 +521,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return false;
     });
   }
+  // DPAD and mouse focus callbacks must not write diagnostic preferences on every input.
   private void styleTvButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
     b.setBackground(makeButtonBg(normalColor,false));
     b.setOnFocusChangeListener((v,focused)->{
-      saveLiveDiagnostic("UI_FOCUS",(b.getText()==null?"按钮":b.getText().toString())+" focused="+focused);
+
       if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
       b.setScaleX(focused?1.025f:1f);b.setScaleY(focused?1.025f:1f);b.setElevation(focused?dp(6):0);
     });
     b.setOnHoverListener((v,event)->{
       int action=event.getActionMasked();
       if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        if(action==android.view.MotionEvent.ACTION_HOVER_ENTER)
-          saveLiveDiagnostic("UI_HOVER",(b.getText()==null?"按钮":b.getText().toString())+" focus="+b.hasFocus());
+
         GradientDrawable hover=new GradientDrawable();hover.setColor(Color.rgb(35,91,139));
         hover.setCornerRadius(dp(7));hover.setStroke(dp(2),Color.rgb(105,185,245));
         b.setBackground(hover);b.setScaleX(1.025f);b.setScaleY(1.025f);b.setElevation(dp(6));
