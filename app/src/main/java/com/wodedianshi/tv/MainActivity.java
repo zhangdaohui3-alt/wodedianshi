@@ -3743,13 +3743,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
       Channel c=visible.get(row);
       if(c==null)continue;
-      // Legacy and partially migrated catalogue rows may contain null metadata.
-      // Normalize display fields before any naming/category helper can inspect them.
-      if(c.name==null)c.name="";
-      if(c.url==null)c.url="";
-      if(c.group==null)c.group="";
-      if(c.tvgName==null)c.tvgName="";
-      if(c.tvgId==null)c.tvgId="";
+      // Filtering runs on a worker over the same Channel references. UI rendering
+      // must NEVER mutate their fields; use null-safe display locals instead.
       final String channelKey=c.key();
       final String channelName=c.name==null?"":c.name;
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
@@ -4583,12 +4578,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       @Override public void run(){
         long now=android.os.SystemClock.uptimeMillis();
         long late=Math.max(0L,now-expectedAt[0]);
-        if(late>=3000L&&fullScreenPlayback&&activityStarted){
-          String detail="uiDelayMs="+late+" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
-              +" remoteDialog="+fullscreenRemoteDialogOpen;
+        if(late>=3000L&&activityStarted){
+          String detail="uiDelayMs="+late+" fullscreen="+fullScreenPlayback
+              +" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
+              +" remoteDialog="+fullscreenRemoteDialogOpen
+              +" category="+activeCategory+" channels="+channels.size();
           android.util.Log.w("MyTVInput",detail);
-          // Record only exceptional stalls, never each remote key or heartbeat.
-          saveLiveDiagnostic("LIVE_UI_DELAY",detail);
+          // Capture BOTH touch-device catalogue stalls and TV fullscreen stalls.
+          // Never save every touch or timer tick, only an observed long delay.
+          saveLiveDiagnostic(fullScreenPlayback?"LIVE_UI_DELAY":"CATALOGUE_UI_DELAY",detail);
         }
         expectedAt[0]=now+1000L;
         if(liveUiStallProbe!=null)uiHandler.postDelayed(this,1000L);
@@ -4636,7 +4634,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void exitFullScreenPlayback(){
     if(!fullScreenPlayback||rootLayout==null)return;
-    stopLiveUiStallProbe();
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -5004,6 +5001,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }).show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
+  @Override public boolean dispatchTouchEvent(MotionEvent event){
+    // MotionEvent timestamps are monotonic uptime. Measure dispatch latency for
+    // phones and mice without adding per-touch disk writes or expensive work.
+    if(event!=null&&event.getActionMasked()==MotionEvent.ACTION_DOWN){
+      long deliveryMs=Math.max(0L,android.os.SystemClock.uptimeMillis()-event.getEventTime());
+      if(deliveryMs>=500L){
+        String detail="touchDeliveryMs="+deliveryMs+" fullscreen="+fullScreenPlayback
+            +" category="+activeCategory;
+        android.util.Log.w("MyTVInput",detail);
+        if(deliveryMs>=1500L)saveLiveDiagnostic("TOUCH_DELIVERY_DELAY",detail);
+      }
+    }
+    return super.dispatchTouchEvent(event);
+  }
   @Override public boolean dispatchKeyEvent(KeyEvent event){
     if(fullScreenPlayback&&event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
       int receivedKey=event.getKeyCode();
@@ -6929,7 +6940,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   protected void onStart(){
     super.onStart();
     activityStarted=true;
-    if(fullScreenPlayback)startLiveUiStallProbe();
+    startLiveUiStallProbe();
     setSourceUpdateActivityActive(true);
     if(currentVodPanel!=null)setSourceUpdatePlaybackActive(true);
     if(startupDataReady){
