@@ -271,10 +271,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(source==null||source.isEmpty())return;
       if(backups==null)backups=new ArrayList<>();
       if(!backups.contains(source))backups.add(source);
-      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope)){
+      if(ChannelCatalogueScopePolicy.isRetainableScope(scope)){
         HashSet<String> scopes=backupSourceScopes.get(source);
         if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(source,scopes);}
         scopes.add(scope);sourceScopes.add(scope);
+        // The country/state/city playlist also belongs to the appropriate
+        // global or China base directory. Persist both tags on its actual URL,
+        // not just a temporary channel-level flag that the worker can erase.
+        if(scope.startsWith("geo:")){
+          String base=RegionCategoryPolicy.catalogueScope(
+              name+" "+tvgName+" "+tvgId,group,"global");
+          scopes.add(base);sourceScopes.add(base);
+        }
       }
     }
     void mergeBackupOwnership(Channel other){
@@ -772,24 +780,54 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return count;
   }
 
-  private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> snapshotChannelRows(){
-    ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>();
-    synchronized(channels){for(Channel channel:channels){
-      if(channel==null||channel.name==null||channel.name.trim().isEmpty()
-          ||channel.url==null||channel.url.trim().isEmpty())continue;
-      com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-          new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-      row.name=channel.name;row.url=channel.url;row.group=channel.group;
-      row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;row.activeSource=channel.activeSource;
-      if(channel.backups!=null)row.sources.addAll(channel.backups);
-      if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-      if(channel.backupSourceScopes!=null)for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet())
-        row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-      rows.add(row);
-    }}
-    return rows;
+  // Copy a complete, version-consistent Room snapshot in short channel-lock
+  // batches. Previously persistNow() held synchronized(channels) while deep
+  // copying 6k+ channels and their source ownership maps, delaying UI input.
+  // Abort/retry rather than publishing a mixed snapshot if a producer modifies
+  // any channel while its batches are being copied.
+  private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot>
+      snapshotChannelRows(){
+    for(int attempt=0;attempt<3;attempt++){
+      final long expectedMutation=catalogueMutationGeneration;
+      final ArrayList<Channel> refs;
+      synchronized(channels){refs=new ArrayList<>(channels);}
+      final ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
+          new ArrayList<>(refs.size());
+      final int batchSize=32;
+      for(int from=0;from<refs.size();from+=batchSize){
+        if(Thread.currentThread().isInterrupted())return null;
+        final int end=Math.min(from+batchSize,refs.size());
+        synchronized(channels){
+          for(int at=from;at<end;at++){
+            Channel channel=refs.get(at);
+            if(channel==null||channel.name==null||channel.name.trim().isEmpty()
+                ||channel.url==null||channel.url.trim().isEmpty())continue;
+            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+            row.name=channel.name;row.url=channel.url;row.group=channel.group;
+            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
+            row.activeSource=channel.activeSource;
+            if(channel.backups!=null)row.sources.addAll(channel.backups);
+            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+            if(channel.backupSourceScopes!=null){
+              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet())
+                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+            }
+            rows.add(row);
+          }
+        }
+      }
+      if(expectedMutation==catalogueMutationGeneration){
+        return rows;
+      }
+      android.util.Log.i("MyTVCatalogue","Room snapshot changed during short-lock copy; retry="+attempt);
+      Thread.yield();
+    }
+    // Never persist a hybrid of two catalogue versions. The coalescing
+    // persist executor will receive another request when ingestion completes.
+    android.util.Log.w("MyTVCatalogue","Room snapshot copy deferred after repeated mutations");
+    return null;
   }
-
   private void rebuildChannelIndexes(){
     synchronized(channels){
       // If the user starts playback from the first progressively revealed page,
@@ -1123,27 +1161,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long started=android.os.SystemClock.elapsedRealtime();
     int sourceCount=0;
     try{
-      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
-          new ArrayList<>();
-      synchronized(channels){
-        for(Channel channel:channels){
-          if(channel==null||channel.name==null||channel.name.trim().isEmpty()
-              ||channel.url==null||channel.url.trim().isEmpty())continue;
-          com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-              new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-          row.name=channel.name;row.url=channel.url;row.group=channel.group;
-          row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
-          row.activeSource=channel.activeSource;
-          if(channel.backups!=null){row.sources.addAll(channel.backups);sourceCount+=channel.backups.size();}
-          if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-          if(channel.backupSourceScopes!=null){
-            for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
-              row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-            }
-          }
-          rows.add(row);
-        }
-      }
+      long copyStarted=android.os.SystemClock.elapsedRealtime();
+      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
+      if(rows==null)throw new IllegalStateException("Room snapshot changed repeatedly during bounded copy");
+      for(com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row:rows)
+        sourceCount+=row.sources.size();
+      android.util.Log.i("MyTVCatalogue","room_snapshot_copy_ms="
+          +(android.os.SystemClock.elapsedRealtime()-copyStarted)
+          +" channels="+rows.size());
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
@@ -3680,11 +3705,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(isLocalChannel(candidate))localCandidates++;
             if(provinceSnapshot!=null && matchesProvinceLocal(candidate,provinceSnapshot))provinceCandidates++;
           }
-          android.util.Log.w("MyTVDirectory","local_empty total="+sources.size()
+          String localDetail="total="+sources.size()
               +" local_candidates="+localCandidates+" province_candidates="+provinceCandidates
               +" satellite_excluded="+satelliteExcluded+" province="+provinceSnapshot
               +" city="+citySnapshot+" query_matches="+queryMatches
-              +" search_active="+(!query.isEmpty()));
+              +" search_active="+(!query.isEmpty());
+          android.util.Log.w("MyTVDirectory","local_empty "+localDetail);
+          // Available from the Settings copy button; no adb/desktop needed.
+          saveLiveDiagnostic("LOCAL_DIRECTORY_EMPTY",localDetail);
         }
         if(categorySnapshot.equals("央视")){
           visible.sort((a,b)->{
@@ -3970,14 +3998,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     HashSet<String> cctv=new HashSet<>();
     HashSet<String> satellites=new HashSet<>();
     HashSet<String> local=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null)continue;
-        String key=identity(channel);
-        if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
-        if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
-        if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
-      }
+    // Same lock-scope discipline as the remote channel order: snapshot only.
+    // A long provincial name scan on the China worker must not stall DPAD/touch.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null)continue;
+      String key=identity(channel);
+      if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
+      if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
+      if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
     }
     android.util.Log.i("MyTVDirectory","china_cached_count total="+identities.size()
         +" cctv="+cctv.size()+" satellite="+satellites.size()+" local="+local.size()
@@ -4107,7 +4138,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(codes[w].equals("us"))showUsStateDialog();
       else if(codes[w].equals("ca"))showSubdivisionDialog("加拿大",new String[]{"安大略","魁北克","不列颠哥伦比亚","阿尔伯塔","曼尼托巴","萨斯喀彻温","新斯科舍","新不伦瑞克","纽芬兰与拉布拉多","爱德华王子岛"},new String[]{"ca-on","ca-qc","ca-bc","ca-ab","ca-mb","ca-sk","ca-ns","ca-nb","ca-nl","ca-pe"});
       else if(codes[w].equals("au"))showSubdivisionDialog("澳大利亚",new String[]{"新南威尔士","维多利亚","昆士兰","西澳大利亚","南澳大利亚","塔斯马尼亚","首都领地","北领地"},new String[]{"au-nsw","au-vic","au-qld","au-wa","au-sa","au-tas","au-act","au-nt"});
-      else loadGeoPlaylist(labels[w],"https://iptv-org.github.io/iptv/countries/"+codes[w]+".m3u");
+      else if(codes[w].equals("int")){
+        // "International" is an umbrella category, not a country feed code.
+        // countries/int.m3u does not represent an actual country directory.
+        activeGeoChannelKeys=null;activeCategory="全球频道";refresh();
+        if(info!=null)info.setText("已显示已保存的全球频道；请选择具体国家查看地区目录。");
+      }else loadGeoPlaylist(labels[w],"https://iptv-org.github.io/iptv/countries/"+codes[w]+".m3u");
     });
   }
   private void showUsStateDialog(){
@@ -4116,7 +4152,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     showSubdivisionDialog("美国州",names,codes);
   }
   private void showSubdivisionDialog(String title,String[] names,String[] codes){
-    showChoiceDialog(title+" · 选择州/省",names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w]));
+    // Before this change, choosing US/Canada/Australia forced a state/province
+    // selection and never offered the previously available whole-country list.
+    // A missing state-specific feed must not hide all saved country channels.
+    final String countryCode=title.startsWith("美国")?"us":
+        title.startsWith("加拿大")?"ca":title.startsWith("澳大利亚")?"au":"";
+    if(countryCode.isEmpty()){
+      showChoiceDialog(title+" · 选择州/省",names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w]));
+      return;
+    }
+    String[] options=new String[names.length+1];
+    options[0]="全部"+(countryCode.equals("us")?"美国":countryCode.equals("ca")?"加拿大":"澳大利亚")+"频道";
+    System.arraycopy(names,0,options,1,names.length);
+    showChoiceDialog(title+" · 选择地区",options,(d,w)->{
+      if(w==0)loadGeoPlaylist(options[0],
+          "https://iptv-org.github.io/iptv/countries/"+countryCode+".m3u");
+      else showCityPlaylistDialog(title,names[w-1],codes[w-1]);
+    });
   }
   private void showCityPlaylistDialog(String country,String region,String subdivisionCode){
     String[] data;
@@ -4153,17 +4205,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // the country, while finer province/city filtering requires actual feed membership.
   private HashSet<String> savedGeoChannelKeys(String scope,String country){
     HashSet<String> keys=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null)continue;
-        if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
-          keys.add(channel.key());continue;
-        }
-        if(!country.isEmpty()&&channel.sourceScopes!=null
-            &&ChannelCatalogueScopePolicy.matches(channel.sourceScopes,"global")
-            &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
-          keys.add(channel.key());
+    // A country click can scan thousands of TVG identifiers. Do not hold the
+    // same channel monitor that the playback/remote UI needs while scanning.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null)continue;
+      if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
+        keys.add(channel.key());continue;
       }
+      // A valid country suffix identifies country membership even when an
+      // older Room snapshot omitted the channel-level "global" scope. Do not
+      // infer narrower state/city membership from that country-only evidence.
+      if(!country.isEmpty()
+          &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
+        keys.add(channel.key());
     }
     return keys;
   }
@@ -4210,7 +4267,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           try(InputStream input=connection.getInputStream()){playlist=read(input);}
           if(Thread.currentThread().isInterrupted()||request!=geoDirectoryRequestGeneration)return;
           final HashSet<String> downloaded=new HashSet<>();
-          parse(playlist,downloaded,"global");
+          // Attach the exact country/state/city scope to each parsed URL.
+          // Previously only channel-level geo labels were set, which vanished
+          // when SourceUpdateWorker recomputed labels from URL ownership.
+          parse(playlist,downloaded,geoScope);
           // Empty, malformed or unavailable remote playlists must never overwrite
           // a nonempty saved destination filter.
           if(downloaded.isEmpty()){
@@ -4220,14 +4280,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             });
             return;
           }
-          synchronized(channels){
-            for(Channel channel:channels){
-              if(channel!=null&&downloaded.contains(channel.key())){
-                if(channel.sourceScopes==null)channel.sourceScopes=new HashSet<>();
-                channel.sourceScopes.add(geoScope);
-              }
-            }
-          }
+          // Geo ownership is already written per URL by addBackupSource().
+          // Avoid a second full-catalogue lock/scan while the programme runs.
           final boolean saved=persist();
           final HashSet<String> updated=savedGeoChannelKeys(geoScope,country);
           runOnUiThread(()->{
@@ -4250,33 +4304,54 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private int countChannelsForScope(String scope){
+    // Called only on workers. Do not retain the catalogue lock while computing
+    // broadcaster identities: the previous UI call reached here and ANR sampled
+    // canonicalSatelliteName for thousands of records.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
     HashSet<String> identities=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null||!ChannelCatalogueScopePolicy.matches(channel.sourceScopes,scope))continue;
-        identities.add(identity(channel));
-      }
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null||!ChannelCatalogueScopePolicy.matches(channel.sourceScopes,scope))continue;
+      identities.add(identity(channel));
     }
     return identities.size();
   }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
+    // Saved global channels are immediately available through the category
+    // filter. Never begin a large playlist ingest while fullscreen video plays.
+    if(fullScreenPlayback){
+      android.util.Log.i("MyTVDirectory","global_supplement_deferred_during_playback");
+      if(info!=null)info.setText("正在显示保存的全球频道；播放时暂停后台补源。");
+      return;
+    }
     // Match the domestic directory's cache-first behavior. Reopening 全球频道
     // should not redownload the full international index on every visit.
     final long now=System.currentTimeMillis();
     final long last=roomGlobalSupplementLastSuccess;
     final long refreshInterval=12L*60L*60L*1000L;
-    final int cachedGlobalCount=countChannelsForScope("global");
     final int minimumUsefulGlobalChannels=60;
-    if(last>0L&&now-last<refreshInterval&&cachedGlobalCount>=minimumUsefulGlobalChannels){
-      info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
-      return;
-    }
     globalLoading=true;
-    info.setText("正在检查全球公开频道目录（已有频道仍可使用）…");
+    if(info!=null)info.setText("正在显示本地全球频道；后台检查缓存状态…");
     try{
       worker.execute(()->{
         try{
+          // Never count 6k+ canonical identities on the click/UI thread.
+          final int cachedGlobalCount=countChannelsForScope("global");
+          android.util.Log.i("MyTVDirectory","global_cached_count="+cachedGlobalCount
+              +" total="+channels.size());
+          if(last>0L&&now-last<refreshInterval
+              &&cachedGlobalCount>=minimumUsefulGlobalChannels){
+            runOnUiThread(()->{
+              globalLoading=false;
+              if(!isFinishing()&&!isDestroyed()&&info!=null)
+                info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "
+                    +Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
+            });
+            return;
+          }
+          // Existing cached channels remain visible during supplemental discovery.
           StringBuilder errors=new StringBuilder();
           String[] feeds={
             "https://iptv-org.github.io/iptv/index.m3u",
@@ -5130,33 +5205,42 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String remoteChannelOrderKey(String category,String query,boolean favoritesOnly,
       long filterGeneration,int channelCount,int favoritesHash){
-    return filterGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
+    // The channel array may be rebuilt without changing its size.
+    // Include mutation epoch so old positional zapping indexes cannot be reused.
+    return filterGeneration+"|"+catalogueMutationGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
   private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
       boolean favoritesOnly){
+    // Critical ANR fix: thread 37 used to hold synchronized(channels) while
+    // running 6k+ expensive categoryMatch / canonicalSatelliteName calls.
+    // MainActivity.prewarmRemoteChannelOrder then blocked on the same lock.
+    // Take a quick references-only snapshot; do all heavy filtering/sorting after
+    // releasing the catalogue monitor. Retain the indices for channel selection.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    final Set<String> favoriteSnapshot=favoritesOnly?new HashSet<>(favorites):null;
     ArrayList<Integer> order=new ArrayList<>();
-    synchronized(channels){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(c==null)continue;
-        if(favoritesOnly&&!favorites.contains(c.key()))continue;
-        if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
-        String name=c.name==null?"":c.name;
-        String group=c.group==null?"":c.group;
-        if(!name.toLowerCase(Locale.ROOT).contains(query)
-            &&!group.toLowerCase(Locale.ROOT).contains(query)
-            &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
-        order.add(i);
-      }
-      if("央视".equals(category)){
-        order.sort((x,y)->{
-          Channel cx=channels.get(x),cy=channels.get(y);
-          int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
-          if(ox!=oy)return Integer.compare(ox,oy);
-          return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
-        });
-      }
+    for(int i=0;i<snapshot.size();i++){
+      if(Thread.currentThread().isInterrupted())break;
+      Channel c=snapshot.get(i);
+      if(c==null)continue;
+      if(favoritesOnly&&!favoriteSnapshot.contains(c.key()))continue;
+      if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
+      String name=c.name==null?"":c.name;
+      String group=c.group==null?"":c.group;
+      if(!name.toLowerCase(Locale.ROOT).contains(query)
+          &&!group.toLowerCase(Locale.ROOT).contains(query)
+          &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
+      order.add(i);
+    }
+    if("央视".equals(category)){
+      order.sort((x,y)->{
+        Channel cx=snapshot.get(x),cy=snapshot.get(y);
+        int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
+        if(ox!=oy)return Integer.compare(ox,oy);
+        return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
+      });
     }
     return new RemoteChannelOrder(key,order);
   }
@@ -5165,6 +5249,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
     final boolean favoritesOnly=favoriteMode;
     final long filterGeneration=catalogueFilterGeneration;
+    final long mutationGeneration=catalogueMutationGeneration;
     final int count; synchronized(channels){count=channels.size();}
     final int favoritesHash=favorites.hashCode();
     final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
@@ -5181,7 +5266,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int currentCount; synchronized(channels){currentCount=channels.size();}
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
-      if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
+      if(catalogueFilterGeneration==filterGeneration
+          &&catalogueMutationGeneration==mutationGeneration
+          &&favoriteMode==favoritesOnly
           &&currentCount==count&&favorites.hashCode()==favoritesHash){
         cachedRemoteChannelOrder=ready;
         uiHandler.post(()->{
