@@ -3705,11 +3705,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(isLocalChannel(candidate))localCandidates++;
             if(provinceSnapshot!=null && matchesProvinceLocal(candidate,provinceSnapshot))provinceCandidates++;
           }
-          android.util.Log.w("MyTVDirectory","local_empty total="+sources.size()
+          String localDetail="total="+sources.size()
               +" local_candidates="+localCandidates+" province_candidates="+provinceCandidates
               +" satellite_excluded="+satelliteExcluded+" province="+provinceSnapshot
               +" city="+citySnapshot+" query_matches="+queryMatches
-              +" search_active="+(!query.isEmpty()));
+              +" search_active="+(!query.isEmpty());
+          android.util.Log.w("MyTVDirectory","local_empty "+localDetail);
+          // Available from the Settings copy button; no adb/desktop needed.
+          saveLiveDiagnostic("LOCAL_DIRECTORY_EMPTY",localDetail);
         }
         if(categorySnapshot.equals("央视")){
           visible.sort((a,b)->{
@@ -4202,19 +4205,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // the country, while finer province/city filtering requires actual feed membership.
   private HashSet<String> savedGeoChannelKeys(String scope,String country){
     HashSet<String> keys=new HashSet<>();
-    synchronized(channels){
-      for(Channel channel:channels){
-        if(channel==null)continue;
-        if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
-          keys.add(channel.key());continue;
-        }
-        // A valid country suffix identifies country membership even when an
-        // older Room snapshot omitted the channel-level "global" scope. Do not
-        // infer narrower state/city membership from that country-only evidence.
-        if(!country.isEmpty()
-            &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
-          keys.add(channel.key());
+    // A country click can scan thousands of TVG identifiers. Do not hold the
+    // same channel monitor that the playback/remote UI needs while scanning.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    for(Channel channel:snapshot){
+      if(Thread.currentThread().isInterrupted())break;
+      if(channel==null)continue;
+      if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
+        keys.add(channel.key());continue;
       }
+      // A valid country suffix identifies country membership even when an
+      // older Room snapshot omitted the channel-level "global" scope. Do not
+      // infer narrower state/city membership from that country-only evidence.
+      if(!country.isEmpty()
+          &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
+        keys.add(channel.key());
     }
     return keys;
   }
