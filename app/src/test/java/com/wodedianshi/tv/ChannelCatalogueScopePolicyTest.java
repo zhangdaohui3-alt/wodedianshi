@@ -46,4 +46,40 @@ public class ChannelCatalogueScopePolicyTest {
         assertTrue(scopes.contains("china"));
         assertTrue(scopes.contains("global"));
     }
+    @Test public void retainedRegionalOwnershipSurvivesForSavedCountryAndStateUrl() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("country-url", new HashSet<>(Arrays.asList(
+                "global", "geo:countries:us")));
+        ownership.put("state-url", new HashSet<>(Arrays.asList(
+                "global", "geo:subdivisions:us-az")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Arrays.asList("country-url", "state-url")));
+        assertTrue(scopes.contains("geo:countries:us"));
+        assertTrue(scopes.contains("geo:subdivisions:us-az"));
+        assertTrue(scopes.contains("global"));
+    }
+
+    @Test public void removedLastRegionalSourceRemovesOnlyThatRegionMembership() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("country-url", new HashSet<>(Arrays.asList(
+                "global", "geo:countries:us")));
+        ownership.put("state-url", new HashSet<>(Arrays.asList(
+                "global", "geo:subdivisions:us-az")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Collections.singletonList("country-url")));
+        assertTrue(scopes.contains("geo:countries:us"));
+        assertFalse(scopes.contains("geo:subdivisions:us-az"));
+    }
+
+    @Test public void unknownGeographicScopeIsNotPromoted() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("one", new HashSet<>(Arrays.asList(
+                "global", "geo:countries:../../private", "geo:unknown:us")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Collections.singletonList("one")));
+        assertTrue(scopes.contains("global"));
+        assertFalse(scopes.contains("geo:countries:../../private"));
+        assertFalse(scopes.contains("geo:unknown:us"));
+    }
+
 }
