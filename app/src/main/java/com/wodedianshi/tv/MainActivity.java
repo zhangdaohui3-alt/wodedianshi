@@ -168,6 +168,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // and resorted on every remote-control key press.
   private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
+  private volatile String remoteChannelOrderBuildKey=null;
   // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
@@ -4928,7 +4929,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int count; synchronized(channels){count=channels.size();}
     final int favoritesHash=favorites.hashCode();
     final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
+    RemoteChannelOrder alreadyBuilt=cachedRemoteChannelOrder;
+    if(alreadyBuilt!=null&&key.equals(alreadyBuilt.key))return;
+    // Rapid DPAD repeats previously enqueued the same O(catalogue) scan for
+    // every key while the first scan was still running. One scan is enough;
+    // pendingRemoteZapSteps already combines the requested key presses.
+    if(key.equals(remoteChannelOrderBuildKey))return;
+    remoteChannelOrderBuildKey=key;
     try{remoteChannelOrderWorker.execute(()->{
+      try{
       RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
       int currentCount; synchronized(channels){currentCount=channels.size();}
       // Do not touch Android Views from this worker. A category/search change
@@ -4946,7 +4955,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(current!=null)applyChannelZap(current,queuedSteps);
         });
       }
-    });}catch(RuntimeException ignored){}
+      }finally{
+        if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
+      }
+    });}catch(RuntimeException rejected){
+      if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
+    }
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
     String category=activeCategory==null?"全部":activeCategory;
