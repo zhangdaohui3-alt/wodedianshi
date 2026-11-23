@@ -37,7 +37,7 @@ public final class RoomCatalogueWriter {
     }
 
     public static final class StaleCatalogueException extends IllegalStateException {
-        StaleCatalogueException() {
+        public StaleCatalogueException() {
             super("Room catalogue changed during source scan; stale snapshot rejected");
         }
     }
