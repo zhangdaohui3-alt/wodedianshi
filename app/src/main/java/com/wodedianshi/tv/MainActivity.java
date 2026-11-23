@@ -1163,7 +1163,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void makeUi(){
     LinearLayout root=new LinearLayout(this);rootLayout=root;root.setOrientation(0);root.setPadding(dp(10),dp(8),dp(10),dp(8));root.setBackgroundColor(Color.rgb(8,13,24));
     LinearLayout cats=new LinearLayout(this);categoryPane=cats;cats.setOrientation(1);cats.setBackgroundColor(Color.rgb(16,24,40));
-    TextView logo=new TextView(this);logo.setText("我的\\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(21);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(64)));
+    TextView logo=new TextView(this);logo.setText("我的\n电视");logo.setTextColor(Color.WHITE);logo.setTextSize(21);logo.setGravity(Gravity.CENTER);cats.addView(logo,new LinearLayout.LayoutParams(-1,dp(64)));
     // China is the default home directory; CCTV, satellite and local areas remain
     // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
     String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
@@ -3987,6 +3987,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return identities.size();
   }
   private void loadChinaChannels(){
+    // Watching television takes precedence over any supplemental feed scan.
+    // The category click still filters the restored Room catalogue immediately.
+    if(fullScreenPlayback){
+      android.util.Log.i("MyTVDirectory","China supplemental discovery deferred during fullscreen playback");
+      return;
+    }
     if(chinaLoading){android.util.Log.i("MyTVDirectory","China directory refresh already running; keep showing cached catalogue");return;}
     // Cache-first: opening CCTV/satellite/local categories must not redownload
     // twelve playlists on every visit. Refresh the catalogue at most every 12h.
