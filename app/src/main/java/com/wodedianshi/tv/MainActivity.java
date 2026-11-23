@@ -4623,10 +4623,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     LinearLayout right=new LinearLayout(this);right.setOrientation(LinearLayout.VERTICAL);
     ScrollView leftScroll=new ScrollView(this);leftScroll.addView(left);
     ScrollView rightScroll=new ScrollView(this);rightScroll.addView(right);
-    columns.addView(leftScroll,new LinearLayout.LayoutParams(0,dp(300),1.05f));
-    columns.addView(rightScroll,new LinearLayout.LayoutParams(0,dp(300),1.65f));
+    columns.addView(leftScroll,new LinearLayout.LayoutParams(0,dp(284),1.0f));
+    columns.addView(rightScroll,new LinearLayout.LayoutParams(0,dp(284),1.45f));
     shell.addView(columns);
-    Button manage=new Button(this);manage.setText("管理菜单：添加 / 删除 / 排序");manage.setAllCaps(false);
+    Button manage=new Button(this);manage.setText("管理菜单：选择 / 添加 / 排序");manage.setAllCaps(false);
     manage.setOnClickListener(v->{dialog.dismiss();showFullscreenMenuEditor();});
     shell.addView(manage,new LinearLayout.LayoutParams(-1,dp(46)));
     Button close=new Button(this);close.setText("关闭");close.setAllCaps(false);
@@ -4710,13 +4710,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     dialog.setContentView(shell);
     Window window=dialog.getWindow();
     if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);
-      window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(680)),
+      window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
           WindowManager.LayoutParams.WRAP_CONTENT);}
     fullscreenRemoteDialogOpen=true;
     dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     dialog.show();
     if(dialog.getWindow()!=null)dialog.getWindow().setLayout(
-        Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(680)),
+        Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
         WindowManager.LayoutParams.WRAP_CONTENT);
     if(left.getChildCount()>0)left.getChildAt(0).requestFocus();
   }
@@ -4730,18 +4730,40 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String[] choices=labels.toArray(new String[0]);
     new AlertDialog.Builder(this).setTitle("全屏菜单管理")
       .setItems(choices,(d,which)->showFullscreenMenuCategoryEditor(config,ids.get(which)))
-      .setPositiveButton("添加主项目",(d,w)->{
-        EditText input=new EditText(this);input.setHint("主项目名称");
-        new AlertDialog.Builder(this).setTitle("添加主项目").setView(input)
-          .setNegativeButton("取消",null).setPositiveButton("添加",(x,y)->{
-            String title=input.getText().toString().trim();
-            String id="custom_"+UUID.randomUUID().toString().replace("-","");
-            if(config.addCategory(id,title)){saveFullscreenMenuConfig(config);toast("主项目已添加");}
-            else toast("添加失败：名称为空或主项目数量已达上限");
-          }).show();
-      }).setNeutralButton("恢复默认",(d,w)->{
+      .setPositiveButton("添加快捷项目",(d,w)->showFullscreenMenuAddChoice(config)).setNeutralButton("恢复默认",(d,w)->{
         saveFullscreenMenuConfig(FullscreenMenuConfig.defaults());toast("已恢复默认菜单");
       }).setNegativeButton("关闭",null).show();
+  }
+  private void showFullscreenMenuAddChoice(FullscreenMenuConfig config){
+    // TV remotes should choose an existing action rather than open the keyboard
+    // just to add a working fullscreen menu entry.
+    final String[] names={"收藏当前频道","选择备用播放源","打开频道列表",
+        "画面比例","解码与声音设置","频道分类","更新频道目录",
+        "播放控制","返回点播目录"};
+    final String[] ids={"favorite","sources","channel_list","aspect","decoder",
+        "category","refresh","vod_controls","vod_catalogue"};
+    new AlertDialog.Builder(this).setTitle("选择要添加的菜单功能")
+        .setItems(names,(actionDialog,actionIndex)->{
+          final ArrayList<FullscreenMenuConfig.Category> destinations=new ArrayList<>();
+          final ArrayList<String> destinationLabels=new ArrayList<>();
+          for(FullscreenMenuConfig.Category category:config.getCategories()){
+            // Point VOD controls to the VOD section and live functions to a
+            // live section, to avoid adding an invisible or unusable action.
+            boolean vodAction=ids[actionIndex].startsWith("vod_");
+            if(vodAction!=category.id.equals("vod"))continue;
+            destinations.add(category);
+            destinationLabels.add(category.title);
+          }
+          if(destinations.isEmpty()){toast("没有可添加该功能的菜单分类");return;}
+          new AlertDialog.Builder(this).setTitle("选择放入哪个菜单")
+              .setItems(destinationLabels.toArray(new String[0]),(categoryDialog,categoryIndex)->{
+                String categoryId=destinations.get(categoryIndex).id;
+                if(config.addItem(categoryId,ids[actionIndex],names[actionIndex])){
+                  saveFullscreenMenuConfig(config);
+                  toast("已添加："+names[actionIndex]);
+                }else toast("此功能已经添加，或菜单项目已达上限");
+              }).setNegativeButton("取消",null).show();
+        }).setNegativeButton("取消",null).show();
   }
   private void showFullscreenMenuCategoryEditor(FullscreenMenuConfig config,String categoryId){
     FullscreenMenuConfig.Category category=config.findCategory(categoryId);if(category==null)return;
