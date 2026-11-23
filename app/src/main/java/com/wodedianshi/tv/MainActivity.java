@@ -4135,7 +4135,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(codes[w].equals("us"))showUsStateDialog();
       else if(codes[w].equals("ca"))showSubdivisionDialog("加拿大",new String[]{"安大略","魁北克","不列颠哥伦比亚","阿尔伯塔","曼尼托巴","萨斯喀彻温","新斯科舍","新不伦瑞克","纽芬兰与拉布拉多","爱德华王子岛"},new String[]{"ca-on","ca-qc","ca-bc","ca-ab","ca-mb","ca-sk","ca-ns","ca-nb","ca-nl","ca-pe"});
       else if(codes[w].equals("au"))showSubdivisionDialog("澳大利亚",new String[]{"新南威尔士","维多利亚","昆士兰","西澳大利亚","南澳大利亚","塔斯马尼亚","首都领地","北领地"},new String[]{"au-nsw","au-vic","au-qld","au-wa","au-sa","au-tas","au-act","au-nt"});
-      else loadGeoPlaylist(labels[w],"https://iptv-org.github.io/iptv/countries/"+codes[w]+".m3u");
+      else if(codes[w].equals("int")){
+        // "International" is an umbrella category, not a country feed code.
+        // countries/int.m3u does not represent an actual country directory.
+        activeGeoChannelKeys=null;activeCategory="全球频道";refresh();
+        if(info!=null)info.setText("已显示已保存的全球频道；请选择具体国家查看地区目录。");
+      }else loadGeoPlaylist(labels[w],"https://iptv-org.github.io/iptv/countries/"+codes[w]+".m3u");
     });
   }
   private void showUsStateDialog(){
@@ -4308,6 +4313,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadGlobalChannels(){
     if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
+    // Saved global channels are immediately available through the category
+    // filter. Never begin a large playlist ingest while fullscreen video plays.
+    if(fullScreenPlayback){
+      android.util.Log.i("MyTVDirectory","global_supplement_deferred_during_playback");
+      if(info!=null)info.setText("正在显示保存的全球频道；播放时暂停后台补源。");
+      return;
+    }
     // Match the domestic directory's cache-first behavior. Reopening 全球频道
     // should not redownload the full international index on every visit.
     final long now=System.currentTimeMillis();
