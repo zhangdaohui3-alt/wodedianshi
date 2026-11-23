@@ -113,7 +113,8 @@ public final class RoomCatalogueWriter {
                         "Empty Room initialization is allowed only for a genuinely fresh database");
             }
             if (expectedCatalogueVersion >= 0L
-                    && (checkpoint == null || checkpoint.completedAt != expectedCatalogueVersion)) {
+                    && !CatalogueVersionPolicy.matches(expectedCatalogueVersion,
+                            checkpoint == null ? null : checkpoint.completedAt)) {
                 throw new StaleCatalogueException();
             }
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
