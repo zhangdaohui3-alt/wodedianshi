@@ -871,6 +871,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(key.endsWith("卫视"))return key;
     if(!key.startsWith("CCTV-"))return name==null?"":name;
     String suffix=key.substring(5);
+    // CCTV-5+ is a separate sports-events channel. Dropping "+" produced two
+    // visibly identical "CCTV-5 体育" rows in the live channel selector.
+    if("5+".equals(suffix))return "CCTV-5+ 体育赛事";
     String[] titles={"","综合","财经","综艺","中文国际","体育","电影","国防军事","电视剧","纪录","科教","戏曲","社会与法","新闻","少儿","音乐","奥林匹克","农业农村"};
     try{
       if(suffix.matches("\\d{1,2}\\+?")){
