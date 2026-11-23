@@ -5257,8 +5257,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int[] cctvOrders="央视".equals(category)?new int[snapshot.size()]:null;
     final String[] cctvNames=cctvOrders==null?null:new String[snapshot.size()];
     for(int i=0;i<snapshot.size();i++){
-      if((i&63)==0&&(Thread.currentThread().isInterrupted()
-          ||catalogueMutationGeneration!=expectedMutationGeneration))return null;
+      if((i&63)==0&&!RemoteChannelOrderPolicy.complete(
+          Thread.currentThread().isInterrupted(),expectedMutationGeneration,
+          catalogueMutationGeneration))return null;
       Channel c=snapshot.get(i);
       if(c==null)continue;
       if(favoritesOnly&&!favoriteSnapshot.contains(c.key()))continue;
@@ -5274,8 +5275,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         cctvNames[i]=displayChannelName(name);
       }
     }
-    if(Thread.currentThread().isInterrupted()
-        ||catalogueMutationGeneration!=expectedMutationGeneration)return null;
+    if(!RemoteChannelOrderPolicy.complete(
+        Thread.currentThread().isInterrupted(),expectedMutationGeneration,
+        catalogueMutationGeneration))return null;
     if(cctvOrders!=null){
       order.sort((x,y)->{
         int ox=cctvOrders[x],oy=cctvOrders[y];
@@ -5284,8 +5286,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     }
     // Aborted or superseded scans must NEVER publish partial channel indexes.
-    if(Thread.currentThread().isInterrupted()
-        ||catalogueMutationGeneration!=expectedMutationGeneration)return null;
+    if(!RemoteChannelOrderPolicy.complete(
+        Thread.currentThread().isInterrupted(),expectedMutationGeneration,
+        catalogueMutationGeneration))return null;
     return new RemoteChannelOrder(key,order);
   }
   private void prewarmRemoteChannelOrder(){
@@ -5321,10 +5324,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int currentCount; synchronized(channels){currentCount=channels.size();}
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
-      if(catalogueFilterGeneration==filterGeneration
-          &&catalogueMutationGeneration==mutationGeneration
-          &&favoriteMode==favoritesOnly
-          &&currentCount==count&&(!favoritesOnly||favorites.hashCode()==favoritesHash)){
+      if(RemoteChannelOrderPolicy.mayPublish(
+          Thread.currentThread().isInterrupted(),
+          mutationGeneration,catalogueMutationGeneration,
+          filterGeneration,catalogueFilterGeneration,
+          count,currentCount,
+          favoritesOnly,favoriteMode,
+          favoritesHash,favoritesOnly?favorites.hashCode():0)){
         cachedRemoteChannelOrder=ready;
         uiHandler.post(()->{
           if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
