@@ -493,12 +493,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     applyLiveChannelRowStyle(button,Color.rgb(35,45,62));
   }
   private void updateLiveChannelOverlay(){
-    if(channelNameOverlay==null)return;
-    if(selected>=0&&selected<channels.size()){
-      Channel channel=channels.get(selected);
-      channelNameOverlay.setText("正在播放  ·  "+displayChannelName(channel));
-      channelNameOverlay.setVisibility(fullScreenPlayback?View.VISIBLE:View.GONE);
-    }else channelNameOverlay.setVisibility(View.GONE);
+    // Keep the picture unobstructed during fullscreen playback. The transient
+    // channelZapOverlay already shows a channel name for 1.8s after a DPAD zap;
+    // a permanently visible second box is redundant and was explicitly unwanted.
+    if(channelNameOverlay!=null)channelNameOverlay.setVisibility(View.GONE);
   }
   private void updateLiveChannelPresentation(){
     if(list!=null){
