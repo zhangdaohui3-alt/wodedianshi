@@ -64,7 +64,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
-  private boolean fullScreenPlayback = false;
+  // Also checked by the isolated geographic directory worker before any download.
+  private volatile boolean fullScreenPlayback = false;
   private boolean fullscreenRemoteDialogOpen = false;
   private PopupWindow fullscreenMenuPopup;
   private TextView fullscreenMenuButton;
@@ -116,6 +117,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable startupAutoResumeTask;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
+  // An isolated country/region worker must not queue behind startup Room restore,
+  // nor publish an obsolete country selection after the user changes categories.
+  private final ExecutorService geoCatalogueWorker=Executors.newSingleThreadExecutor();
+  private volatile long geoDirectoryRequestGeneration=0L;
+  private volatile Future<?> activeGeoCatalogueTask=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
   // such as “全部河北频道” can never fall through to the global category.
   private boolean localRegionFilterActive=false;
@@ -1162,7 +1168,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
     String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){showProvinceDialog();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();v.requestFocus();refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}geoDirectoryRequestGeneration++;activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){
+      // "国家地区" opens a picker rather than being a channel category; showing
+      // the unmatched label as a filter made the entire saved list appear empty.
+      activeCategory="全球频道";refresh();
+      info.setText("已显示保存的全球频道，请选择国家或地区；选定后优先展示本地缓存。");
+      showCountryDialog();return;
+    }
+    if(name.equals("地方")){
+      // The first tap must immediately display saved local stations, regardless
+      // of whether the province picker is used or dismissed.
+      refresh();
+      info.setText("正在显示保存的地方台；可继续选择全部地方台、省份或城市。");
+      showProvinceDialog();return;
+    }if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();v.requestFocus();refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady)return;new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置","查看直播诊断记录"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else if(w==13)configureRemoteParentLock();else showLiveDiagnostics();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -4124,21 +4143,106 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       else{String[] pair=data[w-1].split("\\|");loadGeoPlaylist(country+" · "+region+" · "+pair[0],"https://iptv-org.github.io/iptv/cities/"+pair[1]+".m3u");}
     });
   }
+  // Saved country membership is first read from the authoritative Room-backed
+  // in-memory snapshot. A country TVG-ID suffix is trustworthy enough to identify
+  // the country, while finer province/city filtering requires actual feed membership.
+  private HashSet<String> savedGeoChannelKeys(String scope,String country){
+    HashSet<String> keys=new HashSet<>();
+    synchronized(channels){
+      for(Channel channel:channels){
+        if(channel==null)continue;
+        if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
+          keys.add(channel.key());continue;
+        }
+        if(!country.isEmpty()&&channel.sourceScopes!=null
+            &&ChannelCatalogueScopePolicy.matches(channel.sourceScopes,"global")
+            &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
+          keys.add(channel.key());
+      }
+    }
+    return keys;
+  }
   private void loadGeoPlaylist(String label,String address){
-    info.setText("正在载入 "+label+" 频道目录…");
-    worker.execute(()->{HttpURLConnection c=null;try{
-      c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(45000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","MyTV/1.0 Android");
-      int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-      String data;try(InputStream in=c.getInputStream()){data=read(in);}
-      final HashSet<String> destinationKeys=new HashSet<>();
-      parse(data,destinationKeys,"global");
-      final int matched=destinationKeys.size();
-      runOnUiThread(()->{
-        activeGeoChannelKeys=new HashSet<>(destinationKeys);
-        activeCategory="全部";favoriteMode=false;persist();refresh();
-        info.setText(label+"：共匹配 "+matched+" 个目的地频道，当前最多显示 120 个。其他国家和地区频道不会混入。部分频道可能受地区、网络或播出授权限制。");
+    final String geoScope=GeoPlaylistCachePolicy.scopeForPlaylist(address);
+    if(geoScope.isEmpty()){if(info!=null)info.setText("地区频道目录地址无效");return;}
+    final String country=GeoPlaylistCachePolicy.countryForPlaylist(address);
+    final long request=++geoDirectoryRequestGeneration;
+    Future<?> older=activeGeoCatalogueTask;
+    if(older!=null)older.cancel(true);
+    if(info!=null)info.setText("正在读取已保存的 "+label+" 频道…");
+    try{
+      activeGeoCatalogueTask=geoCatalogueWorker.submit(()->{
+        final HashSet<String> cached=savedGeoChannelKeys(geoScope,country);
+        runOnUiThread(()->{
+          if(request!=geoDirectoryRequestGeneration||isFinishing()||isDestroyed())return;
+          activeGeoChannelKeys=new HashSet<>(cached);
+          activeCategory="全部";favoriteMode=false;livePageIndex=0;
+          refresh();
+          if(info!=null)info.setText(cached.isEmpty()
+              ?label+"：本地尚无对应的频道快照，正在检查公开目录…"
+              :label+"：已从本地快照显示 "+cached.size()+" 个频道；后台检查补充。");
+        });
+        if(request!=geoDirectoryRequestGeneration||Thread.currentThread().isInterrupted())return;
+        // A full-screen television programme has priority over network discovery.
+        // Retain only the cached result until the user opens this directory
+        // outside fullscreen; no playlist scan competes with the active player.
+        if(fullScreenPlayback){
+          runOnUiThread(()->{
+            if(request==geoDirectoryRequestGeneration&&info!=null)
+              info.setText(label+"：已显示本地缓存 "+cached.size()+" 个；全屏播放期间暂停地区抓源。");
+          });
+          return;
+        }
+        HttpURLConnection connection=null;
+        try{
+          connection=(HttpURLConnection)new URL(address).openConnection();
+          connection.setConnectTimeout(12000);connection.setReadTimeout(25000);
+          connection.setInstanceFollowRedirects(true);
+          connection.setRequestProperty("User-Agent","MyTV/1.0 Android");
+          int status=connection.getResponseCode();
+          if(status<200||status>=300)throw new IOException("HTTP "+status);
+          String playlist;
+          try(InputStream input=connection.getInputStream()){playlist=read(input);}
+          if(Thread.currentThread().isInterrupted()||request!=geoDirectoryRequestGeneration)return;
+          final HashSet<String> downloaded=new HashSet<>();
+          parse(playlist,downloaded,"global");
+          // Empty, malformed or unavailable remote playlists must never overwrite
+          // a nonempty saved destination filter.
+          if(downloaded.isEmpty()){
+            runOnUiThread(()->{
+              if(request==geoDirectoryRequestGeneration&&info!=null)
+                info.setText(label+"：公开目录未返回可用频道，保留本地 "+cached.size()+" 个缓存结果。");
+            });
+            return;
+          }
+          synchronized(channels){
+            for(Channel channel:channels){
+              if(channel!=null&&downloaded.contains(channel.key())){
+                if(channel.sourceScopes==null)channel.sourceScopes=new HashSet<>();
+                channel.sourceScopes.add(geoScope);
+              }
+            }
+          }
+          final boolean saved=persist();
+          final HashSet<String> updated=savedGeoChannelKeys(geoScope,country);
+          runOnUiThread(()->{
+            if(request!=geoDirectoryRequestGeneration||isFinishing()||isDestroyed())return;
+            activeGeoChannelKeys=updated;refresh();
+            if(info!=null)info.setText(label+"：已显示 "+updated.size()+" 个频道"
+                +(saved?"，地区缓存已保存到 Room。":"；Room 保存失败，下次进入可能需重新加载。"));
+          });
+        }catch(Exception failure){
+          android.util.Log.w("MyTVDirectory","geographic directory fetch failed scope="+geoScope,failure);
+          runOnUiThread(()->{
+            if(request==geoDirectoryRequestGeneration&&info!=null)
+              info.setText(label+"：联网获取失败（"+failure.getClass().getSimpleName()
+                  +"），已保留本地 "+cached.size()+" 个频道；稍后可重试。");
+          });
+        }finally{if(connection!=null)connection.disconnect();}
       });
-    }catch(Exception e){runOnUiThread(()->info.setText(label+" 载入失败："+e.getMessage()));}finally{if(c!=null)c.disconnect();}});
+    }catch(RuntimeException rejected){
+      if(info!=null)info.setText(label+"：地区目录任务暂不可用，原有频道不受影响。");
+    }
   }
   private int countChannelsForScope(String scope){
     HashSet<String> identities=new HashSet<>();
@@ -7013,5 +7117,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){stopLiveUiStallProbe();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
 }
