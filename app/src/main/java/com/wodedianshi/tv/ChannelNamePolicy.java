@@ -111,20 +111,21 @@ final class ChannelNamePolicy {
     static String provinceForLocalChannel(String metadata) {
         String normalized = normalize(metadata);
         if (normalized.isEmpty()) return "";
+        final String uppercaseMetadata = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
         String matchedProvince = "";
         boolean explicitProvince = false;
         for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
             String[] aliases = LOCAL_CITY_ALIASES[row];
             String[] normalizedAliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
             // Some feeds expose only the province in group-title rather than a city.
-            if (containsNormalizedAlias(metadata, normalizedAliases[0], normalized)) {
+            if (containsNormalizedAlias(uppercaseMetadata, normalizedAliases[0], normalized)) {
                 if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
                 matchedProvince = aliases[0];
                 explicitProvince = true;
             }
             for (int i = 1; i < aliases.length; i++) {
                 String alias = normalizedAliases[i];
-                if (!containsNormalizedAlias(metadata, alias, normalized)) continue;
+                if (!containsNormalizedAlias(uppercaseMetadata, alias, normalized)) continue;
                 boolean ambiguousCity = false;
                 for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
                     if (alias.equals(ambiguous)) {
@@ -147,6 +148,7 @@ final class ChannelNamePolicy {
         String province = provinceForLocalChannel(metadata);
         if (province.isEmpty()) return "";
         String normalized = normalize(metadata);
+        final String uppercaseMetadata = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
         // Municipalities are both province-level regions and city identities.
         if (("北京".equals(province) || "天津".equals(province)
                 || "上海".equals(province) || "重庆".equals(province))
@@ -160,7 +162,7 @@ final class ChannelNamePolicy {
             String[] normalizedAliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
             if (!province.equals(aliases[0])) continue;
             for (int i = 1; i < aliases.length; i++) {
-                if (!containsNormalizedAlias(metadata, normalizedAliases[i], normalized)) continue;
+                if (!containsNormalizedAlias(uppercaseMetadata, normalizedAliases[i], normalized)) continue;
                 String alias = normalizedAliases[i];
                 if (alias.matches(".*[\\u4E00-\\u9FFF].*")) chineseMatches.add(alias);
                 else englishMatches.add(alias);
@@ -179,17 +181,26 @@ final class ChannelNamePolicy {
     }
 
     private static boolean containsAlias(String metadata, String alias, String normalizedMetadata) {
-        return containsNormalizedAlias(metadata, normalize(alias), normalizedMetadata);
+        return containsNormalizedAlias(
+                metadata == null ? "" : metadata.toUpperCase(Locale.ROOT),
+                normalize(alias), normalizedMetadata);
     }
 
-    private static boolean containsNormalizedAlias(String metadata, String normalizedAlias, String normalizedMetadata) {
+    private static boolean hasCjkCharacter(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char value = text.charAt(i);
+            if (value >= '\\u4E00' && value <= '\\u9FFF') return true;
+        }
+        return false;
+    }
+
+    private static boolean containsNormalizedAlias(String uppercaseMetadata, String normalizedAlias, String normalizedMetadata) {
         if (normalizedAlias.isEmpty()) return false;
         // Chinese names are naturally contiguous. English city names must be
         // whole tokens so "Xiangyang" cannot accidentally match "Xian".
-        if (normalizedAlias.matches(".*[\\u4E00-\\u9FFF].*")) {
+        if (hasCjkCharacter(normalizedAlias)) {
             return normalizedMetadata.contains(normalizedAlias);
         }
-        String upper = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
         Pattern pattern = ENGLISH_LOCAL_PATTERNS.get(normalizedAlias);
         if (pattern == null) {
             Pattern compiled = Pattern.compile("(^|[^A-Z])"
@@ -197,7 +208,7 @@ final class ChannelNamePolicy {
             Pattern previous = ENGLISH_LOCAL_PATTERNS.putIfAbsent(normalizedAlias, compiled);
             pattern = previous == null ? compiled : previous;
         }
-        return pattern.matcher(upper).find();
+        return pattern.matcher(uppercaseMetadata).find();
     }
 
     /** Resolve broadcaster identity from all M3U metadata, not just the display label. */
