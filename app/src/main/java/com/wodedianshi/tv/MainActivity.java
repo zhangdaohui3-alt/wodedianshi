@@ -5490,8 +5490,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(player!=null&&selected==expectedChannel&&currentMediaId.equals(expectedMediaId)
           &&player.getPlaybackState()==Player.STATE_BUFFERING){
         saveLiveDiagnostic("BUFFER_TIMEOUT","still buffering after "+seconds+"s");
-        if(!tryStartLibVlcFallback("连续缓冲超过 "+seconds+" 秒"))
-          advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
+        // A buffering timeout alone is not evidence of decoder incompatibility.
+        // Trying LibVLC on the same unreachable URL doubles the wait and risks
+        // expensive native decoder teardown on Android 9 TV hardware. Prefer
+        // the next verified backup; codec/track failures retain engine fallback.
+        advanceToNextSourceAutomatically("连续缓冲超过 "+seconds+" 秒");
       }
     };
     uiHandler.postDelayed(bufferingFallback,seconds*1000L);
