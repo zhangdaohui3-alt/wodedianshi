@@ -64,7 +64,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
-  private boolean fullScreenPlayback = false;
+  // Also checked by the isolated geographic directory worker before any download.
+  private volatile boolean fullScreenPlayback = false;
   private boolean fullscreenRemoteDialogOpen = false;
   private PopupWindow fullscreenMenuPopup;
   private TextView fullscreenMenuButton;
