@@ -2,10 +2,16 @@ package com.wodedianshi.tv;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Canonical Chinese names for well-known provincial satellite channels. */
 final class ChannelNamePolicy {
     private ChannelNamePolicy() {}
+
+    // Matchers run for every channel during catalogue filtering. Cache the
+    // immutable whole-token patterns instead of recompiling one for each alias.
+    private static final ConcurrentHashMap<String, Pattern> ENGLISH_LOCAL_PATTERNS =
+            new ConcurrentHashMap<>();
 
     private static final String[][] SATELLITE_ALIASES = {
         {"湖南卫视", "HUNANSATELLITETV", "HUNANTV", "HUNANTELEVISION"},
@@ -155,7 +161,13 @@ final class ChannelNamePolicy {
             return normalizedMetadata.contains(normalizedAlias);
         }
         String upper = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
-        Pattern pattern = Pattern.compile("(^|[^A-Z])" + Pattern.quote(normalizedAlias) + "([^A-Z]|$)");
+        Pattern pattern = ENGLISH_LOCAL_PATTERNS.get(normalizedAlias);
+        if (pattern == null) {
+            Pattern compiled = Pattern.compile("(^|[^A-Z])"
+                    + Pattern.quote(normalizedAlias) + "([^A-Z]|$)");
+            Pattern previous = ENGLISH_LOCAL_PATTERNS.putIfAbsent(normalizedAlias, compiled);
+            pattern = previous == null ? compiled : previous;
+        }
         return pattern.matcher(upper).find();
     }
 
