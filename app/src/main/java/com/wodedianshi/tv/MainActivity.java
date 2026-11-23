@@ -7417,6 +7417,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               channelsByUrl.putAll(prepared.byUrl);
               channelsByIdentity.clear();
               channelsByIdentity.putAll(prepared.byIdentity);
+              // A Room reload can replace channels between two bounded
+              // snapshotChannelRows() batches. Invalidate those mixed copies
+              // even if no caller explicitly requested a catalogue save.
+              synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
               loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
               if(!selectedIdentity.isEmpty()){
                 Integer found=prepared.positionByIdentity.get(selectedIdentity);
