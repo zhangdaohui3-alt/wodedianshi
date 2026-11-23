@@ -28,6 +28,24 @@ public class ChannelNamePolicyTest {
                 "HD", "", "ZhejiangSatelliteTV", "Live"));
     }
 
+    @Test public void unknownSatelliteGroupDoesNotBecomeConcatenatedDisplayName() {
+        assertEquals("", ChannelNamePolicy.canonicalBroadcasterName(
+                "城市新闻", "EPG Channel", "regional.123", "卫视"));
+        assertEquals("某地卫视", ChannelNamePolicy.canonicalBroadcasterName(
+                "某地卫视", "EPG Channel", "regional.123", "卫视"));
+        assertEquals("某地卫视", ChannelNamePolicy.canonicalBroadcasterName(
+                "高清频道", "某地卫视", "regional.123", "卫视"));
+        assertEquals("湖南卫视", ChannelNamePolicy.canonicalBroadcasterName(
+                "高清频道", "Hunan TV", "regional.123", "卫视"));
+    }
+
+    @Test public void cctvFivePlusKeepsDistinctIdentity() {
+        assertEquals("CCTV-5+", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-5+ 体育赛事", "", "CCTV5Plus", "央视"));
+        assertEquals("CCTV-5", ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-5 体育", "", "CCTV5", "央视"));
+    }
+
     @Test public void resolvesCctvIdentityFromTvgMetadata() {
         assertEquals("CCTV-1", ChannelNamePolicy.canonicalBroadcasterName(
                 "高清频道", "央视综合", "CCTV-1", "中国"));
