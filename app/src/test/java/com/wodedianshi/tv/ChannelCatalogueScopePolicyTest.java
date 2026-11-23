@@ -71,6 +71,15 @@ public class ChannelCatalogueScopePolicyTest {
         assertFalse(scopes.contains("geo:subdivisions:us-az"));
     }
 
+    @Test public void persistedCountryAndCityTagsAreValidAtReaderBoundary() {
+        assertTrue(ChannelCatalogueScopePolicy.isRetainableScope("geo:countries:us"));
+        assertTrue(ChannelCatalogueScopePolicy.isRetainableScope("geo:subdivisions:us-az"));
+        assertTrue(ChannelCatalogueScopePolicy.isRetainableScope("geo:cities:usphx"));
+        assertFalse(ChannelCatalogueScopePolicy.isRetainableScope("geo:invalid:us"));
+        assertFalse(ChannelCatalogueScopePolicy.isRetainableScope("geo:cities:../../secret"));
+        assertFalse(ChannelCatalogueScopePolicy.isRetainableScope(null));
+    }
+
     @Test public void unknownGeographicScopeIsNotPromoted() {
         java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
         ownership.put("one", new HashSet<>(Arrays.asList(
