@@ -178,7 +178,17 @@ final class ChannelNamePolicy {
                 + (tvgId == null ? "" : tvgId) + " "
                 + (group == null ? "" : group)).trim();
         String satellite = canonicalSatelliteName(metadata);
-        if (!satellite.isEmpty()) return satellite;
+        if (!satellite.isEmpty()) {
+            // Recognized aliases return a short canonical broadcaster name.
+            // For an unknown satellite, the fallback returns the input unchanged.
+            // Never turn the whole concatenated name + EPG + group metadata into
+            // a displayed channel name (e.g. "News tvg-id group 卫视").
+            if (!satellite.equals(metadata)) return satellite;
+            String namedSatellite = canonicalSatelliteName(name);
+            if (!namedSatellite.isEmpty()) return namedSatellite;
+            String epgSatellite = canonicalSatelliteName(tvgName);
+            if (!epgSatellite.isEmpty()) return epgSatellite;
+        }
         String value = metadata.toUpperCase(Locale.ROOT)
                 .replaceAll("[\\s_—–·•]", "");
         // Match special variants before the generic numeric form: otherwise
