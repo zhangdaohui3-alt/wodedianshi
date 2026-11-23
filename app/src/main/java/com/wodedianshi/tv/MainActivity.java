@@ -4739,11 +4739,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // just to add a working fullscreen menu entry.
     final String[] names={"收藏当前频道","选择备用播放源","打开频道列表",
         "画面比例","解码与声音设置","频道分类","更新频道目录",
-        "播放控制","返回点播目录"};
+        "播放控制","返回点播目录","新建自定义主项目…"};
     final String[] ids={"favorite","sources","channel_list","aspect","decoder",
         "category","refresh","vod_controls","vod_catalogue"};
     new AlertDialog.Builder(this).setTitle("选择要添加的菜单功能")
         .setItems(names,(actionDialog,actionIndex)->{
+          if(actionIndex==ids.length){
+            EditText input=new EditText(this);input.setHint("输入自定义主项目名称");
+            new AlertDialog.Builder(this).setTitle("新建自定义主项目").setView(input)
+                .setNegativeButton("取消",null).setPositiveButton("创建",(d,w)->{
+                  String id="custom_"+UUID.randomUUID().toString().replace("-","");
+                  if(config.addCategory(id,input.getText().toString().trim())){
+                    saveFullscreenMenuConfig(config);toast("自定义主项目已创建");
+                  }else toast("名称无效或主项目数量已达上限");
+                }).show();
+            return;
+          }
           final ArrayList<FullscreenMenuConfig.Category> destinations=new ArrayList<>();
           final ArrayList<String> destinationLabels=new ArrayList<>();
           for(FullscreenMenuConfig.Category category:config.getCategories()){
