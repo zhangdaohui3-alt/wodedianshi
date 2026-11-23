@@ -3743,13 +3743,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
       Channel c=visible.get(row);
       if(c==null)continue;
-      // Legacy and partially migrated catalogue rows may contain null metadata.
-      // Normalize display fields before any naming/category helper can inspect them.
-      if(c.name==null)c.name="";
-      if(c.url==null)c.url="";
-      if(c.group==null)c.group="";
-      if(c.tvgName==null)c.tvgName="";
-      if(c.tvgId==null)c.tvgId="";
+      // Filtering runs on a worker over the same Channel references. UI rendering
+      // must NEVER mutate their fields; use null-safe display locals instead.
       final String channelKey=c.key();
       final String channelName=c.name==null?"":c.name;
       final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
@@ -4583,12 +4578,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       @Override public void run(){
         long now=android.os.SystemClock.uptimeMillis();
         long late=Math.max(0L,now-expectedAt[0]);
-        if(late>=3000L&&fullScreenPlayback&&activityStarted){
-          String detail="uiDelayMs="+late+" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
-              +" remoteDialog="+fullscreenRemoteDialogOpen;
+        if(late>=3000L&&activityStarted){
+          String detail="uiDelayMs="+late+" fullscreen="+fullScreenPlayback
+              +" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
+              +" remoteDialog="+fullscreenRemoteDialogOpen
+              +" category="+activeCategory+" channels="+channels.size();
           android.util.Log.w("MyTVInput",detail);
-          // Record only exceptional stalls, never each remote key or heartbeat.
-          saveLiveDiagnostic("LIVE_UI_DELAY",detail);
+          // Capture BOTH touch-device catalogue stalls and TV fullscreen stalls.
+          // Never save every touch or timer tick, only an observed long delay.
+          saveLiveDiagnostic(fullScreenPlayback?"LIVE_UI_DELAY":"CATALOGUE_UI_DELAY",detail);
         }
         expectedAt[0]=now+1000L;
         if(liveUiStallProbe!=null)uiHandler.postDelayed(this,1000L);
@@ -4636,7 +4634,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void exitFullScreenPlayback(){
     if(!fullScreenPlayback||rootLayout==null)return;
-    stopLiveUiStallProbe();
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -5004,6 +5001,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }).show();
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
+  @Override public boolean dispatchTouchEvent(MotionEvent event){
+    // MotionEvent timestamps are monotonic uptime. Measure dispatch latency for
+    // phones and mice without adding per-touch disk writes or expensive work.
+    if(event!=null&&event.getActionMasked()==MotionEvent.ACTION_DOWN){
+      long deliveryMs=Math.max(0L,android.os.SystemClock.uptimeMillis()-event.getEventTime());
+      if(deliveryMs>=500L){
+        String detail="touchDeliveryMs="+deliveryMs+" fullscreen="+fullScreenPlayback
+            +" category="+activeCategory;
+        android.util.Log.w("MyTVInput",detail);
+        if(deliveryMs>=1500L)saveLiveDiagnostic("TOUCH_DELIVERY_DELAY",detail);
+      }
+    }
+    return super.dispatchTouchEvent(event);
+  }
   @Override public boolean dispatchKeyEvent(KeyEvent event){
     if(fullScreenPlayback&&event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
       int receivedKey=event.getKeyCode();
@@ -6929,7 +6940,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   protected void onStart(){
     super.onStart();
     activityStarted=true;
-    if(fullScreenPlayback)startLiveUiStallProbe();
+    startLiveUiStallProbe();
     setSourceUpdateActivityActive(true);
     if(currentVodPanel!=null)setSourceUpdatePlaybackActive(true);
     if(startupDataReady){
@@ -7018,6 +7029,64 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
+
+  // Do not spend a full Room catalogue normalization/deduplication on the UI thread.
+  private static final class PreparedRoomCatalogue {
+    final ArrayList<Channel> entries=new ArrayList<>();
+    final HashMap<String,Channel> byUrl=new HashMap<>();
+    final HashMap<String,Channel> byIdentity=new HashMap<>();
+    final HashMap<String,Integer> positionByIdentity=new HashMap<>();
+    final HashMap<String,Integer> positionByNameGroup=new HashMap<>();
+    final HashSet<String> favorites=new HashSet<>();
+  }
+  private String roomChannelNameGroupKey(String name,String group){
+    return (name==null?"":name)+"\u001f"+(group==null?"":group);
+  }
+  private PreparedRoomCatalogue prepareRoomCatalogue(ArrayList<Channel> restored,
+      Set<String> savedFavorites){
+    PreparedRoomCatalogue prepared=new PreparedRoomCatalogue();
+    if(savedFavorites!=null)prepared.favorites.addAll(savedFavorites);
+    HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,restored.size()*2));
+    HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>();
+    for(Channel channel:restored){
+      if(channel==null)continue;
+      normalizeBroadcasterLabel(channel);
+      if(channel.backups==null)channel.backups=new ArrayList<>();
+      if(channel.backups.isEmpty()&&channel.url!=null&&!channel.url.isEmpty())
+        channel.backups.add(channel.url);
+      String identityKey=identity(channel);
+      Channel keep=firstByIdentity.get(identityKey);
+      if(keep==null){
+        firstByIdentity.put(identityKey,channel);
+        prepared.entries.add(channel);
+      }else{
+        HashSet<String> seen=sourcesByIdentity.get(identityKey);
+        if(seen==null){
+          seen=new HashSet<>(Math.max(4,keep.backups.size()*2));
+          for(String url:keep.backups)if(url!=null&&!url.isEmpty())seen.add(url);
+          sourcesByIdentity.put(identityKey,seen);
+        }
+        for(String url:channel.backups){
+          if(url!=null&&!url.isEmpty()&&seen.add(url))keep.backups.add(url);
+        }
+        keep.mergeBackupOwnership(channel);
+        if(prepared.favorites.contains(channel.key()))prepared.favorites.add(keep.key());
+      }
+    }
+    for(int i=0;i<prepared.entries.size();i++){
+      Channel channel=prepared.entries.get(i);
+      for(String url:channel.backups)prepared.byUrl.put(url,channel);
+      String identityKey=identity(channel);
+      prepared.byIdentity.put(identityKey,channel);
+      if(!prepared.positionByIdentity.containsKey(identityKey))
+        prepared.positionByIdentity.put(identityKey,i);
+      String nameGroup=roomChannelNameGroupKey(channel.name,channel.group);
+      if(!prepared.positionByNameGroup.containsKey(nameGroup))
+        prepared.positionByNameGroup.put(nameGroup,i);
+    }
+    return prepared;
+  }
+
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     if(!catalogueSnapshotTrusted){
@@ -7054,10 +7123,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
           if(generation!=backgroundCatalogueReloadGeneration)return;
-          // Room has already accepted this complete snapshot atomically. Its
-          // cleaned catalogue may legitimately contain fewer channels than the
-          // previous in-memory view, so do not re-impose a stale additive-only rule.
+          long preparationStarted=android.os.SystemClock.elapsedRealtime();
+          final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites);
+          android.util.Log.i("MyTVStartup","room_reload_prepare_ms="
+              +(android.os.SystemClock.elapsedRealtime()-preparationStarted)
+              +" entries="+prepared.entries.size()+" sources="+prepared.byUrl.size());
+          if(generation!=backgroundCatalogueReloadGeneration)return;
+          // Room has atomically committed this snapshot. Only swap the prepared
+          // array/maps in the UI callback; normalization and deduplication are done.
           uiHandler.post(()->{
+            long publishStarted=android.os.SystemClock.elapsedRealtime();
             String selectedIdentity="";
             String selectedName="";
             String selectedGroup="";
@@ -7075,38 +7150,38 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     ?current.backups.get(current.activeSource):current.url;
               }
               channels.clear();
-              channels.addAll(refreshed);
+              channels.addAll(prepared.entries);
+              channelsByUrl.clear();
+              channelsByUrl.putAll(prepared.byUrl);
+              channelsByIdentity.clear();
+              channelsByIdentity.putAll(prepared.byIdentity);
+              if(!selectedIdentity.isEmpty()){
+                Integer found=prepared.positionByIdentity.get(selectedIdentity);
+                if(found==null)found=prepared.positionByNameGroup.get(
+                    roomChannelNameGroupKey(selectedName,selectedGroup));
+                selected=found==null?-1:found;
+                if(selected>=0&&!selectedUrl.isEmpty()){
+                  Channel candidate=channels.get(selected);
+                  for(int i=0;i<candidate.backups.size();i++){
+                    if(selectedUrl.equals(candidate.backups.get(i))){
+                      candidate.activeSource=i;break;
+                    }
+                  }
+                }
+              }
             }
             synchronized(favorites){
               favorites.clear();
-              favorites.addAll(roomSnapshot.favorites);
+              favorites.addAll(prepared.favorites);
             }
-            rebuildChannelIndexes();
-            if(!selectedIdentity.isEmpty()){
-              int found=-1;
-              for(int i=0;i<channels.size();i++){
-                Channel candidate=channels.get(i);
-                if(identity(candidate).equals(selectedIdentity)){found=i;break;}
-              }
-              if(found<0){
-                for(int i=0;i<channels.size();i++){
-                  Channel candidate=channels.get(i);
-                  if(candidate.name.equals(selectedName)
-                      &&java.util.Objects.equals(candidate.group,selectedGroup)){found=i;break;}
-                }
-              }
-              selected=found;
-              if(found>=0&&!selectedUrl.isEmpty()){
-                Channel candidate=channels.get(found);
-                for(int i=0;i<candidate.backups.size();i++){
-                  if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
-                }
-              }
-            }
+            cachedRemoteChannelOrder=null;
             catalogueSnapshotTrusted=true;
+            android.util.Log.i("MyTVStartup","room_reload_ui_publish_ms="
+                +(android.os.SystemClock.elapsedRealtime()-publishStarted)
+                +" channels="+prepared.entries.size()+" sources="+prepared.byUrl.size());
             refresh();
             android.util.Log.i("MyTVStartup","reloaded Room catalogue channels="
-                +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
+                +roomSnapshot.channelCount+" favorites="+prepared.favorites.size());
           });
         }catch(Throwable reloadFailure){
           android.util.Log.e("MyTVStartup","Room catalogue reload failed",reloadFailure);
