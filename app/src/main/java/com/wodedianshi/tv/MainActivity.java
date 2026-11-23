@@ -187,6 +187,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
   private long pendingRemoteZapGeneration=-1L;
+  // Pending DPAD actions belong to one immutable directory generation.
+  private long pendingRemoteZapMutationGeneration=-1L;
   // Parsed source-quality JSON is reused until a playback metric actually updates
   // the backing preference strings; channel zapping must not reparse a large map.
   private final Object sourceScoreCacheLock = new Object();
@@ -5234,14 +5236,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return super.dispatchKeyEvent(event);
   }
   private String remoteChannelOrderKey(String category,String query,boolean favoritesOnly,
-      long filterGeneration,int channelCount,int favoritesHash){
+      long filterGeneration,long mutationGeneration,int channelCount,int favoritesHash){
     // The channel array may be rebuilt without changing its size.
     // Include mutation epoch so old positional zapping indexes cannot be reused.
-    return filterGeneration+"|"+catalogueMutationGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
+    return filterGeneration+"|"+mutationGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
   private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
-      boolean favoritesOnly){
+      boolean favoritesOnly,Set<String> favoriteSnapshot,long expectedMutationGeneration){
     // Critical ANR fix: thread 37 used to hold synchronized(channels) while
     // running 6k+ expensive categoryMatch / canonicalSatelliteName calls.
     // MainActivity.prewarmRemoteChannelOrder then blocked on the same lock.
@@ -5249,10 +5251,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // releasing the catalogue monitor. Retain the indices for channel selection.
     final ArrayList<Channel> snapshot;
     synchronized(channels){snapshot=new ArrayList<>(channels);}
-    final Set<String> favoriteSnapshot=favoritesOnly?new HashSet<>(favorites):null;
     ArrayList<Integer> order=new ArrayList<>();
+    // Freeze sort keys in the worker rather than comparing mutable Channel
+    // objects during TimSort while a background source refresh may run.
+    final int[] cctvOrders="央视".equals(category)?new int[snapshot.size()]:null;
+    final String[] cctvNames=cctvOrders==null?null:new String[snapshot.size()];
     for(int i=0;i<snapshot.size();i++){
-      if(Thread.currentThread().isInterrupted())break;
+      if((i&63)==0&&(Thread.currentThread().isInterrupted()
+          ||catalogueMutationGeneration!=expectedMutationGeneration))return null;
       Channel c=snapshot.get(i);
       if(c==null)continue;
       if(favoritesOnly&&!favoriteSnapshot.contains(c.key()))continue;
@@ -5263,15 +5269,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           &&!group.toLowerCase(Locale.ROOT).contains(query)
           &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
       order.add(i);
+      if(cctvOrders!=null){
+        cctvOrders[i]=cctvSortOrder(c);
+        cctvNames[i]=displayChannelName(name);
+      }
     }
-    if("央视".equals(category)){
+    if(Thread.currentThread().isInterrupted()
+        ||catalogueMutationGeneration!=expectedMutationGeneration)return null;
+    if(cctvOrders!=null){
       order.sort((x,y)->{
-        Channel cx=snapshot.get(x),cy=snapshot.get(y);
-        int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
+        int ox=cctvOrders[x],oy=cctvOrders[y];
         if(ox!=oy)return Integer.compare(ox,oy);
-        return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
+        return cctvNames[x].compareTo(cctvNames[y]);
       });
     }
+    // Aborted or superseded scans must NEVER publish partial channel indexes.
+    if(Thread.currentThread().isInterrupted()
+        ||catalogueMutationGeneration!=expectedMutationGeneration)return null;
     return new RemoteChannelOrder(key,order);
   }
   private void prewarmRemoteChannelOrder(){
@@ -5281,8 +5295,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long filterGeneration=catalogueFilterGeneration;
     final long mutationGeneration=catalogueMutationGeneration;
     final int count; synchronized(channels){count=channels.size();}
-    final int favoritesHash=favorites.hashCode();
-    final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
+    final Set<String> favoriteSnapshot;
+    final int favoritesHash;
+    if(favoritesOnly){
+      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+      favoritesHash=favoriteSnapshot.hashCode();
+    }else{
+      favoriteSnapshot=java.util.Collections.emptySet();
+      favoritesHash=0; // No favorite-list dependency outside the 收藏 filter.
+    }
+    final String key=remoteChannelOrderKey(category,query,favoritesOnly,
+        filterGeneration,mutationGeneration,count,favoritesHash);
     RemoteChannelOrder alreadyBuilt=cachedRemoteChannelOrder;
     if(alreadyBuilt!=null&&key.equals(alreadyBuilt.key))return;
     // Rapid DPAD repeats previously enqueued the same O(catalogue) scan for
@@ -5292,23 +5315,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     remoteChannelOrderBuildKey=key;
     try{remoteChannelOrderWorker.execute(()->{
       try{
-      RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly);
+      RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
+          favoriteSnapshot,mutationGeneration);
+      if(ready==null)return;
       int currentCount; synchronized(channels){currentCount=channels.size();}
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
       if(catalogueFilterGeneration==filterGeneration
           &&catalogueMutationGeneration==mutationGeneration
           &&favoriteMode==favoritesOnly
-          &&currentCount==count&&favorites.hashCode()==favoritesHash){
+          &&currentCount==count&&(!favoritesOnly||favorites.hashCode()==favoritesHash)){
         cachedRemoteChannelOrder=ready;
         uiHandler.post(()->{
           if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
+              ||pendingRemoteZapMutationGeneration!=mutationGeneration
               ||!fullScreenPlayback)return;
+          RemoteChannelOrder current=currentRemoteChannelOrder();
+          if(current==null){
+            // Another catalogue change raced with the UI callback. Leave
+            // input queued and rebuild rather than silently dropping it.
+            prewarmRemoteChannelOrder();
+            return;
+          }
           int queuedSteps=pendingRemoteZapSteps;
           pendingRemoteZapSteps=0;
           pendingRemoteZapGeneration=-1L;
-          RemoteChannelOrder current=currentRemoteChannelOrder();
-          if(current!=null)applyChannelZap(current,queuedSteps);
+          pendingRemoteZapMutationGeneration=-1L;
+          applyChannelZap(current,queuedSteps);
         });
       }
       }finally{
@@ -5322,8 +5355,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String category=activeCategory==null?"全部":activeCategory;
     String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
     int count; synchronized(channels){count=channels.size();}
+    int favoritesHash=0;
+    if(favoriteMode){synchronized(favorites){favoritesHash=favorites.hashCode();}}
     String key=remoteChannelOrderKey(category,query,favoriteMode,
-        catalogueFilterGeneration,count,favorites.hashCode());
+        catalogueFilterGeneration,catalogueMutationGeneration,count,favoritesHash);
     RemoteChannelOrder cached=cachedRemoteChannelOrder;
     return cached!=null&&key.equals(cached.key)?cached:null;
   }
@@ -5341,9 +5376,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     RemoteChannelOrder order=currentRemoteChannelOrder();
     if(order==null){
       long generation=catalogueFilterGeneration;
-      if(pendingRemoteZapGeneration!=generation){
+      long mutationGeneration=catalogueMutationGeneration;
+      if(pendingRemoteZapGeneration!=generation
+          ||pendingRemoteZapMutationGeneration!=mutationGeneration){
         pendingRemoteZapSteps=0;
         pendingRemoteZapGeneration=generation;
+        pendingRemoteZapMutationGeneration=mutationGeneration;
       }
       pendingRemoteZapSteps=Math.max(-12,Math.min(12,pendingRemoteZapSteps+delta));
       prewarmRemoteChannelOrder();
@@ -5353,6 +5391,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
+    pendingRemoteZapMutationGeneration=-1L;
     applyChannelZap(order,delta);
     android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
         +(android.os.SystemClock.elapsedRealtime()-started)+" total="+order.indexes.size());
