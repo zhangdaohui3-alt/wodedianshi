@@ -5529,18 +5529,30 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       for(android.app.ApplicationExitInfo exit:exits){
         if(exit==null||exit.getReason()!=android.app.ApplicationExitInfo.REASON_ANR
             ||exit.getTimestamp()<=0L||exit.getTimestamp()==stackRecordedAt)continue;
-        try(java.io.InputStream trace=exit.getTraceInputStream()){
-          String mainStack=extractHistoricalAnrMainStack(trace);
-          if(!mainStack.isEmpty()){
-            prefs.edit().putString("last_anr_historical_main_stack_v1",
-                    new java.util.Date(exit.getTimestamp()).toString()+" | "+mainStack)
-                .putLong("last_anr_trace_timestamp_v1",exit.getTimestamp()).apply();
-            android.util.Log.i("MyTVANR","Recovered historical main-thread ANR trace");
-            break;
+        // Never place a binder trace read ahead of the Room restore on the
+        // startup executor; schedule it independently after initial UI paint.
+        final android.app.ApplicationExitInfo anrExit=exit;
+        Thread traceWorker=new Thread(()->{
+          try{
+            Thread.sleep(3500L);
+            try(java.io.InputStream trace=anrExit.getTraceInputStream()){
+              String mainStack=extractHistoricalAnrMainStack(trace);
+              if(!mainStack.isEmpty()){
+                prefs.edit().putString("last_anr_historical_main_stack_v1",
+                        new java.util.Date(anrExit.getTimestamp()).toString()+" | "+mainStack)
+                    .putLong("last_anr_trace_timestamp_v1",anrExit.getTimestamp()).apply();
+                android.util.Log.i("MyTVANR","Recovered historical main-thread ANR trace");
+              }
+            }
+          }catch(InterruptedException interrupted){
+            Thread.currentThread().interrupt();
+          }catch(java.io.IOException|RuntimeException traceError){
+            android.util.Log.w("MyTVANR","Historical ANR trace unavailable",traceError);
           }
-        }catch(java.io.IOException|RuntimeException traceError){
-          android.util.Log.w("MyTVANR","Historical ANR trace unavailable",traceError);
-        }
+        },"MyTV-ExitTrace");
+        traceWorker.setDaemon(true);
+        traceWorker.start();
+        break;
       }
       for(android.app.ApplicationExitInfo exit:exits){
         if(exit==null||exit.getTimestamp()<=reported)continue;
