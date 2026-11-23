@@ -59,11 +59,10 @@ public final class RoomCatalogueWriter {
         return new CommitResult(written, committedAt[0]);
     }
 
-    /** Apply an exact snapshot without dropping and recreating the whole database. */
-    public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys) {
-        return writeRecords(context, snapshot, favoriteKeys, -1L, false);
-    }
+    // Deliberately no public unversioned writeRecords overload. Every ordinary
+    // Activity catalogue save must use writeRecordsAtVersion() so an older
+    // in-memory list can never silently replace the SourceUpdateWorker snapshot.
+    // Only first-install initialization uses the unguarded private path.
 
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
