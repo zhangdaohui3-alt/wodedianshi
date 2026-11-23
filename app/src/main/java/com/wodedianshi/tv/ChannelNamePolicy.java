@@ -82,6 +82,28 @@ final class ChannelNamePolicy {
 
     // These names exist in more than one province. Without an explicit province
     // marker in the metadata, a city-only station name must not be guessed.
+    // Pre-normalize static alias tables once. Filtering a 10k-channel catalogue
+    // must not run the same replaceAll regex on every alias for every channel.
+    private static final String[][] NORMALIZED_SATELLITE_ALIASES = normalizedAliases(SATELLITE_ALIASES);
+    private static final String[][] NORMALIZED_LOCAL_CITY_ALIASES = normalizedAliases(LOCAL_CITY_ALIASES);
+    private static final Pattern CCTV_ULTRA_HD = Pattern.compile(
+            "(?:CCTV|中央电视台|央视)[-]?(4K|8K)");
+    private static final Pattern CCTV_ASIA = Pattern.compile(
+            "(?:CCTV|中央电视台|央视)[-]?4(?:ASIA|亚洲)");
+    private static final Pattern CCTV_STANDARD = Pattern.compile(
+            "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS)");
+
+    private static String[][] normalizedAliases(String[][] aliases) {
+        String[][] result = new String[aliases.length][];
+        for (int i = 0; i < aliases.length; i++) {
+            result[i] = new String[aliases[i].length];
+            for (int j = 0; j < aliases[i].length; j++) {
+                result[i][j] = normalize(aliases[i][j]);
+            }
+        }
+        return result;
+    }
+
     private static final String[] AMBIGUOUS_LOCAL_CITY_ALIASES = {
         "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU", "CHAOYANG", "台州", "玉林", "苏州", "福州", "朝阳"
     };
@@ -91,16 +113,18 @@ final class ChannelNamePolicy {
         if (normalized.isEmpty()) return "";
         String matchedProvince = "";
         boolean explicitProvince = false;
-        for (String[] aliases : LOCAL_CITY_ALIASES) {
+        for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
+            String[] aliases = LOCAL_CITY_ALIASES[row];
+            String[] normalizedAliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
             // Some feeds expose only the province in group-title rather than a city.
-            if (containsAlias(metadata, aliases[0], normalized)) {
+            if (containsNormalizedAlias(metadata, normalizedAliases[0], normalized)) {
                 if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
                 matchedProvince = aliases[0];
                 explicitProvince = true;
             }
             for (int i = 1; i < aliases.length; i++) {
-                String alias = normalize(aliases[i]);
-                if (!containsAlias(metadata, aliases[i], normalized)) continue;
+                String alias = normalizedAliases[i];
+                if (!containsNormalizedAlias(metadata, alias, normalized)) continue;
                 boolean ambiguousCity = false;
                 for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
                     if (alias.equals(ambiguous)) {
@@ -131,11 +155,13 @@ final class ChannelNamePolicy {
         }
         java.util.LinkedHashSet<String> chineseMatches = new java.util.LinkedHashSet<>();
         java.util.LinkedHashSet<String> englishMatches = new java.util.LinkedHashSet<>();
-        for (String[] aliases : LOCAL_CITY_ALIASES) {
+        for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
+            String[] aliases = LOCAL_CITY_ALIASES[row];
+            String[] normalizedAliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
             if (!province.equals(aliases[0])) continue;
             for (int i = 1; i < aliases.length; i++) {
-                if (!containsAlias(metadata, aliases[i], normalized)) continue;
-                String alias = normalize(aliases[i]);
+                if (!containsNormalizedAlias(metadata, normalizedAliases[i], normalized)) continue;
+                String alias = normalizedAliases[i];
                 if (alias.matches(".*[\\u4E00-\\u9FFF].*")) chineseMatches.add(alias);
                 else englishMatches.add(alias);
             }
@@ -153,7 +179,10 @@ final class ChannelNamePolicy {
     }
 
     private static boolean containsAlias(String metadata, String alias, String normalizedMetadata) {
-        String normalizedAlias = normalize(alias);
+        return containsNormalizedAlias(metadata, normalize(alias), normalizedMetadata);
+    }
+
+    private static boolean containsNormalizedAlias(String metadata, String normalizedAlias, String normalizedMetadata) {
         if (normalizedAlias.isEmpty()) return false;
         // Chinese names are naturally contiguous. English city names must be
         // whole tokens so "Xiangyang" cannot accidentally match "Xian".
@@ -193,15 +222,11 @@ final class ChannelNamePolicy {
                 .replaceAll("[\\s_—–·•]", "");
         // Match special variants before the generic numeric form: otherwise
         // CCTV-4K and CCTV-4 Asia collapse into the ordinary CCTV-4 identity.
-        java.util.regex.Matcher ultraHd = Pattern.compile(
-                "(?:CCTV|中央电视台|央视)[-]?(4K|8K)").matcher(value);
+        java.util.regex.Matcher ultraHd = CCTV_ULTRA_HD.matcher(value);
         if (ultraHd.find()) return "CCTV-" + ultraHd.group(1);
-        java.util.regex.Matcher asia = Pattern.compile(
-                "(?:CCTV|中央电视台|央视)[-]?4(?:ASIA|亚洲)").matcher(value);
+        java.util.regex.Matcher asia = CCTV_ASIA.matcher(value);
         if (asia.find()) return "CCTV-4 Asia";
-        java.util.regex.Matcher matcher = Pattern.compile(
-                "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS)")
-                .matcher(value);
+        java.util.regex.Matcher matcher = CCTV_STANDARD.matcher(value);
         if (matcher.find()) return "CCTV-" + matcher.group(1);
         return "";
     }
@@ -209,15 +234,17 @@ final class ChannelNamePolicy {
     static String canonicalSatelliteName(String name) {
         String normalized = normalize(name);
         if (normalized.isEmpty()) return "";
-        for (String[] aliases : SATELLITE_ALIASES) {
+        for (int row = 0; row < SATELLITE_ALIASES.length; row++) {
+            String[] aliases = SATELLITE_ALIASES[row];
+            String[] normalizedAliases = NORMALIZED_SATELLITE_ALIASES[row];
             // Match the canonical Chinese label as well as English aliases.
             // Public M3U feeds sometimes repeat a station name many times in
             // one display label (for example "四川卫视 四川卫视 ...").
             // Returning that raw label creates a visibly corrupted channel row.
-            String canonical = normalize(aliases[0]);
+            String canonical = normalizedAliases[0];
             if (normalized.contains(canonical)) return aliases[0];
             for (int i = 1; i < aliases.length; i++) {
-                if (normalized.contains(normalize(aliases[i]))) return aliases[0];
+                if (normalized.contains(normalizedAliases[i])) return aliases[0];
             }
         }
         return name != null && name.contains("卫视") ? name.trim() : "";
