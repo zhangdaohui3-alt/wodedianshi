@@ -81,6 +81,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView channelNameOverlay;
   private TextView networkSpeedOverlay;
   private Runnable networkSpeedUpdater;
+  // Detect pauses in Activity input responsiveness while the video decoder may
+  // continue playing normally. This is a delayed UI heartbeat, not a polling
+  // thread or a playback watchdog.
+  private Runnable liveUiStallProbe;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
   private Button hoveredVodCategoryButton;
@@ -1158,7 +1162,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
     String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){showProvinceDialog();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();refresh();if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())v.requestFocus();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){info.setText("请选择国家或地区…");showCountryDialog();return;}if(name.equals("地方")){showProvinceDialog();return;}if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();v.requestFocus();refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
     Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady)return;new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置","查看直播诊断记录"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else if(w==13)configureRemoteParentLock();else showLiveDiagnostics();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
@@ -4462,6 +4466,29 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void closeFullscreenChannelMenu(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())fullscreenMenuPopup.dismiss();
   }
+  private void startLiveUiStallProbe(){
+    if(liveUiStallProbe!=null)return;
+    final long[] expectedAt={android.os.SystemClock.uptimeMillis()+1000L};
+    liveUiStallProbe=new Runnable(){
+      @Override public void run(){
+        long now=android.os.SystemClock.uptimeMillis();
+        long late=Math.max(0L,now-expectedAt[0]);
+        if(late>=3000L&&fullScreenPlayback&&activityStarted){
+          String detail="uiDelayMs="+late+" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
+              +" remoteDialog="+fullscreenRemoteDialogOpen;
+          android.util.Log.w("MyTVInput",detail);
+          // Record only exceptional stalls, never each remote key or heartbeat.
+          saveLiveDiagnostic("LIVE_UI_DELAY",detail);
+        }
+        expectedAt[0]=now+1000L;
+        if(liveUiStallProbe!=null)uiHandler.postDelayed(this,1000L);
+      }
+    };
+    uiHandler.postDelayed(liveUiStallProbe,1000L);
+  }
+  private void stopLiveUiStallProbe(){
+    if(liveUiStallProbe!=null){uiHandler.removeCallbacks(liveUiStallProbe);liveUiStallProbe=null;}
+  }
   private void enterFullScreenPlayback(){
     if(fullScreenPlayback||rootLayout==null)return;
     fullScreenPlayback=true;
@@ -4495,9 +4522,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|
       View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     video.requestFocus();
+    startLiveUiStallProbe();
   }
   private void exitFullScreenPlayback(){
     if(!fullScreenPlayback||rootLayout==null)return;
+    stopLiveUiStallProbe();
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -4866,6 +4895,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchKeyEvent(KeyEvent event){
+    if(fullScreenPlayback&&event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
+      int receivedKey=event.getKeyCode();
+      if(receivedKey!=KeyEvent.KEYCODE_VOLUME_UP&&receivedKey!=KeyEvent.KEYCODE_VOLUME_DOWN
+          &&receivedKey!=KeyEvent.KEYCODE_VOLUME_MUTE)
+        android.util.Log.i("MyTVInput","live_key="+receivedKey
+            +" popup="+(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
+            +" remoteDialog="+fullscreenRemoteDialogOpen);
+    }
     // While the parental overlay is active, consume all keys delivered to this app window.
     // Android reserves HOME for the system; ordinary apps cannot reliably intercept it.
     if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return true;
@@ -6782,6 +6819,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   protected void onStart(){
     super.onStart();
     activityStarted=true;
+    if(fullScreenPlayback)startLiveUiStallProbe();
     setSourceUpdateActivityActive(true);
     if(currentVodPanel!=null)setSourceUpdatePlaybackActive(true);
     if(startupDataReady){
@@ -6974,6 +7012,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
+  protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
+  protected void onDestroy(){stopLiveUiStallProbe();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
 }
