@@ -19,6 +19,17 @@ public final class SourceUpdateSchedulePolicy {
         return appForeground && !manual;
     }
 
+    /**
+     * First-install exception: an empty Room catalogue cannot become usable if
+     * every discovery run waits for the TV app to leave the foreground.
+     * Playback activity is checked by the worker separately before this gate.
+     */
+    public static boolean shouldDeferForegroundDiscovery(boolean appForeground,
+            boolean manual, boolean initialDiscoveryChain, boolean hasPublishedChannels) {
+        return shouldDeferForegroundAutoUpdate(appForeground, manual)
+                && !(initialDiscoveryChain && !hasPublishedChannels);
+    }
+
     /** A first-run rebuild is complete only after every candidate and feed was covered. */
     public static boolean isInitialDiscoveryComplete(int candidateCount, int scannedCount,
                                                       int failedFeedCount) {
