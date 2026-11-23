@@ -9,6 +9,7 @@ import android.os.Looper;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
@@ -55,22 +56,38 @@ public final class LibVlcPlaybackEngine {
         }
         CountDownLatch completed = new CountDownLatch(1);
         AtomicReference<RuntimeException> failure = new AtomicReference<>();
-        new Handler(Looper.getMainLooper()).post(() -> {
+        // When an 8-second wait expires, the already-posted View operation
+        // must not unexpectedly attach an obsolete VLC Surface minutes later.
+        final AtomicBoolean abandoned = new AtomicBoolean(false);
+        final Handler handler = new Handler(Looper.getMainLooper());
+        final Runnable dispatched = () -> {
             try {
-                operation.run();
+                if (!abandoned.get()) operation.run();
             } catch (RuntimeException error) {
                 failure.set(error);
             } finally {
                 completed.countDown();
             }
-        });
+        };
+        final long started = android.os.SystemClock.elapsedRealtime();
+        if (!handler.post(dispatched)) {
+            throw new IllegalStateException("Could not schedule VLC video surface on UI thread");
+        }
         try {
             if (!completed.await(8, TimeUnit.SECONDS)) {
+                abandoned.set(true);
+                handler.removeCallbacks(dispatched);
                 throw new IllegalStateException("Timed out waiting for VLC video surface on UI thread");
             }
         } catch (InterruptedException interrupted) {
+            abandoned.set(true);
+            handler.removeCallbacks(dispatched);
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while attaching VLC video surface", interrupted);
+        }
+        long waited = android.os.SystemClock.elapsedRealtime() - started;
+        if (waited >= 150L) {
+            android.util.Log.w("MyTVVLC", "VLC_VIEW_DISPATCH_SLOW waitMs=" + waited);
         }
         if (failure.get() != null) throw failure.get();
     }

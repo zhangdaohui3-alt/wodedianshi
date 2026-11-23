@@ -5738,34 +5738,67 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private String lastAutoFailoverMediaId="";
   private void releaseLivePlayerSafely(){
     ExoPlayer old=player;
-    // Invalidate callbacks before touching the player; teardown can race a
-    // channel change or an OEM lifecycle callback.
+    // Invalidate callbacks first. Preserve independent cleanup stages even when
+    // a vendor codec call fails; stage timing is diagnostic, not a new teardown path.
     player=null;
+    final long begun=android.os.SystemClock.elapsedRealtime();
+    final boolean onUiThread=android.os.Looper.myLooper()==android.os.Looper.getMainLooper();
     if(old==null){
       if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
         saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
       }}
+      long detachMs=android.os.SystemClock.elapsedRealtime()-begun;
+      if(detachMs>=150L){
+        android.util.Log.w("MyTVPlayback","media3_empty_detach_ms="+detachMs
+            +" uiThread="+onUiThread);
+        if(detachMs>=500L)saveLiveDiagnostic("MEDIA3_DETACH_SLOW",
+            "emptyPlayerDetachMs="+detachMs+" uiThread="+onUiThread);
+      }
       return;
     }
+    long checkpoint=begun;
     try{old.setPlayWhenReady(false);}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
     }
+    long disableMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    checkpoint=android.os.SystemClock.elapsedRealtime();
     try{old.pause();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_PAUSE_RELEASE_ERROR",error.getClass().getSimpleName());
     }
+    long pauseMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    checkpoint=android.os.SystemClock.elapsedRealtime();
     if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
     }}
-    // Keep every cleanup stage independent. A vendor pause/stop failure must
-    // not skip clearMediaItems() or release(), which could leave audio alive.
+    long detachMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    // Preserve stop/clear/release independently. A failed stop must not leave
+    // stale audio or skip releasing the Media3 codec/renderers.
+    checkpoint=android.os.SystemClock.elapsedRealtime();
     try{old.stop();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
     }
+    long stopMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    checkpoint=android.os.SystemClock.elapsedRealtime();
     try{old.clearMediaItems();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
     }
+    long clearMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    checkpoint=android.os.SystemClock.elapsedRealtime();
     try{old.release();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_PLAYER_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    long releaseMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    long totalMs=android.os.SystemClock.elapsedRealtime()-begun;
+    // Healthy teardown produces no diagnostic writes. Capture a single
+    // sanitized summary only when there is measurable input-latency risk.
+    if(totalMs>=150L||disableMs>=100L||pauseMs>=100L||detachMs>=100L
+        ||stopMs>=100L||clearMs>=100L||releaseMs>=100L){
+      String summary="totalMs="+totalMs+" disableMs="+disableMs
+          +" pauseMs="+pauseMs+" detachMs="+detachMs+" stopMs="+stopMs
+          +" clearMs="+clearMs+" releaseMs="+releaseMs
+          +" uiThread="+onUiThread;
+      android.util.Log.w("MyTVPlayback","MEDIA3_RELEASE_TIMING "+summary);
+      if(totalMs>=500L)saveLiveDiagnostic("MEDIA3_RELEASE_SLOW",summary);
     }
   }
   private void cancelBufferingFallback(){
