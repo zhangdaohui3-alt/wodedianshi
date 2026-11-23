@@ -6344,9 +6344,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(ordered.equals(c.backups))return;
     c.backups.clear();c.backups.addAll(ordered);
     int ix=c.backups.indexOf(active);c.activeSource=ix>=0?ix:0;
-    persist();
-    // Source order is part of the Room shadow: activeSource is a priority index.
-    // Re-import the committed snapshot so the relation order and index stay aligned.
+    // Quality re-ranking is a transient playback preference, not a channel
+    // catalogue edit. Persisting here rewrote the entire Room directory during
+    // every channel zap whose source scores changed, causing I/O contention.
+    // SourceMemoryStore and QoE scores preserve real success/failure history;
+    // the order is reconstructed from those metrics when the channel is tuned.
 
   }
   private void toggleNetworkSpeed(){
