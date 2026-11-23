@@ -86,6 +86,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // continue playing normally. This is a delayed UI heartbeat, not a polling
   // thread or a playback watchdog.
   private Runnable liveUiStallProbe;
+  // Independent diagnostic sampler: a delayed Handler callback alone cannot
+  // capture the main thread's stack while it is blocked.
+  private volatile long mainThreadSampleGeneration=0L;
+  private volatile Thread mainThreadSampleWorker;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
   private Button hoveredVodCategoryButton;
@@ -4571,6 +4575,63 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void closeFullscreenChannelMenu(){
     if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())fullscreenMenuPopup.dismiss();
   }
+  // Runs only while this Activity is foreground. A single daemon samples the
+  // UI thread if a posted acknowledgement cannot run within 2.5 seconds.
+  // The sampler never waits from the UI thread, never touches a View, and never
+  // logs every input event. D6 Android 9 can use this without ExitInfo (API 30).
+  private void startMainThreadAnrSampler(){
+    if(mainThreadSampleWorker!=null&&mainThreadSampleWorker.isAlive())return;
+    final long generation=++mainThreadSampleGeneration;
+    Thread watcher=new Thread(()->{
+      while(generation==mainThreadSampleGeneration&&!Thread.currentThread().isInterrupted()){
+        final java.util.concurrent.CountDownLatch acknowledged=
+            new java.util.concurrent.CountDownLatch(1);
+        long postedAt=android.os.SystemClock.uptimeMillis();
+        if(!uiHandler.post(acknowledged::countDown))break;
+        try{
+          if(!acknowledged.await(2500L,java.util.concurrent.TimeUnit.MILLISECONDS)
+              &&generation==mainThreadSampleGeneration){
+            long waited=android.os.SystemClock.uptimeMillis()-postedAt;
+            StackTraceElement[] stack=android.os.Looper.getMainLooper()
+                .getThread().getStackTrace();
+            StringBuilder report=new StringBuilder("waitMs=").append(waited)
+                .append(" mainThread=");
+            Thread main=android.os.Looper.getMainLooper().getThread();
+            report.append(main.getState());
+            for(int i=0;i<Math.min(18,stack.length);i++)
+              report.append("\n#").append(i).append(' ').append(stack[i]);
+            String text=report.length()>2800?report.substring(0,2800):report.toString();
+            android.util.Log.e("MyTVANR","MAIN_THREAD_BLOCK_STACK "+text);
+            // Only one small snapshot is retained. Never store stream URLs or
+            // user input contents, and avoid fsync/commit on the blocked UI thread.
+            try{
+              getApplicationContext().getSharedPreferences("mytv",0)
+                  .edit().putString("last_main_thread_block_stack_v1",
+                      new java.util.Date().toString()+" | "+text).apply();
+            }catch(RuntimeException storageFailure){
+              android.util.Log.w("MyTVANR","Could not save main-thread sample",storageFailure);
+            }
+            // Do not generate repeated stack samples during the same freeze.
+            acknowledged.await(8000L,java.util.concurrent.TimeUnit.MILLISECONDS);
+          }
+          Thread.sleep(750L);
+        }catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();
+          break;
+        }
+      }
+    },"MyTV-ANR-Sampler");
+    watcher.setDaemon(true);
+    mainThreadSampleWorker=watcher;
+    watcher.start();
+  }
+  private void stopMainThreadAnrSampler(){
+    ++mainThreadSampleGeneration;
+    Thread watcher=mainThreadSampleWorker;
+    mainThreadSampleWorker=null;
+    if(watcher!=null)watcher.interrupt();
+  }
+
   private void startLiveUiStallProbe(){
     if(liveUiStallProbe!=null)return;
     final long[] expectedAt={android.os.SystemClock.uptimeMillis()+1000L};
@@ -5431,6 +5492,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Android 11+ exposes the previous process exit classification. This is the
   // most useful way to distinguish a Java crash, native codec crash and ANR after
   // Android has already killed the previous app process.
+  // A system ANR report may retain a readable trace on Android 11+.
+  // Never read the full trace on the main thread and never store unrelated
+  // process/thread information. The caller runs on the startup worker.
+  private String extractHistoricalAnrMainStack(java.io.InputStream stream)throws java.io.IOException{
+    if(stream==null)return "";
+    java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();
+    byte[] chunk=new byte[4096];
+    int total=0,count;
+    while(total<196608&&(count=stream.read(chunk,0,Math.min(chunk.length,196608-total)))>0){
+      output.write(chunk,0,count);
+      total+=count;
+    }
+    String text=new String(output.toByteArray(),java.nio.charset.StandardCharsets.UTF_8);
+    int start=text.indexOf("\"main\"");
+    if(start<0)return "";
+    int end=Math.min(text.length(),start+3600);
+    int next=text.indexOf("\n\n\"",start+6);
+    if(next>start&&next<end)end=next;
+    return text.substring(start,end)
+        .replaceAll("(?i)https?://\\S+","[URL]");
+  }
   private void recordPreviousProcessExitReason(){
     if(android.os.Build.VERSION.SDK_INT<30)return;
     try{
@@ -5440,6 +5522,38 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long reported=prefs.getLong("last_reported_exit_timestamp_v1",0L);
       java.util.List<android.app.ApplicationExitInfo> exits=manager.getHistoricalProcessExitReasons(getPackageName(),0,8);
       if(exits==null||exits.isEmpty())return;
+      // Recover the trace from an already-reported ANR as well. The previous
+      // build persisted the exit summary and marked its timestamp, but did not
+      // try ApplicationExitInfo.getTraceInputStream().
+      long stackRecordedAt=prefs.getLong("last_anr_trace_timestamp_v1",0L);
+      for(android.app.ApplicationExitInfo exit:exits){
+        if(exit==null||exit.getReason()!=android.app.ApplicationExitInfo.REASON_ANR
+            ||exit.getTimestamp()<=0L||exit.getTimestamp()==stackRecordedAt)continue;
+        // Never place a binder trace read ahead of the Room restore on the
+        // startup executor; schedule it independently after initial UI paint.
+        final android.app.ApplicationExitInfo anrExit=exit;
+        Thread traceWorker=new Thread(()->{
+          try{
+            Thread.sleep(3500L);
+            try(java.io.InputStream trace=anrExit.getTraceInputStream()){
+              String mainStack=extractHistoricalAnrMainStack(trace);
+              if(!mainStack.isEmpty()){
+                prefs.edit().putString("last_anr_historical_main_stack_v1",
+                        new java.util.Date(anrExit.getTimestamp()).toString()+" | "+mainStack)
+                    .putLong("last_anr_trace_timestamp_v1",anrExit.getTimestamp()).apply();
+                android.util.Log.i("MyTVANR","Recovered historical main-thread ANR trace");
+              }
+            }
+          }catch(InterruptedException interrupted){
+            Thread.currentThread().interrupt();
+          }catch(java.io.IOException|RuntimeException traceError){
+            android.util.Log.w("MyTVANR","Historical ANR trace unavailable",traceError);
+          }
+        },"MyTV-ExitTrace");
+        traceWorker.setDaemon(true);
+        traceWorker.start();
+        break;
+      }
       for(android.app.ApplicationExitInfo exit:exits){
         if(exit==null||exit.getTimestamp()<=reported)continue;
         int reason=exit.getReason();
@@ -5479,8 +5593,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
     String previousExit=diagnostics.getString("previous_process_exit_v1","");
     if(!previousExit.isEmpty())details+="\n\n===== 上一次进程退出原因（Android 11+ 系统记录） =====\n"+previousExit;
+    String historicalAnrStack=diagnostics.getString("last_anr_historical_main_stack_v1","");
+    if(!historicalAnrStack.isEmpty())details+="\n\n===== Android 11+ 历史 ANR 的主线程调用堆栈 =====\n"+historicalAnrStack;
     String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
     if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
+    String blockedStack=diagnostics.getString("last_main_thread_block_stack_v1","");
+    if(!blockedStack.isEmpty())details+="\n\n===== 主线程超过2.5秒未响应时的调用堆栈 =====\n"+blockedStack;
     final String copyDetails=details;
     new AlertDialog.Builder(this).setTitle("直播诊断记录")
         .setMessage(copyDetails+"\n\n提示：点击“复制”后可把记录发给我；记录不包含完整播放地址。")
@@ -6940,6 +7058,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   protected void onStart(){
     super.onStart();
     activityStarted=true;
+    startMainThreadAnrSampler();
     startLiveUiStallProbe();
     setSourceUpdateActivityActive(true);
     if(currentVodPanel!=null)setSourceUpdatePlaybackActive(true);
@@ -7197,6 +7316,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
-  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);}
+  protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
