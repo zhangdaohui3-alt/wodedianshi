@@ -589,8 +589,23 @@ public class SourceUpdateWorker extends Worker {
         // retry an exhausted, unpublishable build forever merely because the TV
         // Activity happens to remain open; discard staging and retain the live DB.
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
-        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_full_rebuild_active");
-        com.wodedianshi.tv.db.AppStateStore.remove(getApplicationContext(),"source_initial_has_validated_source");
+        // A failed full scan must not preserve per-feed "done" flags or cursors.
+        // Otherwise the next rebuild may start with every feed already exhausted,
+        // see no candidates, and never retry discovery after network recovery.
+        com.wodedianshi.tv.db.AppStateEditor failedBuildReset=
+            new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
+        for(int feed=0;feed<feeds.length;feed++){
+          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+        }
+        failedBuildReset.remove("source_full_rebuild_active")
+            .remove("source_full_rebuild_feed_fingerprint")
+            .remove("source_initial_has_validated_source")
+            .remove("source_initial_discovery_fingerprint")
+            .remove("source_initial_discovery_scanned")
+            .remove("source_feed_batch_fingerprint")
+            .remove("source_feed_batch_scanned")
+            .putInt("source_initial_next_feed_index",0)
+            .apply();
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
             :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
