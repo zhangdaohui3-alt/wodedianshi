@@ -271,10 +271,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(source==null||source.isEmpty())return;
       if(backups==null)backups=new ArrayList<>();
       if(!backups.contains(source))backups.add(source);
-      if("china".equals(scope)||"global".equals(scope)||"custom".equals(scope)){
+      if(ChannelCatalogueScopePolicy.isRetainableScope(scope)){
         HashSet<String> scopes=backupSourceScopes.get(source);
         if(scopes==null){scopes=new HashSet<>();backupSourceScopes.put(source,scopes);}
         scopes.add(scope);sourceScopes.add(scope);
+        // The country/state/city playlist also belongs to the appropriate
+        // global or China base directory. Persist both tags on its actual URL,
+        // not just a temporary channel-level flag that the worker can erase.
+        if(scope.startsWith("geo:")){
+          String base=RegionCategoryPolicy.catalogueScope(
+              name+" "+tvgName+" "+tvgId,group,"global");
+          scopes.add(base);sourceScopes.add(base);
+        }
       }
     }
     void mergeBackupOwnership(Channel other){
@@ -4248,7 +4256,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           try(InputStream input=connection.getInputStream()){playlist=read(input);}
           if(Thread.currentThread().isInterrupted()||request!=geoDirectoryRequestGeneration)return;
           final HashSet<String> downloaded=new HashSet<>();
-          parse(playlist,downloaded,"global");
+          // Attach the exact country/state/city scope to each parsed URL.
+          // Previously only channel-level geo labels were set, which vanished
+          // when SourceUpdateWorker recomputed labels from URL ownership.
+          parse(playlist,downloaded,geoScope);
           // Empty, malformed or unavailable remote playlists must never overwrite
           // a nonempty saved destination filter.
           if(downloaded.isEmpty()){
@@ -4258,14 +4269,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             });
             return;
           }
-          synchronized(channels){
-            for(Channel channel:channels){
-              if(channel!=null&&downloaded.contains(channel.key())){
-                if(channel.sourceScopes==null)channel.sourceScopes=new HashSet<>();
-                channel.sourceScopes.add(geoScope);
-              }
-            }
-          }
+          // Geo ownership is already written per URL by addBackupSource().
+          // Avoid a second full-catalogue lock/scan while the programme runs.
           final boolean saved=persist();
           final HashSet<String> updated=savedGeoChannelKeys(geoScope,country);
           runOnUiThread(()->{
