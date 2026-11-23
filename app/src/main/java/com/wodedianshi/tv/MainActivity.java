@@ -5492,6 +5492,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Android 11+ exposes the previous process exit classification. This is the
   // most useful way to distinguish a Java crash, native codec crash and ANR after
   // Android has already killed the previous app process.
+  // A system ANR report may retain a readable trace on Android 11+.
+  // Never read the full trace on the main thread and never store unrelated
+  // process/thread information. The caller runs on the startup worker.
+  private String extractHistoricalAnrMainStack(java.io.InputStream stream)throws java.io.IOException{
+    if(stream==null)return "";
+    java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();
+    byte[] chunk=new byte[4096];
+    int total=0,count;
+    while(total<196608&&(count=stream.read(chunk,0,Math.min(chunk.length,196608-total)))>0){
+      output.write(chunk,0,count);
+      total+=count;
+    }
+    String text=new String(output.toByteArray(),java.nio.charset.StandardCharsets.UTF_8);
+    int start=text.indexOf("\"main\"");
+    if(start<0)return "";
+    int end=Math.min(text.length(),start+3600);
+    int next=text.indexOf("\n\n\"",start+6);
+    if(next>start&&next<end)end=next;
+    return text.substring(start,end)
+        .replaceAll("(?i)https?://\\S+","[URL]");
+  }
   private void recordPreviousProcessExitReason(){
     if(android.os.Build.VERSION.SDK_INT<30)return;
     try{
@@ -5501,6 +5522,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long reported=prefs.getLong("last_reported_exit_timestamp_v1",0L);
       java.util.List<android.app.ApplicationExitInfo> exits=manager.getHistoricalProcessExitReasons(getPackageName(),0,8);
       if(exits==null||exits.isEmpty())return;
+      // Recover the trace from an already-reported ANR as well. The previous
+      // build persisted the exit summary and marked its timestamp, but did not
+      // try ApplicationExitInfo.getTraceInputStream().
+      long stackRecordedAt=prefs.getLong("last_anr_trace_timestamp_v1",0L);
+      for(android.app.ApplicationExitInfo exit:exits){
+        if(exit==null||exit.getReason()!=android.app.ApplicationExitInfo.REASON_ANR
+            ||exit.getTimestamp()<=0L||exit.getTimestamp()==stackRecordedAt)continue;
+        try(java.io.InputStream trace=exit.getTraceInputStream()){
+          String mainStack=extractHistoricalAnrMainStack(trace);
+          if(!mainStack.isEmpty()){
+            prefs.edit().putString("last_anr_historical_main_stack_v1",
+                    new java.util.Date(exit.getTimestamp()).toString()+" | "+mainStack)
+                .putLong("last_anr_trace_timestamp_v1",exit.getTimestamp()).apply();
+            android.util.Log.i("MyTVANR","Recovered historical main-thread ANR trace");
+            break;
+          }
+        }catch(java.io.IOException|RuntimeException traceError){
+          android.util.Log.w("MyTVANR","Historical ANR trace unavailable",traceError);
+        }
+      }
       for(android.app.ApplicationExitInfo exit:exits){
         if(exit==null||exit.getTimestamp()<=reported)continue;
         int reason=exit.getReason();
@@ -5540,6 +5581,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!crash.isEmpty())details+="\n\n===== 最近一次未捕获崩溃（脱敏） =====\n"+crash;
     String previousExit=diagnostics.getString("previous_process_exit_v1","");
     if(!previousExit.isEmpty())details+="\n\n===== 上一次进程退出原因（Android 11+ 系统记录） =====\n"+previousExit;
+    String historicalAnrStack=diagnostics.getString("last_anr_historical_main_stack_v1","");
+    if(!historicalAnrStack.isEmpty())details+="\n\n===== Android 11+ 历史 ANR 的主线程调用堆栈 =====\n"+historicalAnrStack;
     String nativeStage=diagnostics.getString("last_native_engine_stage_v1","");
     if(!nativeStage.isEmpty())details+="\n\n===== 最近一次原生播放器关键阶段（不代表已确认崩溃） =====\n"+nativeStage;
     String blockedStack=diagnostics.getString("last_main_thread_block_stack_v1","");
