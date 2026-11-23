@@ -14,6 +14,14 @@ public final class ChannelCatalogueScopePolicy {
                 && !requestedScope.isEmpty() && channelScopes.contains(requestedScope);
     }
 
+    /** Explicit country/state/city playlist provenance may survive a Room refresh
+     * only while at least one retained backup still owns that directory scope. */
+    public static boolean isRetainableScope(String scope) {
+        if ("china".equals(scope) || "global".equals(scope) || "custom".equals(scope))
+            return true;
+        return scope != null && scope.matches("geo:(countries|subdivisions|cities):[a-z0-9-]+");
+    }
+
     /**
      * Rebuilds channel-level scope membership from the retained URL ownership map.
      * Removing the last source owned by a region must also remove that region from
@@ -30,7 +38,7 @@ public final class ChannelCatalogueScopePolicy {
             Set<String> scopes = sourceOwnership.get(url);
             if (scopes == null) continue;
             for (String scope : scopes) {
-                if ("china".equals(scope) || "global".equals(scope) || "custom".equals(scope)) {
+                if (isRetainableScope(scope)) {
                     result.add(scope);
                 }
             }
