@@ -5187,7 +5187,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String remoteChannelOrderKey(String category,String query,boolean favoritesOnly,
       long filterGeneration,int channelCount,int favoritesHash){
-    return filterGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
+    // The channel array may be rebuilt without changing its size.
+    // Include mutation epoch so old positional zapping indexes cannot be reused.
+    return filterGeneration+"|"+catalogueMutationGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
   private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
@@ -5229,6 +5231,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
     final boolean favoritesOnly=favoriteMode;
     final long filterGeneration=catalogueFilterGeneration;
+    final long mutationGeneration=catalogueMutationGeneration;
     final int count; synchronized(channels){count=channels.size();}
     final int favoritesHash=favorites.hashCode();
     final String key=remoteChannelOrderKey(category,query,favoritesOnly,filterGeneration,count,favoritesHash);
@@ -5245,7 +5248,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int currentCount; synchronized(channels){currentCount=channels.size();}
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
-      if(catalogueFilterGeneration==filterGeneration&&favoriteMode==favoritesOnly
+      if(catalogueFilterGeneration==filterGeneration
+          &&catalogueMutationGeneration==mutationGeneration
+          &&favoriteMode==favoritesOnly
           &&currentCount==count&&favorites.hashCode()==favoritesHash){
         cachedRemoteChannelOrder=ready;
         uiHandler.post(()->{
