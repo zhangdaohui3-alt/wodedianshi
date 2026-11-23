@@ -12,8 +12,8 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, true));
     }
 
-    @Test public void missingAudioAloneTriggersFailoverEvenWhenVideoIsPresent() {
-        assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, false));
+    @Test public void missingAudioAloneDoesNotDiscardVideo() {
+        assertFalse(TrackHealthPolicy.shouldFailoverForTrackHealth(true, false));
     }
 
     @Test public void healthyTracksDoNotFailover() {
