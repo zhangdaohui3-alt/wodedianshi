@@ -668,6 +668,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         favorites.addAll(roomSnapshot.favorites);
       }
       rebuildChannelIndexes();
+      loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
       catalogueSnapshotTrusted=true;
       int sourceCount=countChannelSources();
       logCatalogueMemory("room_restore_ready",roomSnapshot.channelCount,sourceCount,
@@ -1152,6 +1153,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return cataloguePersistLastSuccess;
     }
   }
+  // The exact Room checkpoint backing the currently loaded in-memory directory.
+  // A newer SourceUpdateWorker checkpoint makes stale UI saves fail closed.
+  private volatile long loadedRoomCatalogueVersion=-1L;
+
   private boolean persistNow(){
     if(!catalogueSnapshotTrusted){
       android.util.Log.e("MyTVCatalogue","Room save blocked because startup catalogue is not trusted");
@@ -1161,6 +1166,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long started=android.os.SystemClock.elapsedRealtime();
     int sourceCount=0;
     try{
+      // Capture the Room baseline BEFORE copying channels. If an onStart Room
+      // reload installs a newer directory between the copy and the commit,
+      // reading the baseline afterwards could falsely authorize stale rows.
+      final long expectedVersion=loadedRoomCatalogueVersion;
       long copyStarted=android.os.SystemClock.elapsedRealtime();
       ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
       if(rows==null)throw new IllegalStateException("Room snapshot changed repeatedly during bounded copy");
@@ -1172,14 +1181,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
-      int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecords(
-          getApplicationContext(),rows,favoriteSnapshot);
-      if(written<=0)throw new IllegalStateException("Room wrote zero channel rows");
+      // The writer's transaction performs the final compare-and-swap. This
+      // early guard avoids even attempting an inconsistent in-memory copy.
+      if(expectedVersion!=loadedRoomCatalogueVersion)
+        throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
+      com.wodedianshi.tv.db.RoomCatalogueWriter.CommitResult commit=
+          com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecordsAtVersion(
+              getApplicationContext(),rows,favoriteSnapshot,expectedVersion);
+      if(commit.channelCount<=0)throw new IllegalStateException("Room wrote zero channel rows");
+      // Use this transaction's exact checkpoint, never a later database read.
+      loadedRoomCatalogueVersion=commit.catalogueVersion;
       saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM",
-          "saved "+written+" channels, "+sourceCount+" source routes and "+favoriteSnapshot.size()+" favorites");
-      logCatalogueMemory("room_persist_done",written,sourceCount,
+          "saved "+commit.channelCount+" channels, "+sourceCount+" source routes and "
+              +favoriteSnapshot.size()+" favorites version="+commit.catalogueVersion);
+      logCatalogueMemory("room_persist_done",commit.channelCount,sourceCount,
           android.os.SystemClock.elapsedRealtime()-started);
       return true;
+    }catch(com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException stale){
+      // A background source refresh won the transaction. Never overwrite its
+      // newer complete directory with old Activity rows or blindly retry.
+      android.util.Log.w("MyTVCatalogue","ROOM_STALE_SNAPSHOT_REJECTED"
+          +" baseVersion="+loadedRoomCatalogueVersion+"; newer Room data retained");
+      saveLiveDiagnostic("ROOM_STALE_SNAPSHOT_REJECTED",
+          "检测到后台已更新完整频道目录，拒绝旧目录覆盖；播放不受影响");
+      uiHandler.post(()->{
+        if(!isFinishing()&&!isDestroyed()&&info!=null)
+          info.setText("已保护后台更新的完整频道目录，本次旧目录保存被拒绝；"
+              +"重新打开应用后加载最新快照。");
+      });
+      return false;
     }catch(Throwable failure){
       android.util.Log.e("MyTVCatalogue","Room catalogue transaction failed",failure);
       saveLiveDiagnostic("CATALOGUE_PERSIST_ROOM_ERROR",
@@ -7394,6 +7424,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               channelsByUrl.putAll(prepared.byUrl);
               channelsByIdentity.clear();
               channelsByIdentity.putAll(prepared.byIdentity);
+              // A Room reload can replace channels between two bounded
+              // snapshotChannelRows() batches. Invalidate those mixed copies
+              // even if no caller explicitly requested a catalogue save.
+              synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
+              loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
               if(!selectedIdentity.isEmpty()){
                 Integer found=prepared.positionByIdentity.get(selectedIdentity);
                 if(found==null)found=prepared.positionByNameGroup.get(

@@ -24,11 +24,45 @@ public final class RoomCatalogueWriter {
         public final HashMap<String, HashSet<String>> backupSourceScopes = new HashMap<>();
     }
 
-    /** Apply an exact snapshot without dropping and recreating the whole database. */
-    public static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys) {
-        return writeRecords(context, snapshot, favoriteKeys, -1L, false);
+    /** The precise checkpoint created by a successful optimistic Room commit.
+     * Do not re-read the version after commit: another worker may publish a
+     * newer version between the transaction and that read. */
+    public static final class CommitResult {
+        public final int channelCount;
+        public final long catalogueVersion;
+        CommitResult(int channelCount, long catalogueVersion) {
+            this.channelCount = channelCount;
+            this.catalogueVersion = catalogueVersion;
+        }
     }
+
+    public static final class StaleCatalogueException extends IllegalStateException {
+        public StaleCatalogueException() {
+            super("Room catalogue changed during source scan; stale snapshot rejected");
+        }
+    }
+
+    /** MainActivity must pass the version of the in-memory Room snapshot.
+     * A stale in-memory catalogue is rejected atomically instead of overwriting
+     * newer SourceUpdateWorker country/local channels.
+     */
+    public static CommitResult writeRecordsAtVersion(Context context,
+            List<ChannelSnapshot> snapshot, java.util.Set<String> favoriteKeys,
+            long expectedCatalogueVersion) {
+        if (expectedCatalogueVersion < 0L) {
+            throw new IllegalArgumentException("Expected Room catalogue version is not initialized");
+        }
+        final long[] committedAt = {-1L};
+        int written = writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+                false, false, committedAt);
+        if (committedAt[0] < 0L) throw new IllegalStateException("Room commit lacked catalogue checkpoint");
+        return new CommitResult(written, committedAt[0]);
+    }
+
+    // Deliberately no public unversioned writeRecords overload. Every ordinary
+    // Activity catalogue save must use writeRecordsAtVersion() so an older
+    // in-memory list can never silently replace the SourceUpdateWorker snapshot.
+    // Only first-install initialization uses the unguarded private path.
 
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
@@ -51,6 +85,14 @@ public final class RoomCatalogueWriter {
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization) {
+        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+                clearBuildRowsOnCommit, allowEmptyInitialization, null);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+            long[] committedAt) {
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty() && !allowEmptyInitialization) {
             throw new IllegalArgumentException("refusing to commit an empty catalogue");
@@ -71,9 +113,9 @@ public final class RoomCatalogueWriter {
                         "Empty Room initialization is allowed only for a genuinely fresh database");
             }
             if (expectedCatalogueVersion >= 0L
-                    && (checkpoint == null || checkpoint.completedAt != expectedCatalogueVersion)) {
-                throw new IllegalStateException(
-                        "Room catalogue changed during source scan; stale snapshot rejected");
+                    && !CatalogueVersionPolicy.matches(expectedCatalogueVersion,
+                            checkpoint == null ? null : checkpoint.completedAt)) {
+                throw new StaleCatalogueException();
             }
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
@@ -227,6 +269,9 @@ public final class RoomCatalogueWriter {
                     checkpoint == null
                             ? (allowEmptyInitialization ? "room_empty_initialization_v1" : "room_native_seed_v1")
                             : checkpoint.catalogueFingerprint));
+            // This value is written in the same transaction as the rows and
+            // is the only version that the committing Activity may adopt.
+            if (committedAt != null) committedAt[0] = completedAt;
             if (clearBuildRowsOnCommit) {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.

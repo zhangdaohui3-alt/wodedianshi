@@ -1,6 +1,7 @@
 package com.wodedianshi.tv.db;
 
 import android.content.Context;
+import com.wodedianshi.tv.ChannelCatalogueScopePolicy;
 import org.json.JSONArray;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,7 +57,11 @@ public final class RoomCatalogueReader {
                 JSONArray values = new JSONArray(json);
                 for (int i = 0; i < values.length(); i++) {
                     String scope = values.optString(i, "");
-                    if ("china".equals(scope) || "global".equals(scope) || "custom".equals(scope)) {
+                    // Preserve the exact country/state/city provenance that
+                    // RoomCatalogueWriter already persisted with each backup.
+                    // The earlier whitelist silently discarded all geo:* tags
+                    // on every Room restart/reload.
+                    if (ChannelCatalogueScopePolicy.isRetainableScope(scope)) {
                         result.add(scope);
                     }
                 }
