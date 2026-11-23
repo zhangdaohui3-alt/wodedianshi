@@ -21,6 +21,13 @@ public class ChannelNamePolicyTest {
                 "高清 湖南卫视 湖南卫视 直播"));
     }
 
+    @Test public void fujianSatelliteEpGLabelDoesNotRepeatAcrossRows() {
+        assertEquals("福建东南卫视", ChannelNamePolicy.canonicalSatelliteName(
+                "E卫视 福建卫视 FUJIANWEISHI.SATELLITE"));
+        assertEquals("福建东南卫视", ChannelNamePolicy.canonicalBroadcasterName(
+                "E卫视", "福建卫视", "FUJIANWEISHI.SATELLITE", "卫视"));
+    }
+
     @Test public void resolvesSatelliteIdentityFromTvgMetadataEvenWhenDisplayNameIsGeneric() {
         assertEquals("湖南卫视", ChannelNamePolicy.canonicalBroadcasterName(
                 "高清频道", "Hunan TV", "HunanSatelliteTV", "China"));
