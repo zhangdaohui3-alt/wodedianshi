@@ -5135,28 +5135,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
       boolean favoritesOnly){
+    // Critical ANR fix: thread 37 used to hold synchronized(channels) while
+    // running 6k+ expensive categoryMatch / canonicalSatelliteName calls.
+    // MainActivity.prewarmRemoteChannelOrder then blocked on the same lock.
+    // Take a quick references-only snapshot; do all heavy filtering/sorting after
+    // releasing the catalogue monitor. Retain the indices for channel selection.
+    final ArrayList<Channel> snapshot;
+    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    final Set<String> favoriteSnapshot=favoritesOnly?new HashSet<>(favorites):null;
     ArrayList<Integer> order=new ArrayList<>();
-    synchronized(channels){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(c==null)continue;
-        if(favoritesOnly&&!favorites.contains(c.key()))continue;
-        if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
-        String name=c.name==null?"":c.name;
-        String group=c.group==null?"":c.group;
-        if(!name.toLowerCase(Locale.ROOT).contains(query)
-            &&!group.toLowerCase(Locale.ROOT).contains(query)
-            &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
-        order.add(i);
-      }
-      if("央视".equals(category)){
-        order.sort((x,y)->{
-          Channel cx=channels.get(x),cy=channels.get(y);
-          int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
-          if(ox!=oy)return Integer.compare(ox,oy);
-          return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
-        });
-      }
+    for(int i=0;i<snapshot.size();i++){
+      if(Thread.currentThread().isInterrupted())break;
+      Channel c=snapshot.get(i);
+      if(c==null)continue;
+      if(favoritesOnly&&!favoriteSnapshot.contains(c.key()))continue;
+      if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
+      String name=c.name==null?"":c.name;
+      String group=c.group==null?"":c.group;
+      if(!name.toLowerCase(Locale.ROOT).contains(query)
+          &&!group.toLowerCase(Locale.ROOT).contains(query)
+          &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
+      order.add(i);
+    }
+    if("央视".equals(category)){
+      order.sort((x,y)->{
+        Channel cx=snapshot.get(x),cy=snapshot.get(y);
+        int ox=cctvSortOrder(cx),oy=cctvSortOrder(cy);
+        if(ox!=oy)return Integer.compare(ox,oy);
+        return displayChannelName(cx.name).compareTo(displayChannelName(cy.name));
+      });
     }
     return new RemoteChannelOrder(key,order);
   }
