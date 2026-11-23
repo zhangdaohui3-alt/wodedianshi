@@ -7018,6 +7018,64 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
+
+  // Do not spend a full Room catalogue normalization/deduplication on the UI thread.
+  private static final class PreparedRoomCatalogue {
+    final ArrayList<Channel> entries=new ArrayList<>();
+    final HashMap<String,Channel> byUrl=new HashMap<>();
+    final HashMap<String,Channel> byIdentity=new HashMap<>();
+    final HashMap<String,Integer> positionByIdentity=new HashMap<>();
+    final HashMap<String,Integer> positionByNameGroup=new HashMap<>();
+    final HashSet<String> favorites=new HashSet<>();
+  }
+  private String roomChannelNameGroupKey(String name,String group){
+    return (name==null?"":name)+"\u001f"+(group==null?"":group);
+  }
+  private PreparedRoomCatalogue prepareRoomCatalogue(ArrayList<Channel> restored,
+      Set<String> savedFavorites){
+    PreparedRoomCatalogue prepared=new PreparedRoomCatalogue();
+    if(savedFavorites!=null)prepared.favorites.addAll(savedFavorites);
+    HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,restored.size()*2));
+    HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>();
+    for(Channel channel:restored){
+      if(channel==null)continue;
+      normalizeBroadcasterLabel(channel);
+      if(channel.backups==null)channel.backups=new ArrayList<>();
+      if(channel.backups.isEmpty()&&channel.url!=null&&!channel.url.isEmpty())
+        channel.backups.add(channel.url);
+      String identityKey=identity(channel);
+      Channel keep=firstByIdentity.get(identityKey);
+      if(keep==null){
+        firstByIdentity.put(identityKey,channel);
+        prepared.entries.add(channel);
+      }else{
+        HashSet<String> seen=sourcesByIdentity.get(identityKey);
+        if(seen==null){
+          seen=new HashSet<>(Math.max(4,keep.backups.size()*2));
+          for(String url:keep.backups)if(url!=null&&!url.isEmpty())seen.add(url);
+          sourcesByIdentity.put(identityKey,seen);
+        }
+        for(String url:channel.backups){
+          if(url!=null&&!url.isEmpty()&&seen.add(url))keep.backups.add(url);
+        }
+        keep.mergeBackupOwnership(channel);
+        if(prepared.favorites.contains(channel.key()))prepared.favorites.add(keep.key());
+      }
+    }
+    for(int i=0;i<prepared.entries.size();i++){
+      Channel channel=prepared.entries.get(i);
+      for(String url:channel.backups)prepared.byUrl.put(url,channel);
+      String identityKey=identity(channel);
+      prepared.byIdentity.put(identityKey,channel);
+      if(!prepared.positionByIdentity.containsKey(identityKey))
+        prepared.positionByIdentity.put(identityKey,i);
+      String nameGroup=roomChannelNameGroupKey(channel.name,channel.group);
+      if(!prepared.positionByNameGroup.containsKey(nameGroup))
+        prepared.positionByNameGroup.put(nameGroup,i);
+    }
+    return prepared;
+  }
+
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     if(!catalogueSnapshotTrusted){
@@ -7054,10 +7112,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return;
           }
           if(generation!=backgroundCatalogueReloadGeneration)return;
-          // Room has already accepted this complete snapshot atomically. Its
-          // cleaned catalogue may legitimately contain fewer channels than the
-          // previous in-memory view, so do not re-impose a stale additive-only rule.
+          long preparationStarted=android.os.SystemClock.elapsedRealtime();
+          final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites);
+          android.util.Log.i("MyTVStartup","room_reload_prepare_ms="
+              +(android.os.SystemClock.elapsedRealtime()-preparationStarted)
+              +" entries="+prepared.entries.size()+" sources="+prepared.byUrl.size());
+          if(generation!=backgroundCatalogueReloadGeneration)return;
+          // Room has atomically committed this snapshot. Only swap the prepared
+          // array/maps in the UI callback; normalization and deduplication are done.
           uiHandler.post(()->{
+            long publishStarted=android.os.SystemClock.elapsedRealtime();
             String selectedIdentity="";
             String selectedName="";
             String selectedGroup="";
@@ -7075,38 +7139,38 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     ?current.backups.get(current.activeSource):current.url;
               }
               channels.clear();
-              channels.addAll(refreshed);
+              channels.addAll(prepared.entries);
+              channelsByUrl.clear();
+              channelsByUrl.putAll(prepared.byUrl);
+              channelsByIdentity.clear();
+              channelsByIdentity.putAll(prepared.byIdentity);
+              if(!selectedIdentity.isEmpty()){
+                Integer found=prepared.positionByIdentity.get(selectedIdentity);
+                if(found==null)found=prepared.positionByNameGroup.get(
+                    roomChannelNameGroupKey(selectedName,selectedGroup));
+                selected=found==null?-1:found;
+                if(selected>=0&&!selectedUrl.isEmpty()){
+                  Channel candidate=channels.get(selected);
+                  for(int i=0;i<candidate.backups.size();i++){
+                    if(selectedUrl.equals(candidate.backups.get(i))){
+                      candidate.activeSource=i;break;
+                    }
+                  }
+                }
+              }
             }
             synchronized(favorites){
               favorites.clear();
-              favorites.addAll(roomSnapshot.favorites);
+              favorites.addAll(prepared.favorites);
             }
-            rebuildChannelIndexes();
-            if(!selectedIdentity.isEmpty()){
-              int found=-1;
-              for(int i=0;i<channels.size();i++){
-                Channel candidate=channels.get(i);
-                if(identity(candidate).equals(selectedIdentity)){found=i;break;}
-              }
-              if(found<0){
-                for(int i=0;i<channels.size();i++){
-                  Channel candidate=channels.get(i);
-                  if(candidate.name.equals(selectedName)
-                      &&java.util.Objects.equals(candidate.group,selectedGroup)){found=i;break;}
-                }
-              }
-              selected=found;
-              if(found>=0&&!selectedUrl.isEmpty()){
-                Channel candidate=channels.get(found);
-                for(int i=0;i<candidate.backups.size();i++){
-                  if(selectedUrl.equals(candidate.backups.get(i))){candidate.activeSource=i;break;}
-                }
-              }
-            }
+            cachedRemoteChannelOrder=null;
             catalogueSnapshotTrusted=true;
+            android.util.Log.i("MyTVStartup","room_reload_ui_publish_ms="
+                +(android.os.SystemClock.elapsedRealtime()-publishStarted)
+                +" channels="+prepared.entries.size()+" sources="+prepared.byUrl.size());
             refresh();
             android.util.Log.i("MyTVStartup","reloaded Room catalogue channels="
-                +roomSnapshot.channelCount+" favorites="+roomSnapshot.favorites.size());
+                +roomSnapshot.channelCount+" favorites="+prepared.favorites.size());
           });
         }catch(Throwable reloadFailure){
           android.util.Log.e("MyTVStartup","Room catalogue reload failed",reloadFailure);
