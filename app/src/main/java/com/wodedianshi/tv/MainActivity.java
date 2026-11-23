@@ -4119,7 +4119,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     showSubdivisionDialog("美国州",names,codes);
   }
   private void showSubdivisionDialog(String title,String[] names,String[] codes){
-    showChoiceDialog(title+" · 选择州/省",names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w]));
+    // Before this change, choosing US/Canada/Australia forced a state/province
+    // selection and never offered the previously available whole-country list.
+    // A missing state-specific feed must not hide all saved country channels.
+    final String countryCode=title.startsWith("美国")?"us":
+        title.startsWith("加拿大")?"ca":title.startsWith("澳大利亚")?"au":"";
+    if(countryCode.isEmpty()){
+      showChoiceDialog(title+" · 选择州/省",names,(d,w)->showCityPlaylistDialog(title,names[w],codes[w]));
+      return;
+    }
+    String[] options=new String[names.length+1];
+    options[0]="全部"+(countryCode.equals("us")?"美国":countryCode.equals("ca")?"加拿大":"澳大利亚")+"频道";
+    System.arraycopy(names,0,options,1,names.length);
+    showChoiceDialog(title+" · 选择地区",options,(d,w)->{
+      if(w==0)loadGeoPlaylist(options[0],
+          "https://iptv-org.github.io/iptv/countries/"+countryCode+".m3u");
+      else showCityPlaylistDialog(title,names[w-1],codes[w-1]);
+    });
   }
   private void showCityPlaylistDialog(String country,String region,String subdivisionCode){
     String[] data;
@@ -4162,8 +4178,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(channel.sourceScopes!=null&&channel.sourceScopes.contains(scope)){
           keys.add(channel.key());continue;
         }
-        if(!country.isEmpty()&&channel.sourceScopes!=null
-            &&ChannelCatalogueScopePolicy.matches(channel.sourceScopes,"global")
+        // A valid country suffix identifies country membership even when an
+        // older Room snapshot omitted the channel-level "global" scope. Do not
+        // infer narrower state/city membership from that country-only evidence.
+        if(!country.isEmpty()
             &&GeoPlaylistCachePolicy.matchesCountryTvgId(channel.tvgId,country))
           keys.add(channel.key());
       }
