@@ -772,24 +772,54 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return count;
   }
 
-  private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> snapshotChannelRows(){
-    ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=new ArrayList<>();
-    synchronized(channels){for(Channel channel:channels){
-      if(channel==null||channel.name==null||channel.name.trim().isEmpty()
-          ||channel.url==null||channel.url.trim().isEmpty())continue;
-      com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-          new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-      row.name=channel.name;row.url=channel.url;row.group=channel.group;
-      row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;row.activeSource=channel.activeSource;
-      if(channel.backups!=null)row.sources.addAll(channel.backups);
-      if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-      if(channel.backupSourceScopes!=null)for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet())
-        row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-      rows.add(row);
-    }}
-    return rows;
+  // Copy a complete, version-consistent Room snapshot in short channel-lock
+  // batches. Previously persistNow() held synchronized(channels) while deep
+  // copying 6k+ channels and their source ownership maps, delaying UI input.
+  // Abort/retry rather than publishing a mixed snapshot if a producer modifies
+  // any channel while its batches are being copied.
+  private ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot>
+      snapshotChannelRows(){
+    for(int attempt=0;attempt<3;attempt++){
+      final long expectedMutation=catalogueMutationGeneration;
+      final ArrayList<Channel> refs;
+      synchronized(channels){refs=new ArrayList<>(channels);}
+      final ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
+          new ArrayList<>(refs.size());
+      final int batchSize=32;
+      for(int from=0;from<refs.size();from+=batchSize){
+        if(Thread.currentThread().isInterrupted())return null;
+        final int end=Math.min(from+batchSize,refs.size());
+        synchronized(channels){
+          for(int at=from;at<end;at++){
+            Channel channel=refs.get(at);
+            if(channel==null||channel.name==null||channel.name.trim().isEmpty()
+                ||channel.url==null||channel.url.trim().isEmpty())continue;
+            com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
+                new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
+            row.name=channel.name;row.url=channel.url;row.group=channel.group;
+            row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
+            row.activeSource=channel.activeSource;
+            if(channel.backups!=null)row.sources.addAll(channel.backups);
+            if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
+            if(channel.backupSourceScopes!=null){
+              for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet())
+                row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+            }
+            rows.add(row);
+          }
+        }
+      }
+      if(expectedMutation==catalogueMutationGeneration){
+        return rows;
+      }
+      android.util.Log.i("MyTVCatalogue","Room snapshot changed during short-lock copy; retry="+attempt);
+      Thread.yield();
+    }
+    // Never persist a hybrid of two catalogue versions. The coalescing
+    // persist executor will receive another request when ingestion completes.
+    android.util.Log.w("MyTVCatalogue","Room snapshot copy deferred after repeated mutations");
+    return null;
   }
-
   private void rebuildChannelIndexes(){
     synchronized(channels){
       // If the user starts playback from the first progressively revealed page,
@@ -1123,27 +1153,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long started=android.os.SystemClock.elapsedRealtime();
     int sourceCount=0;
     try{
-      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=
-          new ArrayList<>();
-      synchronized(channels){
-        for(Channel channel:channels){
-          if(channel==null||channel.name==null||channel.name.trim().isEmpty()
-              ||channel.url==null||channel.url.trim().isEmpty())continue;
-          com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row=
-              new com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot();
-          row.name=channel.name;row.url=channel.url;row.group=channel.group;
-          row.tvgId=channel.tvgId;row.tvgName=channel.tvgName;
-          row.activeSource=channel.activeSource;
-          if(channel.backups!=null){row.sources.addAll(channel.backups);sourceCount+=channel.backups.size();}
-          if(channel.sourceScopes!=null)row.sourceScopes.addAll(channel.sourceScopes);
-          if(channel.backupSourceScopes!=null){
-            for(Map.Entry<String,HashSet<String>> entry:channel.backupSourceScopes.entrySet()){
-              row.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-            }
-          }
-          rows.add(row);
-        }
-      }
+      long copyStarted=android.os.SystemClock.elapsedRealtime();
+      ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
+      if(rows==null)throw new IllegalStateException("Room snapshot changed repeatedly during bounded copy");
+      for(com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot row:rows)
+        sourceCount+=row.sources.size();
+      android.util.Log.i("MyTVCatalogue","room_snapshot_copy_ms="
+          +(android.os.SystemClock.elapsedRealtime()-copyStarted)
+          +" channels="+rows.size());
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
