@@ -476,31 +476,51 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     button.setSelected(playing);
     button.setActivated(playing);
   }
+  // A channel zap changes the playing marker for at most two visible rows.
+  // Rebuilding every row's title, regex-based name and background on each
+  // remote keypress caused unnecessary UI allocations on Android TV boxes.
+  private void updateLiveChannelRow(Button button,int index){
+    if(button==null||index<0||index>=channels.size())return;
+    Channel channel=channels.get(index);
+    if(channel==null)return;
+    String channelName=channel.name==null?"":channel.name;
+    boolean broadcast=isCctvChannel(channel)||isSatelliteChannel(channel);
+    String title=broadcast?displayChannelName(channel):channelName;
+    String channelGroup=channel.group==null?"":channel.group;
+    String group=broadcast?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
+    button.setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
+    button.setContentDescription(index==selected?"当前正在播放："+title:title);
+    applyLiveChannelRowStyle(button,Color.rgb(35,45,62));
+  }
+  private void updateLiveChannelOverlay(){
+    if(channelNameOverlay==null)return;
+    if(selected>=0&&selected<channels.size()){
+      Channel channel=channels.get(selected);
+      channelNameOverlay.setText("正在播放  ·  "+displayChannelName(channel));
+      channelNameOverlay.setVisibility(fullScreenPlayback?View.VISIBLE:View.GONE);
+    }else channelNameOverlay.setVisibility(View.GONE);
+  }
   private void updateLiveChannelPresentation(){
+    if(list!=null){
+      for(int i=0;i<list.getChildCount();i++){
+        View child=list.getChildAt(i);
+        if(child instanceof Button&&child.getTag() instanceof Integer)
+          updateLiveChannelRow((Button)child,(Integer)child.getTag());
+      }
+    }
+    updateLiveChannelOverlay();
+  }
+  private void updateLiveChannelSelection(int previousSelected){
     if(list!=null){
       for(int i=0;i<list.getChildCount();i++){
         View child=list.getChildAt(i);
         if(!(child instanceof Button)||!(child.getTag() instanceof Integer))continue;
         int index=(Integer)child.getTag();
-        if(index<0||index>=channels.size())continue;
-        Channel channel=channels.get(index);
-        if(channel==null)continue;
-        String channelName=channel.name==null?"":channel.name;
-        String title=(isCctvChannel(channel)||isSatelliteChannel(channel))?displayChannelName(channelName):channelName;
-        String channelGroup=channel.group==null?"":channel.group;
-        String group=(isCctvChannel(channel)||isSatelliteChannel(channel))?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
-        ((Button)child).setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
-        ((Button)child).setContentDescription(index==selected?"当前正在播放："+title:title);
-        applyLiveChannelRowStyle((Button)child,Color.rgb(35,45,62));
+        if(index==previousSelected||index==selected)
+          updateLiveChannelRow((Button)child,index);
       }
     }
-    if(channelNameOverlay!=null){
-      if(selected>=0&&selected<channels.size()){
-        Channel channel=channels.get(selected);
-        channelNameOverlay.setText("正在播放  ·  "+(isCctvChannel(channel)?displayChannelName(channel.name):channel.name));
-        channelNameOverlay.setVisibility(fullScreenPlayback?View.VISIBLE:View.GONE);
-      }else channelNameOverlay.setVisibility(View.GONE);
-    }
+    updateLiveChannelOverlay();
   }
   private void styleVodPageButton(Button b,int normalColor){
     b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
@@ -5556,8 +5576,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
+    int previouslySelected=selected;
     selected=next;
-    updateLiveChannelPresentation();
+    updateLiveChannelSelection(previouslySelected);
     Channel target=channels.get(selected);
     // Playlist refreshes may reorder backups; never trust a persisted numeric index.
     target.activeSource=0;
@@ -5573,8 +5594,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
+    int previouslySelected=selected;
     selected=ix;
-    updateLiveChannelPresentation();
+    updateLiveChannelSelection(previouslySelected);
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     Channel target=channels.get(ix);
     // Backup indices can change when playlists refresh; restore by URL identity instead.
@@ -5595,9 +5617,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
+    int previouslySelected=selected;
     selected=ix;
     target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
-    updateLiveChannelPresentation();
+    updateLiveChannelSelection(previouslySelected);
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     persist();
     startCurrentSource();
@@ -5694,7 +5717,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
     info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
-    updateLiveChannelPresentation();
+    updateLiveChannelSelection(selected);
     saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size());
     try{
     if(player==null){
