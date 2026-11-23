@@ -30,7 +30,7 @@ final class ChannelNamePolicy {
         {"吉林卫视", "JILINSATELLITETV"},
         {"黑龙江卫视", "HEILONGJIANGSATELLITETV"},
         {"江西卫视", "JIANGXISATELLITETV"},
-        {"福建东南卫视", "SOUTHEASTSATELLITETV", "FUJIANSATELLITETV"},
+        {"福建东南卫视", "福建卫视", "FUJIANWEISHI", "SOUTHEASTSATELLITETV", "FUJIANSATELLITETV"},
         {"广西卫视", "GUANGXISATELLITETV"},
         {"云南卫视", "YUNNANSATELLITETV"},
         {"贵州卫视", "GUIZHOUSATELLITETV"},
