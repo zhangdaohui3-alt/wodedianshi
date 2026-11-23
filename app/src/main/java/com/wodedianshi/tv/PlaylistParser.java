@@ -12,9 +12,9 @@ import java.util.regex.Pattern;
 
 /** Pure M3U parser shared by discovery and deterministic unit tests. */
 public final class PlaylistParser {
-    private static final Pattern TVG_NAME = Pattern.compile("tvg-name=\"([^\"]*)\"");
-    private static final Pattern TVG_ID = Pattern.compile("tvg-id=\"([^\"]*)\"");
-    private static final Pattern GROUP_TITLE = Pattern.compile("group-title=\"([^\"]*)\"");
+    private static final Pattern TVG_NAME = Pattern.compile("(?i)(?:^|\\s)tvg-name\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+    private static final Pattern TVG_ID = Pattern.compile("(?i)(?:^|\\s)tvg-id\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+    private static final Pattern GROUP_TITLE = Pattern.compile("(?i)(?:^|\\s)group-title\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
 
     private PlaylistParser() {}
 
@@ -36,6 +36,12 @@ public final class PlaylistParser {
 
     public interface EntryConsumer {
         void accept(ChannelSource entry);
+    }
+
+    /** Recreate a parser record from the private on-disk playlist index. */
+    public static ChannelSource indexedSource(String name, String url, String group,
+                                              String tvgId, String tvgName) {
+        return new ChannelSource(name, url, group, tvgId, tvgName);
     }
 
     public static List<ChannelSource> parse(String data, int maxEntries) {
@@ -77,12 +83,31 @@ public final class PlaylistParser {
         boolean groupTitlePresent = false;
         String tvgId = "";
         String tvgName = "";
+        ChannelSource lastEntry = null;
         int emitted = 0;
         int skipped = 0;
         String rawLine;
         while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
             String line = rawLine.replace("\uFEFF", "").trim();
             if (line.isEmpty()) continue;
+            if (line.startsWith("#EXTBURL:")) {
+                // Some maintained IPTV aggregators publish backup URLs as a
+                // non-standard tag immediately after the primary channel URL.
+                // Emit them as separate candidates with the same channel identity
+                // so the normal merge/quality policy can attach them as backups.
+                String backupUrl = line.substring("#EXTBURL:".length()).trim();
+                if (lastEntry != null && isHttpUrl(backupUrl)) {
+                    ChannelSource backup = new ChannelSource(lastEntry.name, backupUrl,
+                            lastEntry.group, lastEntry.tvgId, lastEntry.tvgName);
+                    if (skipped < skipEntries) {
+                        skipped++;
+                    } else {
+                        consumer.accept(backup);
+                        emitted++;
+                    }
+                }
+                continue;
+            }
             if (line.startsWith("#EXTGRP:")) {
                 String extGroup = line.substring(8).trim();
                 if (name != null) {
@@ -93,32 +118,34 @@ public final class PlaylistParser {
                 continue;
             }
             if (line.startsWith("#EXTINF")) {
+                lastEntry = null;
                 int comma = firstCommaOutsideQuotes(line);
                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
                 if (name.isEmpty()) {
                     Matcher matcher = TVG_NAME.matcher(line);
-                    if (matcher.find()) name = matcher.group(1).trim();
+                    if (matcher.find()) name = attributeValue(matcher).trim();
                 }
                 if (name.isEmpty()) name = "未命名频道";
                 Matcher idMatcher = TVG_ID.matcher(line);
-                tvgId = idMatcher.find() ? idMatcher.group(1).trim() : "";
+                tvgId = idMatcher.find() ? attributeValue(idMatcher).trim() : "";
                 Matcher tvgNameMatcher = TVG_NAME.matcher(line);
-                tvgName = tvgNameMatcher.find() ? tvgNameMatcher.group(1).trim() : "";
+                tvgName = tvgNameMatcher.find() ? attributeValue(tvgNameMatcher).trim() : "";
                 group = pendingGroup;
                 pendingGroup = "";
                 groupTitlePresent = false;
                 Matcher groupMatcher = GROUP_TITLE.matcher(line);
-                if (groupMatcher.find() && !groupMatcher.group(1).trim().isEmpty()) {
-                    group = groupMatcher.group(1).trim();
+                if (groupMatcher.find() && !attributeValue(groupMatcher).trim().isEmpty()) {
+                    group = attributeValue(groupMatcher).trim();
                     groupTitlePresent = true;
                 }
             } else if (!line.startsWith("#")
                     && (line.startsWith("http://") || line.startsWith("https://"))) {
                 if (name != null && !name.trim().isEmpty()) {
+                    lastEntry = new ChannelSource(name, line, group, tvgId, tvgName);
                     if (skipped < skipEntries) {
                         skipped++;
                     } else {
-                        consumer.accept(new ChannelSource(name, line, group, tvgId, tvgName));
+                        consumer.accept(lastEntry);
                         emitted++;
                     }
                 }
@@ -130,6 +157,15 @@ public final class PlaylistParser {
             }
         }
         return emitted;
+    }
+
+    private static String attributeValue(Matcher matcher) {
+        String quoted = matcher.group(1);
+        return quoted != null ? quoted : matcher.group(2);
+    }
+
+    private static boolean isHttpUrl(String value) {
+        return value != null && (value.startsWith("http://") || value.startsWith("https://"));
     }
 
     private static int firstCommaOutsideQuotes(String line) {

@@ -11,9 +11,27 @@ final class RegionCategoryPolicy {
 
     private RegionCategoryPolicy() {}
 
-    /** Keeps HMT channels in China even when they arrive inside a global master index. */
+    /** Keeps Chinese regional and national channels in China when found in global indexes. */
+    static String catalogueScope(String name, String group, String tvgName,
+                                 String tvgId, String requestedScope) {
+        String combinedName = (name == null ? "" : name) + " "
+                + (tvgName == null ? "" : tvgName) + " "
+                + (tvgId == null ? "" : tvgId);
+        return catalogueScope(combinedName, group, requestedScope);
+    }
+
     static String catalogueScope(String name, String group, String requestedScope) {
-        if ("global".equals(requestedScope) && isHongKongMacauTaiwan(name, group)) return "china";
+        if (!"global".equals(requestedScope)) return requestedScope;
+        if (isHongKongMacauTaiwan(name, group)) return "china";
+        String metadata = (name == null ? "" : name) + " " + (group == null ? "" : group);
+        String normalizedGroup = normalize(group);
+        // Aggregated M3U feeds often classify local county stations under
+        // "中国大陆 · 新闻" instead of putting the province in each channel name.
+        if (normalizedGroup.contains("中国大陆") || normalizedGroup.contains("mainland china")) {
+            return "china";
+        }
+        if (!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()) return "china";
+        if (!ChannelNamePolicy.canonicalBroadcasterName(name, "", "", group).isEmpty()) return "china";
         return requestedScope;
     }
 

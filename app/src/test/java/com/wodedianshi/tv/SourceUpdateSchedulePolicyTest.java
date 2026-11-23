@@ -16,6 +16,19 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(true, true));
     }
 
+    @Test public void firstInstallMayDiscoverWithEmptyCatalogueInForeground() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, false, true, false));
+        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, false, true, true));
+        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, false, false, false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                false, false, true, false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, true, true, false));
+    }
+
     @Test public void schedulesDiscoveryForNewInstall() {
         assertTrue(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(true, 0L));
     }
