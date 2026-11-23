@@ -1166,6 +1166,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long started=android.os.SystemClock.elapsedRealtime();
     int sourceCount=0;
     try{
+      // Capture the Room baseline BEFORE copying channels. If an onStart Room
+      // reload installs a newer directory between the copy and the commit,
+      // reading the baseline afterwards could falsely authorize stale rows.
+      final long expectedVersion=loadedRoomCatalogueVersion;
       long copyStarted=android.os.SystemClock.elapsedRealtime();
       ArrayList<com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelSnapshot> rows=snapshotChannelRows();
       if(rows==null)throw new IllegalStateException("Room snapshot changed repeatedly during bounded copy");
@@ -1177,7 +1181,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
       synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
-      final long expectedVersion=loadedRoomCatalogueVersion;
+      // The writer's transaction performs the final compare-and-swap. This
+      // early guard avoids even attempting an inconsistent in-memory copy.
+      if(expectedVersion!=loadedRoomCatalogueVersion)
+        throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
       com.wodedianshi.tv.db.RoomCatalogueWriter.CommitResult commit=
           com.wodedianshi.tv.db.RoomCatalogueWriter.writeRecordsAtVersion(
               getApplicationContext(),rows,favoriteSnapshot,expectedVersion);
