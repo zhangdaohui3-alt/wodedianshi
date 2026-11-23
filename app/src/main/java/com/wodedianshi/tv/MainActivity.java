@@ -4397,7 +4397,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
     if(channelPane.getParent()==rootLayout)rootLayout.removeView(channelPane);
     categoryPane.setVisibility(View.VISIBLE);channelPane.setVisibility(View.VISIBLE);
-    LinearLayout menu=new LinearLayout(this);menu.setOrientation(0);menu.setBackgroundColor(Color.rgb(8,13,24));
+    LinearLayout menu=new LinearLayout(this);menu.setOrientation(0);menu.setBackgroundColor(Color.argb(200,8,13,24));
+    // The same panes are reused on the normal screen: tint only while fullscreen.
+    categoryPane.setBackgroundColor(Color.argb(205,16,24,40));
+    channelPane.setBackgroundColor(Color.argb(205,19,29,47));
     menu.addView(categoryPane,new LinearLayout.LayoutParams(dp(104),-1));
     menu.addView(channelPane,new LinearLayout.LayoutParams(dp(250),-1));
     // These panes are re-parented into a PopupWindow after initial Activity layout.
@@ -4417,6 +4420,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Reparenting changes the measurement path; validate the restored tree too.
       normalizeFrameLayoutChildren(rootLayout);
       categoryPane.setVisibility(View.GONE);channelPane.setVisibility(View.GONE);
+      categoryPane.setBackgroundColor(Color.rgb(16,24,40));
+      channelPane.setBackgroundColor(Color.rgb(19,29,47));
       fullscreenMenuPopup=null;
       if(fullscreenAspectMenuItem!=null&&fullscreenAspectMenuItem.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)fullscreenAspectMenuItem.getParent()).removeView(fullscreenAspectMenuItem);
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
@@ -4615,7 +4620,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final FullscreenMenuConfig config=loadFullscreenMenuConfig();
     final Dialog dialog=new Dialog(this);
     LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);
-    shell.setPadding(dp(12),dp(10),dp(12),dp(10));shell.setBackgroundColor(Color.rgb(8,13,24));
+    shell.setPadding(dp(12),dp(10),dp(12),dp(10));shell.setBackgroundColor(Color.argb(208,8,13,24));
     TextView heading=new TextView(this);heading.setText(vodMode?"点播全屏菜单":"直播全屏菜单");heading.setTextColor(Color.WHITE);
     heading.setTextSize(19);heading.setPadding(dp(8),dp(4),dp(8),dp(10));shell.addView(heading);
     LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
@@ -4715,9 +4720,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     fullscreenRemoteDialogOpen=true;
     dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     dialog.show();
-    if(dialog.getWindow()!=null)dialog.getWindow().setLayout(
-        Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
-        WindowManager.LayoutParams.WRAP_CONTENT);
+    if(dialog.getWindow()!=null){
+      dialog.getWindow().setDimAmount(0.12f);
+      dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+      dialog.getWindow().setLayout(
+          Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
+          WindowManager.LayoutParams.WRAP_CONTENT);
+    }
     if(left.getChildCount()>0)left.getChildAt(0).requestFocus();
   }
   private void showFullscreenMenuEditor(){
