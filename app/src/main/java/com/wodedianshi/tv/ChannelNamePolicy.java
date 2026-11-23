@@ -189,7 +189,7 @@ final class ChannelNamePolicy {
     private static boolean hasCjkCharacter(String text) {
         for (int i = 0; i < text.length(); i++) {
             char value = text.charAt(i);
-            if (value >= '\\u4E00' && value <= '\\u9FFF') return true;
+            if (value >= 0x4E00 && value <= 0x9FFF) return true;
         }
         return false;
     }
