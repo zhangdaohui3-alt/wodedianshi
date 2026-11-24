@@ -35,6 +35,23 @@ public class RemoteChannelOrderPolicyTest {
         assertFalse(RemoteChannelOrderPolicy.canResume(false, true, original, original));
     }
 
+    @Test public void pendingResumeFollowsIdentityInsteadOfOldPosition() {
+        Object original = new Object();
+        java.util.Map<String,Integer> positions = java.util.Collections.singletonMap("CCTV-2|cctv", 4);
+        org.junit.Assert.assertEquals(4, RemoteChannelOrderPolicy.remapResumeIndex(
+                false, false, original, original, "CCTV-2|cctv", positions, 5));
+        org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+                false, false, original, original, "CCTV-3|cctv", positions, 5));
+        org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+                false, false, original, new Object(), "CCTV-2|cctv", positions, 5));
+        org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+                true, false, original, original, "CCTV-2|cctv", positions, 5));
+        org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+                false, true, original, original, "CCTV-2|cctv", positions, 5));
+        org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+                false, false, original, original, "CCTV-2|cctv", positions, 4));
+    }
+
     @Test public void completedOrderCanPublish() {
         assertTrue(RemoteChannelOrderPolicy.mayPublish(
                 false, 31L, 31L, 4L, 4L, 6861, 6861, true, true, 123, 123));
