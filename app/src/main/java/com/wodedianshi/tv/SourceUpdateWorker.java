@@ -405,6 +405,9 @@ public class SourceUpdateWorker extends Worker {
       StringBuilder batchIdentity=new StringBuilder();
       appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
       for(FeedBatch batch:feedBatches){
+        // Only pages that actually contributed candidates determine probe
+        // resume. A preceding unavailable feed must not invalidate the same page.
+        if(!batch.success||batch.unavailable||batch.parsed<=0)continue;
         appendFingerprintPart(batchIdentity,Integer.toString(batch.index));
         appendFingerprintPart(batchIdentity,batch.version);
         appendFingerprintPart(batchIdentity,Integer.toString(batch.cursor));
