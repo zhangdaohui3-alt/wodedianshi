@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void firstDiscoveryProbeReuseIsShortLivedAndClockSafe() {
+        assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, 1000, 301000));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, 1000, 301001));
+        assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(false, 1000, 16000));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(false, 1000, 16001));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, 1000, 999));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, -1, 999));
+    }
+
     @org.junit.Test public void manualRefreshProcessesAllPagesBeforeAdvancing() {
         org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,12,25,12));
         org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(12,12,25,12));
