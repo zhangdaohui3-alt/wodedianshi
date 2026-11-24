@@ -43,6 +43,13 @@ public final class SourceUpdateSchedulePolicy {
         return batchComplete ? routineSliceEnd(safe, feedCount) % feedCount : safe;
     }
 
+    /** Reuse only a completed probe from this process, never a historical score.
+     * Failures expire quickly so temporary outages are not held for long. */
+    public static boolean canReuseInitialProbe(boolean valid, long measuredAt, long now) {
+        return measuredAt >= 0L && now >= measuredAt
+                && now - measuredAt <= (valid ? 300_000L : 15_000L);
+    }
+
     /** Manual refresh advances only at EOF, never just because a page was processed. */
     public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
             int pageSize) {

@@ -22,6 +22,15 @@ public class SourceUpdateWorker extends Worker {
   private void noteInitialStage(String stage){
     if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
   }
+  // Single source-work owner accesses this bounded process-local cache.
+  // Do not reuse old persisted quality scores as evidence of a new preflight.
+  private static final LinkedHashMap<String,RecentProbe> INITIAL_PROBES=
+      new LinkedHashMap<>(64,0.75f,true);
+  private static final int INITIAL_PROBE_CACHE_CAP=1024;
+  private static final class RecentProbe {
+    final ProbeResult result; final long at;
+    RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
+  }
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
@@ -151,6 +160,7 @@ public class SourceUpdateWorker extends Worker {
         boolean rebuildProgressMustReset=!"true".equals(buildActive)
             ||!configuredFeedFingerprint.equals(savedFeedFingerprint);
         if(rebuildProgressMustReset){
+          INITIAL_PROBES.clear();
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
           // Feed progress is tied to the exact ordered URL list: an app update that
@@ -483,7 +493,7 @@ public class SourceUpdateWorker extends Worker {
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-      int savedScanned=0,discoveryScanned=0;
+      int savedScanned=0,discoveryScanned=0,reusedPreflights=0;
       HashSet<String> visitedUrls=new HashSet<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
@@ -500,9 +510,19 @@ public class SourceUpdateWorker extends Worker {
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
-          checked++;
-          noteInitialStage("本批检测第 "+checked+" 条（尚未提交）");
-          measured=probe(e.url,probeDeadline);
+          String cacheKey=initialDiscoveryChain?StableKey.url(e.url):"";
+          RecentProbe cached=initialDiscoveryChain?INITIAL_PROBES.get(cacheKey):null;
+          long clock=android.os.SystemClock.elapsedRealtime();
+          boolean reuse=cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(
+              cached.result.valid,cached.at,clock);
+          if(reuse){
+            measured=cached.result;
+            reusedPreflights++;
+          }else{
+            checked++;
+            noteInitialStage("本批检测第 "+checked+" 条（尚未提交）");
+            measured=probe(e.url,probeDeadline);
+          }
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
@@ -511,6 +531,11 @@ public class SourceUpdateWorker extends Worker {
             // A source interrupted by the global deadline is inconclusive, not a failed source.
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
+          }
+          if(initialDiscoveryChain&&!reuse){
+            INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,android.os.SystemClock.elapsedRealtime()));
+            while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
+              INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
           }
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
@@ -612,6 +637,7 @@ public class SourceUpdateWorker extends Worker {
       // health checks while public catalogue services are down; retry discovery
       // separately after persisting these local probe results.
       boolean discoveryUnavailable=feedsOk==0;
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -726,7 +752,7 @@ public class SourceUpdateWorker extends Worker {
           }
           String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):
               manualRefresh?manualFeedCursorKey(batch.index):routineFeedCursorKey(batch.index);
-          if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
+          if(initialDiscoveryChain&&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(cursorKey).remove(cursorKey+"_version");
           }else if(batch.parsed>0){
@@ -769,7 +795,7 @@ public class SourceUpdateWorker extends Worker {
         if(feedBatchComplete){
           for(FeedBatch batch:feedBatches){
             if(batch.success&&batch.index>=0&&batch.index<feeds.length
-                &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+                &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED))
               finished[batch.index]=true;
           }
         }
@@ -850,7 +876,7 @@ public class SourceUpdateWorker extends Worker {
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
                     +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
                     +(validatedSoFar+Math.max(0,discoveryProbesValid))
-                    +" 次（非实机播放验证）。")
+                    +" 次（含近期重复地址复用，非实机播放验证）。")
                 :("首次完整抓源进度 "+progressPercent+"%；已处理 "
                     +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
                     +unavailableCount+" 个；已发布频道保留，未完成线路继续检测。"));
@@ -1012,6 +1038,7 @@ public class SourceUpdateWorker extends Worker {
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
       if(!initialDiscoveryChain)return Result.success();
+      if(initialDiscoveryComplete)INITIAL_PROBES.clear();
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
@@ -1028,7 +1055,7 @@ public class SourceUpdateWorker extends Worker {
       if(!done){
         for(FeedBatch batch:batches){
           if(batch.index==i&&batch.success
-              &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
+              &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
             done=true;break;
           }
         }
