@@ -43,6 +43,12 @@ public final class AppStateEditor {
 
     public void apply() {
         AppDatabase db = RoomDatabaseProvider.get(context);
+        db.runInTransaction(() -> applyInTransaction(db));
+    }
+
+    /** The catalogue writer owns the outer transaction and its rollback. */
+    void applyInTransaction(AppDatabase db) {
+        if (!db.inTransaction()) throw new IllegalStateException("App state requires Room transaction");
         AppStateDao dao = db.appStateDao();
         ArrayList<AppStateEntity> rows = new ArrayList<>(updates.size());
         long now = System.currentTimeMillis();
@@ -50,9 +56,7 @@ public final class AppStateEditor {
             rows.add(new AppStateEntity(entry.getKey(), entry.getValue(), now));
         }
         ArrayList<String> deleteKeys = new ArrayList<>(removals);
-        db.runInTransaction(() -> {
-            if (!deleteKeys.isEmpty()) dao.removeAll(deleteKeys);
-            if (!rows.isEmpty()) dao.putAll(rows);
-        });
+        if (!deleteKeys.isEmpty()) dao.removeAll(deleteKeys);
+        if (!rows.isEmpty()) dao.putAll(rows);
     }
 }

@@ -104,6 +104,14 @@ public final class RoomCatalogueWriter {
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
             long[] committedAt, BooleanSupplier paused) {
+        return writeRecords(context,snapshot,favoriteKeys,expectedCatalogueVersion,
+                clearBuildRowsOnCommit,allowEmptyInitialization,committedAt,paused,null);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+            long[] committedAt, BooleanSupplier paused, AppStateEditor progress) {
         checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty() && !allowEmptyInitialization) {
@@ -340,6 +348,7 @@ public final class RoomCatalogueWriter {
             // This value is written in the same transaction as the rows and
             // is the only version that the committing Activity may adopt.
             if (committedAt != null) committedAt[0] = completedAt;
+            if (progress != null) progress.applyInTransaction(db);
             if (clearBuildRowsOnCommit) {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
@@ -411,6 +420,21 @@ public final class RoomCatalogueWriter {
     private static int writeSnapshot(Context context, JSONArray snapshot,
             long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
             BooleanSupplier paused) throws Exception {
+        return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,null);
+    }
+
+    /** Commit a worker's snapshot and its progress together. */
+    public static int writeSnapshotWithProgress(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+            BooleanSupplier paused, AppStateEditor progress) throws Exception {
+        if (expectedCatalogueVersion < 0L || progress == null)
+            throw new IllegalArgumentException("Missing catalogue version or progress");
+        return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,progress);
+    }
+
+    private static int writeSnapshot(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+            BooleanSupplier paused, AppStateEditor progress) throws Exception {
         checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
@@ -460,7 +484,7 @@ public final class RoomCatalogueWriter {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
         return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit, false, null, paused);
+                clearBuildRowsOnCommit, false, null, paused, progress);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {

@@ -37,6 +37,11 @@ public final class RoomCatalogueBuildStore {
     }
 
     public static int replace(Context context, JSONArray snapshot, BooleanSupplier paused) throws JSONException {
+        return replace(context,snapshot,paused,null);
+    }
+
+    public static int replace(Context context, JSONArray snapshot, BooleanSupplier paused,
+            AppStateEditor progress) throws JSONException {
         checkPause(paused);
         if (context == null || snapshot == null) {
             throw new IllegalArgumentException("context/snapshot is null");
@@ -74,6 +79,7 @@ public final class RoomCatalogueBuildStore {
             }
             checkPause(paused);
             dao.deleteCatalogueBuildRowsFrom(snapshot.length());
+            if (progress != null) progress.applyInTransaction(db);
             checkPause(paused);
         });
         return snapshot.length();
@@ -84,6 +90,16 @@ public final class RoomCatalogueBuildStore {
     }
 
     public static void clear(Context context) {
-        RoomDatabaseProvider.get(context).channelDao().clearCatalogueBuildRows();
+        clear(context,null,null);
+    }
+
+    public static void clear(Context context, AppStateEditor progress, BooleanSupplier paused) {
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        db.runInTransaction(() -> {
+            checkPause(paused);
+            db.channelDao().clearCatalogueBuildRows();
+            if(progress!=null)progress.applyInTransaction(db);
+            checkPause(paused);
+        });
     }
 }

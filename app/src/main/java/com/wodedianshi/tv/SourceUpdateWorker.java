@@ -127,7 +127,6 @@ public class SourceUpdateWorker extends Worker {
           // intentionally not read as input and remains untouched until publish.
           // Feed progress is tied to the exact ordered URL list: an app update that
           // adds, removes, or reorders feeds must not inherit stale per-index cursors.
-          com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
           com.wodedianshi.tv.db.AppStateEditor resetBuildState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
           for(int feed=0;feed<feeds.length;feed++){
@@ -164,9 +163,9 @@ public class SourceUpdateWorker extends Worker {
               .putString("source_initial_progress_phase","正在准备首次完整抓源")
               .putInt("source_initial_next_feed_index",0)
               .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
-              .apply();
-          com.wodedianshi.tv.db.AppStateStore.put(
-              getApplicationContext(),"source_full_rebuild_active","true");
+              .putBoolean("source_full_rebuild_active",true);
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
+              getApplicationContext(),resetBuildState,pauseRequested);
         }
         saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext());
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
@@ -216,6 +215,8 @@ public class SourceUpdateWorker extends Worker {
           }
         }
       }
+      com.wodedianshi.tv.db.AppStateEditor update=
+          new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       int initialFeedStartIndex=InitialFeedRotationPolicy.normalizeStart(
           roomInt("source_initial_next_feed_index",0),feeds.length);
@@ -357,13 +358,10 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain){
             int attempts=InitialFeedFailurePolicy.nextAttempts(
                 roomInt(initialFeedFailureCountKey(feedIndex),0));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedFailureCountKey(feedIndex),Integer.toString(attempts));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedFailureReasonKey(feedIndex),
-                InitialFeedFailurePolicy.userVisibleReason(failure));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
+            update.putInt(initialFeedFailureCountKey(feedIndex),attempts)
+                .putString(initialFeedFailureReasonKey(feedIndex),
+                    InitialFeedFailurePolicy.userVisibleReason(failure))
+                .putString(initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
             feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
                 failure,attempts);
             if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
@@ -634,50 +632,15 @@ public class SourceUpdateWorker extends Worker {
       boolean initialHasValidatedSource=initialDiscoveryChain
           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
       boolean initialDiscoveryComplete=initialFeedsExhausted&&initialHasValidatedSource;
-      int roomRowsWritten=0;
-      int publishedChannelCount=saved.length();
-      if(initialDiscoveryChain){
-        // Persist only to the isolated staging table between batches. A partial
-        // collection can never replace or contaminate the currently playable Room catalogue.
-        int stagedRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
-            getApplicationContext(),saved,pauseRequested);
-        if(initialDiscoveryComplete){
-          if(stagedRows<=0)throw new IllegalStateException(
-              "Full catalogue rebuild completed without any validated channels; live catalogue retained");
-          // The independent staging catalogue is complete, but it must not
-          // erase previously playable channels that a public directory missed.
-          // Reconcile the user's Room snapshot only at the final atomic publish.
-          JSONArray safePublish=preservePreviouslyPublishedChannels(saved,roomSnapshot);
-          publishedChannelCount=safePublish.length();
-          // The reconciliation above can take time on a low-memory TV box.
-          // A viewer may have started playback after the earlier gate; in that
-          // case leave all live Room rows untouched and retry the publication.
-          if(isStopped())return Result.retry();
-          if(pauseRequested.getAsBoolean()){
-            saveStatus(prefs,"节目开始播放，已保留完整候选目录并延后发布",0);
-            return deferredViewingResult(manual,initialDiscoveryChain);
-          }
-          roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotAndClearBuild(
-              getApplicationContext(),safePublish,roomSnapshot.catalogueVersion,pauseRequested);
-          if(roomRowsWritten!=publishedChannelCount)throw new IllegalStateException(
-              "Published Room rows do not match the complete reconciled catalogue");
-        }
-      }else{
-        // Recheck immediately before the incremental transaction as well.
-        if(isStopped())return Result.retry();
-        if(pauseRequested.getAsBoolean()){
-          saveStatus(prefs,"节目或频道界面正在使用，维护延后",0);
-          return deferredViewingResult(manual,initialDiscoveryChain);
-        }
-        // Routine updates remain incremental against the current authoritative Room snapshot.
-        roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
-            getApplicationContext(),saved,roomSnapshot.catalogueVersion,pauseRequested);
-      }
-      if(!initialDiscoveryChain&&saved.length()>0&&roomRowsWritten==0){
-        throw new IllegalStateException("Room catalogue update produced no channel rows");
-      }
-      com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-          .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+      // Prepare the full publication and all progress before opening a write transaction.
+      JSONArray publication=initialDiscoveryComplete
+          ?preservePreviouslyPublishedChannels(saved,roomSnapshot):saved;
+      int publishedChannelCount=publication.length();
+      if(initialDiscoveryComplete&&saved.length()==0)
+        throw new IllegalStateException("Full rebuild has no validated channels");
+      if(pauseRequested.getAsBoolean())
+        return deferredViewingResult(manual,initialDiscoveryChain);
+      update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
@@ -853,7 +816,7 @@ public class SourceUpdateWorker extends Worker {
       if(!initialDiscoveryChain){
         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
         update.putInt("source_routine_next_feed_index",nextRoutine);
-        if(!manual&&feedBatchComplete&&nextRoutine==0&&roomRowsWritten>0&&checked>0)
+        if(!manual&&feedBatchComplete&&nextRoutine==0&&publishedChannelCount>0&&checked>0)
           update.putLong("source_last_routine_maintenance_at",System.currentTimeMillis());
         update.putString("source_update_result","日常分批轮检：目录 "+(routineStart+1)+"–"+routineEnd
             +"/"+feeds.length+"；读取成功 "+feedsOk+"，失败 "+feedsFailed
@@ -863,17 +826,14 @@ public class SourceUpdateWorker extends Worker {
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
-      update.apply();
       if(initialFeedsExhausted&&!initialHasValidatedSource){
         // Every feed and every current candidate has had its probe turn. Do not
         // retry an exhausted, unpublishable build forever merely because the TV
         // Activity happens to remain open; discard staging and retain the live DB.
-        com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(getApplicationContext());
         // A failed full scan must not preserve per-feed "done" flags or cursors.
         // Otherwise the next rebuild may start with every feed already exhausted,
         // see no candidates, and never retry discovery after network recovery.
-        com.wodedianshi.tv.db.AppStateEditor failedBuildReset=
-            new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
+        com.wodedianshi.tv.db.AppStateEditor failedBuildReset=update;
         for(int feed=0;feed<feeds.length;feed++){
           // Reset the publish/scan cursors for the next attempt, but leave the
           // last failure diagnostics visible in Settings until that next attempt
@@ -898,12 +858,25 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_checked_urls",0)
             .putInt("source_initial_progress_validated_urls",0)
             .putInt("source_initial_progress_china_validated_urls",0)
-            .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试")
-            .apply();
+            .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试");
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
+            getApplicationContext(),failedBuildReset,pauseRequested);
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
             :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
         return Result.failure();
+      }
+      // Commit one unit: either unpublished staging + progress or published
+      // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+      if(initialDiscoveryChain&&!initialDiscoveryComplete){
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
+            getApplicationContext(),saved,pauseRequested,update);
+      }else{
+        int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+            getApplicationContext(),publication,roomSnapshot.catalogueVersion,
+            initialDiscoveryComplete,pauseRequested,update);
+        if(written!=publishedChannelCount)
+          throw new IllegalStateException("Committed directory count mismatch");
       }
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
         androidx.work.OneTimeWorkRequest continuation=
