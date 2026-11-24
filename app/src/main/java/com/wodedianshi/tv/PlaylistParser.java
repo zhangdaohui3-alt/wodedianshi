@@ -74,7 +74,14 @@ public final class PlaylistParser {
     /** Stream a bounded page from a playlist; skipEntries counts valid HTTP entries. */
     public static int parseEach(Reader source, int skipEntries, int maxEntries,
                                 EntryConsumer consumer) throws IOException {
+        return parseEach(source, skipEntries, maxEntries, consumer, () -> false);
+    }
+
+    public static int parseEach(Reader source, int skipEntries, int maxEntries,
+                                EntryConsumer consumer, java.util.function.BooleanSupplier paused)
+            throws IOException {
         if (source == null || skipEntries < 0 || maxEntries <= 0 || consumer == null) return 0;
+        SourceProbeTimePolicy.checkPaused(paused);
         BufferedReader reader = source instanceof BufferedReader
                 ? (BufferedReader) source : new BufferedReader(source, 8192);
         String name = null;
@@ -88,6 +95,7 @@ public final class PlaylistParser {
         int skipped = 0;
         String rawLine;
         while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
+            SourceProbeTimePolicy.checkPaused(paused);
             String line = rawLine.replace("\uFEFF", "").trim();
             if (line.isEmpty()) continue;
             if (line.startsWith("#EXTBURL:")) {
@@ -156,6 +164,7 @@ public final class PlaylistParser {
                 tvgName = "";
             }
         }
+        SourceProbeTimePolicy.checkPaused(paused);
         return emitted;
     }
 

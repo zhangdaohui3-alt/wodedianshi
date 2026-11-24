@@ -12,6 +12,7 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
+  private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
   private static final int MAX_SOURCES_PER_CHANNEL = 8;
@@ -55,6 +56,8 @@ public class SourceUpdateWorker extends Worker {
       hasPublishedChannels=com.wodedianshi.tv.db.RoomDatabaseProvider
           .get(getApplicationContext()).channelDao().countChannels()>0;
     }
+    final boolean publishedAtStart=hasPublishedChannels;
+    pauseRequested=()->isStopped()||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart);
     if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
       saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
           ?"节目或频道界面正在使用，首次/手动更新已推迟"
@@ -238,7 +241,7 @@ public class SourceUpdateWorker extends Worker {
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
-              initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0);
+              initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0,pauseRequested);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
@@ -246,7 +249,7 @@ public class SourceUpdateWorker extends Worker {
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
-          });
+          },pauseRequested);
           if(initialDiscoveryChain&&SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)){
             // Preserve every address and the exact raw index cursor. Within the
             // current 24-row page, probe mainland candidates first. Java's List
@@ -305,6 +308,11 @@ public class SourceUpdateWorker extends Worker {
           feedReadSucceeded=true;
           feedsOk++;
         }catch(Exception e){
+          // A viewing pause is not a source failure or an exhausted feed.
+          if(e instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean()){
+            saveStatus(prefs,"频道播放优先，目录读取已暂停，保留原游标",0);
+            return deferredViewingResult(manual,initialDiscoveryChain);
+          }
           // Keep complete entries parsed before a transient stream read failure;
           // an incomplete feed is still reported as failed and will be retried later.
           if(!feedCandidatesAdded&&!initialDiscoveryChain){
@@ -413,6 +421,10 @@ public class SourceUpdateWorker extends Worker {
           if(!visitedUrls.add(endpoint))continue;
           checked++;
           measured=probe(e.url,probeDeadline);
+          if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
+            saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
+            return deferredViewingResult(manual,initialDiscoveryChain);
+          }
           if(probeDeadlineReached(probeDeadline)){
             // A source interrupted by the global deadline is inconclusive, not a failed source.
             if(e.savedSource)savedScanned--;else discoveryScanned--;
@@ -1365,7 +1377,8 @@ public class SourceUpdateWorker extends Worker {
     SampleResponse(byte[] data,String url,boolean wasTruncated){bytes=data;finalUrl=url;truncated=wasTruncated;}
   }
   private boolean probeDeadlineReached(long deadline){
-    return android.os.SystemClock.elapsedRealtime()>=deadline;
+    return pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()
+        ||android.os.SystemClock.elapsedRealtime()>=deadline;
   }
   private byte[] fetchSample(String address,int maxBytes,long deadline)throws Exception{
     SampleResponse response=fetchSampleResponse(address,maxBytes,deadline);
@@ -1374,6 +1387,7 @@ public class SourceUpdateWorker extends Worker {
   private SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline)throws Exception{
     HttpURLConnection c=null;
     try{
+      if(probeDeadlineReached(deadline))return null;
       c=(HttpURLConnection)new URL(address).openConnection();
       // URLConnection options must be configured before the first operation that connects it.
       // Reserve half the remaining budget for connection setup and the rest for response reads.
@@ -1391,7 +1405,7 @@ public class SourceUpdateWorker extends Worker {
       // Read one sentinel byte beyond the retained sample to distinguish an
       // exact-length resource from a longer segment truncated at the sample cap.
       c.setRequestProperty("Range","bytes=0-"+maxBytes);
-      int code=c.getResponseCode();if(code<200||code>=400)return null;
+      int code=c.getResponseCode();if(probeDeadlineReached(deadline)||code<200||code>=400)return null;
       boolean rangeIncomplete=code==HttpURLConnection.HTTP_PARTIAL
           &&HlsProbeValidationPolicy.isIncompleteContentRange(c.getHeaderField("Content-Range"),maxBytes);
       String type=c.getContentType();
