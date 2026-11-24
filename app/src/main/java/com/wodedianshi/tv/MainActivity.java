@@ -93,7 +93,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseMedia3Confirmed(ExoPlayer old){
     long start=android.os.SystemClock.elapsedRealtime();
     try{
+      noteUiDecoderStage("Media3 release begin");
       old.release();
+      noteUiDecoderStage("Media3 release returned");
       // The default release timeout is 500ms. A callback may be queued rather
       // than delivered synchronously; treat reaching that bound conservatively.
       if(android.os.SystemClock.elapsedRealtime()-start>=
@@ -154,6 +156,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Independent diagnostic sampler: a delayed Handler callback alone cannot
   // capture the main thread's stack while it is blocked.
   private volatile long mainThreadSampleGeneration=0L;
+  // UI-owned breadcrumb; the ANR sampler reads it without waiting on the UI.
+  private volatile String lastUiDecoderStage="not started";
+  private void noteUiDecoderStage(String phase){
+    if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+      lastUiDecoderStage=phase+" uptimeMs="+android.os.SystemClock.uptimeMillis();
+  }
   private volatile Thread mainThreadSampleWorker;
   private Runnable hideChannelZapOverlay;
   private boolean manualSourceSwitch = false;
@@ -2569,7 +2577,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     watchMedia3Release(old);
     if(view!=null){
       try{view.setKeepScreenOn(false);}catch(RuntimeException ignored){}
-      try{view.setPlayer(null);}catch(RuntimeException error){
+      try{if(view.getPlayer()!=null){noteUiDecoderStage("VOD surface detach begin");view.setPlayer(null);}}catch(RuntimeException error){
         saveLiveDiagnostic("VOD_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
       }
     }
@@ -2577,10 +2585,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{old.setPlayWhenReady(false);}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
     }
-    try{old.stop();}catch(RuntimeException error){
+    try{noteUiDecoderStage("VOD Media3 stop begin");old.stop();}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
     }
-    try{old.clearMediaItems();}catch(RuntimeException error){
+    try{noteUiDecoderStage("VOD Media3 clear begin");old.clearMediaItems();}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
     }
     releaseMedia3Confirmed(old);
@@ -4705,7 +4713,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final java.util.concurrent.CountDownLatch acknowledged=
             new java.util.concurrent.CountDownLatch(1);
         long postedAt=android.os.SystemClock.uptimeMillis();
-        if(!uiHandler.post(acknowledged::countDown))break;
+        Runnable heartbeat=acknowledged::countDown;
+        if(!uiHandler.post(heartbeat))break;
         try{
           if(!acknowledged.await(2500L,java.util.concurrent.TimeUnit.MILLISECONDS)
               &&generation==mainThreadSampleGeneration){
@@ -4715,7 +4724,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             StringBuilder report=new StringBuilder("waitMs=").append(waited)
                 .append(" mainThread=");
             Thread main=android.os.Looper.getMainLooper().getThread();
-            report.append(main.getState());
+            report.append(main.getState()).append(" decoderBreadcrumb=").append(lastUiDecoderStage);
             for(int i=0;i<Math.min(18,stack.length);i++)
               report.append("\n#").append(i).append(' ').append(stack[i]);
             String text=report.length()>2800?report.substring(0,2800):report.toString();
@@ -4729,14 +4738,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }catch(RuntimeException storageFailure){
               android.util.Log.w("MyTVANR","Could not save main-thread sample",storageFailure);
             }
-            // Do not generate repeated stack samples during the same freeze.
-            acknowledged.await(8000L,java.util.concurrent.TimeUnit.MILLISECONDS);
+            // Keep only this heartbeat outstanding until UI recovery or cancellation.
+            // A long native freeze must not accumulate more main-thread callbacks.
+            while(generation==mainThreadSampleGeneration&&!Thread.currentThread().isInterrupted()
+                &&!acknowledged.await(8000L,java.util.concurrent.TimeUnit.MILLISECONDS)){}
           }
           Thread.sleep(750L);
         }catch(InterruptedException interrupted){
           Thread.currentThread().interrupt();
           break;
-        }
+        }finally{uiHandler.removeCallbacks(heartbeat);}
       }
     },"MyTV-ANR-Sampler");
     watcher.setDaemon(true);
@@ -5580,6 +5591,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Best-effort asynchronous native breadcrumb. A native abort or abrupt
   // process death can occur before SharedPreferences persists it.
   private void saveCriticalEngineStage(String stage,String detail){
+    // Keep this in memory before diagnostic persistence, which can itself stall.
+    noteUiDecoderStage(stage+" "+safeDiagnosticDetail(detail));
     saveLiveDiagnostic(stage,detail,true);
   }
   private static final Object LIVE_DIAGNOSTIC_LOCK=new Object();
@@ -5901,7 +5914,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long begun=android.os.SystemClock.elapsedRealtime();
     final boolean onUiThread=android.os.Looper.myLooper()==android.os.Looper.getMainLooper();
     if(old==null){
-      if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
+      if(video!=null&&video.getPlayer()!=null){try{noteUiDecoderStage("live orphan view detach");video.setPlayer(null);}catch(RuntimeException error){
         saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
       }}
       long detachMs=android.os.SystemClock.elapsedRealtime()-begun;
@@ -5921,19 +5934,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long disableMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
     // pause() is equivalent to setPlayWhenReady(false); do not issue it twice.
     checkpoint=android.os.SystemClock.elapsedRealtime();
-    if(video!=null){try{video.setPlayer(null);}catch(RuntimeException error){
+    if(video!=null&&video.getPlayer()!=null){try{noteUiDecoderStage("live surface detach begin");video.setPlayer(null);}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
     }}
     long detachMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
     // Preserve stop/clear/release independently. A failed stop must not leave
     // stale audio or skip releasing the Media3 codec/renderers.
     checkpoint=android.os.SystemClock.elapsedRealtime();
-    try{old.stop();}catch(RuntimeException error){
+    try{noteUiDecoderStage("live Media3 stop begin");old.stop();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
     }
     long stopMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
     checkpoint=android.os.SystemClock.elapsedRealtime();
-    try{old.clearMediaItems();}catch(RuntimeException error){
+    try{noteUiDecoderStage("live Media3 clear begin");old.clearMediaItems();}catch(RuntimeException error){
       saveLiveDiagnostic("LIVE_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
     }
     long clearMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
