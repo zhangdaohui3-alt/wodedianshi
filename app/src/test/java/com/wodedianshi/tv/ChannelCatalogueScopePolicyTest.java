@@ -80,6 +80,18 @@ public class ChannelCatalogueScopePolicyTest {
         assertFalse(ChannelCatalogueScopePolicy.isRetainableScope(null));
     }
 
+    @Test public void aSurvivingLocalCityBackupKeepsItsDirectoryMembership() {
+        java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
+        ownership.put("one", new HashSet<>(Arrays.asList("china", "geo:cities:cn-fuzhou")));
+        ownership.put("two", new HashSet<>(Arrays.asList("global", "geo:cities:cn-xiamen")));
+        java.util.Set<String> scopes = ChannelCatalogueScopePolicy.retainedScopes(
+                ownership, new HashSet<>(Collections.singletonList("one")));
+        assertTrue(scopes.contains("china"));
+        assertTrue(scopes.contains("geo:cities:cn-fuzhou"));
+        assertFalse(scopes.contains("geo:cities:cn-xiamen"));
+        assertFalse(scopes.contains("global"));
+    }
+
     @Test public void unknownGeographicScopeIsNotPromoted() {
         java.util.Map<String, java.util.Set<String>> ownership = new java.util.HashMap<>();
         ownership.put("one", new HashSet<>(Arrays.asList(
