@@ -157,7 +157,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
   private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
-  private static final String ROOM_STATE_SOURCE_QOE="source_qoe_v1";
   private volatile String roomLastChannelIdentity="";
   private volatile String roomLastChannelUrl="";
   private volatile String roomLastChannelName="";
@@ -166,7 +165,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
   private volatile String roomSourceProbeJson="{}";
-  private volatile String roomSourceQoeJson="{}";
   private volatile long roomSourceUpdateLastSuccessAt=0L;
   private volatile long roomFullRebuildCompletedAt=0L;
   private volatile long roomChinaSupplementLastSuccess=0L;
@@ -203,9 +201,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long pendingRemoteZapMutationGeneration=-1L;
   // Parsed source-quality JSON is reused until a playback metric actually updates
   // the backing preference strings; channel zapping must not reparse a large map.
-  private final Object sourceScoreCacheLock = new Object();
-  private String cachedProbeScoreRaw,cachedQoeScoreRaw;
-  private org.json.JSONObject cachedProbeScoreJson,cachedQoeScoreJson;
+  // Probe scores are parsed on a background Room read, then published read-only.
+  private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
 
   private volatile long catalogueFilterGeneration=0L;
   private volatile int lastFilteredMatchCount=0;
@@ -773,8 +770,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
     roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
-    roomSourceQoeJson=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
+    publishProbeScores(roomSourceProbeJson);
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
     roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
@@ -6665,99 +6661,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
-    if(url==null||url.isEmpty())return;
-    try{
-      // Reuse the parsed QoE map across consecutive tune events. Parsing the
-      // entire accumulated source-history JSON on every attempt/first-frame
-      // adds UI-thread work proportional to catalogue history size.
-      org.json.JSONObject all;
-      synchronized(sourceScoreCacheLock){
-        if(cachedQoeScoreJson==null||!roomSourceQoeJson.equals(cachedQoeScoreRaw)){
-          try{cachedQoeScoreJson=new org.json.JSONObject(roomSourceQoeJson);}
-          catch(org.json.JSONException malformed){cachedQoeScoreJson=new org.json.JSONObject();}
-          cachedQoeScoreRaw=roomSourceQoeJson;
-        }
-        all=cachedQoeScoreJson;
-      }
-      String key=StableKey.url(url);
-      String legacyKey=StableKey.legacyUrl(url);
-      org.json.JSONObject m=all.optJSONObject(key);
-      if(m==null){m=all.optJSONObject(legacyKey);if(m!=null)all.remove(legacyKey);}
-      if(m==null)m=new org.json.JSONObject();
-      if("attempt".equals(event))m.put("attempts",m.optInt("attempts",0)+1);
-      else if("failure".equals(event))m.put("failures",m.optInt("failures",0)+1);
-      else if("buffer".equals(event))m.put("buffers",m.optInt("buffers",0)+1);
-      else if("audioCodecError".equals(event))m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
-      else if("audioSinkError".equals(event))m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
-      else if("videoCodecError".equals(event))m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
-      else if("ready".equals(event)){
-        int count=m.optInt("ready",0);long avg=m.optLong("avgReadyMs",0L);
-        m.put("ready",count+1);m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastReady",System.currentTimeMillis());
-      }else if("firstFrame".equals(event)){
-        int count=m.optInt("firstFrames",0);long avg=m.optLong("avgFirstFrameMs",0L);
-        m.put("firstFrames",count+1);
-        m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
-        m.put("lastFirstFrame",System.currentTimeMillis());
-      }else if("stable".equals(event)){
-        m.put("stablePlays",m.optInt("stablePlays",0)+1);
-        m.put("lastStable",System.currentTimeMillis());
-      }
-      m.put("updated",System.currentTimeMillis());all.put(key,m);
-      roomSourceQoeJson=all.toString();
-      queueRoomAppStateWrite(ROOM_STATE_SOURCE_QOE,roomSourceQoeJson);
-      synchronized(sourceScoreCacheLock){
-        cachedQoeScoreJson=all;cachedQoeScoreRaw=roomSourceQoeJson;
-      }
-    }catch(Exception ignored){}
+    SourceMemoryStore.recordMetric(getApplicationContext(),url,event,readyMs);
+  }
+  private void publishProbeScores(String raw){
+    try{cachedProbeScoreJson=new org.json.JSONObject(raw);}
+    catch(Exception malformed){cachedProbeScoreJson=new org.json.JSONObject();}
   }
   private HashMap<String,Double> observedSourceScores(List<String> urls){
     HashMap<String,Double> scores=new HashMap<>();
     if(urls==null||urls.isEmpty())return scores;
-    try{
-      String probeRaw=roomSourceProbeJson;
-      String qoeRaw=roomSourceQoeJson;
-      org.json.JSONObject measured,allQoe;
-      synchronized(sourceScoreCacheLock){
-        if(cachedProbeScoreJson==null||cachedQoeScoreJson==null
-            ||probeRaw!=cachedProbeScoreRaw||qoeRaw!=cachedQoeScoreRaw){
-          try{cachedProbeScoreJson=new org.json.JSONObject(probeRaw);}
-          catch(Exception malformed){cachedProbeScoreJson=new org.json.JSONObject();}
-          try{cachedQoeScoreJson=new org.json.JSONObject(qoeRaw);}
-          catch(Exception malformed){cachedQoeScoreJson=new org.json.JSONObject();}
-          cachedProbeScoreRaw=probeRaw;cachedQoeScoreRaw=qoeRaw;
-        }
-        measured=cachedProbeScoreJson;allQoe=cachedQoeScoreJson;
-      }
-      long now=System.currentTimeMillis();
-      for(String url:urls){
-        int label=sourceQualityScore(url);
-        try{
-          String key=StableKey.url(url),legacyKey=StableKey.legacyUrl(url);
-          double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
-          if(SourceQualityScorer.isFailedProbeScore(probeScore)){
-            scores.put(url,probeScore+label*0.01);continue;
-          }
-          org.json.JSONObject m=allQoe.optJSONObject(key);
-          if(m==null)m=allQoe.optJSONObject(legacyKey);
-          if(m==null||m.optInt("attempts",0)<2){
-            scores.put(url,probeScore+label*0.01);continue;
-          }
-          int attempts=Math.max(1,m.optInt("attempts",0));
-          int ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-          int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-          double recentSuccessBonus=SourceQoeScoringPolicy.recentSuccessBonus(
-              m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
-          double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
-              attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
-              fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
-              codecWarnings);
-          double historyWeight=SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
-          scores.put(url,probeScore+qoeAdjustment*historyWeight+recentSuccessBonus+label*0.01);
-        }catch(Exception malformedUrl){scores.put(url,label*0.01);}
-      }
-    }catch(Exception malformedStore){
-      for(String url:urls)scores.put(url,sourceQualityScore(url)*0.01);
+    org.json.JSONObject measured=cachedProbeScoreJson;
+    long now=System.currentTimeMillis();
+    for(String url:urls){
+      int label=sourceQualityScore(url);
+      try{
+        String key=StableKey.url(url),legacyKey=StableKey.legacyUrl(url);
+        double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
+        double adjustment=SourceQualityScorer.isFailedProbeScore(probeScore)?0.0:
+            SourceMemoryStore.qoeAdjustment(key,legacyKey,now);
+        scores.put(url,probeScore+adjustment+label*0.01);
+      }catch(Exception malformedUrl){scores.put(url,label*0.01);}
     }
     return scores;
   }
@@ -7268,17 +7191,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void reloadRoomSourceMetrics(){
     String probe=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
-    String qoe=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_SOURCE_QOE,"{}");
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
-    synchronized(sourceScoreCacheLock){
-      roomSourceProbeJson=probe;
-      roomSourceQoeJson=qoe;
-      cachedProbeScoreRaw=null;
-      cachedQoeScoreRaw=null;
-      cachedProbeScoreJson=null;
-      cachedQoeScoreJson=null;
-    }
+    roomSourceProbeJson=probe;
+    publishProbeScores(probe);
   }
 
 
