@@ -1507,6 +1507,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             initialDiscoveryProgressTitle.setText("首次完整抓源 · "
                 +Math.max(0,Math.min(99,percent))+"%");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
+            String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             initialDiscoveryProgressDetail.setText(
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
@@ -1515,7 +1516,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个"
-                +"\n"+phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""));
+                +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage));
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
