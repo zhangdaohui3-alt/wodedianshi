@@ -1465,7 +1465,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
-              "validated_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
+              "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
               "percent","phase"})keys.add(prefix+suffix);
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
@@ -1478,6 +1478,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int staged=(int)readStateLong(snapshot,prefix+"staged_channels",0L);
           final int checked=(int)readStateLong(snapshot,prefix+"checked_urls",0L);
           final int validated=(int)readStateLong(snapshot,prefix+"validated_urls",0L);
+          final int timeouts=(int)readStateLong(snapshot,prefix+"timeout_urls",0L);
           final int unavailable=(int)readStateLong(snapshot,prefix+"unavailable_feeds",0L);
           final int feedIndex=(int)readStateLong(snapshot,prefix+"feed_index",0L);
           final int cursor=(int)readStateLong(snapshot,prefix+"feed_cursor",0L);
@@ -1500,7 +1501,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   +Math.max(0,staged)+" 个频道"+"\n中国来源初筛通过 "
                   +Math.max(0,chinaValidated)+" 次 · 全部来源 "
                   +Math.max(0,validated)+" 次"+"\n暂不可用来源 "
-                  +Math.max(0,unavailable)+" 个 · 之后只在空闲时补查"
+                  +Math.max(0,unavailable)+" 个 · 超时未确认 "+Math.max(0,timeouts)+" 次，待补查"
                   +"\n100%不代表全部频道可播，详见设置→查看更新状态");
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
@@ -1523,7 +1524,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +"\n已整理频道 "+Math.max(0,staged)+(previewLevel>0?" · 阶段目录已发布":"")+" · 中国初筛通过 "
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
-                    +Math.max(0,unavailable)+" 个"
+                    +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
                 +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage));
           });
         }catch(Throwable error){

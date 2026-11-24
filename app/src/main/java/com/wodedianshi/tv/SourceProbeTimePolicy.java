@@ -28,6 +28,15 @@ public final class SourceProbeTimePolicy {
             throw new PausedException();
     }
 
+    // First build prioritizes breadth. Keep one difficult HLS address from
+    // monopolizing an entire slice. A timed-out probe is inconclusive.
+    public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
+    public static long initialAddressDeadline(long batchDeadline, long now) {
+        if (now < 0L || batchDeadline < now
+                || batchDeadline - now < INITIAL_ADDRESS_BUDGET_MS) return 0L;
+        return now + INITIAL_ADDRESS_BUDGET_MS;
+    }
+
     /**
      * Returns zero when the deadline has expired; otherwise caps the request timeout
      * at both the per-request maximum and the remaining elapsed-realtime budget.
