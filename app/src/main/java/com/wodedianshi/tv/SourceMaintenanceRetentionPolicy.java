@@ -15,6 +15,12 @@ public final class SourceMaintenanceRetentionPolicy {
     private SourceMaintenanceRetentionPolicy() {}
     public static final int FAILURES_BEFORE_RETIREMENT = 3;
 
+    /** Count independent failed saved-route probes; a success resets the streak. */
+    public static int nextFailureStreak(int previous, boolean probeSucceeded) {
+        return probeSucceeded ? 0 : Math.min(FAILURES_BEFORE_RETIREMENT,
+                Math.max(0, previous) + 1);
+    }
+
     public static List<String> retainDuringRoutineUpdate(List<String> existing,
             String verifiedCandidate, int maxSources, Comparator<String> bestFirst,
             String primary, String active, Set<String> repeatedlyFailed) {
@@ -40,6 +46,8 @@ public final class SourceMaintenanceRetentionPolicy {
                     && bestFirst.compare(url,old.get(retireIndex))>0) retireIndex=i;
         }
         if (retireIndex<0 || bestFirst==null || verifiedCandidate==null
+                || !(verifiedCandidate.startsWith("https://")
+                      || verifiedCandidate.startsWith("http://"))
                 || bestFirst.compare(verifiedCandidate,old.get(retireIndex))>=0) return old;
         // Deduplicate before replacing to avoid losing a source whose candidate
         // spelling differs from an already retained endpoint.
