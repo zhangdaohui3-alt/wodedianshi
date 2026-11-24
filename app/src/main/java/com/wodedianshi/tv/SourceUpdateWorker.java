@@ -166,6 +166,8 @@ public class SourceUpdateWorker extends Worker {
               getApplicationContext(),"source_full_rebuild_active","true");
         }
         saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext());
+        com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+            "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
         saved=roomSnapshotToArray(roomSnapshot);
       }
@@ -662,6 +664,10 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_feed_batch_fingerprint")
             .remove("source_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
+            .putInt("source_initial_progress_percent",0)
+            .putInt("source_initial_progress_done_feeds",0)
+            .putInt("source_initial_progress_staged_channels",0)
+            .putString("source_initial_progress_phase","本轮抓源没有通过验证的来源，未发布快照；可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
@@ -757,6 +763,11 @@ public class SourceUpdateWorker extends Worker {
   }
 
   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
+    if(initialDiscoveryChain){
+      // The existing counters and cursors stay unchanged while viewing.
+      com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+          "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+    }
     // Do not repeatedly wake the periodic job every few minutes while a user
     // watches television; next week's schedule is the automatic fallback.
     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
