@@ -16,6 +16,8 @@ public class SourceMaintenanceRetentionPolicyTest {
         assertEquals(2,SourceMaintenanceRetentionPolicy.nextFailureStreak(1,false));
         assertEquals(3,SourceMaintenanceRetentionPolicy.nextFailureStreak(2,false));
         assertEquals(3,SourceMaintenanceRetentionPolicy.nextFailureStreak(3,false));
+        assertEquals(3,SourceMaintenanceRetentionPolicy.nextFailureStreak(
+                Integer.MAX_VALUE,false));
         assertEquals(0,SourceMaintenanceRetentionPolicy.nextFailureStreak(2,true));
         assertEquals(1,SourceMaintenanceRetentionPolicy.nextFailureStreak(0,false));
     }
