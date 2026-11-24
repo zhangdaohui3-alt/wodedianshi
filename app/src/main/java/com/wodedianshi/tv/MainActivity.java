@@ -52,6 +52,57 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int pendingVlcTeardowns=0;
   private static final java.util.concurrent.atomic.AtomicInteger PROCESS_VLC_TEARDOWNS=new java.util.concurrent.atomic.AtomicInteger();
   private static volatile boolean media3ReleaseUnconfirmed;
+  private static final DecoderOwnership DECODER_OWNERSHIP=new DecoderOwnership();
+  private final Object decoderOwnerToken=new Object();
+
+  private boolean acquireDecoderOwnership(){
+    return !media3ReleaseUnconfirmed&&PROCESS_VLC_TEARDOWNS.get()==0
+        &&DECODER_OWNERSHIP.acquire(decoderOwnerToken);
+  }
+  private void releaseDecoderOwnershipIfIdle(){
+    if(player==null&&vodPlayer==null&&libVlcEngine==null&&vodFallbackBackend==null
+        &&pendingVlcTeardowns==0&&!media3ReleaseUnconfirmed)
+      DECODER_OWNERSHIP.release(decoderOwnerToken);
+  }
+  private void quarantineMedia3Release(String detail){
+    media3ReleaseUnconfirmed=true;
+    DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
+    saveLiveDiagnostic("MEDIA3_RELEASE_UNCONFIRMED",detail);
+  }
+  // Media3 may report a timeout through onPlayerError rather than throw.
+  // Attach this independent listener before old-player callbacks are revoked.
+  private void watchMedia3Release(ExoPlayer old){
+    if(old==null)return;
+    try{
+      old.addListener(new Player.Listener(){
+        @Override public void onPlayerError(PlaybackException error){
+          Throwable cause=error;
+          for(int i=0;i<12&&cause!=null;i++,cause=cause.getCause()){
+            if(cause instanceof androidx.media3.exoplayer.ExoTimeoutException){
+              int op=((androidx.media3.exoplayer.ExoTimeoutException)cause).timeoutOperation;
+              if(op==androidx.media3.exoplayer.ExoTimeoutException.TIMEOUT_OPERATION_RELEASE
+                  ||op==androidx.media3.exoplayer.ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE)
+                quarantineMedia3Release("timeout operation="+op);
+              break;
+            }
+          }
+        }
+      });
+    }catch(RuntimeException failure){quarantineMedia3Release("release listener registration failed");}
+  }
+  private void releaseMedia3Confirmed(ExoPlayer old){
+    long start=android.os.SystemClock.elapsedRealtime();
+    try{
+      old.release();
+      // The default release timeout is 500ms. A callback may be queued rather
+      // than delivered synchronously; treat reaching that bound conservatively.
+      if(android.os.SystemClock.elapsedRealtime()-start>=
+          androidx.media3.exoplayer.ExoPlayer.Builder.DEFAULT_RELEASE_TIMEOUT_MS)
+        quarantineMedia3Release("release reached timeout budget");
+    }catch(RuntimeException|LinkageError failure){
+      quarantineMedia3Release(failure.getClass().getSimpleName());
+    }finally{releaseDecoderOwnershipIfIdle();}
+  }
   private Runnable pendingVodStartAfterRelease;
   private Runnable liveVlcReleaseContinuation;
   private Runnable libVlcReleaseNotice;
@@ -2493,13 +2544,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseVodPlayerSafely(PlayerView view){
     ExoPlayer old=vodPlayer;
     vodPlayer=null;
+    watchMedia3Release(old);
     if(view!=null){
       try{view.setKeepScreenOn(false);}catch(RuntimeException ignored){}
       try{view.setPlayer(null);}catch(RuntimeException error){
         saveLiveDiagnostic("VOD_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
       }
     }
-    if(old==null)return;
+    if(old==null){releaseDecoderOwnershipIfIdle();return;}
     try{old.setPlayWhenReady(false);}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
     }
@@ -2509,10 +2561,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{old.clearMediaItems();}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
     }
-    try{old.release();}catch(RuntimeException error){
-      media3ReleaseUnconfirmed=true;
-      saveLiveDiagnostic("VOD_PLAYER_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
+    releaseMedia3Confirmed(old);
   }
   private void releaseVodFallback(){
     if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}
@@ -2523,7 +2572,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(old!=null){
       old.revoke();
       queueVlcTeardown(old::releaseAndConfirm);
-    }
+    }else releaseDecoderOwnershipIfIdle();
   }
   private void fallbackVodToLibVlc(Dialog dialog,VodItem item,PlayerView media3View,VLCVideoLayout vlcLayout,long resumePosition,Runnable onEnded,Runnable onFailure){
     if(isAnyPlaybackLockActive()||!activityStarted||vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
@@ -2538,6 +2587,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     media3View.setVisibility(View.GONE);vlcLayout.setVisibility(View.VISIBLE);
     try{
+      if(!acquireDecoderOwnership()){if(onFailure!=null)onFailure.run();return;}
       final LibVlcVodBackend backend=new LibVlcVodBackend(this,vlcLayout,libVlcWorker);vodFallbackBackend=backend;vodUsingLibVlc=true;
       backend.setListener(new VodPlaybackBackend.Listener(){
         private boolean current(){return session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
@@ -3513,6 +3563,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;if(revealVodControlsAction!=null)revealVodControlsAction=null;});
     try{
       recordDecoderInventoryOnce();
+      if(!acquireDecoderOwnership())throw new IllegalStateException("旧播放器仍在使用资源");
       vodPlayer=PlaybackPlayerFactory.createVodPlayer(this,isDecoderFallbackEnabled());
       final ExoPlayer vodListenerOwner=vodPlayer;
       final boolean[] vodHasVideoTrack={false},vodRenderedFirstFrame={false};
@@ -3578,7 +3629,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       uiHandler.postDelayed(vodPlaybackWatchdog,2000L);
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
-    }catch(Exception e){toast("影片无法播放："+e.getMessage());d.dismiss();}
+    }catch(Exception|LinkageError e){
+      releaseVodFallback();releaseVodPlayerSafely(pv);
+      vodSessionGeneration++;activeVodItem=null;
+      if(vodPlayerDialog==d)vodPlayerDialog=null;
+      toast("影片无法播放："+e.getMessage());d.dismiss();
+    }
   }
 
   // Official VOD navigation is isolated in its own UI module.
@@ -5776,6 +5832,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Invalidate callbacks first. Preserve independent cleanup stages even when
     // a vendor codec call fails; stage timing is diagnostic, not a new teardown path.
     player=null;
+    watchMedia3Release(old);
     final long begun=android.os.SystemClock.elapsedRealtime();
     final boolean onUiThread=android.os.Looper.myLooper()==android.os.Looper.getMainLooper();
     if(old==null){
@@ -5789,6 +5846,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(detachMs>=500L)saveLiveDiagnostic("MEDIA3_DETACH_SLOW",
             "emptyPlayerDetachMs="+detachMs+" uiThread="+onUiThread);
       }
+      releaseDecoderOwnershipIfIdle();
       return;
     }
     long checkpoint=begun;
@@ -5815,10 +5873,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     long clearMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
     checkpoint=android.os.SystemClock.elapsedRealtime();
-    try{old.release();}catch(RuntimeException error){
-      media3ReleaseUnconfirmed=true;
-      saveLiveDiagnostic("LIVE_PLAYER_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
+    releaseMedia3Confirmed(old);
     long releaseMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
     long totalMs=android.os.SystemClock.elapsedRealtime()-begun;
     // Healthy teardown produces no diagnostic writes. Capture a single
@@ -5990,7 +6045,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(media3ReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
     if(vodPlayer!=null||vodFallbackBackend!=null)return;
-    if(!libVlcReleaseInProgress&&PROCESS_VLC_TEARDOWNS.get()>0){toast("旧播放器仍在释放，请稍后重试");return;}
+    if(!DECODER_OWNERSHIP.availableTo(decoderOwnerToken)
+        ||(!libVlcReleaseInProgress&&PROCESS_VLC_TEARDOWNS.get()>0)){
+      toast("旧播放器仍在使用资源，请稍后重试");return;
+    }
     if(selected<0||selected>=channels.size())return;
     ++liveTuneRequestSerial;
     Channel requested=channels.get(selected);
@@ -6094,6 +6152,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(player==null){
       recordDecoderInventoryOnce();
       saveCriticalEngineStage("TUNE_STAGE","Media3 player construction begin");
+      if(!acquireDecoderOwnership())throw new IllegalStateException("decoder owner unavailable");
       player=PlaybackPlayerFactory.createLivePlayer(this,isDecoderFallbackEnabled());
       saveCriticalEngineStage("TUNE_STAGE","Media3 player constructed");
       saveCriticalEngineStage("TUNE_STAGE","Media3 PlayerView attach begin");
@@ -6347,6 +6406,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     info.setText(reason+"，正在切换独立 VLC 播放器…");
     saveLiveDiagnostic("ENGINE_FALLBACK","Media3 -> LibVLC; "+reason);
     try{
+      if(!acquireDecoderOwnership())return false;
       final LibVlcPlaybackEngine engine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
       libVlcEngine=engine;
       engine.setListener(new LibVlcPlaybackEngine.Listener(){
@@ -6601,6 +6661,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(pendingVlcTeardowns>0)--pendingVlcTeardowns;
     if(pendingVlcTeardowns!=0)return;
     libVlcReleaseInProgress=false;
+    releaseDecoderOwnershipIfIdle();
     if(libVlcReleaseNotice!=null){uiHandler.removeCallbacks(libVlcReleaseNotice);libVlcReleaseNotice=null;}
     if(player==null&&libVlcEngine==null&&currentVodPanel==null)setSourceUpdatePlaybackActive(false);
     if(libVlcReleaseCallbacks.isEmpty())return;
@@ -6622,7 +6683,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       else if(old==null){afterRelease.run();return;}
       else libVlcReleaseCallbacks.add(afterRelease);
     }
-    if(old==null)return;
+    if(old==null){releaseDecoderOwnershipIfIdle();return;}
     queueVlcTeardown(old::release);
   }
   /** Shared release barrier for live and VOD VLC. A failed teardown never opens it. */
@@ -6651,6 +6712,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Fail closed: Media3 must not acquire the shared output when native VLC
         // teardown failed or could not be confirmed. Keep the barrier and queued
         // callbacks intact; restarting the Activity is safer than dual decoders.
+        DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
         saveLiveDiagnostic("VLC_RELEASE_BARRIER_RETAINED","native teardown not confirmed");
         return;
       }
