@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @org.junit.Test public void manualRefreshProcessesAllPagesBeforeAdvancing() {
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,12,25,12));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(12,12,25,12));
+        org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(24,1,25,12));
+        org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(0,12,12,12));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,12,-1,12));
+        org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(12,0,-1,12));
+    }
+
     @Test public void routineRotationCoversEveryFeedWithoutWrappingMidSlice() {
         int start=0, visited=0;
         do {
