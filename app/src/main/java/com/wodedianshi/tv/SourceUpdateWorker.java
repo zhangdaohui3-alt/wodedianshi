@@ -424,10 +424,10 @@ public class SourceUpdateWorker extends Worker {
         }
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
           String streakKey=scoreKey(e.url);
-          if(measured.valid)probeFailureStreaks.remove(streakKey);
-          else probeFailureStreaks.put(streakKey,
-              Math.min(SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT,
-                  Math.max(0,probeFailureStreaks.optInt(streakKey,0))+1));
+          int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
+              probeFailureStreaks.optInt(streakKey,0),measured.valid);
+          if(streak==0)probeFailureStreaks.remove(streakKey);
+          else probeFailureStreaks.put(streakKey,streak);
         }
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
         if(!measured.valid&&!initialDiscoveryChain)continue;
@@ -546,6 +546,7 @@ public class SourceUpdateWorker extends Worker {
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       trimProbeScores(measuredScores,savedPool,probeCandidates);
+      trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
       // Playback can begin after the last probe-loop check but before persistence.
