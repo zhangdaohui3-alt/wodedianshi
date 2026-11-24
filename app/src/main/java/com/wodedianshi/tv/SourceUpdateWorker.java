@@ -751,9 +751,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :(stageDescription+"；中国大陆已检查 "+chinaFeedDone+"/"
-                    +SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT
-                    +"；暂不可用 "+unavailableCount+" 个"))
+                :(stageDescription+"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
