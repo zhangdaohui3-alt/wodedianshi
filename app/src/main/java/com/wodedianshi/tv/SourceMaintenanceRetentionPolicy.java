@@ -26,26 +26,28 @@ public final class SourceMaintenanceRetentionPolicy {
         }
         HashSet<String> permittedToEvict = new HashSet<>();
         if (repeatedlyFailed != null) permittedToEvict.addAll(repeatedlyFailed);
-        // Construct a comparator that makes only *eligible* old backups
-        // replaceable. The existing merge helper also refuses to evict the
-        // stable primary or the user's current route.
-        Comparator<String> protectedWorstFirst = (a,b) -> {
-            boolean aCanRetire = permittedToEvict.contains(SourceSelectionPolicy.endpointKey(a));
-            boolean bCanRetire = permittedToEvict.contains(SourceSelectionPolicy.endpointKey(b));
-            if (aCanRetire != bCanRetire) return aCanRetire ? 1 : -1;
-            return bestFirst == null ? 0 : bestFirst.compare(a,b);
-        };
-        // If no existing backup is eligible, decline to evict anything.
-        boolean canRetire = false;
-        for (String url : old) {
-            if (permittedToEvict.contains(SourceSelectionPolicy.endpointKey(url))
-                    && !SourceSelectionPolicy.endpointKey(url).equals(SourceSelectionPolicy.endpointKey(primary))
-                    && !SourceSelectionPolicy.endpointKey(url).equals(SourceSelectionPolicy.endpointKey(active))) {
-                canRetire=true;break;
-            }
+        // If the channel is already full, replace only a backup that has
+        // independently failed at least three probes and only if the newly
+        // preflighted candidate actually ranks better. The pinned source and
+        // stable primary are never retired automatically.
+        int retireIndex=-1;
+        for (int i=0;i<old.size();i++) {
+            String url=old.get(i), key=SourceSelectionPolicy.endpointKey(url);
+            if (!permittedToEvict.contains(key)
+                    || key.equals(SourceSelectionPolicy.endpointKey(primary))
+                    || key.equals(SourceSelectionPolicy.endpointKey(active))) continue;
+            if (retireIndex<0 || bestFirst!=null
+                    && bestFirst.compare(url,old.get(retireIndex))>0) retireIndex=i;
         }
-        if (!canRetire) return old;
-        return SourceChannelMergePolicy.attachSharedEndpoint(
-                old, verifiedCandidate, maxSources, protectedWorstFirst, primary, active);
+        if (retireIndex<0 || bestFirst==null || verifiedCandidate==null
+                || bestFirst.compare(verifiedCandidate,old.get(retireIndex))>=0) return old;
+        // Deduplicate before replacing to avoid losing a source whose candidate
+        // spelling differs from an already retained endpoint.
+        String candidateKey=SourceSelectionPolicy.endpointKey(verifiedCandidate);
+        for (String url:old)
+            if (SourceSelectionPolicy.endpointKey(url).equals(candidateKey)) return old;
+        ArrayList<String> updated=new ArrayList<>(old);
+        updated.set(retireIndex,verifiedCandidate);
+        return updated;
     }
 }
