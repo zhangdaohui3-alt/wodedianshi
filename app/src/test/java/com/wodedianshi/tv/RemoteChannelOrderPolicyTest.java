@@ -5,6 +5,13 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class RemoteChannelOrderPolicyTest {
+    @Test public void pendingKeyStepsAreMergedAndBounded() {
+        org.junit.Assert.assertEquals(4, RemoteChannelOrderPolicy.mergeZapSteps(3, 1));
+        org.junit.Assert.assertEquals(0, RemoteChannelOrderPolicy.mergeZapSteps(1, -1));
+        org.junit.Assert.assertEquals(12, RemoteChannelOrderPolicy.mergeZapSteps(12, 1));
+        org.junit.Assert.assertEquals(-12, RemoteChannelOrderPolicy.mergeZapSteps(-12, -1));
+    }
+
     @Test public void countryAndFavoriteMembershipAreBothRequired() {
         java.util.Set<String> geo = java.util.Collections.singleton("fujian");
         java.util.Set<String> fav = java.util.Collections.singleton("other");
