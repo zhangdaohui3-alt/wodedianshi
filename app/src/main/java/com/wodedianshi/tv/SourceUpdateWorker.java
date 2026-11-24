@@ -618,6 +618,17 @@ public class SourceUpdateWorker extends Worker {
           }
         }
         for(boolean done:finished)if(done)completedFeeds++;
+        boolean[] unavailableFlags=new boolean[feeds.length];
+        for(int i=0;i<feeds.length;i++)
+          unavailableFlags[i]=roomBoolean(initialFeedUnavailableKey(i),false);
+        if(feedBatchComplete){
+          for(FeedBatch batch:feedBatches)
+            if(batch.index>=0&&batch.index<feeds.length&&batch.unavailable
+                &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+              unavailableFlags[batch.index]=true;
+        }
+        int unavailableCount=0;
+        for(boolean missing:unavailableFlags)if(missing)unavailableCount++;
         int activeFeed=initialNextFeedIndex;
         int activeCursor=0,activeEntries=-1;
         for(FeedBatch batch:feedBatches){
@@ -630,17 +641,32 @@ public class SourceUpdateWorker extends Worker {
         int progressPercent=FullDiscoveryProgressPolicy.percent(
             completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
+        int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
             .putInt("source_initial_progress_staged_channels",saved.length())
             .putInt("source_initial_progress_checked_urls",
                 (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
+            .putInt("source_initial_progress_validated_urls",
+                (int)Math.min(Integer.MAX_VALUE,
+                    (long)validatedSoFar+Math.max(0,discoveryProbesValid)))
+            .putInt("source_initial_progress_unavailable_feeds",unavailableCount)
             .putInt("source_initial_progress_feed_index",Math.max(0,activeFeed))
             .putInt("source_initial_progress_feed_cursor",Math.max(0,activeCursor))
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
-                ?"完整频道快照已发布":"正在逐个抓取、检测和整理来源");
+                ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
+                :("正在逐个抓取、检测和整理来源；暂不可用 "+unavailableCount+" 个"))
+            .putString("source_update_result",initialDiscoveryComplete
+                ?("首次全量目录检查已完成并发布；成功处理 "
+                    +(completedFeeds-unavailableCount)+"/"+feeds.length
+                    +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
+                    +(validatedSoFar+Math.max(0,discoveryProbesValid))
+                    +" 次（非实机播放验证）。")
+                :("首次完整抓源进度 "+progressPercent+"%；已处理 "
+                    +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
+                    +unavailableCount+" 个；旧频道目录保持不变。"));
       }
       if(initialDiscoveryChain&&initialHasValidatedSource){
         update.putBoolean("source_initial_has_validated_source",true);
@@ -672,7 +698,9 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.AppStateEditor failedBuildReset=
             new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
         for(int feed=0;feed<feeds.length;feed++){
-          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+              .remove(initialFeedUnavailableKey(feed))
+              .remove(initialFeedFailureCountKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -685,6 +713,8 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_percent",0)
             .putInt("source_initial_progress_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
+            .putInt("source_initial_progress_unavailable_feeds",0)
+            .putInt("source_initial_progress_validated_urls",0)
             .putString("source_initial_progress_phase","本轮抓源没有通过验证的来源，未发布快照；可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0
