@@ -56,7 +56,7 @@ public class SourceUpdateWorker extends Worker {
           :"正在观看或浏览频道，本周自动检查已跳过；保存的频道继续正常使用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }
-    int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,feedsFailed=0,checked=0;
+    int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,chinaPreflightsValid=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
     // Centralized, testable feed order: China local-first, then global.
     // A feed-list fingerprint change intentionally restarts first-build cursors.
@@ -124,6 +124,7 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_staged_channels",0)
               .putInt("source_initial_progress_checked_urls",0)
               .putInt("source_initial_progress_validated_urls",0)
+              .putInt("source_initial_progress_china_validated_urls",0)
               .putInt("source_initial_progress_unavailable_feeds",0)
               .putInt("source_initial_progress_feed_index",0)
               .putInt("source_initial_progress_feed_cursor",0)
@@ -241,6 +242,16 @@ public class SourceUpdateWorker extends Worker {
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           });
+          if(initialDiscoveryChain&&SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)){
+            // Preserve every address and the exact raw index cursor. Within the
+            // current 24-row page, probe mainland candidates first. Java's List
+            // sort is stable, so partial-batch fingerprint/resume stays deterministic.
+            feedCandidates.sort((aEntry,bEntry)->Integer.compare(
+                ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
+                    aEntry.scope,aEntry.name,aEntry.group,aEntry.tvgName,aEntry.tvgId),
+                ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
+                    bEntry.scope,bEntry.name,bEntry.group,bEntry.tvgName,bEntry.tvgId)));
+          }
           indexedEntries=PlaylistFeedIndex.indexedEntryCount(cachedFeed);
           // Parsing a cached large playlist can overlap a newly started player.
           // Do not enqueue its candidates for probing or advance any cursor.
@@ -270,7 +281,10 @@ public class SourceUpdateWorker extends Worker {
           }
           android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
-              +" candidates="+feedCandidates.size()+" local_metadata="+localMetadataCandidates
+              +" candidates="+feedCandidates.size()
+              +" mainland_priority_page="
+                  +(initialDiscoveryChain&&SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex))
+              +" local_metadata="+localMetadataCandidates
               +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+scopeForFeed(feed));
           if(!feedCandidates.isEmpty())feedsWithEntries++;
@@ -412,7 +426,11 @@ public class SourceUpdateWorker extends Worker {
           if(streak==0)probeFailureStreaks.remove(streakKey);
           else probeFailureStreaks.put(streakKey,streak);
         }
-        if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
+        if(measured.valid&&(!e.savedSource||initialDiscoveryChain)){
+          discoveryProbesValid++;
+          if(initialDiscoveryChain&&ChinaDiscoveryCandidatePolicy.isClearlyMainland(
+              e.scope,e.name,e.group,e.tvgName,e.tvgId))chinaPreflightsValid++;
+        }
         if(!measured.valid&&!initialDiscoveryChain)continue;
         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
         if(target!=null){
@@ -710,6 +728,8 @@ public class SourceUpdateWorker extends Worker {
               Math.max(0,roomInt("source_initial_progress_percent",0))));
         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
         int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
+        int chinaValidatedSoFar=Math.max(0,
+            roomInt("source_initial_progress_china_validated_urls",0));
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
@@ -722,15 +742,16 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_validated_urls",
                 (int)Math.min(Integer.MAX_VALUE,
                     (long)validatedSoFar+Math.max(0,discoveryProbesValid)))
+            .putInt("source_initial_progress_china_validated_urls",
+                (int)Math.min(Integer.MAX_VALUE,
+                    (long)chinaValidatedSoFar+Math.max(0,chinaPreflightsValid)))
             .putInt("source_initial_progress_unavailable_feeds",unavailableCount)
             .putInt("source_initial_progress_feed_index",Math.max(0,activeFeed))
             .putInt("source_initial_progress_feed_cursor",Math.max(0,activeCursor))
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :(stageDescription+"；中国大陆已检查 "+chinaFeedDone+"/"
-                    +SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT
-                    +"；暂不可用 "+unavailableCount+" 个"))
+                :(stageDescription+"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
@@ -788,6 +809,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
             .putInt("source_initial_progress_validated_urls",0)
+            .putInt("source_initial_progress_china_validated_urls",0)
             .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0

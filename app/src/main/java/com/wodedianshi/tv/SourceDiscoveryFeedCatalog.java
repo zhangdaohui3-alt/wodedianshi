@@ -14,6 +14,10 @@ public final class SourceDiscoveryFeedCatalog {
     // and triggers the worker's existing feed fingerprint reset on upgrade.
     public static final int MAINLAND_FEED_COUNT = 10;
     public static final int CHINESE_REGION_FEED_COUNT = 13;
+    // This public aggregator contains both mainland and foreign rows.
+    // It is visited early for county stations, but only its verified mainland
+    // metadata is probed in the first-build China priority phase.
+    public static final int MIXED_MAINLAND_FEED_INDEX = 4;
 
     private static final String[] FEEDS = {
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
@@ -50,8 +54,14 @@ public final class SourceDiscoveryFeedCatalog {
 
     static {
         if (FEEDS.length <= CHINESE_REGION_FEED_COUNT
-                || CHINESE_REGION_FEED_COUNT <= MAINLAND_FEED_COUNT)
+                || CHINESE_REGION_FEED_COUNT <= MAINLAND_FEED_COUNT
+                || MIXED_MAINLAND_FEED_INDEX >= MAINLAND_FEED_COUNT
+                || !FEEDS[MIXED_MAINLAND_FEED_INDEX].contains("/cs3306/IPTV-Sources/"))
             throw new IllegalStateException("Invalid China-first feed boundaries");
+    }
+
+    public static boolean isMixedMainlandFeed(int index) {
+        return index == MIXED_MAINLAND_FEED_INDEX;
     }
 
     public static String[] feeds() {
