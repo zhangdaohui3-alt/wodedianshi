@@ -144,6 +144,14 @@ public class ChannelNamePolicyTest {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Fuzhou TV"));
     }
 
+    @Test public void previouslyUiOnlyCitiesRemainInProvinceDirectories() {
+        assertEquals("西藏", ChannelNamePolicy.provinceForLocalChannel("拉萨新闻综合"));
+        assertEquals("海南", ChannelNamePolicy.provinceForLocalChannel("三沙电视台"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("甘孜新闻"));
+        assertEquals("青海", ChannelNamePolicy.provinceForLocalChannel("海南州新闻"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("青海 海南州新闻", "青海", "海南州"));
+    }
+
     @Test public void englishCityMetadataMatchesChineseCityPicker() {
         assertTrue(ChannelNamePolicy.matchesLocalCity("Fujian Fuzhou TV", "福建", "福州"));
         assertTrue(ChannelNamePolicy.matchesLocalCity("Xiamen News", "福建", "厦门"));
