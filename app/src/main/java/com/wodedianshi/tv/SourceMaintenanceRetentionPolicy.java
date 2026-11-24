@@ -17,8 +17,9 @@ public final class SourceMaintenanceRetentionPolicy {
 
     /** Count independent failed saved-route probes; a success resets the streak. */
     public static int nextFailureStreak(int previous, boolean probeSucceeded) {
-        return probeSucceeded ? 0 : Math.min(FAILURES_BEFORE_RETIREMENT,
-                Math.max(0, previous) + 1);
+        if (probeSucceeded) return 0;
+        if (previous >= FAILURES_BEFORE_RETIREMENT) return FAILURES_BEFORE_RETIREMENT;
+        return Math.max(0, previous) + 1;
     }
 
     public static List<String> retainDuringRoutineUpdate(List<String> existing,
