@@ -10,6 +10,11 @@ import java.util.Arrays;
 public final class SourceDiscoveryFeedCatalog {
     private SourceDiscoveryFeedCatalog() {}
 
+    // Ordered phases. Moving or adding an entry requires updating the boundary
+    // and triggers the worker's existing feed fingerprint reset on upgrade.
+    public static final int MAINLAND_FEED_COUNT = 10;
+    public static final int CHINESE_REGION_FEED_COUNT = 13;
+
     private static final String[] FEEDS = {
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
         "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv_status.m3u8",
@@ -42,6 +47,12 @@ public final class SourceDiscoveryFeedCatalog {
         "https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u",
         "https://iptv-org.github.io/iptv/index.m3u"
     };
+
+    static {
+        if (FEEDS.length <= CHINESE_REGION_FEED_COUNT
+                || CHINESE_REGION_FEED_COUNT <= MAINLAND_FEED_COUNT)
+            throw new IllegalStateException("Invalid China-first feed boundaries");
+    }
 
     public static String[] feeds() {
         return Arrays.copyOf(FEEDS, FEEDS.length);

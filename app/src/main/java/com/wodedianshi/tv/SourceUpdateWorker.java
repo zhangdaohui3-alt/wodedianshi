@@ -118,6 +118,9 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_percent",0)
               .putInt("source_initial_progress_done_feeds",0)
               .putInt("source_initial_progress_total_feeds",feeds.length)
+              .putInt("source_initial_progress_china_done_feeds",0)
+              .putInt("source_initial_progress_china_total_feeds",
+                  SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               .putInt("source_initial_progress_staged_channels",0)
               .putInt("source_initial_progress_checked_urls",0)
               .putInt("source_initial_progress_validated_urls",0)
@@ -184,15 +187,26 @@ public class SourceUpdateWorker extends Worker {
       int initialFeedStartIndex=InitialFeedRotationPolicy.normalizeStart(
           roomInt("source_initial_next_feed_index",0),feeds.length);
       int initialNextFeedIndex=initialFeedStartIndex;
+      boolean[] inspectedFeeds=new boolean[feeds.length];
+      boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
+      if(initialDiscoveryChain){
+        for(int i=0;i<feeds.length;i++)
+          inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
+      }
       for(int feedOffset=0;feedOffset<feeds.length;feedOffset++){
         int feedIndex=initialDiscoveryChain
-            ?(initialFeedStartIndex+feedOffset)%feeds.length:feedOffset;
-        // A full rebuild visits every configured feed in round-robin order.
-        // Per-run probing remains capped at 24 URLs and immediately yields
-        // when actual playback begins. Routine refreshes use stricter limits.
+            ?SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,
+                inspectedFeeds,attemptedFeedsThisRun,
+                SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)
+            :feedOffset;
+        if(feedIndex<0)break;
+        // Full rebuild: inspect China mainland feeds first (CCTV, provincial,
+        // county/local); then HK/Macau/Taiwan; only then international feeds.
+        // Rotate fairly within a stage and resume each feed's saved page cursor.
+        // Keep the 24-probe budget and yield to playback in every stage.
         if(!initialDiscoveryChain&&foregroundAtStart&&feedIndex>=8)break;
         if(!initialDiscoveryChain&&!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
-        if(initialDiscoveryChain&&roomBoolean(initialFeedDoneKey(feedIndex),false))continue;
         String feed=feeds[feedIndex];
         int feedCursor=roomInt(feedCursorKey(feedIndex),0);
         int[] parsedCount={0};
@@ -306,6 +320,7 @@ public class SourceUpdateWorker extends Worker {
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
               indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
               feedTerminalUnavailable));
+          if(initialDiscoveryChain)attemptedFeedsThisRun[feedIndex]=true;
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
@@ -681,6 +696,12 @@ public class SourceUpdateWorker extends Worker {
         }
         int progressPercent=FullDiscoveryProgressPolicy.percent(
             completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
+        int chinaFeedDone=SourceDiscoveryPriorityPolicy.completedInStage(
+            finished,0,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+        int activeStage=SourceDiscoveryPriorityPolicy.activeStage(finished,
+            SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+            SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT);
+        String stageDescription=SourceDiscoveryPriorityPolicy.stageLabel(activeStage);
         // Fair round-robin scans a different in-progress feed on the next run.
         // Persist the highest measured percent to avoid a misleading backwards
         // progress bar while keeping 100% gated on the Room publication.
@@ -692,6 +713,9 @@ public class SourceUpdateWorker extends Worker {
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
+            .putInt("source_initial_progress_china_done_feeds",chinaFeedDone)
+            .putInt("source_initial_progress_china_total_feeds",
+                SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
             .putInt("source_initial_progress_staged_channels",publishedChannelCount)
             .putInt("source_initial_progress_checked_urls",
                 (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
@@ -704,7 +728,9 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :("正在逐个抓取、检测和整理来源；暂不可用 "+unavailableCount+" 个"))
+                :(stageDescription+"；中国大陆已检查 "+chinaFeedDone+"/"
+                    +SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT
+                    +"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
