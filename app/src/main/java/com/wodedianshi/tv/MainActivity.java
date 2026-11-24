@@ -444,6 +444,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         startupAutoResumePending=restoreSucceeded && !channels.isEmpty()
             && roomLastChannelIdentity!=null && !roomLastChannelIdentity.isEmpty();
         scheduleStartupAutoResume();
+        // Do not show the first-run progress box on later completed launches.
+        if(roomFullRebuildCompletedAt>0L&&initialDiscoveryProgressPanel!=null){
+          stopInitialDiscoveryProgressTicker();
+          initialDiscoveryProgressPanel.setVisibility(View.GONE);
+        }
         // Register periodic source maintenance only after the saved catalogue
         // has been restored and the home screen is usable. WorkManager performs
         // refreshes independently; no network discovery is part of app entry.
@@ -1405,8 +1410,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             initialDiscoveryProgressDetail.setText(
                 (total>0?"已完成来源 "+Math.max(0,done)+"/"+total
                     +" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:"准备来源列表")
-                +"\\n已整理频道 "+Math.max(0,staged)+" · 已初筛地址 "+Math.max(0,checked)
-                +"\\n"+phase);
+                +"\n已整理频道 "+Math.max(0,staged)+" · 已初筛地址 "+Math.max(0,checked)
+                +"\n"+phase);
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
