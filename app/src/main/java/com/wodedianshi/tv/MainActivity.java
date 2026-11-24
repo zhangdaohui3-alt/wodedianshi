@@ -1435,8 +1435,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int cursor=(int)readRoomProgressLong(context,prefix+"feed_cursor",0L);
           final int entries=(int)readRoomProgressLong(context,prefix+"feed_entries",0L);
           final int percent=(int)readRoomProgressLong(context,prefix+"percent",0L);
-          final String coverage=com.wodedianshi.tv.db.AppStateStore.get(context,
-              FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,"");
+
           final String phase=com.wodedianshi.tv.db.AppStateStore.get(
               context,prefix+"phase","尚未开始首次完整抓源");
           runOnUiThread(()->{
@@ -1593,6 +1592,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             "source_initial_progress_total_feeds",0L);
         String coverage=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
             FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,"");
+        String freshCoverage=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
+            FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
         StringBuilder failedDetails=new StringBuilder();
         int failedShown=0;
         for(int i=0;i<feedTotal&&i<100;i++){
@@ -1624,6 +1625,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +Math.max(0,validated)+" 次 · 暂不可用来源："+Math.max(0,unavailable)
                 +failedList
                 +"\n\n"+(coverage.isEmpty()?"首次发布覆盖统计尚未生成（旧版记录或尚未发布）":coverage)
+                +(freshCoverage.isEmpty()?"":"\n\n"+freshCoverage)
                 +"\n\n说明：100%只表示配置目录处理结束且快照已发布，不代表所有目录成功、频道齐全或实际可播。失败目录按上限重试，记录后不阻碍其他有效目录发布。旧频道及已选线路优先保留；预检不等于真实播放稳定或获得授权。")
             .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
         });

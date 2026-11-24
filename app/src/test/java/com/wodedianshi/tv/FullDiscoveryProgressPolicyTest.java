@@ -5,6 +5,20 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void overallProgressIncludesEveryPartialFeed() {
+        boolean[] done={true,false,false,false};
+        int[] partial={0,5000,2500,0};
+        assertEquals(43,FullDiscoveryProgressPolicy.overallPercent(done,partial,false));
+        partial[1]=0;
+        assertEquals(31,FullDiscoveryProgressPolicy.overallPercent(done,partial,false));
+        assertEquals(99,FullDiscoveryProgressPolicy.overallPercent(
+            new boolean[]{true,true},new int[]{0,0},false));
+        assertEquals(100,FullDiscoveryProgressPolicy.overallPercent(done,partial,true));
+        assertEquals(5000,FullDiscoveryProgressPolicy.feedProgress(12,24));
+        assertEquals(0,FullDiscoveryProgressPolicy.feedProgress(12,-1));
+        assertEquals(10000,FullDiscoveryProgressPolicy.feedProgress(Integer.MAX_VALUE,1));
+    }
+
     @Test public void coverageSeparatesMainlandCategoriesAndDoesNotCountForeignLocal() {
         FullDiscoveryProgressPolicy.Coverage c = new FullDiscoveryProgressPolicy.Coverage();
         c.add("CCTV-2","央视","","");
