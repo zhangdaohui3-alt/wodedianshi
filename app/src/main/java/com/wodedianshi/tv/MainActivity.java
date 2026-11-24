@@ -3853,7 +3853,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String provinceSnapshot=activeLocalProvince;
     final String citySnapshot=activeLocalCity;
     final Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
-    final Set<String> favoriteSnapshot=new HashSet<>(favorites);
+    // Collections.synchronizedSet synchronizes individual methods, not
+    // iteration by HashSet(Collection). Take the entire favorites snapshot
+    // under the same lock used by remote order/persistence; this prevents
+    // ConcurrentModificationException during a quick favorite toggle.
+    final Set<String> favoriteSnapshot;
+    synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
     final int requestedPage=livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
