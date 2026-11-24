@@ -192,7 +192,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // and resorted on every remote-control key press.
   private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
-  private volatile String remoteChannelOrderBuildKey=null;
+  // Task ownership, cache publication and pending input are main-thread only.
+  private String remoteChannelOrderBuildKey=null;
+  private Object remoteChannelOrderBuildToken;
   // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
@@ -4640,6 +4642,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!fullScreenPlayback||rootLayout==null)return;
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
+    clearPendingRemoteZap();
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     if(video!=null)video.setKeepScreenOn(false);
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
@@ -5195,57 +5198,60 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // every key while the first scan was still running. One scan is enough;
     // pendingRemoteZapSteps already combines the requested key presses.
     if(key.equals(remoteChannelOrderBuildKey))return;
+    final Object token=new Object();
+    remoteChannelOrderBuildToken=token;
     remoteChannelOrderBuildKey=key;
     try{remoteChannelOrderWorker.execute(()->{
+      final RemoteChannelOrder ready;
       try{
-      RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
-          favoriteSnapshot,mutationGeneration,filterGeneration,regionOnly,province,city,geoKeys);
-      if(ready==null){
-        if(!Thread.currentThread().isInterrupted())
-          uiHandler.post(()->retryPendingRemoteZapAfterInvalidation(filterGeneration));
+        ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
+            favoriteSnapshot,mutationGeneration,filterGeneration,regionOnly,province,city,geoKeys);
+      }catch(RuntimeException failure){
+        android.util.Log.e("MyTVZap","remote order build failed",failure);
+        uiHandler.post(()->{
+          if(remoteChannelOrderBuildToken==token){
+            remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
+          }
+        });
         return;
       }
-      int currentCount; synchronized(channels){currentCount=channels.size();}
-      int currentFavoritesHash=0;
-      if(favoritesOnly){synchronized(favorites){currentFavoritesHash=favorites.hashCode();}}
-      // Do not touch Android Views from this worker. A category/search change
-      // increments catalogueFilterGeneration and invalidates this prewarm.
-      if(RemoteChannelOrderPolicy.mayPublish(
-          Thread.currentThread().isInterrupted(),
-          mutationGeneration,catalogueMutationGeneration,
-          filterGeneration,catalogueFilterGeneration,
-          count,currentCount,
-          favoritesOnly,favoriteMode,
-          favoritesHash,currentFavoritesHash)){
-        cachedRemoteChannelOrder=ready;
-        uiHandler.post(()->{
-          if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
-              ||pendingRemoteZapMutationGeneration!=mutationGeneration
-              ||!fullScreenPlayback)return;
-          RemoteChannelOrder current=currentRemoteChannelOrder();
-          if(current==null){
-            // Another catalogue change raced with the UI callback. Leave
-            // input queued and rebuild rather than silently dropping it.
-            prewarmRemoteChannelOrder();
-            return;
+      final boolean interrupted=Thread.currentThread().isInterrupted();
+      uiHandler.post(()->{
+        // A completion can clear only its own task. Clear BEFORE any retry.
+        if(remoteChannelOrderBuildToken!=token)return;
+        remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
+        if(isFinishing()||isDestroyed()||interrupted)return;
+        int currentCount; synchronized(channels){currentCount=channels.size();}
+        int currentFavoritesHash=0;
+        if(favoritesOnly){synchronized(favorites){currentFavoritesHash=favorites.hashCode();}}
+        boolean sameFavorites=!favoritesOnly||favoriteSnapshot.equals(FavoriteMembershipPolicy.snapshot(favorites));
+        if(ready!=null&&sameFavorites&&RemoteChannelOrderPolicy.mayPublish(false,
+            mutationGeneration,catalogueMutationGeneration,
+            filterGeneration,catalogueFilterGeneration,count,currentCount,
+            favoritesOnly,favoriteMode,favoritesHash,currentFavoritesHash)){
+          cachedRemoteChannelOrder=ready;
+          if(fullScreenPlayback&&pendingRemoteZapSteps!=0
+              &&pendingRemoteZapGeneration==filterGeneration){
+            RemoteChannelOrder current=currentRemoteChannelOrder();
+            if(current!=null){
+              int queuedSteps=pendingRemoteZapSteps;
+              clearPendingRemoteZap();
+              if(!isAnyPlaybackLockActive())applyChannelZap(current,queuedSteps);
+            }else retryPendingRemoteZapAfterInvalidation(filterGeneration);
           }
-          int queuedSteps=pendingRemoteZapSteps;
-          pendingRemoteZapSteps=0;
-          pendingRemoteZapGeneration=-1L;
-          pendingRemoteZapMutationGeneration=-1L;
-          applyChannelZap(current,queuedSteps);
-        });
-      }else if(!Thread.currentThread().isInterrupted()){
-        // A catalogue or filter generation superseded this scan. Retry the
-        // already queued DPAD action against the latest complete directory.
-        uiHandler.post(()->retryPendingRemoteZapAfterInvalidation(filterGeneration));
-      }
-      }finally{
-        if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
-      }
+        }else retryPendingRemoteZapAfterInvalidation(filterGeneration);
+      });
     });}catch(RuntimeException rejected){
-      if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
+      if(remoteChannelOrderBuildToken==token){
+        remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
+      }
+      android.util.Log.w("MyTVZap","remote order queue rejected",rejected);
     }
+  }
+  private void clearPendingRemoteZap(){
+    pendingRemoteZapSteps=0;
+    pendingRemoteZapGeneration=-1L;
+    pendingRemoteZapMutationGeneration=-1L;
   }
   private void retryPendingRemoteZapAfterInvalidation(long originalFilterGeneration){
     if(!fullScreenPlayback||pendingRemoteZapSteps==0)return;
@@ -5253,7 +5259,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(pendingRemoteZapGeneration!=originalFilterGeneration
         ||catalogueFilterGeneration!=originalFilterGeneration)return;
     pendingRemoteZapMutationGeneration=catalogueMutationGeneration;
-    prewarmRemoteChannelOrder();
+    RemoteChannelOrder ready=currentRemoteChannelOrder();
+    if(ready!=null){
+      int steps=pendingRemoteZapSteps;
+      clearPendingRemoteZap();
+      if(!isAnyPlaybackLockActive())applyChannelZap(ready,steps);
+    }else prewarmRemoteChannelOrder();
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
     String category=activeCategory==null?"全部":activeCategory;
@@ -5270,33 +5281,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(order==null||order.indexes.isEmpty()){toast("当前栏目没有可切换的频道");return;}
     Integer current=order.positions.get(selected);
     int currentPosition=current==null?-1:current;
-    int nextPosition=currentPosition<0?(delta>0?0:order.indexes.size()-1)
+    if(delta==0)return;
+    int nextPosition=currentPosition<0?SourceSelectionPolicy.wrapIndex(
+        delta>0?delta-1:delta,order.indexes.size())
         :SourceSelectionPolicy.wrapIndex(currentPosition+delta,order.indexes.size());
     play(order.indexes.get(nextPosition));
     showChannelZapOverlay();
   }
   private void stepChannel(int delta){
+    if(isAnyPlaybackLockActive())return;
     long started=android.os.SystemClock.elapsedRealtime();
+    long generation=catalogueFilterGeneration;
+    long mutationGeneration=catalogueMutationGeneration;
+    // Keep accepted steps within the same user-selected filter. A catalogue
+    // replacement can rebase them onto a new complete order, not a stale index.
+    if(pendingRemoteZapGeneration!=generation)clearPendingRemoteZap();
+    int steps=RemoteChannelOrderPolicy.mergeZapSteps(pendingRemoteZapSteps,delta);
     RemoteChannelOrder order=currentRemoteChannelOrder();
     if(order==null){
-      long generation=catalogueFilterGeneration;
-      long mutationGeneration=catalogueMutationGeneration;
-      if(pendingRemoteZapGeneration!=generation
-          ||pendingRemoteZapMutationGeneration!=mutationGeneration){
-        pendingRemoteZapSteps=0;
-        pendingRemoteZapGeneration=generation;
-        pendingRemoteZapMutationGeneration=mutationGeneration;
-      }
-      pendingRemoteZapSteps=Math.max(-12,Math.min(12,pendingRemoteZapSteps+delta));
-      prewarmRemoteChannelOrder();
+      pendingRemoteZapSteps=steps;
+      pendingRemoteZapGeneration=generation;
+      pendingRemoteZapMutationGeneration=mutationGeneration;
+      if(steps!=0)prewarmRemoteChannelOrder();
       android.util.Log.i("MyTVZap","channel_order_cache_miss_async total_ms="
           +(android.os.SystemClock.elapsedRealtime()-started));
       return;
     }
-    pendingRemoteZapSteps=0;
-    pendingRemoteZapGeneration=-1L;
-    pendingRemoteZapMutationGeneration=-1L;
-    applyChannelZap(order,delta);
+    clearPendingRemoteZap();
+    if(steps!=0)applyChannelZap(order,steps);
     android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
         +(android.os.SystemClock.elapsedRealtime()-started)+" total="+order.indexes.size());
   }
@@ -6926,7 +6938,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void refreshChildLockState(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
-    if(isRemotePlaybackLockActive())return;
     if(childLockDialog!=null&&childLockDialog.isShowing()){
       childLockDialog.dismiss();childLockDialog=null;
       toast("限制时段已结束，可以继续使用");
