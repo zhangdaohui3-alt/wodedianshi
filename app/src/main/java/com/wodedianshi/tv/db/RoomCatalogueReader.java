@@ -101,6 +101,14 @@ public final class RoomCatalogueReader {
 
     private RoomCatalogueReader() {}
 
+    /** Readiness only: no channel/source objects, no paged catalogue read.
+     * A publication must still read a complete current snapshot and check its version. */
+    public static boolean hasValidatedCatalogue(Context context) {
+        if(context==null)throw new IllegalArgumentException("context is null");
+        return RoomDatabaseProvider.get(context).channelDao()
+                .getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY)!=null;
+    }
+
     /** Returns null when the one-time seed/checkpoint is absent or inconsistent. */
     public static Snapshot read(Context context) {
         return read(context, null);
