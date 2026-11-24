@@ -109,7 +109,7 @@ public final class RoomCatalogueWriter {
     }
 
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            HashSet<String> favoriteKeys, long expectedCatalogueVersion,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
             long[] committedAt, BooleanSupplier paused, AppStateEditor progress) {
         checkPause(paused);
