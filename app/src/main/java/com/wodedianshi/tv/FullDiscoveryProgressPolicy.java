@@ -9,6 +9,13 @@ package com.wodedianshi.tv;
 public final class FullDiscoveryProgressPolicy {
     private FullDiscoveryProgressPolicy() {}
 
+    /** Acquisition attempts are separate from the final verified-build percent. */
+    public static boolean isMainlandIndexPhase(int attempted, int mainlandCount,
+            int checked, boolean complete) {
+        return !complete && checked <= 0 && mainlandCount > 0
+                && Math.max(0,attempted) < mainlandCount;
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // At most two extra publications: an early useful set, then mainland coverage.
     // A milestone is not a completed full build and does not change the probe policy.

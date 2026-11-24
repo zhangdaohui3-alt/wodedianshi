@@ -5,6 +5,15 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void mainlandIndexPhaseIsSeparateFromVerifiedProgress() {
+        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,false));
+        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(9,10,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(10,10,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,1,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,0,0,false));
+    }
+
     @org.junit.Test public void earlyPreviewMilestonesNeverPretendToCompleteFullDiscovery() {
         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 11, 3, false));
         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 20, 0, true));
