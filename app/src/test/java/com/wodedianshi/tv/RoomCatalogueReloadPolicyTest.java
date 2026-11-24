@@ -25,6 +25,24 @@ public class RoomCatalogueReloadPolicyTest {
                 true, true, 10L, 11L, -1));
     }
 
+    @Test public void concurrentWorkerPublishDuringPagedReadCanRetryOnce() {
+        // No Activity mutation need occur: the independent source worker can
+        // change Room while the reader is walking a large channel directory.
+        assertTrue(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+                true, true, 1));
+        assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+                true, true, 0));
+        assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+                true, true, -1));
+    }
+
+    @Test public void staleReadNeverRestartsAfterNewRequestOrStop() {
+        assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+                false, true, 1));
+        assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+                true, false, 1));
+    }
+
     @Test public void newerReloadOrStoppedActivityPreventsStaleRetry() {
         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
                 false, true, 10L, 11L, 1));
