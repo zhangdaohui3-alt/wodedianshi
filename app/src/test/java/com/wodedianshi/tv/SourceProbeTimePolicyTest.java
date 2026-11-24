@@ -4,6 +4,32 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void stableViewingLeaseExpiresAndRevokesOnNewPlaybackOrStop() {
+        SourceUpdateActivityPolicy.setActivityActive(true);
+        SourceUpdateActivityPolicy.setPlaybackActive(true);
+        try {
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
+            SourceUpdateActivityPolicy.reportStableLive(15000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
+            long generation=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            SourceUpdateActivityPolicy.revokeStableLive();
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16001L));
+            assertEquals(generation+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
+            SourceUpdateActivityPolicy.reportStableLive(17000L);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(17001L));
+            SourceUpdateActivityPolicy.reportStableLive(18000L);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(18001L));
+        } finally {
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+
     @Test public void initialAddressRequiresFullBudgetBeforeStarting() {
         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(91000L,1000L));
         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(16000L,1000L));

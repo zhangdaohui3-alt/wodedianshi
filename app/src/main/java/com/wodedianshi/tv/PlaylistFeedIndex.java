@@ -59,6 +59,21 @@ public final class PlaylistFeedIndex {
         return page.size();
     }
 
+    /** No rebuilding while viewing; a damaged index is deferred to idle work. */
+    public static int readExistingPage(File playlist,int startEntry,int maxEntries,
+            PlaylistParser.EntryConsumer consumer,java.util.function.BooleanSupplier paused) throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
+        File records=new File(playlist.getAbsolutePath()+".index-data");
+        File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
+        if(!isUsableIndex(records,offsets))throw new IOException("Cached index unavailable");
+        List<PlaylistParser.ChannelSource> page=readIndexedPage(records,offsets,startEntry,maxEntries);
+        for(PlaylistParser.ChannelSource source:page){
+            SourceProbeTimePolicy.checkPaused(paused);
+            consumer.accept(source);
+        }
+        return page.size();
+    }
+
     /**
      * Cheap, checked entry count from the already built feed index. Do not
      * claim a fractional percentage if the cache/index is missing or corrupt.

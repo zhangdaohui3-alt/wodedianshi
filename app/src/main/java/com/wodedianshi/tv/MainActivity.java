@@ -4612,6 +4612,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void exportFile(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_TITLE,"mytv.m3u");startActivityForResult(i,11);}
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
+    pauseStableDiscovery();
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     clearPendingRemoteZap();
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
@@ -5198,6 +5199,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   // 全屏播放时的遥控器快捷键；频道菜单打开后，方向键和确认键交给菜单控件。
   @Override public boolean dispatchTouchEvent(MotionEvent event){
+    if(event!=null&&event.getActionMasked()==MotionEvent.ACTION_DOWN)pauseStableDiscovery();
     // MotionEvent timestamps are monotonic uptime. Measure dispatch latency for
     // phones and mice without adding per-touch disk writes or expensive work.
     if(event!=null&&event.getActionMasked()==MotionEvent.ACTION_DOWN){
@@ -5212,6 +5214,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return super.dispatchTouchEvent(event);
   }
   @Override public boolean dispatchKeyEvent(KeyEvent event){
+    if(event.getAction()==KeyEvent.ACTION_DOWN)pauseStableDiscovery();
     if(fullScreenPlayback&&event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
       int receivedKey=event.getKeyCode();
       if(receivedKey!=KeyEvent.KEYCODE_VOLUME_UP&&receivedKey!=KeyEvent.KEYCODE_VOLUME_DOWN
@@ -5829,6 +5832,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean confirmedOutput=TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,
           audioTrackSupported,audioTrackSelected,audioPositionAdvancing,videoTrackPresent,
           videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded);
+      if(confirmedOutput&&sourceReadyAt>0L&&now-sourceReadyAt>=30000L
+          &&now-lastStableDiscoveryInteraction>=20000L
+          &&watchdogLastAdvanceAt>0L&&now-watchdogLastAdvanceAt<5000L
+          &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<5000L
+          &&player.isPlaying()&&activityStarted&&fullScreenPlayback&&hasWindowFocus()
+          &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
+          &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
+          &&currentVodPanel==null&&!isAnyPlaybackLockActive()
+          &&!libVlcReleaseInProgress&&!media3ReleaseUnconfirmed){
+        SourceUpdateActivityPolicy.reportStableLive(now);
+      }else SourceUpdateActivityPolicy.revokeStableLive();
       if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
           &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L
           &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<20000L){
@@ -5866,6 +5880,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Only allow one automatic failover for each playback generation.
   private String lastAutoFailoverMediaId="";
   private void releaseLivePlayerSafely(){
+    pauseStableDiscovery();
     ExoPlayer old=player;
     // Invalidate callbacks first. Preserve independent cleanup stages even when
     // a vendor codec call fails; stage timing is diagnostic, not a new teardown path.
@@ -6082,6 +6097,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void startCurrentSource(){
+    pauseStableDiscovery();
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(media3ReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
     if(vodPlayer!=null||vodFallbackBackend!=null)return;
@@ -6315,6 +6331,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         public void onPlayerError(PlaybackException e){
           if(!isCurrent())return;
+          pauseStableDiscovery();
           saveLiveDiagnostic("PLAYER_ERROR","code="+e.errorCode+" name="+e.getErrorCodeName()+" cause="+(e.getCause()==null?"":e.getCause().getClass().getSimpleName()+": "+e.getCause().getMessage()));
           // HLS live playback can fail only because its playback position fell
           // behind the sliding live window. Re-seek to the live edge once before
@@ -6347,6 +6364,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
+          if(st!=Player.STATE_READY)pauseStableDiscovery();
           saveLiveDiagnostic("STATE",st==Player.STATE_IDLE?"IDLE":st==Player.STATE_BUFFERING?"BUFFERING":st==Player.STATE_READY?"READY":st==Player.STATE_ENDED?"ENDED":"STATE_"+st);
           if(st==Player.STATE_BUFFERING){
             cancelPlaybackWatchdog();
@@ -7597,6 +7615,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
+  private long lastStableDiscoveryInteraction;
+  private void pauseStableDiscovery(){
+    lastStableDiscoveryInteraction=android.os.SystemClock.elapsedRealtime();
+    SourceUpdateActivityPolicy.revokeStableLive();
+  }
+  @Override public void onWindowFocusChanged(boolean focused){
+    super.onWindowFocusChanged(focused);
+    if(!focused)pauseStableDiscovery();
+  }
   private void setSourceUpdatePlaybackActive(boolean active){
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||media3ReleaseUnconfirmed);
   }
