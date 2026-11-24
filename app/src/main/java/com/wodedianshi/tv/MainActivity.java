@@ -192,13 +192,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
-  // Fullscreen zap order is built once per catalogue/filter state, not rescanned
-  // and resorted on every remote-control key press.
-  private final ExecutorService remoteChannelOrderWorker = Executors.newSingleThreadExecutor();
+  // The directory filter publishes the one order shared by rows and remote zapping.
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
-  // Task ownership, cache publication and pending input are main-thread only.
-  private String remoteChannelOrderBuildKey=null;
-  private Object remoteChannelOrderBuildToken;
+  private String directoryFilterInFlightKey;
   // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
@@ -3933,15 +3929,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return "全部".equals(category)||"收藏".equals(category)||categoryMatch(c,category);
   }
 
-  private void refresh(){
-    if(list==null||search==null)return;
+  private void refresh(){refresh(false);}
+  private void refresh(boolean preserveQueuedZap){
+    if(list==null||search==null||isFinishing()||isDestroyed())return;
+    final long oldGeneration=catalogueFilterGeneration;
     final long generation=++catalogueFilterGeneration;
+    if(preserveQueuedZap&&pendingRemoteZapGeneration==oldGeneration)
+      pendingRemoteZapGeneration=generation;
+    else clearPendingRemoteZap();
+    final long mutation=catalogueMutationGeneration;
     java.util.concurrent.Future<?> previousFilter=pendingCatalogueFilter;
     if(previousFilter!=null)previousFilter.cancel(true);
     if(livePreviousPageButton!=null)livePreviousPageButton.setEnabled(false);
     if(liveNextPageButton!=null)liveNextPageButton.setEnabled(false);
     final String query=RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
-    final String categorySnapshot=activeCategory;
+    final String categorySnapshot=activeCategory==null?"全部":activeCategory;
     final boolean favoriteOnly=favoriteMode;
     final boolean regionOnly=localRegionFilterActive&&"地方".equals(categorySnapshot);
     final String provinceSnapshot=activeLocalProvince;
@@ -3953,6 +3955,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // ConcurrentModificationException during a quick favorite toggle.
     final Set<String> favoriteSnapshot;
     favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
+    final int expectedCount; synchronized(channels){expectedCount=channels.size();}
+    final int favoriteHash=favoriteOnly?favoriteSnapshot.hashCode():0;
+    final String orderKey=remoteChannelOrderKey(categorySnapshot,query,favoriteOnly,
+        generation,mutation,expectedCount,favoriteHash);
+    directoryFilterInFlightKey=orderKey;
     final int requestedPage=livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
@@ -3983,7 +3990,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Channel edits replace/append under the catalogue lock; playback actions
         // resolve by stable key, so these references are read-only in this pass.
         HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
-        ArrayList<Channel> visible=new ArrayList<>();
+        ArrayList<Integer> indexes=new ArrayList<>();
+        final int[] cctvOrders="央视".equals(categorySnapshot)?new int[sources.size()]:null;
+        final String[] cctvNames=cctvOrders==null?null:new String[sources.size()];
         for(int i=0;i<sources.size();i++){
           if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
           scanned++;
@@ -4000,13 +4009,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String display=displayChannelName(c);
           if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
           queryMatches++;
-          visible.add(c);
+          indexes.add(i);
+          if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
           String key=c.key();
           if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
         }
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
-        if("地方".equals(categorySnapshot) && visible.isEmpty()) {
+        if("地方".equals(categorySnapshot) && indexes.isEmpty()) {
           int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
           for(Channel candidate:sources) {
             if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
@@ -4024,25 +4034,44 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Available from the Settings copy button; no adb/desktop needed.
           saveLiveDiagnostic("LOCAL_DIRECTORY_EMPTY",localDetail);
         }
-        if(categorySnapshot.equals("央视")){
-          visible.sort((a,b)->{
-            int oa=cctvSortOrder(a),ob=cctvSortOrder(b);
-            if(oa!=ob)return Integer.compare(oa,ob);
-            return displayChannelName(a).compareTo(displayChannelName(b));
+        if(cctvOrders!=null){
+          indexes.sort((a,b)->{
+            int order=Integer.compare(cctvOrders[a],cctvOrders[b]);
+            return order!=0?order:cctvNames[a].compareTo(cctvNames[b]);
           });
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
+        ArrayList<Channel> visible=new ArrayList<>(indexes.size());
+        for(int index:indexes)visible.add(sources.get(index));
+        RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
-          renderFilteredChannels(visible,selectedKey,favoriteSnapshot,customCategory,requestedPage,
+          directoryFilterInFlightKey=null;
+          if(!orderKey.equals(currentDirectoryOrderKey())
+              ||!favoriteSnapshot.equals(FavoriteMembershipPolicy.snapshot(favorites))){
+            // Never publish positions from a replaced directory. Recompute with
+            // the newest metadata; pending keys belong to this same filter only.
+            refresh(true);
+            return;
+          }
+          cachedRemoteChannelOrder=ready;
+          String currentSelectedKey=null;
+          if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
+          renderFilteredChannels(visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
               preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
+          if(fullScreenPlayback&&pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
+            int steps=pendingRemoteZapSteps;
+            clearPendingRemoteZap();
+            if(!isAnyPlaybackLockActive())applyChannelZap(ready,steps);
+          }
         });
       }catch(Throwable failure){
         android.util.Log.e("MyTVCatalogue","background catalogue filter failed category="+categorySnapshot+" scanned="+scanned+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt),failure);
         runOnUiThread(()->{
           if(generation!=catalogueFilterGeneration||isFinishing()||isDestroyed())return;
+          directoryFilterInFlightKey=null;
           // Keep the previously rendered catalogue usable when a new background
           // filter fails. refresh() disables paging while work is pending; without
           // restoring the buttons here, one transient exception strands the user
@@ -5170,156 +5199,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return filterGeneration+"|"+mutationGeneration+"|"+channelCount+"|"+favoritesHash+"|"+favoritesOnly+"|"
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
-  private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
-      boolean favoritesOnly,Set<String> favoriteSnapshot,long expectedMutationGeneration,
-      long expectedFilterGeneration,boolean regionOnly,String province,String city,Set<String> geoKeys){
-    // Critical ANR fix: thread 37 used to hold synchronized(channels) while
-    // running 6k+ expensive categoryMatch / canonicalSatelliteName calls.
-    // MainActivity.prewarmRemoteChannelOrder then blocked on the same lock.
-    // Take a quick references-only snapshot; do all heavy filtering/sorting after
-    // releasing the catalogue monitor. Retain the indices for channel selection.
-    final ArrayList<Channel> snapshot;
-    synchronized(channels){snapshot=new ArrayList<>(channels);}
-    ArrayList<Integer> order=new ArrayList<>();
-    // Freeze sort keys in the worker rather than comparing mutable Channel
-    // objects during TimSort while a background source refresh may run.
-    final int[] cctvOrders="央视".equals(category)?new int[snapshot.size()]:null;
-    final String[] cctvNames=cctvOrders==null?null:new String[snapshot.size()];
-    for(int i=0;i<snapshot.size();i++){
-      if((i&63)==0&&(expectedFilterGeneration!=catalogueFilterGeneration||!RemoteChannelOrderPolicy.complete(
-          Thread.currentThread().isInterrupted(),expectedMutationGeneration,
-          catalogueMutationGeneration)))return null;
-      Channel c=snapshot.get(i);
-      if(!matchesDirectoryScope(c,category,regionOnly,province,city,geoKeys,favoritesOnly,favoriteSnapshot))continue;
-      String display=displayChannelName(c);
-      if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
-      order.add(i);
-      if(cctvOrders!=null){
-        cctvOrders[i]=cctvSortOrder(c);
-        cctvNames[i]=display;
-      }
-    }
-    if(!RemoteChannelOrderPolicy.complete(
-        Thread.currentThread().isInterrupted(),expectedMutationGeneration,
-        catalogueMutationGeneration))return null;
-    if(cctvOrders!=null){
-      order.sort((x,y)->{
-        int ox=cctvOrders[x],oy=cctvOrders[y];
-        if(ox!=oy)return Integer.compare(ox,oy);
-        return cctvNames[x].compareTo(cctvNames[y]);
-      });
-    }
-    // Aborted or superseded scans must NEVER publish partial channel indexes.
-    if(!RemoteChannelOrderPolicy.complete(
-        Thread.currentThread().isInterrupted(),expectedMutationGeneration,
-        catalogueMutationGeneration))return null;
-    return new RemoteChannelOrder(key,order);
-  }
   private void prewarmRemoteChannelOrder(){
-    final String category=activeCategory==null?"全部":activeCategory;
-    final String query=search==null?"":RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
-    final boolean favoritesOnly=favoriteMode;
-    final boolean regionOnly=localRegionFilterActive&&"地方".equals(category);
-    final String province=activeLocalProvince,city=activeLocalCity;
-    final Set<String> geoKeys=activeGeoChannelKeys; // Published by replacement, never mutated in place.
-    final long filterGeneration=catalogueFilterGeneration;
-    final long mutationGeneration=catalogueMutationGeneration;
-    final int count; synchronized(channels){count=channels.size();}
-    final Set<String> favoriteSnapshot;
-    final int favoritesHash;
-    if(favoritesOnly){
-      favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
-      favoritesHash=favoriteSnapshot.hashCode();
-    }else{
-      favoriteSnapshot=java.util.Collections.emptySet();
-      favoritesHash=0; // No favorite-list dependency outside the 收藏 filter.
-    }
-    final String key=remoteChannelOrderKey(category,query,favoritesOnly,
-        filterGeneration,mutationGeneration,count,favoritesHash);
-    RemoteChannelOrder alreadyBuilt=cachedRemoteChannelOrder;
-    if(alreadyBuilt!=null&&key.equals(alreadyBuilt.key))return;
-    // Rapid DPAD repeats previously enqueued the same O(catalogue) scan for
-    // every key while the first scan was still running. One scan is enough;
-    // pendingRemoteZapSteps already combines the requested key presses.
-    if(key.equals(remoteChannelOrderBuildKey))return;
-    final Object token=new Object();
-    remoteChannelOrderBuildToken=token;
-    remoteChannelOrderBuildKey=key;
-    try{remoteChannelOrderWorker.execute(()->{
-      final RemoteChannelOrder ready;
-      try{
-        ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
-            favoriteSnapshot,mutationGeneration,filterGeneration,regionOnly,province,city,geoKeys);
-      }catch(RuntimeException failure){
-        android.util.Log.e("MyTVZap","remote order build failed",failure);
-        uiHandler.post(()->{
-          if(remoteChannelOrderBuildToken==token){
-            remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
-          }
-        });
-        return;
-      }
-      final boolean interrupted=Thread.currentThread().isInterrupted();
-      uiHandler.post(()->{
-        // A completion can clear only its own task. Clear BEFORE any retry.
-        if(remoteChannelOrderBuildToken!=token)return;
-        remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
-        if(isFinishing()||isDestroyed()||interrupted)return;
-        int currentCount; synchronized(channels){currentCount=channels.size();}
-        int currentFavoritesHash=0;
-        if(favoritesOnly){synchronized(favorites){currentFavoritesHash=favorites.hashCode();}}
-        boolean sameFavorites=!favoritesOnly||favoriteSnapshot.equals(FavoriteMembershipPolicy.snapshot(favorites));
-        if(ready!=null&&sameFavorites&&RemoteChannelOrderPolicy.mayPublish(false,
-            mutationGeneration,catalogueMutationGeneration,
-            filterGeneration,catalogueFilterGeneration,count,currentCount,
-            favoritesOnly,favoriteMode,favoritesHash,currentFavoritesHash)){
-          cachedRemoteChannelOrder=ready;
-          if(fullScreenPlayback&&pendingRemoteZapSteps!=0
-              &&pendingRemoteZapGeneration==filterGeneration){
-            RemoteChannelOrder current=currentRemoteChannelOrder();
-            if(current!=null){
-              int queuedSteps=pendingRemoteZapSteps;
-              clearPendingRemoteZap();
-              if(!isAnyPlaybackLockActive())applyChannelZap(current,queuedSteps);
-            }else retryPendingRemoteZapAfterInvalidation(filterGeneration);
-          }
-        }else retryPendingRemoteZapAfterInvalidation(filterGeneration);
-      });
-    });}catch(RuntimeException rejected){
-      if(remoteChannelOrderBuildToken==token){
-        remoteChannelOrderBuildToken=null;remoteChannelOrderBuildKey=null;
-      }
-      android.util.Log.w("MyTVZap","remote order queue rejected",rejected);
-    }
+    if(currentRemoteChannelOrder()!=null)return;
+    if(currentDirectoryOrderKey().equals(directoryFilterInFlightKey))return;
+    refresh(true);
   }
   private void clearPendingRemoteZap(){
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
     pendingRemoteZapMutationGeneration=-1L;
   }
-  private void retryPendingRemoteZapAfterInvalidation(long originalFilterGeneration){
-    if(!fullScreenPlayback||pendingRemoteZapSteps==0)return;
-    // Never replay a queued key into a different user-selected category/search.
-    if(pendingRemoteZapGeneration!=originalFilterGeneration
-        ||catalogueFilterGeneration!=originalFilterGeneration)return;
-    pendingRemoteZapMutationGeneration=catalogueMutationGeneration;
-    RemoteChannelOrder ready=currentRemoteChannelOrder();
-    if(ready!=null){
-      int steps=pendingRemoteZapSteps;
-      clearPendingRemoteZap();
-      if(!isAnyPlaybackLockActive())applyChannelZap(ready,steps);
-    }else prewarmRemoteChannelOrder();
-  }
-  private RemoteChannelOrder currentRemoteChannelOrder(){
+  private String currentDirectoryOrderKey(){
     String category=activeCategory==null?"全部":activeCategory;
     String query=search==null?"":RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
     int count; synchronized(channels){count=channels.size();}
     int favoritesHash=0;
     if(favoriteMode){synchronized(favorites){favoritesHash=favorites.hashCode();}}
-    String key=remoteChannelOrderKey(category,query,favoriteMode,
+    return remoteChannelOrderKey(category,query,favoriteMode,
         catalogueFilterGeneration,catalogueMutationGeneration,count,favoritesHash);
+  }
+  private RemoteChannelOrder currentRemoteChannelOrder(){
     RemoteChannelOrder cached=cachedRemoteChannelOrder;
-    return cached!=null&&key.equals(cached.key)?cached:null;
+    return cached!=null&&currentDirectoryOrderKey().equals(cached.key)?cached:null;
   }
   private void applyChannelZap(RemoteChannelOrder order,int delta){
     if(order==null||order.indexes.isEmpty()){toast("当前栏目没有可切换的频道");return;}
@@ -7617,5 +7518,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||media3ReleaseUnconfirmed);
   }
   protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
