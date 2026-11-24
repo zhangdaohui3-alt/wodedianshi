@@ -186,12 +186,15 @@ public final class RoomCatalogueWriter {
                 if (categoryOrder == null) {
                     categoryOrder = categoryOrders.size();
                     categoryOrders.put(categoryId, categoryOrder);
+                    CategoryEntity category = new CategoryEntity(categoryId,
+                            group.isEmpty() ? "未分类" : group, categoryOrder);
+                    if (previousCategoryIds.contains(categoryId)) {
+                        dao.updateCategoryFields(categoryId, category.name, categoryOrder);
+                    } else {
+                        dao.insertCategoryIfAbsent(category);
+                    }
+                    presentCategoryIds.add(categoryId);
                 }
-                CategoryEntity category = new CategoryEntity(categoryId,
-                        group.isEmpty() ? "未分类" : group, categoryOrder);
-                dao.insertCategoryIfAbsent(category);
-                dao.updateCategoryFields(categoryId, category.name, categoryOrder);
-                presentCategoryIds.add(categoryId);
 
                 String legacyKey = name + "|" + primary;
                 LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
@@ -214,7 +217,9 @@ public final class RoomCatalogueWriter {
                 }
                 int active = Math.max(0, Math.min(ordered.activeIndex, ordered.urls.size() - 1));
                 JSONArray channelScopes = new JSONArray();
-                if (item.sourceScopes != null) for (String scope : item.sourceScopes) channelScopes.put(scope);
+                if (item.sourceScopes != null) {
+                    for (String scope : new java.util.TreeSet<>(item.sourceScopes)) channelScopes.put(scope);
+                }
                 ChannelEntity channel = new ChannelEntity(id, legacyKey, name,
                         ordered.urls.get(0), group, categoryId,
                         item.tvgId == null ? "" : item.tvgId,
@@ -226,10 +231,39 @@ public final class RoomCatalogueWriter {
                     String url = ordered.urls.get(i);
                     JSONArray scopes = new JSONArray();
                     HashSet<String> owned = item.backupSourceScopes.get(url);
-                    if (owned != null) for (String scope : owned) scopes.put(scope);
+                    if (owned != null) {
+                        for (String scope : new java.util.TreeSet<>(owned)) scopes.put(scope);
+                    }
                     sourceRows.add(new BackupSourceEntity(id, url, i, scopes.toString()));
                 }
-                dao.replaceChannelWithSources(category, channel, sourceRows);
+                if (previousChannelIds.contains(id)) {
+                    dao.updateChannelFields(channel.id, channel.legacyKey, channel.name,
+                            channel.primaryUrl, channel.groupName, channel.categoryId,
+                            channel.tvgId, channel.tvgName, channel.channelScopesJson,
+                            channel.activeSource, channel.sortOrder);
+                    // Read only this channel's indexed source rows. No second
+                    // full catalogue in memory and no delete/reinsert of equal URLs.
+                    HashMap<String, BackupSourceEntity> oldSources = new HashMap<>();
+                    for (BackupSourceEntity old : dao.getBackupSourcesForChannel(id)) {
+                        oldSources.put(old.url, old);
+                    }
+                    ArrayList<BackupSourceEntity> changedSources = new ArrayList<>();
+                    for (BackupSourceEntity next : sourceRows) {
+                        BackupSourceEntity old = oldSources.remove(next.url);
+                        if (old == null || old.priority != next.priority
+                                || !old.scopesJson.equals(next.scopesJson)) {
+                            changedSources.add(next);
+                        }
+                    }
+                    for (String staleUrl : oldSources.keySet()) {
+                        checkPause(paused);
+                        dao.deleteBackupSource(id, staleUrl);
+                    }
+                    if (!changedSources.isEmpty()) dao.insertBackupSources(changedSources);
+                } else {
+                    dao.insertChannelIfAbsent(channel);
+                    if (!sourceRows.isEmpty()) dao.insertBackupSources(sourceRows);
+                }
                 presentChannelIds.add(id);
                 if (favoriteKeys != null && favoriteKeys.contains(legacyKey)) {
                     desiredFavoriteIds.add(id);
