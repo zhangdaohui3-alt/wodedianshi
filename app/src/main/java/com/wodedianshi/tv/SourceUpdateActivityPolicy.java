@@ -1,13 +1,13 @@
 package com.wodedianshi.tv;
 
-/** Lease policy preventing background source maintenance from committing while the TV UI is active. */
+/** In-process viewing gate. The manifest and default WorkManager use the same app process.
+ * No persisted busy flag can survive process death, reboot, or a clock adjustment. */
 public final class SourceUpdateActivityPolicy {
-    public static final long LEASE_MS = 90_000L;
-
+    private static volatile boolean activityActive;
+    private static volatile boolean playbackActive;
     private SourceUpdateActivityPolicy() {}
-
-    public static boolean isLeaseFresh(boolean active, long heartbeatAtMs, long nowMs) {
-        if (!active || heartbeatAtMs <= 0L || nowMs < heartbeatAtMs) return false;
-        return nowMs - heartbeatAtMs <= LEASE_MS;
-    }
+    public static void setActivityActive(boolean active) { activityActive = active; }
+    public static void setPlaybackActive(boolean active) { playbackActive = active; }
+    public static boolean isActivityActive() { return activityActive; }
+    public static boolean isPlaybackActive() { return playbackActive; }
 }
