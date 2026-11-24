@@ -216,11 +216,15 @@ public class SourceUpdateWorker extends Worker {
         // Keep the existing cache/index as the candidate store; Room records
         // only the acquisition cursor and counts, not duplicate unverified URLs.
         int nextIndex=Math.max(0,roomInt("source_initial_index_attempted",0));
-        int mainlandLimit=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
-        if(FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandLimit,
-            roomInt("source_initial_progress_checked_urls",0),false)){
+        int mainlandCount=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+        int mainlandLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(mainlandCount);
+        long indexedEntriesSoFar=0L;
+        try{indexedEntriesSoFar=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
+        catch(NumberFormatException ignored){}
+        if(FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
+            roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
           int count=-1;
-          noteInitialStage("中国目录预处理 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
+          noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
           try{
             File cached=PlaylistFeedCache.obtain(getApplicationContext(),feeds[nextIndex],true,
                 roomInt(feedCursorKey(nextIndex),0)>0,pauseRequested);
@@ -235,17 +239,19 @@ public class SourceUpdateWorker extends Worker {
           }
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           int ready=Math.max(0,roomInt("source_initial_index_ready",0))+(count>=0?1:0);
-          long entries=0L;
-          try{entries=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
-          catch(NumberFormatException ignored){}
-          new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+          long entries=indexedEntriesSoFar;
+          com.wodedianshi.tv.db.AppStateEditor acquisition=
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
               .putInt("source_initial_index_attempted",nextIndex+1)
               .putInt("source_initial_index_ready",ready)
               .putLong("source_initial_index_entries",Math.min(Long.MAX_VALUE-Math.max(0,count),entries)+Math.max(0,count))
-              .putString("source_initial_progress_phase",nextIndex+1>=mainlandLimit
-                  ?"中国目录预处理已结束，开始线路初筛"
-                  :"中国目录预处理："+(nextIndex+1)+"/"+mainlandLimit)
-              .apply();
+              .putString("source_initial_progress_phase",count>0||nextIndex+1>=mainlandLimit
+                  ?"首批目录准备已结束，开始线路初筛"
+                  :"首批目录准备："+(nextIndex+1)+"/"+mainlandLimit);
+          // Start with the nonempty indexed feed, rather than immediately
+          // retrying an earlier failed download. Other feeds remain unfinished.
+          if(count>0)acquisition.putInt("source_initial_next_feed_index",nextIndex);
+          acquisition.apply();
           // Persist acquisition before queueing the next slice. An unavailable
           // directory is retried by the ordinary bounded probe phase.
           enqueueInitialContinuation();

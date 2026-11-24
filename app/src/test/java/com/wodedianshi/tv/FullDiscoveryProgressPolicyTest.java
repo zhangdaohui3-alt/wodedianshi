@@ -6,12 +6,16 @@ import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
     @Test public void mainlandIndexPhaseIsSeparateFromVerifiedProgress() {
-        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,false));
-        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(9,10,0,false));
-        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(10,10,0,false));
-        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,1,false));
-        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,true));
-        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,0,0,false));
+        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,0,false));
+        assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,0,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(2,10,0,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,0,5,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,1,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,0,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,0,0,0,false));
+        assertEquals(2,FullDiscoveryProgressPolicy.bootstrapIndexLimit(10));
+        assertEquals(1,FullDiscoveryProgressPolicy.bootstrapIndexLimit(1));
+        assertEquals(0,FullDiscoveryProgressPolicy.bootstrapIndexLimit(-1));
     }
 
     @org.junit.Test public void earlyPreviewMilestonesNeverPretendToCompleteFullDiscovery() {

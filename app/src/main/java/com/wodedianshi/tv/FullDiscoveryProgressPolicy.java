@@ -9,11 +9,16 @@ package com.wodedianshi.tv;
 public final class FullDiscoveryProgressPolicy {
     private FullDiscoveryProgressPolicy() {}
 
+    // Do not hold the first playable preview behind every mainland download.
+    // At most two bootstrap acquisitions, then normal fair paged discovery.
+    public static int bootstrapIndexLimit(int mainlandCount) {
+        return Math.max(0,Math.min(2,mainlandCount));
+    }
     /** Acquisition attempts are separate from the final verified-build percent. */
     public static boolean isMainlandIndexPhase(int attempted, int mainlandCount,
-            int checked, boolean complete) {
-        return !complete && checked <= 0 && mainlandCount > 0
-                && Math.max(0,attempted) < mainlandCount;
+            int checked, long indexedEntries, boolean complete) {
+        return !complete && checked <= 0 && indexedEntries <= 0
+                && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
     }
 
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";

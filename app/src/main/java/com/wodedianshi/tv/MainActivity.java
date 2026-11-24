@@ -1519,15 +1519,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }
             initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
             initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(99,percent)));
+            int bootstrapLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
             boolean indexing=FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
-                SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,false);
+                SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
             initialDiscoveryProgressTitle.setText(indexing
-                ?"中国目录读取 · "+Math.max(0,indexAttempted)+"/"+SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT
+                ?"首批中国目录准备 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
                 :"首次完整抓源 · "+Math.max(0,Math.min(99,percent))+"%");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             initialDiscoveryProgressDetail.setText(
-                (indexing?"中国目录读取 "+indexAttempted+"/"+SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
+                (indexing?"首批目录准备 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                     :"正在准备来源列表"))
