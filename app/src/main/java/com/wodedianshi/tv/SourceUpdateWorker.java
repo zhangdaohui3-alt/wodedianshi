@@ -202,22 +202,24 @@ public class SourceUpdateWorker extends Worker {
         for(int i=0;i<feeds.length;i++)
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
       }
-      for(int feedOffset=0;feedOffset<feeds.length;feedOffset++){
+      int routineStart=InitialFeedRotationPolicy.normalizeStart(
+          roomInt("source_routine_next_feed_index",0),feeds.length);
+      int routineEnd=SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
+      int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
+      for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
             ?SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)
-            :feedOffset;
+            :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Full rebuild: inspect China mainland feeds first (CCTV, provincial,
         // county/local); then HK/Macau/Taiwan; only then international feeds.
         // Rotate fairly within a stage and resume each feed's saved page cursor.
         // Keep the 24-probe budget and yield to playback in every stage.
-        if(!initialDiscoveryChain&&foregroundAtStart&&feedIndex>=8)break;
-        if(!initialDiscoveryChain&&!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         String feed=feeds[feedIndex];
-        int feedCursor=roomInt(feedCursorKey(feedIndex),0);
+        int feedCursor=roomInt(initialDiscoveryChain?feedCursorKey(feedIndex):routineFeedCursorKey(feedIndex),0);
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
         boolean feedReadSucceeded=false;
@@ -241,7 +243,7 @@ public class SourceUpdateWorker extends Worker {
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
-              initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0,pauseRequested);
+              initialDiscoveryChain,feedCursor>0,pauseRequested);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
@@ -315,11 +317,7 @@ public class SourceUpdateWorker extends Worker {
           }
           // Keep complete entries parsed before a transient stream read failure;
           // an incomplete feed is still reported as failed and will be retried later.
-          if(!feedCandidatesAdded&&!initialDiscoveryChain){
-            int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
-            for(int i=0;i<feedCandidates.size()&&i<remaining;i++)candidates.add(feedCandidates.get(i));
-            if(!feedCandidates.isEmpty())feedsWithEntries++;
-          }
+          // Failed pages never contribute partial candidates or advance a cursor.
           // A partial initial feed is retried from its unchanged cursor. Do not
           // mix its partial page with another feed's batch, or a later fingerprint
           // change could discard unprobed entries from the partial page.
@@ -534,6 +532,7 @@ public class SourceUpdateWorker extends Worker {
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
       for(int i=0;i<saved.length();i++){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
@@ -658,7 +657,7 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
-          if(!initialDiscoveryChain && batch.parsed>=0
+          if(!initialDiscoveryChain && batch.parsed>0
               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
             // A previously unavailable directory has now been fetched and its
             // candidates have completed this run's probe window. Clear its old
@@ -680,12 +679,15 @@ public class SourceUpdateWorker extends Worker {
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
           }else if(batch.parsed>0){
-            update.putInt(feedCursorKey(batch.index),batch.cursor+batch.parsed);
+            String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):routineFeedCursorKey(batch.index);
+            if(!initialDiscoveryChain&&batch.indexedEntries>=0&&batch.cursor+batch.parsed>=batch.indexedEntries)
+              update.remove(cursorKey);
+            else update.putInt(cursorKey,batch.cursor+batch.parsed);
           }else if(initialDiscoveryChain){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
           }else{
-            update.remove(feedCursorKey(batch.index));
+            update.remove(routineFeedCursorKey(batch.index));
           }
         }
         update.remove("source_feed_batch_fingerprint").remove("source_feed_batch_scanned");
@@ -699,7 +701,7 @@ public class SourceUpdateWorker extends Worker {
           boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
           if(wasUnavailable){
             for(FeedBatch batch:feedBatches){
-              if(batch.index==i&&batch.success){wasUnavailable=false;break;}
+              if(batch.index==i&&batch.success&&batch.parsed>0){wasUnavailable=false;break;}
             }
           }
           if(wasUnavailable)stillUnavailable++;
@@ -807,8 +809,16 @@ public class SourceUpdateWorker extends Worker {
       }
       // A completed, committed probe pass advances the weekly deadline;
       // skipped or failed work leaves the due date unchanged.
-      if(!manual&&!initialDiscoveryChain&&checked>0&&roomRowsWritten>0)
-        update.putLong("source_last_routine_maintenance_at",System.currentTimeMillis());
+      if(!initialDiscoveryChain){
+        int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
+        update.putInt("source_routine_next_feed_index",nextRoutine);
+        if(!manual&&feedBatchComplete&&nextRoutine==0&&roomRowsWritten>0&&checked>0)
+          update.putLong("source_last_routine_maintenance_at",System.currentTimeMillis());
+        update.putString("source_update_result","日常分批轮检：目录 "+(routineStart+1)+"–"+routineEnd
+            +"/"+feeds.length+"；读取成功 "+feedsOk+"，失败 "+feedsFailed
+            +"；媒体预检 "+checked+" 次；"+(feedBatchComplete?"本批已处理":"保留本批游标，下次继续")
+            +"。旧目录保留，实际播放待验证。");
+      }
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
@@ -862,6 +872,9 @@ public class SourceUpdateWorker extends Worker {
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
             "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
       }
+      // Routine failures rotate to other directories and wait for the next idle
+      // eligibility check; no aggressive WorkManager retry loop on dead feeds.
+      if(!initialDiscoveryChain)return Result.success();
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
@@ -1096,6 +1109,7 @@ public class SourceUpdateWorker extends Worker {
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
+  private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
   private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
