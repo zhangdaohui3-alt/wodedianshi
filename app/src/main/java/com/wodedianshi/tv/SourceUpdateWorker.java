@@ -31,6 +31,7 @@ public class SourceUpdateWorker extends Worker {
     final ProbeResult result; final long at;
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
+  private boolean slowPlayback;
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
@@ -78,6 +79,8 @@ public class SourceUpdateWorker extends Worker {
     }
     final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
     final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
+    final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
+    slowPlayback=initialDiscoveryChain&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime());
     final boolean foregroundAtStart=isActivityActive(prefs);
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
     // Defer that work while the TV app is active so it cannot compete with playback,
@@ -94,6 +97,7 @@ public class SourceUpdateWorker extends Worker {
         true,manual,initialDiscoveryChain,publishedAtStart);
     pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
+        ||(slowPlayback&&SourceUpdateActivityPolicy.stableRevocationGeneration()!=stableGeneration)
         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
         ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart));
     if(pauseRequested.getAsBoolean()){
@@ -160,6 +164,7 @@ public class SourceUpdateWorker extends Worker {
         boolean rebuildProgressMustReset=!"true".equals(buildActive)
             ||!configuredFeedFingerprint.equals(savedFeedFingerprint);
         if(rebuildProgressMustReset){
+          if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
           INITIAL_PROBES.clear();
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
@@ -223,6 +228,7 @@ public class SourceUpdateWorker extends Worker {
         catch(NumberFormatException ignored){}
         if(FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
+          if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
           int count=-1;
           noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
           try{
@@ -365,20 +371,26 @@ public class SourceUpdateWorker extends Worker {
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
-          File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
-              initialDiscoveryChain,feedCursor>0,pauseRequested);
+          File cachedFeed=slowPlayback?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
+              PlaylistFeedCache.obtain(getApplicationContext(),feed,initialDiscoveryChain,feedCursor>0,pauseRequested);
+          if(cachedFeed==null){
+            saveStatus(prefs,"稳定播放中：未缓存目录等待空闲下载",0);
+            return deferredViewingResult(manual,initialDiscoveryChain);
+          }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
               roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?MAX_PROBES_PER_RUN/2:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
-          parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
+          PlaylistParser.EntryConsumer consume=source->{
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
-          },pauseRequested);
+          };
+          parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
+              PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
           if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Preserve every address and the exact raw index cursor. Within the
             // current 24-row page, probe mainland candidates first. Java's List
@@ -442,6 +454,7 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"频道播放优先，目录读取已暂停，保留原游标",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
+          if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
           // Keep complete entries parsed before a transient stream read failure;
           // an incomplete feed is still reported as failed and will be retried later.
           // Failed pages never contribute partial candidates or advance a cursor.
@@ -526,6 +539,7 @@ public class SourceUpdateWorker extends Worker {
           initialDiscoveryScanned,candidates.size());
       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
           initialDiscoveryScanned,candidates.size()),MAX_PROBES_PER_RUN-savedWindow);
+      if(slowPlayback)discoveryWindow=Math.min(1,discoveryWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -578,7 +592,7 @@ public class SourceUpdateWorker extends Worker {
             reusedPreflights++;
           }else{
             checked++;
-            noteInitialStage("本批检测第 "+checked+" 条（尚未提交）");
+            noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
             measured=probe(e.url,addressDeadline);
           }
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
@@ -1056,11 +1070,14 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+      // Never swap the live catalogue during low-rate viewing work. The final
+      // page stays resumable until an idle worker can atomically publish it.
+      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
             getApplicationContext(),saved,pauseRequested,update);
-        if(previewLevel>previousPreviewLevel){
+        if(!slowPlayback&&previewLevel>previousPreviewLevel){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
           JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
@@ -1111,6 +1128,7 @@ public class SourceUpdateWorker extends Worker {
   private void enqueueInitialContinuation() throws Exception {
     androidx.work.OneTimeWorkRequest continuation=
         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+            .setInitialDelay(slowPlayback?20L:0L,java.util.concurrent.TimeUnit.SECONDS)
             .setConstraints(new androidx.work.Constraints.Builder()
                 .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
             .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
@@ -1191,7 +1209,7 @@ public class SourceUpdateWorker extends Worker {
 
   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
       boolean initialDiscoveryChain, boolean hasPublishedChannels){
-    return SourceUpdateActivityPolicy.isPlaybackActive()
+    return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime()):SourceUpdateActivityPolicy.isPlaybackActive())
         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
   }
