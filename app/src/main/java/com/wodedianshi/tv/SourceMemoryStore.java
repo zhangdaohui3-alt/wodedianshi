@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 public final class SourceMemoryStore {
     private static final String LAST_GOOD = "source_last_good_v1";
     private static final String COOLDOWNS = "source_cooldowns_v1";
+    private static final String QOE = "source_qoe_v1";
     private static final long LAST_GOOD_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L;
     private static final int MAX_ENTRIES = 500;
     private static final Object LOCK = new Object();
@@ -18,16 +19,36 @@ public final class SourceMemoryStore {
     private static JSONObject lastGood = new JSONObject();
     private static JSONObject cooldowns = new JSONObject();
     private static volatile boolean initialized = false;
+    // Each published value is private and never mutated after publication.
+    private static final java.util.concurrent.ConcurrentHashMap<String, JSONObject> qoe =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static boolean qoeFlushQueued;
+    private static final java.util.HashSet<String> memoryFlushQueued = new java.util.HashSet<>();
 
     private SourceMemoryStore() {}
 
     /** Must be called on a background thread before playback begins. */
     public static void initialize(Context context) {
         if (context == null) throw new IllegalArgumentException("context is null");
+        if (initialized) return;
         Context application = context.getApplicationContext();
+        String savedQoe = AppStateStore.get(application, QOE, "{}");
         String savedGood = AppStateStore.get(application, LAST_GOOD, "{}");
         String savedCooldowns = AppStateStore.get(application, COOLDOWNS, "{}");
         synchronized (LOCK) {
+            // Activity recreation must not overwrite unflushed process-owned memory.
+            if (initialized) return;
+            try {
+                JSONObject persisted = new JSONObject(savedQoe);
+                Iterator<String> keys = persisted.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    JSONObject entry = persisted.optJSONObject(key);
+                    if (entry != null) qoe.put(key, entry);
+                }
+            } catch (Exception malformed) {
+                android.util.Log.w("MyTVSourceMemory", "Invalid stored QoE history", malformed);
+            }
             try { lastGood = new JSONObject(savedGood); }
             catch (Exception malformed) { lastGood = new JSONObject(); }
             try { cooldowns = new JSONObject(savedCooldowns); }
@@ -52,7 +73,6 @@ public final class SourceMemoryStore {
     public static void saveLastGood(Context context, String channelKey, String url) {
         if (context == null || channelKey == null || channelKey.isEmpty()
                 || url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
-        String snapshot;
         synchronized (LOCK) {
             if (!initialized) return;
             try {
@@ -61,10 +81,9 @@ public final class SourceMemoryStore {
                 entry.put("at", System.currentTimeMillis());
                 lastGood.put(channelKey, entry);
                 trimOldest(lastGood);
-                snapshot = lastGood.toString();
+                scheduleMemoryFlush(context, LAST_GOOD);
             } catch (Exception ignored) { return; }
         }
-        persist(context, LAST_GOOD, snapshot);
     }
 
     public static String getLastGood(Context context, String channelKey) {
@@ -95,7 +114,6 @@ public final class SourceMemoryStore {
 
     public static void coolDown(Context context, String url, long durationMs) {
         if (context == null || url == null || url.isEmpty() || durationMs <= 0L) return;
-        String snapshot;
         synchronized (LOCK) {
             if (!initialized) return;
             try {
@@ -111,10 +129,9 @@ public final class SourceMemoryStore {
                 if (!canonicalKey.equals(originalKey)) cooldowns.remove(originalKey);
                 cooldowns.remove(StableKey.legacyUrl(url));
                 trimOldest(cooldowns);
-                snapshot = cooldowns.toString();
+                scheduleMemoryFlush(context, COOLDOWNS);
             } catch (Exception ignored) { return; }
         }
-        persist(context, COOLDOWNS, snapshot);
     }
 
     public static boolean isCoolingDown(Context context, String url) {
@@ -128,17 +145,98 @@ public final class SourceMemoryStore {
         }
     }
 
-    private static void persist(Context context, String key, String value) {
+    // Called under LOCK. Snapshot selection and queue ordering are serialized;
+    // the worker performs encoding and disk I/O after releasing the lock.
+    private static void scheduleMemoryFlush(Context context, String key) {
+        if (!memoryFlushQueued.add(key)) return;
         Context application = context.getApplicationContext();
         try {
             WRITER.execute(() -> {
-                try { AppStateStore.put(application, key, value); }
-                catch (Throwable failure) {
-                    android.util.Log.e("MyTVSourceMemory", "Room source-memory write failed: " + key, failure);
+                java.util.HashMap<String, Object> copy = new java.util.HashMap<>();
+                synchronized (LOCK) {
+                    JSONObject source = LAST_GOOD.equals(key) ? lastGood : cooldowns;
+                    Iterator<String> keys = source.keys();
+                    while (keys.hasNext()) {
+                        String item = keys.next();
+                        copy.put(item, source.opt(item));
+                    }
+                    memoryFlushQueued.remove(key);
+                }
+                write(application, key, new JSONObject(copy).toString());
+            });
+        } catch (RuntimeException rejected) {
+            memoryFlushQueued.remove(key);
+            android.util.Log.e("MyTVSourceMemory", "source-memory queue rejected", rejected);
+        }
+    }
+
+    public static void recordMetric(Context context, String url, String event, long readyMs) {
+        if (!initialized || context == null || url == null || url.isEmpty()) return;
+        Context application = context.getApplicationContext();
+        final long at = System.currentTimeMillis();
+        try {
+            WRITER.execute(() -> {
+                try {
+                    String key = StableKey.url(url), legacy = StableKey.legacyUrl(url);
+                    JSONObject old = qoe.get(key);
+                    if (old == null) old = qoe.get(legacy);
+                    // Only copy one endpoint, never the entire history on a tune.
+                    JSONObject m = old == null ? new JSONObject() : new JSONObject(old.toString());
+                    if ("attempt".equals(event)) m.put("attempts", m.optInt("attempts",0)+1);
+                    else if ("failure".equals(event)) m.put("failures",m.optInt("failures",0)+1);
+                    else if ("buffer".equals(event)) m.put("buffers",m.optInt("buffers",0)+1);
+                    else if ("audioCodecError".equals(event)) m.put("audioCodecErrors",m.optInt("audioCodecErrors",0)+1);
+                    else if ("audioSinkError".equals(event)) m.put("audioSinkErrors",m.optInt("audioSinkErrors",0)+1);
+                    else if ("videoCodecError".equals(event)) m.put("videoCodecErrors",m.optInt("videoCodecErrors",0)+1);
+                    else if ("ready".equals(event)) {
+                        int count=m.optInt("ready",0); long avg=m.optLong("avgReadyMs",0L);
+                        m.put("ready",count+1); m.put("avgReadyMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+                        m.put("lastReady",at);
+                    } else if ("firstFrame".equals(event)) {
+                        int count=m.optInt("firstFrames",0); long avg=m.optLong("avgFirstFrameMs",0L);
+                        m.put("firstFrames",count+1); m.put("avgFirstFrameMs",count==0?readyMs:((avg*count)+readyMs)/(count+1));
+                        m.put("lastFirstFrame",at);
+                    } else if ("stable".equals(event)) {
+                        m.put("stablePlays",m.optInt("stablePlays",0)+1); m.put("lastStable",at);
+                    } else return;
+                    m.put("updated",at);
+                    qoe.put(key,m);
+                    if (!key.equals(legacy)) qoe.remove(legacy);
+                    // A flush queued behind existing metric tasks combines a burst.
+                    if (!qoeFlushQueued) {
+                        qoeFlushQueued=true;
+                        WRITER.execute(() -> {
+                            qoeFlushQueued=false;
+                            write(application,QOE,new JSONObject(qoe).toString());
+                        });
+                    }
+                } catch (Exception failure) {
+                    android.util.Log.e("MyTVSourceMemory","QoE event failed",failure);
                 }
             });
         } catch (RuntimeException rejected) {
-            android.util.Log.e("MyTVSourceMemory", "source-memory writer rejected key=" + key, rejected);
+            android.util.Log.e("MyTVSourceMemory","QoE queue rejected",rejected);
+        }
+    }
+
+    /** Published metrics are read here only; never expose mutable JSON to callers. */
+    public static double qoeAdjustment(String key, String legacy, long now) {
+        JSONObject m=qoe.get(key);
+        if(m==null)m=qoe.get(legacy);
+        if(m==null||m.optInt("attempts",0)<2)return 0.0d;
+        int attempts=Math.max(1,m.optInt("attempts",0));
+        int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
+        double adjustment=SourceQoeScoringPolicy.adjustment(attempts,m.optInt("ready",0),
+            m.optInt("firstFrames",0),m.optInt("stablePlays",0),m.optInt("failures",0),
+            m.optInt("buffers",0),m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),codecWarnings);
+        return adjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now)
+            +SourceQoeScoringPolicy.recentSuccessBonus(m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
+    }
+
+    private static void write(Context context, String key, String value) {
+        try { AppStateStore.put(context, key, value); }
+        catch (Throwable failure) {
+            android.util.Log.e("MyTVSourceMemory", "Room source-memory write failed: " + key, failure);
         }
     }
 
