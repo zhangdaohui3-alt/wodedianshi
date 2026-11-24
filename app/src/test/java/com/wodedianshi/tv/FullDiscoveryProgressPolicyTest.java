@@ -5,6 +5,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void finalizationDoesNotConfuseInspectedWithPublished() {
+        assertTrue(FullDiscoveryProgressPolicy.awaitingIdleFinalization(true,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.awaitingIdleFinalization(false,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.awaitingIdleFinalization(true,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,true));
+        assertTrue(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(false,true,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,false,false));
+        assertEquals(99,FullDiscoveryProgressPolicy.overallPercent(new boolean[]{true,true},new int[]{0,0},false));
+    }
+
     @Test public void mainlandIndexPhaseIsSeparateFromVerifiedProgress() {
         assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,0,false));
         assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,0,0,false));
