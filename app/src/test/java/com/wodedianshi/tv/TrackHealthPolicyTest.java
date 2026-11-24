@@ -4,6 +4,16 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class TrackHealthPolicyTest {
+    @Test public void automaticChannelRecoveryStaysInScopeAndStopsAfterThreeSwitches() {
+        java.util.List<Integer> scope=java.util.Arrays.asList(3,10,28,47,99);
+        assertEquals(10,ChannelFailoverPolicy.nextScopedChannel(scope,0,0));
+        assertEquals(47,ChannelFailoverPolicy.nextScopedChannel(scope,2,2));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,3,3));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,null,0));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(null,0,0));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(java.util.Arrays.asList(3,10),1,1));
+    }
+
     @Test public void firstFrameWithoutAudioIsNotConfirmedTvOutput() {
         assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,false,true,true,true,true));
         assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,false));
