@@ -47,6 +47,12 @@ public final class RemoteChannelOrderPolicy {
         return position != null && position >= 0 && position < newCount ? position : -1;
     }
 
+    /** A delayed zap belongs only to unobstructed, foreground live playback. */
+    public static boolean canApplyQueuedZap(boolean activityActive, boolean fullscreen,
+            boolean menuOpen, boolean dialogOpen, boolean vodOpen, boolean locked) {
+        return activityActive && fullscreen && !menuOpen && !dialogOpen && !vodOpen && !locked;
+    }
+
     public static boolean complete(boolean interrupted,
             long expectedMutation, long currentMutation) {
         return !interrupted && expectedMutation == currentMutation;

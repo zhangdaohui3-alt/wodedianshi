@@ -1855,6 +1855,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     vodGridHoverTarget[0]=vodGrid;
     vodGrid.setId(View.generateViewId());
     panel.addView(results,new LinearLayout.LayoutParams(-1,0,1));
+    clearPendingRemoteZap();
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
@@ -4125,10 +4126,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
           renderFilteredChannels(visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
               preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
-          if(fullScreenPlayback&&pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
+          if(pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
             int steps=pendingRemoteZapSteps;
             clearPendingRemoteZap();
-            if(!isAnyPlaybackLockActive())applyChannelZap(ready,steps);
+            if(canApplyRemoteZap())applyChannelZap(ready,steps);
           }
         });
       }catch(Throwable failure){
@@ -4249,14 +4250,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(visible.size()>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+visible.size()+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
     android.util.Log.i("MyTVDirectory","render_ready category="+activeCategory+" total_matches="+visible.size()+" rendered_buttons="+Math.min(maxRows,Math.max(0,visible.size()-pageStart))+" child_views="+list.getChildCount()+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-renderStartedAt));
     final int restoreIndex=previousFocusedIndex;
+    final long focusGeneration=catalogueFilterGeneration;
+    final PopupWindow focusPopup=fullscreenMenuPopup;
     if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()
         &&(previousFocusedKey!=null||previousFocusedIndex>=0))list.post(()->{
-      if(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+      if(!activityStarted||!fullScreenPlayback||focusPopup!=fullscreenMenuPopup
+          ||focusPopup==null||!focusPopup.isShowing()||focusGeneration!=catalogueFilterGeneration)return;
       View target=null;
       // Channel indices can shift after a directory merge. Restore focus by stable
       // channel identity first, and use the old integer index only as a fallback.
       if(previousFocusedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(previousFocusedKey.equals(keyTag)){target=child;break;}}}
-      if(target==null&&restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
+      if(target==null&&previousFocusedKey==null&&restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
       if(target==null&&selectedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(selectedKey.equals(keyTag)){target=child;break;}}}
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
@@ -4290,13 +4294,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void focusSelectedChannelInMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+    final PopupWindow expectedPopup=fullscreenMenuPopup;
     channelPane.post(()->{
-      if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
+      if(!activityStarted||!fullScreenPlayback||expectedPopup!=fullscreenMenuPopup||!expectedPopup.isShowing())return;
       View target=findChannelRow(selected);
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target==null)return;
       final View focusTarget=target;
       channelScroll.post(()->{
+        if(!activityStarted||!fullScreenPlayback||expectedPopup!=fullscreenMenuPopup
+            ||!expectedPopup.isShowing()||focusTarget.getParent()!=list)return;
         channelScroll.scrollTo(0,Math.max(0,focusTarget.getTop()-dp(72)));
         focusTarget.requestFocus();
       });
@@ -4615,6 +4622,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
+    clearPendingRemoteZap();
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
     if(fullscreenAspectMenuItem.getParent()==null&&categoryPane!=null)categoryPane.addView(fullscreenAspectMenuItem,1,new LinearLayout.LayoutParams(-1,dp(48)));
     if(categoryPane.getParent()==rootLayout)rootLayout.removeView(categoryPane);
@@ -5070,6 +5078,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);
       window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
           WindowManager.LayoutParams.WRAP_CONTENT);}
+    clearPendingRemoteZap();
     fullscreenRemoteDialogOpen=true;
     dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     dialog.show();
@@ -5301,8 +5310,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     play(order.indexes.get(nextPosition));
     showChannelZapOverlay();
   }
+  private boolean canApplyRemoteZap(){
+    return RemoteChannelOrderPolicy.canApplyQueuedZap(
+        activityStarted&&!isFinishing()&&!isDestroyed(),fullScreenPlayback,
+        fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing(),fullscreenRemoteDialogOpen,
+        currentVodPanel!=null,isAnyPlaybackLockActive());
+  }
   private void stepChannel(int delta){
-    if(isAnyPlaybackLockActive())return;
+    if(!canApplyRemoteZap())return;
     long started=android.os.SystemClock.elapsedRealtime();
     long generation=catalogueFilterGeneration;
     long mutationGeneration=catalogueMutationGeneration;
@@ -5394,6 +5409,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         c.activeSource=index;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
+      clearPendingRemoteZap();
       fullscreenRemoteDialogOpen=true;
       dialog.setOnDismissListener(d->fullscreenRemoteDialogOpen=false);
     }
@@ -5422,6 +5438,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
   }
   private void stepSource(int delta){
+    clearPendingRemoteZap();
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
@@ -6024,6 +6041,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void play(int ix){
+    clearPendingRemoteZap();
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
@@ -6047,6 +6065,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep this path separate from normal channel selection, which intentionally applies
   // the remembered last-good source.
   private void play(int ix,int requestedSourceIndex){
+    clearPendingRemoteZap();
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
@@ -7589,6 +7608,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||media3ReleaseUnconfirmed);
   }
-  protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
