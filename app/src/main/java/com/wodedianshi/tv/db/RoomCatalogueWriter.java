@@ -1,6 +1,7 @@
 package com.wodedianshi.tv.db;
 
 import android.content.Context;
+import com.wodedianshi.tv.FullDiscoveryProgressPolicy;
 import com.wodedianshi.tv.SourceProbeTimePolicy;
 import java.util.function.BooleanSupplier;
 import org.json.JSONArray;
@@ -108,6 +109,17 @@ public final class RoomCatalogueWriter {
         if (snapshot.isEmpty() && !allowEmptyInitialization) {
             throw new IllegalArgumentException("refusing to commit an empty catalogue");
         }
+        // Compute once off the UI and outside the SQLite transaction.
+        String coverageText = "";
+        if (clearBuildRowsOnCommit) {
+            FullDiscoveryProgressPolicy.Coverage coverage = new FullDiscoveryProgressPolicy.Coverage();
+            for (ChannelSnapshot item : snapshot) {
+                checkPause(paused);
+                if (item != null) coverage.add(item.name,item.group,item.tvgName,item.tvgId);
+            }
+            coverageText = coverage.summary();
+        }
+        final String publishedCoverage = coverageText;
         AppDatabase db = RoomDatabaseProvider.get(context);
         ChannelDao dao = db.channelDao();
         // A missing checkpoint means a genuinely fresh database. It may receive
@@ -305,6 +317,12 @@ public final class RoomCatalogueWriter {
                 db.appStateDao().put(new AppStateEntity(
                         "source_update_last_success_at",
                         Long.toString(publishedAt), publishedAt));
+                db.appStateDao().put(new AppStateEntity(
+                        FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY, publishedCoverage, publishedAt));
+                db.appStateDao().put(new AppStateEntity(
+                        "source_initial_progress_percent", "100", publishedAt));
+                db.appStateDao().put(new AppStateEntity(
+                        "source_initial_progress_staged_channels", Integer.toString(written[0]), publishedAt));
                 db.appStateDao().remove("source_full_rebuild_active");
             }
             // Throwing from this callback rolls back rows, checkpoint and staging together.
