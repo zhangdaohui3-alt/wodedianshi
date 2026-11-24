@@ -12,6 +12,10 @@ import java.util.*;
 import org.json.*;
 
 public class SourceUpdateWorker extends Worker {
+  // WorkManager unique names do not exclude one another. Keep every source
+  // task in this process under one nonblocking ownership gate.
+  private static final java.util.concurrent.atomic.AtomicBoolean SOURCE_WORK_ACTIVE=
+      new java.util.concurrent.atomic.AtomicBoolean();
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
@@ -26,24 +30,36 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_INITIAL_DISCOVERY_PER_FEED = MAX_PROBES_PER_RUN;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
+    if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true)){
+      return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(
+          getInputData().getBoolean("manual",false),
+          getInputData().getBoolean("initial_discovery_chain",false))
+          ?Result.retry():Result.success();
+    }
+    try{return runOwnedWork();}
+    finally{SOURCE_WORK_ACTIVE.set(false);}
+  }
+  private Result runOwnedWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     final boolean manual=getInputData().getBoolean("manual",false);
     final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     // No full catalogue yet: the one-time chain owns discovery; a periodic
     // worker must neither compete with it nor publish a partial replacement.
-    if(!manual&&!initialDiscoveryChain){
+    if(!initialDiscoveryChain){
       long completedAt=0L;
       try{completedAt=Long.parseLong(roomString("source_full_rebuild_completed_at","0"));}
       catch(NumberFormatException ignored){}
       if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true,completedAt))
-        return Result.success();
+        return manual?Result.retry():Result.success();
       long lastRoutineAt=0L;
       try{lastRoutineAt=Long.parseLong(roomString("source_last_routine_maintenance_at","0"));}
       catch(NumberFormatException ignored){}
-      if(!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
+      if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
         return Result.success();
     }
+    final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
+    final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
     final boolean foregroundAtStart=isActivityActive(prefs);
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
     // Defer that work while the TV app is active so it cannot compete with playback,
@@ -57,8 +73,13 @@ public class SourceUpdateWorker extends Worker {
           .get(getApplicationContext()).channelDao().countChannels()>0;
     }
     final boolean publishedAtStart=hasPublishedChannels;
-    pauseRequested=()->isStopped()||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart);
-    if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+    final boolean deferForeground=SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+        true,manual,initialDiscoveryChain,publishedAtStart);
+    pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
+        ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
+        ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
+        ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart));
+    if(pauseRequested.getAsBoolean()){
       saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
           ?"节目或频道界面正在使用，首次/手动更新已推迟"
           :"正在观看或浏览频道，维护仍待执行；下次空闲检查再继续",0);
@@ -225,7 +246,7 @@ public class SourceUpdateWorker extends Worker {
         boolean feedReadSucceeded=false;
         boolean feedTerminalUnavailable=false;
         if(isStopped())return Result.retry();
-        if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+        if(pauseRequested.getAsBoolean()){
           saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
@@ -238,7 +259,7 @@ public class SourceUpdateWorker extends Worker {
           // A playback session can begin after the batch-level check above.
           // Do not start a potentially large network download in that case.
           if(isStopped())return Result.retry();
-          if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+          if(pauseRequested.getAsBoolean()){
             saveStatus(prefs,"节目播放或频道操作优先，已推迟频道源下载",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
@@ -266,7 +287,7 @@ public class SourceUpdateWorker extends Worker {
           // Parsing a cached large playlist can overlap a newly started player.
           // Do not enqueue its candidates for probing or advance any cursor.
           if(isStopped())return Result.retry();
-          if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+          if(pauseRequested.getAsBoolean()){
             saveStatus(prefs,"频道操作开始，本轮目录整理已暂停且未发布部分结果",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
@@ -405,7 +426,7 @@ public class SourceUpdateWorker extends Worker {
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
-        if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+        if(pauseRequested.getAsBoolean()){
           saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
@@ -574,7 +595,7 @@ public class SourceUpdateWorker extends Worker {
       // Playback can begin after the last probe-loop check but before persistence.
       // Re-check immediately before the catalogue commit so a just-started session
       // is not overlapped by the worker's final state write.
-      if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+      if(pauseRequested.getAsBoolean()){
         saveStatus(prefs,"观看或频道操作已开始，放弃本轮发布，旧完整目录仍然可用",0);
         return deferredViewingResult(manual,initialDiscoveryChain);
       }
@@ -613,7 +634,7 @@ public class SourceUpdateWorker extends Worker {
           // A viewer may have started playback after the earlier gate; in that
           // case leave all live Room rows untouched and retry the publication.
           if(isStopped())return Result.retry();
-          if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+          if(pauseRequested.getAsBoolean()){
             saveStatus(prefs,"节目开始播放，已保留完整候选目录并延后发布",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
@@ -625,7 +646,7 @@ public class SourceUpdateWorker extends Worker {
       }else{
         // Recheck immediately before the incremental transaction as well.
         if(isStopped())return Result.retry();
-        if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+        if(pauseRequested.getAsBoolean()){
           saveStatus(prefs,"节目或频道界面正在使用，维护延后",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
