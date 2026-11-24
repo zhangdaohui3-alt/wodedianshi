@@ -178,6 +178,7 @@ public class SourceUpdateWorker extends Worker {
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(feedCursorKey(feed)+"_version")
                 .remove(initialFeedProgressKey(feed))
+                .remove(initialBatchPrefix(feed)+"fingerprint").remove(initialBatchPrefix(feed)+"scanned")
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -379,8 +380,10 @@ public class SourceUpdateWorker extends Worker {
             // Acquisition is its own bounded slice: no stream probe in the same
             // worker. Never advance the verified cursor after a download alone.
             long now=android.os.SystemClock.elapsedRealtime();
-            if(now<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))
-              return deferInitialDirectory("稳定直播中：较慢或较大目录等待空闲补查");
+            if(now<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L)){
+              // Skip this feed only for this execution; never mark it done.
+              continue;
+            }
             noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
             try{
               cachedFeed=PlaylistFeedCache.obtainSmallInitialDuringViewing(
@@ -396,7 +399,9 @@ public class SourceUpdateWorker extends Worker {
               if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
                 return deferredViewingResult(manual,initialDiscoveryChain);
               LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
-              return deferInitialDirectory("稳定直播中：目录超过低速预算或暂不可用，待空闲补查");
+              // Allow the next eligible feed to make progress. No source or
+              // directory failure counters are charged for a viewing budget.
+              continue;
             }
           }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
@@ -476,7 +481,10 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"频道播放优先，目录读取已暂停，保留原游标",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
-          if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
+          if(slowPlayback){
+            LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
+            continue;
+          }
           // Keep complete entries parsed before a transient stream read failure;
           // an incomplete feed is still reported as failed and will be retried later.
           // Failed pages never contribute partial candidates or advance a cursor.
@@ -528,6 +536,7 @@ public class SourceUpdateWorker extends Worker {
           continue;
         }
       }
+      if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
@@ -537,7 +546,10 @@ public class SourceUpdateWorker extends Worker {
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
       int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      String batchPrefix=initialDiscoveryChain?"source_initial_feed_batch_":
+      int pageFeed=-1;
+      if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
+        if(batch.success&&!batch.unavailable){pageFeed=batch.index;break;}
+      String batchPrefix=initialDiscoveryChain?initialBatchPrefix(pageFeed):
           manualRefresh?"source_manual_feed_batch_":"source_routine_feed_batch_";
       StringBuilder batchIdentity=new StringBuilder();
       appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
@@ -551,9 +563,17 @@ public class SourceUpdateWorker extends Worker {
       }
       String discoveryFingerprint=CatalogueFingerprint.sha256(batchIdentity.toString());
       String previousDiscoveryFingerprint=roomString(batchPrefix+"fingerprint","");
+      int previousScanned=roomInt(batchPrefix+"scanned",0);
+      // An upgrade may have one committed legacy page. Migrate only if the
+      // full page fingerprint matches (including feed, version and cursor).
+      if(initialDiscoveryChain&&pageFeed>=0&&previousDiscoveryFingerprint.isEmpty()
+          &&discoveryFingerprint.equals(roomString("source_initial_feed_batch_fingerprint",""))){
+        previousDiscoveryFingerprint=discoveryFingerprint;
+        previousScanned=roomInt("source_initial_feed_batch_scanned",0);
+        update.remove("source_initial_feed_batch_fingerprint").remove("source_initial_feed_batch_scanned");
+      }
       int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
-          discoveryFingerprint,previousDiscoveryFingerprint,
-          roomInt(batchPrefix+"scanned",0),candidates.size());
+          discoveryFingerprint,previousDiscoveryFingerprint,previousScanned,candidates.size());
       // Resume by exact position inside an unchanged batch. URL-based cursors are
       // unsafe because distinct channel identities can share one endpoint; choosing
       // the last duplicate URL can skip entries that were not yet scanned.
@@ -799,8 +819,9 @@ public class SourceUpdateWorker extends Worker {
         // resume this exact feed and its fingerprint before rotating onward.
         // Otherwise its prefix would be rescanned and the tail could starve.
         int attemptedFeed=feedBatches.get(feedBatches.size()-1).index;
-        initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterProbeBatch(
-            attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
+        initialNextFeedIndex=slowPlayback&&pageFeed>=0?(pageFeed+1)%feeds.length:
+            InitialFeedRotationPolicy.nextAfterProbeBatch(
+                attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
       }
       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
@@ -1065,7 +1086,8 @@ public class SourceUpdateWorker extends Worker {
           // starts and explicitly initializes a fresh build.
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
               .remove(feedCursorKey(feed)+"_version")
-              .remove(initialFeedProgressKey(feed));
+              .remove(initialFeedProgressKey(feed))
+              .remove(initialBatchPrefix(feed)+"fingerprint").remove(initialBatchPrefix(feed)+"scanned");
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -1393,6 +1415,7 @@ public class SourceUpdateWorker extends Worker {
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
+  private static String initialBatchPrefix(int index){return "source_initial_page_"+index+"_";}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
