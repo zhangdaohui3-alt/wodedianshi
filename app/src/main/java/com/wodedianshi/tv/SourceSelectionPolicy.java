@@ -83,6 +83,14 @@ public final class SourceSelectionPolicy {
         }
     }
 
+    /** A stale menu must not modify another channel or silently select a changed URL. */
+    public static int resolveManualSelection(Object menuChannel, Object selectedChannel,
+            List<String> currentSources, String requestedUrl) {
+        if (menuChannel == null || menuChannel != selectedChannel || currentSources == null
+                || requestedUrl == null || requestedUrl.trim().isEmpty()) return -1;
+        return currentSources.indexOf(requestedUrl);
+    }
+
     /** Finds a remembered URL in the current list without rewriting its signed path/query. */
     public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
         if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
