@@ -9,6 +9,59 @@ package com.wodedianshi.tv;
 public final class FullDiscoveryProgressPolicy {
     private FullDiscoveryProgressPolicy() {}
 
+    public static final String PUBLISHED_COVERAGE_KEY = "source_initial_published_coverage_v1";
+    private static final String[] PROVINCES = {"北京","天津","河北","山西","内蒙古","辽宁","吉林",
+        "黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南",
+        "广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+
+    /** Counts catalogue rows, not real-world playable channels or unique successful probes.
+     * Retained old rows are intentionally included, with no claim of fresh validation. */
+    public static final class Coverage {
+        private int total, cctv, satellite, local, unresolvedLocal;
+        private final java.util.Set<String> provinces = new java.util.HashSet<>();
+
+        public void add(String name, String group, String tvgName, String tvgId) {
+            total++;
+            String metadata = safe(name) + " " + safe(tvgName) + " " + safe(tvgId);
+            if (RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group)) return;
+            String broadcaster = ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
+            if (broadcaster.startsWith("CCTV-")) { cctv++; return; }
+            if (ChannelNamePolicy.isSatellite(metadata, group)) { satellite++; return; }
+            String all = (metadata + " " + safe(group)).toLowerCase(java.util.Locale.ROOT);
+            String province = ChannelNamePolicy.provinceForLocalChannel(all);
+            if (!province.isEmpty()) {
+                local++;
+                provinces.add(province);
+            } else if (all.contains("地方") || all.contains("local")) {
+                // A generic foreign "Local" group is not evidence of China.
+                if (all.contains("地方") || all.contains("中国") || all.contains("china")
+                        || all.contains(".cn")) {
+                    local++;
+                    unresolvedLocal++;
+                }
+            }
+        }
+
+        public int provinceCount() { return provinces.size(); }
+        public int cctvCount() { return cctv; }
+        public int satelliteCount() { return satellite; }
+        public int localCount() { return local; }
+
+        public String summary() {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String province : PROVINCES) if (!provinces.contains(province)) missing.add(province);
+            String warning = cctv == 0 || satellite == 0 || local == 0 || !missing.isEmpty()
+                    ? "覆盖有缺口，待补查" : "各省级地区均有记录，仍待实播验收";
+            return "首次发布目录（含保留旧频道，非实播验证）：" + total + " 条"
+                    + "\n央视 " + cctv + " · 卫视 " + satellite + " · 识别地方台 " + local
+                    + "\n省级地区覆盖 " + provinceCount() + "/31 · 地方台省份未识别 " + unresolvedLocal
+                    + "\n" + warning + (missing.isEmpty() ? "" : "；无已识别地方台记录：" + String.join("、", missing));
+        }
+    }
+
+    private static String safe(String value) { return value == null ? "" : value; }
+
+
     public static int percent(int completedFeeds, int totalFeeds,
             int activeCursor, int activeFeedEntries, boolean published) {
         if (published) return 100;
