@@ -48,7 +48,19 @@ public final class PlaylistFeedCache {
     public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
                               boolean preserveExistingSnapshot,
                               java.util.function.BooleanSupplier paused) throws IOException {
+        return obtainBounded(context,feedUrl,initialDiscovery,preserveExistingSnapshot,paused,false);
+    }
+
+    public static File obtainSmallInitialDuringViewing(Context context,String feedUrl,
+            boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
+        return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
+    }
+
+    private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
+            boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
+            boolean lowRate) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
+        long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES:MAX_BYTES;
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
@@ -60,6 +72,8 @@ public final class PlaylistFeedCache {
         File cached = new File(directory, key + ".m3u");
         File metadata = new File(directory, key + ".m3u.properties");
         Properties old = readProperties(metadata);
+        if(lowRate&&cached.isFile()&&!SourceProbeTimePolicy.fitsLiveDirectory(cached.length()))
+            throw new IOException("Large cached directory requires idle indexing");
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
                 && isPlaylistFile(cached);
         // Do not trust validators or index files after a body replacement crash,
@@ -85,12 +99,12 @@ public final class PlaylistFeedCache {
         HttpURLConnection connection = null;
         File temporary = new File(directory, key + ".m3u.tmp");
         File metadataTemporary = new File(directory, key + ".m3u.properties.tmp");
-        final long deadline = android.os.SystemClock.elapsedRealtime() + DOWNLOAD_BUDGET_MS;
+        final long deadline = android.os.SystemClock.elapsedRealtime() + (lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
         try {
             SourceProbeTimePolicy.checkPaused(paused);
             connection = (HttpURLConnection) new URL(feedUrl).openConnection();
-            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
             connection.setInstanceFollowRedirects(true);
             connection.setUseCaches(false);
             connection.setRequestProperty("User-Agent", "MyTV/1.19 Android TV");
@@ -120,7 +134,7 @@ public final class PlaylistFeedCache {
             }
 
             long declaredLength = connection.getContentLength();
-            if (declaredLength > MAX_BYTES) {
+            if (declaredLength > maxBytes) {
                 throw new IOException("Playlist exceeds cache size limit");
             }
             long copied = 0L;
@@ -128,7 +142,8 @@ public final class PlaylistFeedCache {
             try (InputStream input = new BufferedInputStream(connection.getInputStream());
                  FileOutputStream fileOutput = new FileOutputStream(temporary);
                  OutputStream output = new BufferedOutputStream(fileOutput)) {
-                byte[] buffer = new byte[32 * 1024];
+                byte[] buffer = new byte[lowRate?4096:32 * 1024];
+                final long readStarted=android.os.SystemClock.elapsedRealtime();
                 int count;
                 while (true) {
                     checkDownloadBudget(paused, deadline);
@@ -136,11 +151,21 @@ public final class PlaylistFeedCache {
                     checkDownloadBudget(paused, deadline);
                     if (count == -1) break;
                     copied += count;
-                    if (copied > MAX_BYTES) {
+                    if (copied > maxBytes) {
                         throw new IOException("Playlist exceeds cache size limit");
                     }
                     output.write(buffer, 0, count);
                     digest.update(buffer, 0, count);
+                    if(lowRate){
+                        long delay=SourceProbeTimePolicy.liveDirectoryPacingMillis(
+                                copied,android.os.SystemClock.elapsedRealtime()-readStarted);
+                        while(delay>0L){
+                            checkDownloadBudget(paused,deadline);
+                            long step=Math.min(50L,delay);
+                            android.os.SystemClock.sleep(step);
+                            delay-=step;
+                        }
+                    }
                 }
                 output.flush();
                 fileOutput.getFD().sync();
