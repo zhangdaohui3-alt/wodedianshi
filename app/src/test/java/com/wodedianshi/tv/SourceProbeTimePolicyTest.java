@@ -4,6 +4,14 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void initialAddressRequiresFullBudgetBeforeStarting() {
+        assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(91000L,1000L));
+        assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(16000L,1000L));
+        assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(15999L,1000L));
+        assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(1000L,1001L));
+        assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(1000L,-1L));
+    }
+
     @Test public void observedPauseRemainsLatchedAfterViewerLeaves() {
         java.util.concurrent.atomic.AtomicBoolean viewing = new java.util.concurrent.atomic.AtomicBoolean();
         java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(viewing::get);
