@@ -10,7 +10,8 @@ public final class InitialFeedFailurePolicy {
     public static final int MAX_FAILURE_ATTEMPTS = 3;
 
     public static int nextAttempts(int previous) {
-        return Math.min(MAX_FAILURE_ATTEMPTS, Math.max(0, previous) + 1);
+        if (previous >= MAX_FAILURE_ATTEMPTS) return MAX_FAILURE_ATTEMPTS;
+        return Math.max(0, previous) + 1;
     }
 
     /** Safe, stable UI reasons: never echo an untrusted response or URL token. */
