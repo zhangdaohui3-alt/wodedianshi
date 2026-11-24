@@ -35,6 +35,25 @@ public class FullRebuildRouteRetentionPolicyTest {
         assertEquals(1,r.activeIndex);
     }
 
+    @Test public void oversizedOldSourceListKeepsLateSelectedRoute() {
+        List<String> old=Arrays.asList(
+                "https://old.example/primary","https://old.example/a",
+                "https://old.example/b","https://old.example/selected");
+        FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+                old,3,old.get(0),Collections.singletonList("https://new.example/a"),3);
+        assertEquals(Arrays.asList(old.get(0),old.get(1),old.get(3)),r.urls);
+        assertEquals(2,r.activeIndex);
+    }
+
+    @Test public void singleAvailableSlotPrefersExplicitlySelectedRoute() {
+        List<String> old=Arrays.asList("https://old.example/primary",
+                "https://old.example/selected");
+        FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+                old,1,old.get(0),Collections.emptyList(),1);
+        assertEquals(Collections.singletonList(old.get(1)),r.urls);
+        assertEquals(0,r.activeIndex);
+    }
+
     @Test public void skipsInvalidAndDuplicateNewEndpoints() {
         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
                 Collections.singletonList("https://old.example/a"),0,
