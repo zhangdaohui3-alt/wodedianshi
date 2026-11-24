@@ -37,6 +37,11 @@ public class SourceUpdateWorker extends Worker {
       catch(NumberFormatException ignored){}
       if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true,completedAt))
         return Result.success();
+      long lastRoutineAt=0L;
+      try{lastRoutineAt=Long.parseLong(roomString("source_last_routine_maintenance_at","0"));}
+      catch(NumberFormatException ignored){}
+      if(!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
+        return Result.success();
     }
     final boolean foregroundAtStart=isActivityActive(prefs);
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
@@ -53,7 +58,7 @@ public class SourceUpdateWorker extends Worker {
     if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
       saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
           ?"节目或频道界面正在使用，首次/手动更新已推迟"
-          :"正在观看或浏览频道，本周自动检查已跳过；保存的频道继续正常使用",0);
+          :"正在观看或浏览频道，维护仍待执行；下次空闲检查再继续",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }
     int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,chinaPreflightsValid=0,feedsFailed=0,checked=0;
@@ -607,6 +612,12 @@ public class SourceUpdateWorker extends Worker {
               "Published Room rows do not match the complete reconciled catalogue");
         }
       }else{
+        // Recheck immediately before the incremental transaction as well.
+        if(isStopped())return Result.retry();
+        if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+          saveStatus(prefs,"节目或频道界面正在使用，维护延后",0);
+          return deferredViewingResult(manual,initialDiscoveryChain);
+        }
         // Routine updates remain incremental against the current authoritative Room snapshot.
         roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
             getApplicationContext(),saved,roomSnapshot.catalogueVersion);
@@ -782,6 +793,10 @@ public class SourceUpdateWorker extends Worker {
       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }
+      // A completed, committed probe pass advances the weekly deadline;
+      // skipped or failed work leaves the due date unchanged.
+      if(!manual&&!initialDiscoveryChain&&checked>0&&roomRowsWritten>0)
+        update.putLong("source_last_routine_maintenance_at",System.currentTimeMillis());
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
@@ -911,7 +926,7 @@ public class SourceUpdateWorker extends Worker {
 
   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
       boolean initialDiscoveryChain, boolean hasPublishedChannels){
-    return prefs.getBoolean("source_update_playback_active",false)
+    return SourceUpdateActivityPolicy.isPlaybackActive()
         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
   }
@@ -923,17 +938,13 @@ public class SourceUpdateWorker extends Worker {
           "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
     }
     // Do not repeatedly wake the periodic job every few minutes while a user
-    // watches television; next week's schedule is the automatic fallback.
+    // watches television; the next daily check retains the overdue weekly intent.
     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
         ?Result.retry():Result.success();
   }
 
   private boolean isActivityActive(SharedPreferences prefs){
-    boolean active=prefs.getBoolean("source_update_activity_active",false);
-    long heartbeat=prefs.getLong("source_update_activity_heartbeat",0L);
-    // An expired lease is treated as inactive without writing back a stale value.
-    // This avoids racing a just-started Activity that has refreshed the heartbeat.
-    return SourceUpdateActivityPolicy.isLeaseFresh(active,heartbeat,System.currentTimeMillis());
+    return SourceUpdateActivityPolicy.isActivityActive();
   }
   private static class Entry{
     String name,url,group,scope,tvgId,tvgName;boolean savedSource;
