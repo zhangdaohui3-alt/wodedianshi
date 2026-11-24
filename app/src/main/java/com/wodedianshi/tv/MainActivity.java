@@ -1463,6 +1463,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
           keys.add("source_full_rebuild_completed_at");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
+          keys.add("source_initial_index_attempted");
+          keys.add("source_initial_index_ready");
+          keys.add("source_initial_index_entries");
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
@@ -1470,6 +1473,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
+          final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
+          final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
+          final long indexEntries=readStateLong(snapshot,"source_initial_index_entries",0L);
           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
           final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
           final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
@@ -1518,9 +1524,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             initialDiscoveryProgressDetail.setText(
+                (indexAttempted>0&&checked==0?"中国目录读取 "+indexAttempted+"/"+SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
-                    :"正在准备来源列表")
+                    :"正在准备来源列表"))
                 +"\n已整理频道 "+Math.max(0,staged)+(previewLevel>0?" · 阶段目录已发布":"")+" · 中国初筛通过 "
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
