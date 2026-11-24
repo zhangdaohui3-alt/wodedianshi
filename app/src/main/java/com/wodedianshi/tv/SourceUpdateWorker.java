@@ -1206,6 +1206,7 @@ public class SourceUpdateWorker extends Worker {
     enqueueInitialContinuation(slowPlayback?20L:0L);
   }
   private void enqueueInitialContinuation(long delaySeconds) throws Exception {
+    if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException("Initial source work cancelled");
     androidx.work.OneTimeWorkRequest continuation=
         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
             .setInitialDelay(delaySeconds,java.util.concurrent.TimeUnit.SECONDS)
@@ -1216,7 +1217,7 @@ public class SourceUpdateWorker extends Worker {
                 .putBoolean("initial_discovery_chain",true).build())
             .build();
     androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-        "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+        "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND,continuation)
         .getResult().get();
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
