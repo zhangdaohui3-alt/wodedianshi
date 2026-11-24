@@ -30,8 +30,9 @@ public final class PlaylistFeedCache {
     private static final long MAX_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final long MAX_BYTES = 96L * 1024L * 1024L;
     private static final long MAX_CACHE_BYTES = 256L * 1024L * 1024L;
-    private static final int CONNECT_TIMEOUT_MS = 8000;
-    private static final int READ_TIMEOUT_MS = 20000;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 8000;
+    private static final long DOWNLOAD_BUDGET_MS = 60_000L;
 
     private PlaylistFeedCache() { }
 
@@ -41,6 +42,13 @@ public final class PlaylistFeedCache {
      */
     public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
                               boolean preserveExistingSnapshot) throws IOException {
+        return obtain(context, feedUrl, initialDiscovery, preserveExistingSnapshot, () -> false);
+    }
+
+    public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
+                              boolean preserveExistingSnapshot,
+                              java.util.function.BooleanSupplier paused) throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
@@ -67,7 +75,9 @@ public final class PlaylistFeedCache {
         HttpURLConnection connection = null;
         File temporary = new File(directory, key + ".m3u.tmp");
         File metadataTemporary = new File(directory, key + ".m3u.properties.tmp");
+        final long deadline = android.os.SystemClock.elapsedRealtime() + DOWNLOAD_BUDGET_MS;
         try {
+            SourceProbeTimePolicy.checkPaused(paused);
             connection = (HttpURLConnection) new URL(feedUrl).openConnection();
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
             connection.setReadTimeout(READ_TIMEOUT_MS);
@@ -87,6 +97,7 @@ public final class PlaylistFeedCache {
             }
 
             int status = connection.getResponseCode();
+            checkDownloadBudget(paused, deadline);
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
@@ -107,7 +118,11 @@ public final class PlaylistFeedCache {
                  OutputStream output = new BufferedOutputStream(new FileOutputStream(temporary))) {
                 byte[] buffer = new byte[32 * 1024];
                 int count;
-                while ((count = input.read(buffer)) != -1) {
+                while (true) {
+                    checkDownloadBudget(paused, deadline);
+                    count = input.read(buffer);
+                    checkDownloadBudget(paused, deadline);
+                    if (count == -1) break;
                     copied += count;
                     if (copied > MAX_BYTES) {
                         throw new IOException("Playlist exceeds cache size limit");
@@ -121,6 +136,7 @@ public final class PlaylistFeedCache {
 
             // The index is tied to the exact cached body. Remove it before replacing
             // that body so a later page can never seek into records from an older feed.
+            checkDownloadBudget(paused, deadline);
             invalidateIndex(cached);
             // Publish the new snapshot only after the complete response passed validation.
             if (cached.exists() && !cached.delete()) {
@@ -144,6 +160,13 @@ public final class PlaylistFeedCache {
             if (temporary.exists()) temporary.delete();
             if (metadataTemporary.exists()) metadataTemporary.delete();
         }
+    }
+
+    private static void checkDownloadBudget(java.util.function.BooleanSupplier paused,
+                                            long deadline) throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
+        if (android.os.SystemClock.elapsedRealtime() >= deadline)
+            throw new IOException("Playlist download budget exceeded");
     }
 
     private static void invalidateIndex(File playlist) throws IOException {
