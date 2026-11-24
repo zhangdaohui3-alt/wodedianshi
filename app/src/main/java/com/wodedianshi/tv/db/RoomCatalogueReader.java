@@ -111,6 +111,12 @@ public final class RoomCatalogueReader {
      * Activity model, avoiding a second full in-memory copy of a large catalogue.
      */
     public static Snapshot read(Context context, PageConsumer consumer) {
+        return read(context, consumer, null);
+    }
+
+    /** Worker reads can yield between bounded pages; never publish an incomplete result. */
+    public static Snapshot read(Context context, PageConsumer consumer, java.util.function.BooleanSupplier paused) {
+        if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         if (context == null) throw new IllegalArgumentException("context is null");
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
         CatalogueMigrationEntity initialCheckpoint =
@@ -121,10 +127,12 @@ public final class RoomCatalogueReader {
         int total = initialCheckpoint.channelsCount;
         int loaded = 0;
         for (int offset = 0; offset < total; offset += PAGE_SIZE) {
+            if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
             List<ChannelWithSources> page = dao.getAllChannelsPage(PAGE_SIZE, offset);
             if (page == null || page.isEmpty()) break;
             ArrayList<ChannelRecord> records = new ArrayList<>(page.size());
             for (ChannelWithSources item : page) {
+                if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
                 if (item == null || item.channel == null) continue;
                 records.add(new ChannelRecord(item.channel, item.getSourcesInPriorityOrder()));
             }
@@ -132,6 +140,7 @@ public final class RoomCatalogueReader {
             if (consumer == null) allRows.addAll(records);
             else consumer.accept(records);
         }
+        if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
         CatalogueMigrationEntity finalCheckpoint =
                 dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
@@ -144,6 +153,7 @@ public final class RoomCatalogueReader {
         // A truncated read without any intervening write is a real structural
         // failure. Do not retry it endlessly or publish a partial directory.
         CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
+        if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
                 favorites, loaded, catalogueVersion);
     }
