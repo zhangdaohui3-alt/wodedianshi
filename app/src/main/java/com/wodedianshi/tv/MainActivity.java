@@ -1378,6 +1378,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final long completed=readRoomProgressLong(context,"source_full_rebuild_completed_at",0L);
           final int done=(int)readRoomProgressLong(context,prefix+"done_feeds",0L);
           final int total=(int)readRoomProgressLong(context,prefix+"total_feeds",0L);
+          final int chinaDone=(int)readRoomProgressLong(context,prefix+"china_done_feeds",0L);
+          final int chinaTotal=(int)readRoomProgressLong(context,prefix+"china_total_feeds",0L);
+          final int chinaValidated=(int)readRoomProgressLong(context,prefix+"china_validated_urls",0L);
           final int staged=(int)readRoomProgressLong(context,prefix+"staged_channels",0L);
           final int checked=(int)readRoomProgressLong(context,prefix+"checked_urls",0L);
           final int validated=(int)readRoomProgressLong(context,prefix+"validated_urls",0L);
@@ -1396,9 +1399,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               initialDiscoveryProgressBar.setProgress(100);
               initialDiscoveryProgressTitle.setText("首次完整抓源 · 100%");
               initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
-                  +Math.max(0,staged)+" 个频道"+"\n初筛通过 "
-                  +Math.max(0,validated)+" 次 · 暂不可用来源 "
-                  +Math.max(0,unavailable)+" 个"+"\n之后只在空闲时补查失败来源");
+                  +Math.max(0,staged)+" 个频道"+"\n中国来源初筛通过 "
+                  +Math.max(0,chinaValidated)+" 次 · 全部来源 "
+                  +Math.max(0,validated)+" 次"+"\n暂不可用来源 "
+                  +Math.max(0,unavailable)+" 个 · 之后只在空闲时补查");
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
               uiHandler.postDelayed(()->{
@@ -1413,13 +1417,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +Math.max(0,Math.min(99,percent))+"%");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             initialDiscoveryProgressDetail.setText(
-                (total>0?"已处理来源 "+Math.max(0,done)+"/"+total
-                    +" · 暂不可用 "+Math.max(0,unavailable)+" 个":"正在准备来源列表")
-                +"\n已整理频道 "+Math.max(0,staged)+" · 预检通过 "
-                    +Math.max(0,validated)+" 次"
-                +"\n已初筛地址 "+Math.max(0,checked)
-                    +(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:"")
-                +"\n"+phase);
+                (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
+                    +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
+                    :"正在准备来源列表")
+                +"\n已整理频道 "+Math.max(0,staged)+" · 中国初筛通过 "
+                    +Math.max(0,chinaValidated)+" 次"
+                +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
+                    +Math.max(0,unavailable)+" 个"
+                +"\n"+phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""));
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
