@@ -16,6 +16,7 @@ import java.util.List;
  */
 public final class RoomCatalogueBuildStore {
     private RoomCatalogueBuildStore() {}
+    public static final String STAGING_REVISION_KEY="source_initial_staging_revision";
 
     public static JSONArray read(Context context) throws JSONException {
         return read(context, null);
@@ -87,6 +88,7 @@ public final class RoomCatalogueBuildStore {
             checkPause(paused);
             dao.deleteCatalogueBuildRowsFrom(snapshot.length());
             if (progress != null) progress.applyInTransaction(db);
+            db.appStateDao().remove(STAGING_REVISION_KEY);
             checkPause(paused);
         });
         return snapshot.length();
@@ -152,6 +154,7 @@ public final class RoomCatalogueBuildStore {
             checkPause(paused);
             db.channelDao().clearCatalogueBuildRows();
             if(progress!=null)progress.applyInTransaction(db);
+            db.appStateDao().remove(STAGING_REVISION_KEY);
             checkPause(paused);
         });
     }
