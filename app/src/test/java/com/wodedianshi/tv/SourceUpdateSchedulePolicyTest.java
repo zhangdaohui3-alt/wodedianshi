@@ -38,10 +38,10 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(true, true));
     }
 
-    @Test public void firstInstallMayDiscoverWithEmptyCatalogueInForeground() {
+    @Test public void firstInstallMayDiscoverWithEmptyOrSeededCatalogueInForeground() {
         assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
                 true, false, true, false));
-        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
                 true, false, true, true));
         assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
                 true, false, false, false));
@@ -111,8 +111,8 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(true, true));
     }
 
-    @Test public void manualFirstRebuildMustDeferWhenSavedChannelsAlreadyExist() {
-        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+    @Test public void manualFirstRebuildMayProceedWhenSavedChannelsAlreadyExist() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
                 true, true, true, true));
         assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
                 true, true, true, false));
