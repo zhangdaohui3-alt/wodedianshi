@@ -5,6 +5,19 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void stagingReuseRequiresMatchingCommittedRevisionAndFreshBoundedRows() {
+        assertTrue(FullDiscoveryProgressPolicy.canRetainStaging(512,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canRetainStaging(513,true));
+        assertTrue(FullDiscoveryProgressPolicy.canRetainStaging(1024,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canRetainStaging(1025,false));
+        assertTrue(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,61000));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,61001));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","b",1000,1100));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"","",1000,1100));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,999));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(-1,"a","a",1000,1100));
+    }
+
     @Test public void finalizationDoesNotConfuseInspectedWithPublished() {
         assertTrue(FullDiscoveryProgressPolicy.awaitingIdleFinalization(true,true));
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.awaitingIdleFinalization(false,true));
