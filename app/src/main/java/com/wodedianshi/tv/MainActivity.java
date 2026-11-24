@@ -4878,28 +4878,37 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
         cataloguePersistWorker.execute(()->{
           try{
-            com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
+            boolean persisted=com.wodedianshi.tv.db.RoomCatalogueMutations.setFavorite(
                 getApplicationContext(),legacyKey,favorite);
-            saveLiveDiagnostic("FAVORITE_ROOM_MUTATION",
-                (favorite?"added ":"removed ")+legacyKey);
+            if(persisted){
+              saveLiveDiagnostic("FAVORITE_ROOM_MUTATION",
+                  (favorite?"added ":"removed ")+legacyKey);
+            }else{
+              // The channel may have disappeared in a new complete Room snapshot.
+              // Do not claim success or replay a stale whole-catalogue write.
+              saveLiveDiagnostic("FAVORITE_ROOM_MISS",
+                  "收藏频道已不在最新 Room 目录，请刷新后重试");
+              uiHandler.post(()->{
+                if(!isFinishing()&&!isDestroyed())toast("收藏未保存：频道目录已变化，请刷新后重试");
+              });
+            }
           }catch(Throwable failure){
             android.util.Log.e("MyTVCatalogue","Room favorite mutation failed",failure);
             saveLiveDiagnostic("FAVORITE_ROOM_MUTATION_ERROR",
                 failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
-            // Recover through the normal complete-snapshot writer on a different
-            // executor; never block this single-thread Room mutation queue.
-            try{worker.execute(this::persist);}
-            catch(RuntimeException rejected){
-              android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",rejected);
-            }
+            // Never try a full Room overwrite as a fallback for a single failed
+            // favorite update. A background refresh may already own a newer snapshot.
+            uiHandler.post(()->{
+              if(!isFinishing()&&!isDestroyed())toast("收藏写入失败，请重试");
+            });
           }
         });
       }catch(RuntimeException rejected){
         android.util.Log.e("MyTVCatalogue","favorite mutation queue was rejected",rejected);
-        try{worker.execute(this::persist);}
-        catch(RuntimeException fallbackRejected){
-          android.util.Log.e("MyTVCatalogue","favorite fallback save was rejected",fallbackRejected);
-        }
+        saveLiveDiagnostic("FAVORITE_ROOM_QUEUE_ERROR",rejected.getClass().getSimpleName());
+        uiHandler.post(()->{
+          if(!isFinishing()&&!isDestroyed())toast("收藏保存队列不可用，请重试");
+        });
       }
     }
   }
@@ -5364,8 +5373,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       try{
       RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
           favoriteSnapshot,mutationGeneration);
-      if(ready==null)return;
+      if(ready==null){
+        if(!Thread.currentThread().isInterrupted())
+          uiHandler.post(()->retryPendingRemoteZapAfterInvalidation(filterGeneration));
+        return;
+      }
       int currentCount; synchronized(channels){currentCount=channels.size();}
+      int currentFavoritesHash=0;
+      if(favoritesOnly){synchronized(favorites){currentFavoritesHash=favorites.hashCode();}}
       // Do not touch Android Views from this worker. A category/search change
       // increments catalogueFilterGeneration and invalidates this prewarm.
       if(RemoteChannelOrderPolicy.mayPublish(
@@ -5374,7 +5389,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           filterGeneration,catalogueFilterGeneration,
           count,currentCount,
           favoritesOnly,favoriteMode,
-          favoritesHash,favoritesOnly?favorites.hashCode():0)){
+          favoritesHash,currentFavoritesHash)){
         cachedRemoteChannelOrder=ready;
         uiHandler.post(()->{
           if(pendingRemoteZapSteps==0||pendingRemoteZapGeneration!=filterGeneration
@@ -5393,6 +5408,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           pendingRemoteZapMutationGeneration=-1L;
           applyChannelZap(current,queuedSteps);
         });
+      }else if(!Thread.currentThread().isInterrupted()){
+        // A catalogue or filter generation superseded this scan. Retry the
+        // already queued DPAD action against the latest complete directory.
+        uiHandler.post(()->retryPendingRemoteZapAfterInvalidation(filterGeneration));
       }
       }finally{
         if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
@@ -5400,6 +5419,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     });}catch(RuntimeException rejected){
       if(key.equals(remoteChannelOrderBuildKey))remoteChannelOrderBuildKey=null;
     }
+  }
+  private void retryPendingRemoteZapAfterInvalidation(long originalFilterGeneration){
+    if(!fullScreenPlayback||pendingRemoteZapSteps==0)return;
+    // Never replay a queued key into a different user-selected category/search.
+    if(pendingRemoteZapGeneration!=originalFilterGeneration
+        ||catalogueFilterGeneration!=originalFilterGeneration)return;
+    pendingRemoteZapMutationGeneration=catalogueMutationGeneration;
+    prewarmRemoteChannelOrder();
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
     String category=activeCategory==null?"全部":activeCategory;

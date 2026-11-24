@@ -730,7 +730,9 @@ public class SourceUpdateWorker extends Worker {
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
-    if(!"china".equals(scope)&&!"global".equals(scope)&&!"custom".equals(scope))return;
+    // Use the same strict scope allowlist as the Room reader. Otherwise a
+    // background refresh can silently erase country/state/city ownership.
+    if(!ChannelCatalogueScopePolicy.isRetainableScope(scope))return;
     JSONArray channelScopes=channel.optJSONArray("sourceScopes");
     if(channelScopes==null){channelScopes=new JSONArray();channel.put("sourceScopes",channelScopes);}
     boolean channelHasScope=false;
