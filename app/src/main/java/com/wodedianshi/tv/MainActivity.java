@@ -66,6 +66,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
   private Runnable libVlcBufferingTimeout;
+  private boolean libVlcRebuffering;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -6419,6 +6420,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });}
         public void onBuffering(float percent){uiHandler.post(()->{
           if(!isCurrent())return;
+          libVlcRebuffering=percent<100f;
           if(percent>=100f){
             cancelLibVlcBufferingTimeout();
             saveLiveDiagnostic("VLC_BUFFER_RECOVERED","buffering_percent=100");
@@ -6545,6 +6547,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.postDelayed(libVlcWatchdog,12000L);
   }
   private void finishLibVlcHealthCheck(String expectedMediaId,int expectedChannel,boolean reportsPlaying){
+      if(libVlcVideoOutputReady&&libVlcRebuffering){
+        // Rebuffering follows the user's timeout setting, not this health poll.
+        libVlcStableChecks=0;
+        scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+        return;
+      }
       if(!libVlcVideoOutputReady||!reportsPlaying){
         libVlcStableChecks=0;
         saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
@@ -6569,16 +6577,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
   }
   private void scheduleLibVlcBufferingTimeout(String expectedMediaId,int expectedChannel,LibVlcPlaybackEngine expectedEngine){
-    if(libVlcBufferingTimeout!=null)return;
+    if(libVlcBufferingTimeout!=null||!libVlcVideoOutputReady)return;
+    final int seconds=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    if(seconds<=0)return;
     libVlcBufferingTimeout=()->{
       libVlcBufferingTimeout=null;
       if(libVlcEngine!=expectedEngine||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||!usingLibVlc)return;
       if(!libVlcVideoOutputReady)return; // Initial connection remains governed by the startup deadline.
-      saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for 12000ms after video output");
+      if(!libVlcRebuffering)return;
+      saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for "+seconds+"s after video output");
       releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-      advanceToNextSourceAutomatically("VLC 连续缓冲超过 12 秒");
+      advanceToNextSourceAutomatically("VLC 连续缓冲超过 "+seconds+" 秒");
     };
-    uiHandler.postDelayed(libVlcBufferingTimeout,12000L);
+    uiHandler.postDelayed(libVlcBufferingTimeout,seconds*1000L);
   }
   private void cancelLibVlcBufferingTimeout(){if(libVlcBufferingTimeout!=null){uiHandler.removeCallbacks(libVlcBufferingTimeout);libVlcBufferingTimeout=null;}}
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
@@ -6604,7 +6615,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
-    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
     if(afterRelease!=null){
       if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
