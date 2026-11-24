@@ -2,9 +2,9 @@ package com.wodedianshi.tv;
 
 /**
  * During the initial mainland-first phase a mixed international directory must
- * spend its media-probe budget only on clearly mainland Chinese stations.
- * Ambiguous/foreign entries remain deferred to the normal international feeds;
- * a scan cursor still counts every inspected record so paging never loops.
+ * check clearly mainland Chinese stations first inside each mixed-feed page.
+ * Other entries are not discarded: all are still probed before the cursor
+ * advances, so a page's complete source coverage is preserved.
  *
  * A playlist label is not proof of streaming rights or playable video/audio.
  */
@@ -18,10 +18,18 @@ public final class ChinaDiscoveryCandidatePolicy {
         return !RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group);
     }
 
-    public static boolean shouldProbeInInitialDiscovery(int feedIndex, String scope,
+    /**
+     * Stable sort rank within a page of the known mixed public directory.
+     * The caller must retain ALL candidates: foreign rows are checked after
+     * mainland rows, not deleted or silently skipped from the full catalogue.
+     */
+    public static int initialProbePriority(int feedIndex, String scope,
             String name, String group, String tvgName, String tvgId) {
-        if (!SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)) return true;
-        return isClearlyMainland(scope, name, group, tvgName, tvgId);
+        if (!SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)) return 0;
+        if (isClearlyMainland(scope, name, group, tvgName, tvgId)) return 0;
+        String metadata = safe(name) + " " + safe(tvgName) + " " + safe(tvgId);
+        if (RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group)) return 1;
+        return 2;
     }
 
     private static String safe(String value) {
