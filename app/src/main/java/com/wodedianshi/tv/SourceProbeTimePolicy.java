@@ -10,6 +10,15 @@ public final class SourceProbeTimePolicy {
     public static final class PublicationPausedException extends RuntimeException {
         public PublicationPausedException() { super("Catalogue publication paused for viewing"); }
     }
+    /** Once this execution observes cancellation it cannot resume or score it as failure. */
+    public static java.util.function.BooleanSupplier latchPause(java.util.function.BooleanSupplier requested) {
+        java.util.concurrent.atomic.AtomicBoolean paused = new java.util.concurrent.atomic.AtomicBoolean();
+        return () -> {
+            if (Thread.currentThread().isInterrupted() || requested.getAsBoolean()) paused.set(true);
+            return paused.get();
+        };
+    }
+
     public static void checkPublicationPaused(java.util.function.BooleanSupplier paused) {
         if (Thread.currentThread().isInterrupted() || (paused != null && paused.getAsBoolean()))
             throw new PublicationPausedException();
