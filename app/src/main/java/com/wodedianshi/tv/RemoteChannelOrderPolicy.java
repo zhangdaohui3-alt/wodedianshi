@@ -37,6 +37,16 @@ public final class RemoteChannelOrderPolicy {
         return !alreadySelected && !vodOpen && expected != null && expected == current;
     }
 
+    /** Remap only an outstanding resume of the exact old object by its stable identity. */
+    public static int remapResumeIndex(boolean alreadySelected, boolean vodOpen,
+            Object expected, Object oldAtIndex, String identity,
+            java.util.Map<String, Integer> newPositions, int newCount) {
+        if (!canResume(alreadySelected, vodOpen, expected, oldAtIndex)
+                || identity == null || identity.isEmpty() || newPositions == null) return -1;
+        Integer position = newPositions.get(identity);
+        return position != null && position >= 0 && position < newCount ? position : -1;
+    }
+
     public static boolean complete(boolean interrupted,
             long expectedMutation, long currentMutation) {
         return !interrupted && expectedMutation == currentMutation;
