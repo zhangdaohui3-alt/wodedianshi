@@ -26,6 +26,16 @@ public class SourceProbeTimePolicyTest {
         }
     }
 
+    @Test public void publicationPauseThrowsUncheckedToTriggerRollback() {
+        SourceProbeTimePolicy.checkPublicationPaused(() -> false);
+        try {
+            SourceProbeTimePolicy.checkPublicationPaused(() -> true);
+            fail("Expected publication rollback signal");
+        } catch (SourceProbeTimePolicy.PublicationPausedException expected) {
+            assertTrue(expected instanceof RuntimeException);
+        }
+    }
+
     @Test public void usesPerRequestMaximumWhenDeadlineIsFarAway() {
         assertEquals(2500, SourceProbeTimePolicy.boundedTimeoutMillis(20_000L, 1_000L, 2500));
     }
