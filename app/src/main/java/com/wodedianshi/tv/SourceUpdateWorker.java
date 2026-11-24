@@ -187,6 +187,9 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
+              .putInt("source_initial_index_attempted",0)
+              .putInt("source_initial_index_ready",0)
+              .putLong("source_initial_index_entries",0L)
               .putInt("source_initial_progress_percent",0)
               .putInt("source_initial_progress_done_feeds",0)
               .putInt("source_initial_progress_total_feeds",feeds.length)
@@ -208,6 +211,42 @@ public class SourceUpdateWorker extends Worker {
               .putBoolean("source_full_rebuild_active",true);
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
               getApplicationContext(),resetBuildState,pauseRequested);
+        }
+        // Acquisition phase: build disk indexes independently of media probes.
+        // Keep the existing cache/index as the candidate store; Room records
+        // only the acquisition cursor and counts, not duplicate unverified URLs.
+        int nextIndex=Math.max(0,roomInt("source_initial_index_attempted",0));
+        int mainlandLimit=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+        if(nextIndex<mainlandLimit){
+          int count=-1;
+          noteInitialStage("中国目录预处理 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
+          try{
+            File cached=PlaylistFeedCache.obtain(getApplicationContext(),feeds[nextIndex],true,
+                roomInt(feedCursorKey(nextIndex),0)>0,pauseRequested);
+            // readPage builds the complete random-access index if necessary.
+            // Decode one record to check the sidecar without allocating all entries.
+            PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
+            count=PlaylistFeedIndex.indexedEntryCount(cached);
+          }catch(Exception failure){
+            if(failure instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean())
+              return deferredViewingResult(manual,initialDiscoveryChain);
+            android.util.Log.w("MyTVSourceDiscovery","initial_index_deferred feed="+nextIndex);
+          }
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          int ready=Math.max(0,roomInt("source_initial_index_ready",0))+(count>=0?1:0);
+          long entries=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));
+          new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+              .putInt("source_initial_index_attempted",nextIndex+1)
+              .putInt("source_initial_index_ready",ready)
+              .putLong("source_initial_index_entries",entries+Math.max(0,count))
+              .putString("source_initial_progress_phase",nextIndex+1>=mainlandLimit
+                  ?"中国目录预处理已结束，开始线路初筛"
+                  :"中国目录预处理："+(nextIndex+1)+"/"+mainlandLimit)
+              .apply();
+          // Persist acquisition before queueing the next slice. An unavailable
+          // directory is retried by the ordinary bounded probe phase.
+          enqueueInitialContinuation();
+          return Result.success();
         }
         saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
@@ -1031,16 +1070,7 @@ public class SourceUpdateWorker extends Worker {
           throw new IllegalStateException("Committed directory count mismatch");
       }
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
-        androidx.work.OneTimeWorkRequest continuation=
-            new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
-                .setConstraints(new androidx.work.Constraints.Builder()
-                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
-                .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
-                    .putBoolean("initial_discovery_chain",true).build())
-                .build();
-        androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-            "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
-            .getResult().get();
+        enqueueInitialContinuation();
       }
       if(manualRefresh&&!manualComplete){
         // Each bounded slice commits before a successor is enqueued. A retry
@@ -1068,6 +1098,18 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private void enqueueInitialContinuation() throws Exception {
+    androidx.work.OneTimeWorkRequest continuation=
+        new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+            .setConstraints(new androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+            .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+                .putBoolean("initial_discovery_chain",true).build())
+            .build();
+    androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
+        "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+        .getResult().get();
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
           List<FeedBatch> batches,int feedCount){
