@@ -977,7 +977,8 @@ public class SourceUpdateWorker extends Worker {
                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                     .putString("manual_refresh_id",manualId).build()).build();
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-            "mytv_manual_source_update",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
+            "mytv_manual_source_update",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+            .getResult().get();
       }
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
