@@ -988,9 +988,10 @@ public class SourceUpdateWorker extends Worker {
     if(oldOwnership==null||oldOwnership.length()==0){
       JSONArray oldScopes=old.optJSONArray("sourceScopes");
       if(oldScopes!=null)for(String url:oldUrls){
-        if(!keptByEndpoint.containsKey(SourceSelectionPolicy.endpointKey(url)))continue;
+        String keptUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(url));
+        if(keptUrl==null)continue;
         for(int j=0;j<oldScopes.length();j++)
-          addBackupSourceScope(old,url,oldScopes.optString(j,""));
+          addBackupSourceScope(old,keptUrl,oldScopes.optString(j,""));
       }
     }
     JSONArray freshOwnership=fresh.optJSONArray("backupSourceScopes");
@@ -1015,12 +1016,8 @@ public class SourceUpdateWorker extends Worker {
           addBackupSourceScope(old,retainedUrl,scopes.optString(j,""));
       }
     }
-    if(old.optString("tvgId","").isEmpty()&&!fresh.optString("tvgId","").isEmpty())
-      old.put("tvgId",fresh.optString("tvgId",""));
-    if(old.optString("tvgName","").isEmpty()&&!fresh.optString("tvgName","").isEmpty())
-      old.put("tvgName",fresh.optString("tvgName",""));
-    if(old.optString("group","").isEmpty()&&!fresh.optString("group","").isEmpty())
-      old.put("group",fresh.optString("group",""));
+    // Keep the exact saved name, TVG, group and stable primary identity.
+    // Enriching them here could change the Room channel ID and lose favorites.
     old.put("sources",kept);
     old.put("activeSource",retained.activeIndex);
     retainBackupSourceScopes(old,kept);
