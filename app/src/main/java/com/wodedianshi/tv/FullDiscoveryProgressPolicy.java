@@ -62,6 +62,23 @@ public final class FullDiscoveryProgressPolicy {
     private static String safe(String value) { return value == null ? "" : value; }
 
 
+    /** One feed contributes at most 10,000 basis points, including partial pages. */
+    public static int feedProgress(int cursor, int entries) {
+        if (entries <= 0 || cursor <= 0) return 0;
+        return (int)Math.min(10000L, 10000L * cursor / entries);
+    }
+
+    public static int overallPercent(boolean[] finished, int[] partial, boolean published) {
+        if (published) return 100;
+        if (finished == null || finished.length == 0) return 0;
+        long work = 0;
+        for (int i = 0; i < finished.length; i++) {
+            work += finished[i] ? 10000 : partial != null && i < partial.length
+                    ? Math.max(0, Math.min(10000, partial[i])) : 0;
+        }
+        return (int)Math.min(99L, work / (100L * finished.length));
+    }
+
     public static int percent(int completedFeeds, int totalFeeds,
             int activeCursor, int activeFeedEntries, boolean published) {
         if (published) return 100;
