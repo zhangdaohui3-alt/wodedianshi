@@ -1282,7 +1282,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     initialDiscoveryProgressDetail.setText("正在准备读取来源目录…");
     initialDiscoveryProgressDetail.setTextSize(11);
     initialDiscoveryProgressDetail.setTextColor(Color.LTGRAY);
-    initialDiscoveryProgressDetail.setMaxLines(3);
+    initialDiscoveryProgressDetail.setMaxLines(4);
     initialDiscoveryProgressPanel.addView(initialDiscoveryProgressDetail);
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,-2));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
@@ -1380,6 +1380,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int total=(int)readRoomProgressLong(context,prefix+"total_feeds",0L);
           final int staged=(int)readRoomProgressLong(context,prefix+"staged_channels",0L);
           final int checked=(int)readRoomProgressLong(context,prefix+"checked_urls",0L);
+          final int validated=(int)readRoomProgressLong(context,prefix+"validated_urls",0L);
+          final int unavailable=(int)readRoomProgressLong(context,prefix+"unavailable_feeds",0L);
           final int feedIndex=(int)readRoomProgressLong(context,prefix+"feed_index",0L);
           final int cursor=(int)readRoomProgressLong(context,prefix+"feed_cursor",0L);
           final int entries=(int)readRoomProgressLong(context,prefix+"feed_entries",0L);
@@ -1393,7 +1395,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               roomFullRebuildCompletedAt=completed;
               initialDiscoveryProgressBar.setProgress(100);
               initialDiscoveryProgressTitle.setText("首次完整抓源 · 100%");
-              initialDiscoveryProgressDetail.setText("完整频道快照已保存；之后只在空闲时维护来源");
+              initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
+                  +Math.max(0,staged)+" 个频道"+"\n初筛通过 "
+                  +Math.max(0,validated)+" 次 · 暂不可用来源 "
+                  +Math.max(0,unavailable)+" 个"+"\n之后只在空闲时补查失败来源");
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
               uiHandler.postDelayed(()->{
@@ -1408,9 +1413,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +Math.max(0,Math.min(99,percent))+"%");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             initialDiscoveryProgressDetail.setText(
-                (total>0?"已完成来源 "+Math.max(0,done)+"/"+total
-                    +" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:"准备来源列表")
-                +"\n已整理频道 "+Math.max(0,staged)+" · 已初筛地址 "+Math.max(0,checked)
+                (total>0?"已处理来源 "+Math.max(0,done)+"/"+total
+                    +" · 暂不可用 "+Math.max(0,unavailable)+" 个":"正在准备来源列表")
+                +"\n已整理频道 "+Math.max(0,staged)+" · 预检通过 "
+                    +Math.max(0,validated)+" 次"
+                +"\n已初筛地址 "+Math.max(0,checked)
+                    +(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:"")
                 +"\n"+phase);
           });
         }catch(Throwable error){
@@ -1515,10 +1523,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             getApplicationContext(),"source_update_time","尚未更新");
         String result=com.wodedianshi.tv.db.AppStateStore.get(
             getApplicationContext(),"source_update_result","尚无更新记录");
+        int unavailable=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_unavailable_feeds",0L);
+        int validated=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_validated_urls",0L);
+        int staged=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_staged_channels",0L);
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed())return;
           new AlertDialog.Builder(this).setTitle("频道源更新状态")
-            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（完整建库后约每 7 天，播放或前台使用时跳过）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：首次全量整理期间继续使用旧目录，完成后整体替换；日常更新再增量维护。媒体预检只代表地址可访问，不代表播放稳定或获得播放授权。")
+            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")
+                +"（完整建库后约每 7 天，播放或前台使用时跳过）\n上次检查："+time
+                +"\n更新结果："+result
+                +"\n已整理频道："+Math.max(0,staged)+" · 预检通过："
+                +Math.max(0,validated)+" 次 · 暂不可用来源："+Math.max(0,unavailable)
+                +"\n\n说明：失败目录按上限重试，记录后不阻碍其他有效目录发布。旧频道及已选线路优先保留；预检不等于真实播放稳定或获得授权。")
             .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
         });
       });
