@@ -10,6 +10,12 @@ package com.wodedianshi.tv;
 public final class RoomCatalogueReloadPolicy {
     private RoomCatalogueReloadPolicy() { }
 
+    /** A trusted in-memory directory already represents this exact committed version. */
+    public static boolean isUnchanged(long loadedVersion, Long committedVersion) {
+        return loadedVersion >= 0L && committedVersion != null
+                && loadedVersion == committedVersion.longValue();
+    }
+
     public static boolean mayPublish(boolean activityActive, boolean latestRequest,
             long capturedMutationGeneration, long currentMutationGeneration) {
         return activityActive && latestRequest

@@ -4,6 +4,14 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RoomCatalogueReloadPolicyTest {
+    @Test public void unchangedCheckpointSkipsOnlyKnownMatchingVersion() {
+        assertTrue(RoomCatalogueReloadPolicy.isUnchanged(42L, 42L));
+        assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, 43L));
+        assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, 41L));
+        assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, null));
+        assertFalse(RoomCatalogueReloadPolicy.isUnchanged(-1L, -1L));
+    }
+
     @Test public void stableRoomSnapshotCanReplaceUi() {
         assertTrue(RoomCatalogueReloadPolicy.mayPublish(true, true, 10L, 10L));
         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(

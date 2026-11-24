@@ -7426,6 +7426,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       worker.execute(()->{
         try{
           reloadRoomSourceMetrics();
+          if(generation!=backgroundCatalogueReloadGeneration)return;
+          // The already trusted directory is keyed by the committed Room checkpoint.
+          // Do not page, normalize and republish an identical snapshot on every onStart.
+          com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=
+              com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
+                  .channelDao().getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+          if(RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
+              checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
+            android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
+            return;
+          }
           ArrayList<Channel> refreshed=new ArrayList<>();
           com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
