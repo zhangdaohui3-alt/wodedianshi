@@ -5355,30 +5355,36 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
     // Re-rank whenever the picker opens so the latest playback results are reflected.
-    // The sorter preserves the currently playing URL and only persists a real order change.
+    // The sorter preserves the currently playing URL; ordering stays in memory.
     sortSourcesByObservedQuality(c);
+    final String displayedActiveUrl=currentSourceUrl();
     ArrayList<String> labels=new ArrayList<>();
-    ArrayList<Integer> indexes=new ArrayList<>();
+    ArrayList<String> displayedUrls=new ArrayList<>();
     for(int i=0;i<c.backups.size();i++){
       String url=c.backups.get(i);
       boolean blocked=isSourceBlocked(url);
       labels.add("播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源")+(blocked?" · 已屏蔽（点此恢复）":""));
-      indexes.add(i);
+      displayedUrls.add(url);
     }
     labels.add("屏蔽当前播放源（广告、错台或异常内容）");
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源")
       .setItems(labels.toArray(new String[0]),(d,which)->{
-        if(which==indexes.size()){
+        if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
+        Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
+        if(current!=c){toast("频道已变化，请重新打开换源菜单");return;}
+        if(which==displayedUrls.size()){
           String bad=currentSourceUrl();
-          if(bad.isEmpty()){toast("当前播放源地址为空");return;}
+          if(bad.isEmpty()||!bad.equals(displayedActiveUrl)){toast("当前播放源已变化，请重新打开换源菜单");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
           if(next>=0){c.activeSource=next;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");}
           return;
         }
-        int index=indexes.get(which);
-        String url=c.backups.get(index);
+        if(which<0||which>=displayedUrls.size())return;
+        String url=displayedUrls.get(which);
+        int index=SourceSelectionPolicy.resolveManualSelection(c,current,c.backups,url);
+        if(index<0){toast("播放源已变化，请重新打开换源菜单");return;}
         if(isSourceBlocked(url)){
           android.content.SharedPreferences p=getSharedPreferences("mytv",0);
           HashSet<String> blocked=new HashSet<>(p.getStringSet("blocked_ad_sources",new HashSet<>()));
@@ -5396,10 +5402,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int findNextUnblockedSource(Channel c,int from,int direction){
     if(c==null||c.backups==null||c.backups.size()<2)return -1;
     // Manual selection remains unrestricted except for sources explicitly blocked by the user.
+    Set<String> blocked=getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet());
     for(int step=1;step<c.backups.size();step++){
       int ix=(from+direction*step)%c.backups.size();
       if(ix<0)ix+=c.backups.size();
-      if(!isSourceBlocked(c.backups.get(ix)))return ix;
+      if(!blocked.contains(c.backups.get(ix)))return ix;
     }
     return -1;
   }
@@ -5407,13 +5414,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(c==null||c.backups==null)return -1;
     HashSet<String> blocked=new HashSet<>();
     HashSet<String> coolingDown=new HashSet<>();
+    Set<String> userBlocked=getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet());
     for(String url:c.backups){
-      if(isSourceBlocked(url)||failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
+      if(userBlocked.contains(url)||failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
       else if(SourceMemoryStore.isCoolingDown(this,url))coolingDown.add(url);
     }
     return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
   }
   private void stepSource(int delta){
+    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
