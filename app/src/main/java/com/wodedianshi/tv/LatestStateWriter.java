@@ -53,6 +53,9 @@ final class LatestStateWriter<T> {
         try {
             operation.accept(value);
             success = true;
+        } catch (RuntimeException failure) {
+            // The operation logs the failure; never crash the executor thread.
+            // Keep the value dirty for the next offer.
         } finally {
             synchronized (this) {
                 if (success) committed = value;
