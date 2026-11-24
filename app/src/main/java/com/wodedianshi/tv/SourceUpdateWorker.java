@@ -217,7 +217,8 @@ public class SourceUpdateWorker extends Worker {
         // only the acquisition cursor and counts, not duplicate unverified URLs.
         int nextIndex=Math.max(0,roomInt("source_initial_index_attempted",0));
         int mainlandLimit=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
-        if(nextIndex<mainlandLimit){
+        if(FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandLimit,
+            roomInt("source_initial_progress_checked_urls",0),false)){
           int count=-1;
           noteInitialStage("中国目录预处理 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
           try{
@@ -234,11 +235,13 @@ public class SourceUpdateWorker extends Worker {
           }
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           int ready=Math.max(0,roomInt("source_initial_index_ready",0))+(count>=0?1:0);
-          long entries=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));
+          long entries=0L;
+          try{entries=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
+          catch(NumberFormatException ignored){}
           new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
               .putInt("source_initial_index_attempted",nextIndex+1)
               .putInt("source_initial_index_ready",ready)
-              .putLong("source_initial_index_entries",entries+Math.max(0,count))
+              .putLong("source_initial_index_entries",Math.min(Long.MAX_VALUE-Math.max(0,count),entries)+Math.max(0,count))
               .putString("source_initial_progress_phase",nextIndex+1>=mainlandLimit
                   ?"中国目录预处理已结束，开始线路初筛"
                   :"中国目录预处理："+(nextIndex+1)+"/"+mainlandLimit)
