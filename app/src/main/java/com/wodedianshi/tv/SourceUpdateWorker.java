@@ -614,6 +614,16 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
+          if(!initialDiscoveryChain && batch.parsed>=0
+              && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
+            // A previously unavailable directory has now been fetched and its
+            // candidates have completed this run's probe window. Clear its old
+            // warning; other old source warnings remain intact.
+            update.remove(initialFeedUnavailableKey(batch.index))
+                .remove(initialFeedFailureCountKey(batch.index))
+                .remove(initialFeedFailureReasonKey(batch.index))
+                .remove(initialFeedDisplayLabelKey(batch.index));
+          }
           if(initialDiscoveryChain&&batch.unavailable){
             update.putBoolean(initialFeedUnavailableKey(batch.index),true);
           }else if(initialDiscoveryChain){
@@ -638,6 +648,19 @@ public class SourceUpdateWorker extends Worker {
       }else if(candidates.size()>0){
         update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
             .putInt("source_feed_batch_scanned",nextBatchScanned);
+      }
+      if(!initialDiscoveryChain&&feedBatchComplete){
+        int stillUnavailable=0;
+        for(int i=0;i<feeds.length;i++){
+          boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
+          if(wasUnavailable){
+            for(FeedBatch batch:feedBatches){
+              if(batch.index==i&&batch.success){wasUnavailable=false;break;}
+            }
+          }
+          if(wasUnavailable)stillUnavailable++;
+        }
+        update.putInt("source_initial_progress_unavailable_feeds",stillUnavailable);
       }
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
