@@ -21,18 +21,7 @@ public final class MasterCatalogueRepository {
 
     /** The master snapshot is usable only when every imported table matches its checkpoint. */
     public boolean isSnapshotReady() {
-        CatalogueMigrationEntity checkpoint =
-                dao.getMigration(MIGRATION_KEY);
-        // A zero-row checkpoint is valid during first-install full discovery.
-        // It is deliberately distinct from a missing or inconsistent checkpoint.
-        if (checkpoint == null || checkpoint.channelsCount < 0
-                || checkpoint.backupSourcesCount < 0
-                || checkpoint.favoritesCount < 0
-                || checkpoint.categoriesCount < 0) return false;
-        return dao.countChannels() == checkpoint.channelsCount
-                && dao.countBackupSources() == checkpoint.backupSourcesCount
-                && dao.countFavorites() == checkpoint.favoritesCount
-                && dao.countCategories() == checkpoint.categoriesCount;
+        return dao.getValidatedCheckpoint(MIGRATION_KEY) != null;
     }
 
     /** Return the category index only after the complete master snapshot validates. */
