@@ -194,6 +194,7 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_china_total_feeds",
                   SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               .putInt("source_initial_progress_staged_channels",0)
+              .putInt("source_initial_progress_timeout_urls",0)
               .putInt("source_initial_progress_checked_urls",0)
               .putInt("source_initial_progress_validated_urls",0)
               .putInt("source_initial_progress_china_validated_urls",0)
@@ -493,7 +494,7 @@ public class SourceUpdateWorker extends Worker {
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-      int savedScanned=0,discoveryScanned=0,reusedPreflights=0;
+      int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       HashSet<String> visitedUrls=new HashSet<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
@@ -515,13 +516,22 @@ public class SourceUpdateWorker extends Worker {
           long clock=android.os.SystemClock.elapsedRealtime();
           boolean reuse=cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(
               cached.result.valid,cached.at,clock);
+          long addressDeadline=probeDeadline;
+          if(initialDiscoveryChain&&!reuse){
+            addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(probeDeadline,clock);
+            if(addressDeadline==0L){
+              // Do not start a new probe with a shortened budget at the tail.
+              discoveryScanned--;
+              break;
+            }
+          }
           if(reuse){
             measured=cached.result;
             reusedPreflights++;
           }else{
             checked++;
             noteInitialStage("本批检测第 "+checked+" 条（尚未提交）");
-            measured=probe(e.url,probeDeadline);
+            measured=probe(e.url,addressDeadline);
           }
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
@@ -531,6 +541,15 @@ public class SourceUpdateWorker extends Worker {
             // A source interrupted by the global deadline is inconclusive, not a failed source.
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
+          }
+          if(initialDiscoveryChain&&!reuse
+              &&android.os.SystemClock.elapsedRealtime()>=addressDeadline){
+            // The address received its bounded first-pass opportunity. Do not
+            // promote, penalize or cache an inconclusive result. The later
+            // manual/routine scan can retry with the normal probe budget.
+            initialTimeouts++;
+            visitedUrls.remove(endpoint);
+            continue;
           }
           if(initialDiscoveryChain&&!reuse){
             INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,android.os.SystemClock.elapsedRealtime()));
@@ -637,7 +656,7 @@ public class SourceUpdateWorker extends Worker {
       // health checks while public catalogue services are down; retry discovery
       // separately after persisting these local probe results.
       boolean discoveryUnavailable=feedsOk==0;
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -849,7 +868,9 @@ public class SourceUpdateWorker extends Worker {
         previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
         previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,saved.length(),
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
-        update.putInt("source_initial_progress_percent",progressPercent)
+        int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
+        update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
+            .putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
             .putInt("source_initial_progress_china_done_feeds",chinaFeedDone)
@@ -876,10 +897,10 @@ public class SourceUpdateWorker extends Worker {
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
                     +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
                     +(validatedSoFar+Math.max(0,discoveryProbesValid))
-                    +" 次（含近期重复地址复用，非实机播放验证）。")
+                    +" 次（含近期重复地址复用，非实机播放验证）；预算超时未确认 "+timeoutTotal+" 次，待后续补查。")
                 :("首次完整抓源进度 "+progressPercent+"%；已处理 "
                     +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
-                    +unavailableCount+" 个；已发布频道保留，未完成线路继续检测。"));
+                    +unavailableCount+" 个；预算超时未确认 "+timeoutTotal+" 次；已发布频道保留，未完成线路继续检测。"));
       }
       if(initialDiscoveryChain&&initialHasValidatedSource){
         update.putBoolean("source_initial_has_validated_source",true);
