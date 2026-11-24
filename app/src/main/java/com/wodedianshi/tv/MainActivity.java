@@ -1529,6 +1529,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             "source_initial_progress_validated_urls",0L);
         int staged=(int)readRoomProgressLong(getApplicationContext(),
             "source_initial_progress_staged_channels",0L);
+        int feedTotal=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_total_feeds",0L);
+        StringBuilder failedDetails=new StringBuilder();
+        int failedShown=0;
+        for(int i=0;i<feedTotal&&i<100;i++){
+          if(!Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
+              getApplicationContext(),"source_initial_feed_unavailable_"+i,"false")))continue;
+          if(failedShown>=5)break;
+          String label=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
+              "source_initial_feed_label_"+i,"来源 "+(i+1));
+          String reason=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
+              "source_initial_feed_failure_reason_"+i,"尚无失败说明");
+          int attempts=(int)readRoomProgressLong(getApplicationContext(),
+              "source_initial_feed_failure_count_"+i,0L);
+          failedDetails.append("\n").append(i+1).append(". ")
+              .append(label).append("：").append(reason).append("（尝试 ")
+              .append(Math.max(0,attempts)).append(" 次）");
+          failedShown++;
+        }
+        String failedList=failedShown==0?"":"\n暂不可用来源记录："
+            +failedDetails+(unavailable>failedShown?"\n其余 "+(unavailable-failedShown)+" 个来源记录略。":"");
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed())return;
           new AlertDialog.Builder(this).setTitle("频道源更新状态")
@@ -1537,6 +1558,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +"\n更新结果："+result
                 +"\n已整理频道："+Math.max(0,staged)+" · 预检通过："
                 +Math.max(0,validated)+" 次 · 暂不可用来源："+Math.max(0,unavailable)
+                +failedList
                 +"\n\n说明：失败目录按上限重试，记录后不阻碍其他有效目录发布。旧频道及已选线路优先保留；预检不等于真实播放稳定或获得授权。")
             .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
         });
