@@ -5,6 +5,16 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void earlyPreviewMilestonesNeverPretendToCompleteFullDiscovery() {
+        org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 11, 3, false));
+        org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 20, 0, true));
+        org.junit.Assert.assertEquals(1, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 12, 3, false));
+        org.junit.Assert.assertEquals(1, FullDiscoveryProgressPolicy.nextPreviewLevel(1, 40, 20, false));
+        org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(1, 40, 20, true));
+        org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 3, 3, true));
+        org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(2, 40, 20, true));
+    }
+
     @Test public void overallProgressIncludesEveryPartialFeed() {
         boolean[] done={true,false,false,false};
         int[] partial={0,5000,2500,0};
