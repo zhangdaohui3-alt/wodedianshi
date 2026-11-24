@@ -52,6 +52,16 @@ public class RemoteChannelOrderPolicyTest {
                 false, false, original, original, "CCTV-2|cctv", positions, 4));
     }
 
+    @Test public void queuedZapCannotInterruptNewInteraction() {
+        assertTrue(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, false, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(false, true, false, false, false, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, false, false, false, false, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, true, false, false, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, true, false, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, true, false));
+        assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, false, true));
+    }
+
     @Test public void completedOrderCanPublish() {
         assertTrue(RemoteChannelOrderPolicy.mayPublish(
                 false, 31L, 31L, 4L, 4L, 6861, 6861, true, true, 123, 123));
