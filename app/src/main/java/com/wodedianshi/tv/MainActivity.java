@@ -207,14 +207,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
   private final ExecutorService vodSourceWorker = Executors.newFixedThreadPool(4);
-  // Keep live channel-directory downloads isolated from VOD source lookups. A busy VOD
-  // search must not occupy every source thread and leave the live catalogue half-loaded.
-  private final ExecutorService playlistWorker = Executors.newFixedThreadPool(6);
-  // Domestic catalogue supplementation must not queue behind the legacy restore/Room import worker.
-  private final ExecutorService chinaCatalogueWorker = Executors.newSingleThreadExecutor();
   // Serialize LibVLC JNI startup/teardown away from the UI thread.
   private final ExecutorService libVlcWorker = Executors.newSingleThreadExecutor();
-  private volatile Future<?> activeChinaCatalogueTask=null;
   private volatile Future<?> activeVodCatalogueTask;
   // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
   // capped independently of large heaps so image browsing cannot crowd playback.
@@ -3943,228 +3937,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     focusSelectedChannelInMenu();
   }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
-  private boolean globalLoading=false; private boolean entertainmentLoading=false; private boolean chinaLoading=false; private boolean regionLoading=false;
-  // Transitional single-store reconciliation. China/international are scope
-  // filters over the complete catalogue, not independent databases.
-  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope){
-    return fetchAndMergePlaylists(feeds,timeoutMs,errors,sourceScope,null);
-  }
-  // Publish the first usable batch immediately. Waiting for every remote feed
-  // before refreshing left a fresh install showing an empty channel pane with a
-  // permanent-looking "正在缓存" message when one slow source held the batch open.
-  private static final long MAX_PLAYLIST_FEED_BYTES=50L*1024L*1024L;
-  private int fetchAndMergePlaylists(String[] feeds,int timeoutMs,StringBuilder errors,String sourceScope,Runnable onFirstEntries){
-    ExecutorCompletionService<PlaylistFetchResult> completion=new ExecutorCompletionService<>(playlistWorker);
-    ArrayList<Future<PlaylistFetchResult>> tasks=new ArrayList<>();
-    for(String address:feeds){
-      tasks.add(completion.submit(()->{
-        HttpURLConnection connection=null;
-        int[] parsedAdded={0};
-        try{
-          connection=(HttpURLConnection)new URL(address).openConnection();
-          connection.setConnectTimeout(8000);connection.setReadTimeout(timeoutMs);connection.setInstanceFollowRedirects(true);
-          connection.setRequestProperty("User-Agent","MyTV/1.84 Android TV");connection.setRequestProperty("Accept","*/*");
-          int code=connection.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-          // Parse as bytes arrive. Do not hold a whole 10–50 MB playlist String
-          // alongside the growing in-memory channel catalogue.
-          try(InputStream in=new PlaylistByteLimitInputStream(connection.getInputStream(),MAX_PLAYLIST_FEED_BYTES);
-              Reader reader=new BufferedReader(new InputStreamReader(in,java.nio.charset.StandardCharsets.UTF_8))){
-            parse(reader,null,sourceScope,parsedAdded);
-          }
-          return new PlaylistFetchResult(address,parsedAdded[0],null);
-        }catch(Exception e){
-          // A feed may have yielded usable rows before a connection or size-limit
-          // failure. Keep those rows and report the incomplete feed separately.
-          return new PlaylistFetchResult(address,parsedAdded[0],e.getMessage());
-        }finally{if(connection!=null)connection.disconnect();}
-      }));
-    }
-    int added=0,remaining=tasks.size();
-    boolean firstBatchPublished=false;
-    // Allow multiple bounded waves of feeds to finish. The former 20–24s global
-    // deadline routinely cancelled queued feeds, producing tiny partial catalogues.
-    long deadline=android.os.SystemClock.elapsedRealtime()+Math.max(60000L,timeoutMs*4L);
-    while(remaining>0&&!Thread.currentThread().isInterrupted()){
-      long wait=deadline-android.os.SystemClock.elapsedRealtime();if(wait<=0)break;
-      try{
-        Future<PlaylistFetchResult> done=completion.poll(Math.min(500L,wait),TimeUnit.MILLISECONDS);if(done==null)continue;
-        remaining--;PlaylistFetchResult result=done.get();
-        if(result.error!=null){
-          android.util.Log.w("MyTVDirectory","feed failed: "+result.address+" reason="+result.error+" partial_added="+result.parsed);
-          if(errors!=null)errors.append(result.address.substring(result.address.lastIndexOf('/')+1)).append(": ").append(result.error).append("; ");
-        }
-        if(result.parsed>0){
-          added+=result.parsed;
-          android.util.Log.i("MyTVDirectory","feed="+result.address+" parsed_added="+result.parsed+" total_added="+added);
-          if(!firstBatchPublished){
-            firstBatchPublished=true;
-            if(onFirstEntries!=null)onFirstEntries.run();
-          }
-        }
-      }catch(Exception e){
-        android.util.Log.w("MyTVDirectory","playlist result processing failed",e);
-        if(errors!=null)errors.append(e.getMessage()).append("; ");
-      }
-    }
-    for(Future<?> task:tasks)if(!task.isDone())task.cancel(true);
-    return added;
-  }
-  private static final class PlaylistByteLimitInputStream extends java.io.FilterInputStream{
-    private final long maximumBytes;
-    private long bytesRead=0L;
-    PlaylistByteLimitInputStream(InputStream source,long maximumBytes){super(source);this.maximumBytes=maximumBytes;}
-    @Override public int read()throws IOException{
-      if(bytesRead>=maximumBytes){
-        int extra=super.read();
-        if(extra<0)return -1;
-        throw new IOException("频道目录超过 50 MB，已停止读取");
-      }
-      int value=super.read();
-      if(value>=0)bytesRead++;
-      return value;
-    }
-    @Override public int read(byte[] buffer,int offset,int length)throws IOException{
-      if(length==0)return 0;
-      if(bytesRead>=maximumBytes){
-        int extra=super.read();
-        if(extra<0)return -1;
-        throw new IOException("频道目录超过 50 MB，已停止读取");
-      }
-      int allowed=(int)Math.min((long)length,maximumBytes-bytesRead);
-      int count=super.read(buffer,offset,allowed);
-      if(count>0)bytesRead+=count;
-      return count;
-    }
-  }
-  private static class PlaylistFetchResult{
-    final String address,error;
-    final int parsed;
-    PlaylistFetchResult(String a,int p,String e){address=a;parsed=p;error=e;}
-  }
-  // Count actual mainland channel identities, not successful HTTP responses.
-  // A directory returning an empty playlist or only non-China entries must not
-  // poison the 12-hour cache and hide the next refresh attempt.
-  private int countRecognizedChinaChannels(){
-    long started=android.os.SystemClock.elapsedRealtime();
-    HashSet<String> identities=new HashSet<>();
-    HashSet<String> cctv=new HashSet<>();
-    HashSet<String> satellites=new HashSet<>();
-    HashSet<String> local=new HashSet<>();
-    // Same lock-scope discipline as the remote channel order: snapshot only.
-    // A long provincial name scan on the China worker must not stall DPAD/touch.
-    final ArrayList<Channel> snapshot;
-    synchronized(channels){snapshot=new ArrayList<>(channels);}
-    for(Channel channel:snapshot){
-      if(Thread.currentThread().isInterrupted())break;
-      if(channel==null)continue;
-      String key=identity(channel);
-      if(categoryMatch(channel,"央视")){cctv.add(key);identities.add(key);}
-      if(categoryMatch(channel,"卫视")){satellites.add(key);identities.add(key);}
-      if(categoryMatch(channel,"地方")){local.add(key);identities.add(key);}
-    }
-    android.util.Log.i("MyTVDirectory","china_cached_count total="+identities.size()
-        +" cctv="+cctv.size()+" satellite="+satellites.size()+" local="+local.size()
-        +" scanned="+channels.size()+" elapsed_ms="
-        +(android.os.SystemClock.elapsedRealtime()-started));
-    return identities.size();
-  }
+  // Category entry is a pure Room-cache operation. Only the first complete
+  // rebuild and explicit/idle WorkManager jobs perform network discovery.
   private void loadChinaChannels(){
-    // Watching television takes precedence over any supplemental feed scan.
-    // The category click still filters the restored Room catalogue immediately.
-    if(fullScreenPlayback){
-      android.util.Log.i("MyTVDirectory","China supplemental discovery deferred during fullscreen playback");
-      return;
-    }
-    if(chinaLoading){android.util.Log.i("MyTVDirectory","China directory refresh already running; keep showing cached catalogue");return;}
-    // Cache-first: opening CCTV/satellite/local categories must not redownload
-    // twelve playlists on every visit. Refresh the catalogue at most every 12h.
-    final long now=System.currentTimeMillis();
-    final long last=roomChinaSupplementLastSuccess;
-    final long refreshInterval=12L*60L*60L*1000L;
-    // Cache readiness is deliberately separate from catalogue completeness.
-    // Once at least the twelve core CCTV identities are in Room, reuse them on
-    // every visit and let scheduled/background discovery keep expanding the list.
-    // A 60-channel threshold caused the app to re-download and "organize" forever
-    // on networks where provincial/local feeds were intermittently unavailable.
-    final int minimumUsefulChinaChannels=12;
-    // Do not count/classify 11k+ saved channels on the UI thread when the user
-    // opens CCTV/Satellite. The old synchronous scan repeatedly built identities
-    // and could itself block MotionEvent dispatch long enough to trigger an ANR.
-    chinaLoading=true;
-    // Render the Room-restored catalogue first. Network discovery must never replace
-    // a usable local directory with a blocking "organizing" state on category entry.
-    if(info!=null)info.setText(channels.isEmpty()?"首次整理国内频道目录…":"正在显示已保存的国内频道，后台检查更新中…");
-    // The category click already scheduled the Room-backed filter. Do not cancel it
-    // with a duplicate generation, which stalls first paint on older TV hardware.
-    android.util.Log.i("MyTVDirectory","china_catalogue_task_start cached_channels="+channels.size()+" last_success="+last);
-    try{activeChinaCatalogueTask=chinaCatalogueWorker.submit(()->{
-      try{
-      final int cachedRecognizedChinaCount=countRecognizedChinaChannels();
-      if(last>0L&&now-last<refreshInterval&&cachedRecognizedChinaCount>=minimumUsefulChinaChannels
-          &&roomChinaDirectoryCommitted){
-        runOnUiThread(()->{
-          chinaLoading=false;
-          if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("已使用已保存的国内频道（"+cachedRecognizedChinaCount+" 个），后台按计划补充；约 "+Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后再次检查。");
-        });
-        return;
-      }
-      // The same CCTV, provincial and iptv-org China feeds are owned by SourceUpdateWorker.
-      // Keep only supplemental feeds here to avoid downloading those URLs twice.
-      String[] feeds={
-        "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
-        "https://raw.githubusercontent.com/mytv-android/China-TV-Live-M3U8/main/iptv.m3u",
-        "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
-        "https://iptv-cn.github.io/IPTV/countries/cn.m3u",
-        "https://m3u.ibert.me/o_s_cn.m3u",
-        "https://m3u.ibert.me/o_cn.m3u",
-        "https://m3u.ibert.me/cn.m3u",
-        "https://m3u.ibert.me/cn_p.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/cn.m3u"
-      };
-      StringBuilder errors=new StringBuilder();
-      int added=fetchAndMergePlaylists(feeds,12000,errors,"china",()->runOnUiThread(()->{
-        if(isFinishing()||isDestroyed())return;
-        refresh();
-        if(info!=null)info.setText("已载入首批国内频道，其他频道源仍在后台补充…");
-      }));
-      final int total=added;final String err=errors.toString();
-      final int recognizedChinaCount=countRecognizedChinaChannels();
-      // Keep the previous cache if no new entries were merged. Only advance the
-      // refresh timestamp after the resulting catalogue contains a minimally
-      // useful set of recognized mainland channels; HTTP 200 alone is not success.
-      // Do not mark the directory as cached until the complete in-memory result
-      // has actually committed to Room. persist() is running on this background
-      // worker, so it waits for the requested Room write and reports real failure.
-      final boolean roomSaved=total<=0||persist();
-      final boolean usefulChinaDirectory=roomSaved
-          &&recognizedChinaCount>=minimumUsefulChinaChannels;
-      if(usefulChinaDirectory){
-        roomChinaSupplementLastSuccess=System.currentTimeMillis();
-        roomChinaCachedCount=recognizedChinaCount;
-        roomChinaDirectoryCommitted=true;
-        queueRoomAppStateWrite("china_supplement_last_success",Long.toString(roomChinaSupplementLastSuccess));
-        queueRoomAppStateWrite("china_directory_cached_count",Integer.toString(roomChinaCachedCount));
-        queueRoomAppStateWrite("china_directory_room_committed","true");
-      }
-      runOnUiThread(()->{
-        chinaLoading=false;
-        if(isFinishing()||isDestroyed()||info==null)return;
-        if(total>0)refresh();
-        String status=usefulChinaDirectory
-            ?"已识别 "+recognizedChinaCount+" 个国内频道条目，频道缓存已保留。"
-            :"国内有效频道不足（当前识别 "+recognizedChinaCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
-        info.setText(usefulChinaDirectory
-            ?"国内频道目录已保存：新增 "+total+" 个条目，识别 "+recognizedChinaCount+" 个；下次打开直接显示，后台定期更新。"
-            :"已保留现有国内频道；本轮新增 "+total+" 个，识别 "+recognizedChinaCount+" 个，后台会继续补充。"+(err.isEmpty()?"":"部分来源暂不可用："+err));
-      });
-      }catch(Throwable failure){
-        final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
-        runOnUiThread(()->{chinaLoading=false;if(!isFinishing()&&!isDestroyed()&&info!=null)info.setText("国内频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);});
-      }
-    });}catch(RuntimeException rejected){
-      chinaLoading=false;
-      info.setText("国内频道整理任务暂时无法启动，已有频道仍可使用；请稍后重试。");
-    }
+    if(info!=null)info.setText(channels.isEmpty()
+        ?"尚未生成完整国内频道快照；首次抓源在后台进行"
+        :"已显示保存的国内频道；节目优先，空闲时再更新源");
   }
   private void showChoiceDialog(String title,String[] items,DialogInterface.OnClickListener listener){
     ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,items);
@@ -4286,6 +4064,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(info!=null)info.setText("正在读取已保存的 "+label+" 频道…");
     try{
       activeGeoCatalogueTask=geoCatalogueWorker.submit(()->{
+        // Read-only country/province/city navigation: never open the URL, merge
+        // partial sources, or write Room just because a user clicked a region.
         final HashSet<String> cached=savedGeoChannelKeys(geoScope,country);
         runOnUiThread(()->{
           if(request!=geoDirectoryRequestGeneration||isFinishing()||isDestroyed())return;
@@ -4293,212 +4073,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           activeCategory="全部";favoriteMode=false;livePageIndex=0;
           refresh();
           if(info!=null)info.setText(cached.isEmpty()
-              ?label+"：本地尚无对应的频道快照，正在检查公开目录…"
-              :label+"：已从本地快照显示 "+cached.size()+" 个频道；后台检查补充。");
+              ?label+"：本地没有对应频道；可在设置中手动更新或导入播放列表"
+              :label+"：已显示保存的 "+cached.size()+" 个频道；浏览分类不会联网抓源");
         });
-        if(request!=geoDirectoryRequestGeneration||Thread.currentThread().isInterrupted())return;
-        // A full-screen television programme has priority over network discovery.
-        // Retain only the cached result until the user opens this directory
-        // outside fullscreen; no playlist scan competes with the active player.
-        if(fullScreenPlayback){
-          runOnUiThread(()->{
-            if(request==geoDirectoryRequestGeneration&&info!=null)
-              info.setText(label+"：已显示本地缓存 "+cached.size()+" 个；全屏播放期间暂停地区抓源。");
-          });
-          return;
-        }
-        HttpURLConnection connection=null;
-        try{
-          connection=(HttpURLConnection)new URL(address).openConnection();
-          connection.setConnectTimeout(12000);connection.setReadTimeout(25000);
-          connection.setInstanceFollowRedirects(true);
-          connection.setRequestProperty("User-Agent","MyTV/1.0 Android");
-          int status=connection.getResponseCode();
-          if(status<200||status>=300)throw new IOException("HTTP "+status);
-          String playlist;
-          try(InputStream input=connection.getInputStream()){playlist=read(input);}
-          if(Thread.currentThread().isInterrupted()||request!=geoDirectoryRequestGeneration)return;
-          final HashSet<String> downloaded=new HashSet<>();
-          // Attach the exact country/state/city scope to each parsed URL.
-          // Previously only channel-level geo labels were set, which vanished
-          // when SourceUpdateWorker recomputed labels from URL ownership.
-          parse(playlist,downloaded,geoScope);
-          // Empty, malformed or unavailable remote playlists must never overwrite
-          // a nonempty saved destination filter.
-          if(downloaded.isEmpty()){
-            runOnUiThread(()->{
-              if(request==geoDirectoryRequestGeneration&&info!=null)
-                info.setText(label+"：公开目录未返回可用频道，保留本地 "+cached.size()+" 个缓存结果。");
-            });
-            return;
-          }
-          // Geo ownership is already written per URL by addBackupSource().
-          // Avoid a second full-catalogue lock/scan while the programme runs.
-          final boolean saved=persist();
-          final HashSet<String> updated=savedGeoChannelKeys(geoScope,country);
-          runOnUiThread(()->{
-            if(request!=geoDirectoryRequestGeneration||isFinishing()||isDestroyed())return;
-            activeGeoChannelKeys=updated;refresh();
-            if(info!=null)info.setText(label+"：已显示 "+updated.size()+" 个频道"
-                +(saved?"，地区缓存已保存到 Room。":"；Room 保存失败，下次进入可能需重新加载。"));
-          });
-        }catch(Exception failure){
-          android.util.Log.w("MyTVDirectory","geographic directory fetch failed scope="+geoScope,failure);
-          runOnUiThread(()->{
-            if(request==geoDirectoryRequestGeneration&&info!=null)
-              info.setText(label+"：联网获取失败（"+failure.getClass().getSimpleName()
-                  +"），已保留本地 "+cached.size()+" 个频道；稍后可重试。");
-          });
-        }finally{if(connection!=null)connection.disconnect();}
       });
     }catch(RuntimeException rejected){
-      if(info!=null)info.setText(label+"：地区目录任务暂不可用，原有频道不受影响。");
+      if(info!=null)info.setText(label+"：本地频道读取暂不可用；原频道仍然保留");
     }
-  }
-  private int countChannelsForScope(String scope){
-    // Called only on workers. Do not retain the catalogue lock while computing
-    // broadcaster identities: the previous UI call reached here and ANR sampled
-    // canonicalSatelliteName for thousands of records.
-    final ArrayList<Channel> snapshot;
-    synchronized(channels){snapshot=new ArrayList<>(channels);}
-    HashSet<String> identities=new HashSet<>();
-    for(Channel channel:snapshot){
-      if(Thread.currentThread().isInterrupted())break;
-      if(channel==null||!ChannelCatalogueScopePolicy.matches(channel.sourceScopes,scope))continue;
-      identities.add(identity(channel));
-    }
-    return identities.size();
   }
   private void loadGlobalChannels(){
-    if(globalLoading){info.setText("全球频道列表正在载入，请稍候…");return;}
-    // Saved global channels are immediately available through the category
-    // filter. Never begin a large playlist ingest while fullscreen video plays.
-    if(fullScreenPlayback){
-      android.util.Log.i("MyTVDirectory","global_supplement_deferred_during_playback");
-      if(info!=null)info.setText("正在显示保存的全球频道；播放时暂停后台补源。");
-      return;
-    }
-    // Match the domestic directory's cache-first behavior. Reopening 全球频道
-    // should not redownload the full international index on every visit.
-    final long now=System.currentTimeMillis();
-    final long last=roomGlobalSupplementLastSuccess;
-    final long refreshInterval=12L*60L*60L*1000L;
-    final int minimumUsefulGlobalChannels=60;
-    globalLoading=true;
-    if(info!=null)info.setText("正在显示本地全球频道；后台检查缓存状态…");
-    try{
-      worker.execute(()->{
-        try{
-          // Never count 6k+ canonical identities on the click/UI thread.
-          final int cachedGlobalCount=countChannelsForScope("global");
-          android.util.Log.i("MyTVDirectory","global_cached_count="+cachedGlobalCount
-              +" total="+channels.size());
-          if(last>0L&&now-last<refreshInterval
-              &&cachedGlobalCount>=minimumUsefulGlobalChannels){
-            runOnUiThread(()->{
-              globalLoading=false;
-              if(!isFinishing()&&!isDestroyed()&&info!=null)
-                info.setText("已使用全球频道缓存（"+cachedGlobalCount+" 个频道）· 下次补源约 "
-                    +Math.max(1L,(refreshInterval-(now-last))/3600000L)+" 小时后");
-            });
-            return;
-          }
-          // Existing cached channels remain visible during supplemental discovery.
-          StringBuilder errors=new StringBuilder();
-          String[] feeds={
-            "https://iptv-org.github.io/iptv/index.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/jp.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/us.m3u",
-            "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/gb.m3u"
-          };
-          int added=fetchAndMergePlaylists(feeds,22000,errors,"global");
-          final int total=added;
-          final String err=errors.toString();
-          final int recognizedGlobalCount=countChannelsForScope("global");
-          // Persist away from the UI thread. A failed/empty directory refresh must
-          // not advance the success timestamp or replace the last saved catalogue.
-          if(total>0)persist();
-          final boolean usefulGlobalDirectory=recognizedGlobalCount>=minimumUsefulGlobalChannels;
-          if(usefulGlobalDirectory){
-            roomGlobalSupplementLastSuccess=System.currentTimeMillis();
-            queueRoomAppStateWrite("global_supplement_last_success",Long.toString(roomGlobalSupplementLastSuccess));
-          }
-          runOnUiThread(()->{
-            globalLoading=false;
-            if(isFinishing())return;
-            if(total>0)refresh();
-            String status=usefulGlobalDirectory
-                ?"已识别 "+recognizedGlobalCount+" 个全球频道，目录缓存已保留。"
-                :"全球有效频道不足（当前识别 "+recognizedGlobalCount+" 个），不会把本次结果记为成功缓存，将继续允许下次重试。";
-            info.setText("全球频道目录检查完成：新增 "+total+" 个条目；"+status+(err.isEmpty()?"":"部分来源暂不可用："+err));
-          });
-        }catch(Throwable failure){
-          final String message=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
-          runOnUiThread(()->{
-            globalLoading=false;
-            if(!isFinishing())info.setText("全球频道整理中断，已有频道仍可使用；可稍后重试。原因："+message);
-          });
-        }
-      });
-    }catch(RuntimeException rejected){
-      globalLoading=false;
-      info.setText("全球频道整理任务暂时无法启动，已有频道仍可使用；请稍后重试。");
-    }
+    if(info!=null)info.setText("已使用保存的全球频道；浏览时不触发联网更新");
   }
   private void loadRegionChannels(){
-    if(regionLoading){info.setText("港澳台频道正在载入，请稍候…");return;}
-    regionLoading=true;info.setText("正在载入港澳台公开频道目录…");
-    worker.execute(()->{
-      int added=0;StringBuilder errors=new StringBuilder();
-      String[] feeds={
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/hk.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/mo.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/countries/tw.m3u"
-      };
-      // Hong Kong, Macau and Taiwan belong to the China catalogue; retain their child categories.
-      added=fetchAndMergePlaylists(feeds,22000,errors,"china");
-      final int total=added;final String err=errors.toString();
-      persist();
-      runOnUiThread(()->{refresh();regionLoading=false;info.setText("港澳台目录载入完成：新增 "+total+" 个条目。部分频道可能因地区或网络限制无法播放。"+(err.isEmpty()?"":"部分目录不可用："+err));});
-    });
+    if(info!=null)info.setText("已使用保存的港澳台频道；空闲维护或手动更新后补充");
   }
   private void loadEntertainmentChannels(){
-    if(entertainmentLoading){info.setText("全球娱乐频道列表正在载入，请稍候…");return;}
-    entertainmentLoading=true;info.setText("正在载入全球娱乐频道（电影、音乐、动画、儿童、喜剧及生活）…");
-    worker.execute(()->{
-      int added=0;StringBuilder errors=new StringBuilder();
-      String[] feeds={
-        "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-        "https://iptv-org.github.io/iptv/categories/movies.m3u",
-        "https://iptv-org.github.io/iptv/categories/series.m3u",
-        "https://iptv-org.github.io/iptv/categories/music.m3u",
-        "https://iptv-org.github.io/iptv/categories/kids.m3u",
-        "https://iptv-org.github.io/iptv/categories/animation.m3u",
-        "https://iptv-org.github.io/iptv/categories/comedy.m3u",
-        "https://iptv-org.github.io/iptv/categories/documentary.m3u",
-        "https://iptv-org.github.io/iptv/categories/family.m3u",
-        "https://iptv-org.github.io/iptv/categories/lifestyle.m3u",
-        "https://iptv-org.github.io/iptv/categories/culture.m3u",
-        "https://iptv-org.github.io/iptv/languages/zho.m3u",
-        "https://cdn.jsdelivr.net/gh/streamline-iptv/iptv-playlists@dist/index.m3u"
-      };
-      for(String address:feeds){HttpURLConnection c=null;try{
-        c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent","MyTV/1.0 Android");c.setRequestProperty("Accept","*/*");
-        int code=c.getResponseCode();if(code<200||code>=300)throw new IOException("HTTP "+code);
-        String data;try(InputStream in=c.getInputStream()){data=read(in);}
-        // parse() performs bounded per-entry synchronization; avoid locking the
-         // entire channel catalogue while parsing a potentially large feed.
-         added+=parse(data,null,"global");
-      }catch(Exception e){errors.append(e.getMessage()).append("; ");}finally{if(c!=null)c.disconnect();}}
-      final int total=added;final String err=errors.toString();
-      persist();
-      runOnUiThread(()->{refresh();entertainmentLoading=false;info.setText("娱乐频道目录载入完成：新增 "+total+" 个条目，覆盖电影、音乐、动画、儿童、喜剧、生活等类别。已合并重复地址；部分频道可能有地区限制。"+(err.isEmpty()?"":"部分目录不可用："+err));});
-    });
+    if(info!=null)info.setText("已使用保存的娱乐频道；不因切换分类而重新抓源");
   }
   private void urlDialog(){EditText e=new EditText(this);e.setSingleLine(true);e.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);e.setHint("https://网站或 /playlist.m3u");e.setText(getSharedPreferences("mytv",0).getString("last_playlist_url",""));e.setSelection(e.getText().length());new AlertDialog.Builder(this).setTitle("输入网站 / 播放列表入口").setMessage("支持可直接访问的 M3U/M3U8 播放列表网址；普通网页需提供实际播放列表或视频地址。").setView(e).setNegativeButton("取消",null).setPositiveButton("导入",(d,w)->{String url=e.getText().toString().trim();getSharedPreferences("mytv",0).edit().putString("last_playlist_url",url).apply();download(url);}).show();}
   private void download(String address){
@@ -7596,5 +7186,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
   protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();if(activeChinaCatalogueTask!=null)activeChinaCatalogueTask.cancel(true);chinaCatalogueWorker.shutdownNow();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();playlistWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
