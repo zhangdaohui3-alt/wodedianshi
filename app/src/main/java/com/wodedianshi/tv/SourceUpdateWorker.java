@@ -141,7 +141,9 @@ public class SourceUpdateWorker extends Worker {
           com.wodedianshi.tv.db.AppStateEditor resetBuildState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
           for(int feed=0;feed<feeds.length;feed++){
-            resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+            resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+                .remove(initialFeedUnavailableKey(feed))
+                .remove(initialFeedFailureCountKey(feed));
           }
           resetBuildState.remove("source_feed_batch_fingerprint")
               .remove("source_feed_batch_scanned")
@@ -155,6 +157,8 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_total_feeds",feeds.length)
               .putInt("source_initial_progress_staged_channels",0)
               .putInt("source_initial_progress_checked_urls",0)
+              .putInt("source_initial_progress_validated_urls",0)
+              .putInt("source_initial_progress_unavailable_feeds",0)
               .putInt("source_initial_progress_feed_index",0)
               .putInt("source_initial_progress_feed_cursor",0)
               .putInt("source_initial_progress_feed_entries",0)
@@ -227,7 +231,7 @@ public class SourceUpdateWorker extends Worker {
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
         boolean feedReadSucceeded=false;
-        boolean feedPermanentlyUnavailable=false;
+        boolean feedTerminalUnavailable=false;
         if(isStopped())return Result.retry();
         if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
           saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
@@ -312,15 +316,24 @@ public class SourceUpdateWorker extends Worker {
           // mix its partial page with another feed's batch, or a later fingerprint
           // change could discard unprobed entries from the partial page.
           String failure=String.valueOf(e.getMessage());
-          // Removed feed endpoints should not hold a complete rebuild open forever.
-          // Treat only definitive 404/410 responses as exhausted; transient/network,
-          // rate-limit, and authorization failures remain retryable.
-          feedPermanentlyUnavailable=initialDiscoveryChain
-              &&(failure.contains("HTTP 404")||failure.contains("HTTP 410"));
+          // A dead/blocked provider is an inspected, UNAVAILABLE outcome rather
+          // than a successful feed. Bound transient failures to three separate
+          // worker attempts; preserve its failure record for later idle/manual retry.
+          if(initialDiscoveryChain){
+            int attempts=InitialFeedFailurePolicy.nextAttempts(
+                roomInt(initialFeedFailureCountKey(feedIndex),0));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedFailureCountKey(feedIndex),Integer.toString(attempts));
+            feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
+                failure,attempts);
+            if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
+                "first_build_feed_marked_unavailable index="+feedIndex+" attempts="+attempts);
+          }
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
-              indexedEntries,feedReadSucceeded||feedPermanentlyUnavailable));
+              indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
+              feedTerminalUnavailable));
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
@@ -331,11 +344,10 @@ public class SourceUpdateWorker extends Worker {
                 parsedCount[0]>=MAX_INITIAL_DISCOVERY_PER_FEED);
             break;
           }
-          // Definitive 404/410 feeds are marked complete by their successful
-          // FeedBatch marker. Transient failures keep their cursor and are retried
-          // after later feeds have had a chance to contribute.
+          // A bounded failure remains on record as unavailable, not as successful
+          // download. Other feeds can still make a usable complete snapshot.
           initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
-              feedIndex,feeds.length,feedPermanentlyUnavailable,false);
+              feedIndex,feeds.length,feedTerminalUnavailable,false);
           continue;
         }
       }
@@ -569,6 +581,12 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
+          if(initialDiscoveryChain&&batch.unavailable){
+            update.putBoolean(initialFeedUnavailableKey(batch.index),true);
+          }else if(initialDiscoveryChain){
+            update.remove(initialFeedUnavailableKey(batch.index))
+                .remove(initialFeedFailureCountKey(batch.index));
+          }
           if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
@@ -796,9 +814,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private static class FeedBatch{
     final int index,cursor,parsed,indexedEntries;
-    final boolean success;
-    FeedBatch(int i,int c,int p,int total,boolean ok){
-      index=i;cursor=c;parsed=p;indexedEntries=total;success=ok;
+    final boolean success,unavailable;
+    FeedBatch(int i,int c,int p,int total,boolean ok,boolean unavailable){
+      index=i;cursor=c;parsed=p;indexedEntries=total;
+      success=ok;this.unavailable=unavailable;
     }
   }
   private String scopeForFeed(String feed){
@@ -806,6 +825,8 @@ public class SourceUpdateWorker extends Worker {
   }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+  private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
+  private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
   private String canonicalDisplayName(Entry entry){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         entry.name,entry.tvgName,entry.tvgId,entry.group);
