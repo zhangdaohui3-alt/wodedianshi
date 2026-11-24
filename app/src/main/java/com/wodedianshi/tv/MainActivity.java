@@ -106,6 +106,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean preserveRequestedLivePageOnce=false;
   private Button livePreviousPageButton,liveNextPageButton;
   private TextView livePageStatus;
+  // Compact, nonblocking first-install progress. No network access from UI.
+  private LinearLayout initialDiscoveryProgressPanel;
+  private TextView initialDiscoveryProgressTitle,initialDiscoveryProgressDetail;
+  private ProgressBar initialDiscoveryProgressBar;
+  private Runnable initialDiscoveryProgressTicker;
+  private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
+      new java.util.concurrent.atomic.AtomicBoolean(false);
   private final ArrayList<Channel> channels = new ArrayList<>();
   // Snapshot of the last catalogue JSON this Activity restored or persisted.
   // It lets onStart detect safe background-worker updates while this Activity was stopped.
@@ -1247,6 +1254,32 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     livePageStatus=new TextView(this);livePageStatus.setTextColor(Color.LTGRAY);livePageStatus.setTextSize(11);livePageStatus.setGravity(Gravity.CENTER);livePageStatus.setText("第 1 页"); 
     liveNextPageButton=new Button(this);liveNextPageButton.setText("下一页");liveNextPageButton.setAllCaps(false);liveNextPageButton.setTextSize(12);liveNextPageButton.setMinHeight(0);liveNextPageButton.setMinimumHeight(0);liveNextPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(liveNextPageButton,Color.rgb(35,55,78));
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
+    // First full source discovery is visible without covering playback or
+    // blocking TV remote focus. This panel stays hidden after a completed build.
+    initialDiscoveryProgressPanel=new LinearLayout(this);
+    initialDiscoveryProgressPanel.setOrientation(1);
+    initialDiscoveryProgressPanel.setPadding(dp(6),dp(7),dp(6),dp(7));
+    initialDiscoveryProgressPanel.setBackground(makeButtonBg(Color.rgb(25,40,64),false));
+    initialDiscoveryProgressTitle=new TextView(this);
+    initialDiscoveryProgressTitle.setText("首次完整抓源 · 0%");
+    initialDiscoveryProgressTitle.setTextSize(13);
+    initialDiscoveryProgressTitle.setTextColor(Color.WHITE);
+    initialDiscoveryProgressTitle.setTypeface(null,android.graphics.Typeface.BOLD);
+    initialDiscoveryProgressPanel.addView(initialDiscoveryProgressTitle);
+    initialDiscoveryProgressBar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+    initialDiscoveryProgressBar.setIndeterminate(false);
+    initialDiscoveryProgressBar.setMax(100);
+    initialDiscoveryProgressBar.setProgress(0);
+    LinearLayout.LayoutParams progressBarParams=new LinearLayout.LayoutParams(-1,dp(12));
+    progressBarParams.topMargin=dp(3);
+    initialDiscoveryProgressPanel.addView(initialDiscoveryProgressBar,progressBarParams);
+    initialDiscoveryProgressDetail=new TextView(this);
+    initialDiscoveryProgressDetail.setText("正在准备读取来源目录…");
+    initialDiscoveryProgressDetail.setTextSize(11);
+    initialDiscoveryProgressDetail.setTextColor(Color.LTGRAY);
+    initialDiscoveryProgressDetail.setMaxLines(3);
+    initialDiscoveryProgressPanel.addView(initialDiscoveryProgressDetail);
+    channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,-2));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
     liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
@@ -1303,12 +1336,101 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // older users' 24-hour jobs running indefinitely after this app update.
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
   }
+  private void startInitialDiscoveryProgressTicker(){
+    stopInitialDiscoveryProgressTicker();
+    if(initialDiscoveryProgressPanel==null)return;
+    if(roomFullRebuildCompletedAt>0L){
+      initialDiscoveryProgressPanel.setVisibility(View.GONE);
+      return;
+    }
+    initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
+    initialDiscoveryProgressTicker=new Runnable(){
+      @Override public void run(){
+        if(!activityStarted||isFinishing()||isDestroyed()||initialDiscoveryProgressPanel==null)return;
+        requestInitialDiscoveryProgress();
+        if(roomFullRebuildCompletedAt<=0L)
+          uiHandler.postDelayed(this,4000L);
+      }
+    };
+    uiHandler.post(initialDiscoveryProgressTicker);
+  }
+
+  private void stopInitialDiscoveryProgressTicker(){
+    if(initialDiscoveryProgressTicker!=null){
+      uiHandler.removeCallbacks(initialDiscoveryProgressTicker);
+      initialDiscoveryProgressTicker=null;
+    }
+  }
+
+  private void requestInitialDiscoveryProgress(){
+    if(initialDiscoveryProgressPanel==null||!activityStarted
+        ||!initialDiscoveryProgressReadPending.compareAndSet(false,true))return;
+    try{
+      worker.execute(()->{
+        try{
+          final android.content.Context context=getApplicationContext();
+          final String prefix="source_initial_progress_";
+          final long completed=readRoomProgressLong(context,"source_full_rebuild_completed_at",0L);
+          final int done=(int)readRoomProgressLong(context,prefix+"done_feeds",0L);
+          final int total=(int)readRoomProgressLong(context,prefix+"total_feeds",0L);
+          final int staged=(int)readRoomProgressLong(context,prefix+"staged_channels",0L);
+          final int checked=(int)readRoomProgressLong(context,prefix+"checked_urls",0L);
+          final int feedIndex=(int)readRoomProgressLong(context,prefix+"feed_index",0L);
+          final int cursor=(int)readRoomProgressLong(context,prefix+"feed_cursor",0L);
+          final int entries=(int)readRoomProgressLong(context,prefix+"feed_entries",0L);
+          final int percent=(int)readRoomProgressLong(context,prefix+"percent",0L);
+          final String phase=com.wodedianshi.tv.db.AppStateStore.get(
+              context,prefix+"phase","尚未开始首次完整抓源");
+          runOnUiThread(()->{
+            if(isFinishing()||isDestroyed()||!activityStarted
+                ||initialDiscoveryProgressPanel==null)return;
+            if(completed>0L){
+              roomFullRebuildCompletedAt=completed;
+              initialDiscoveryProgressBar.setProgress(100);
+              initialDiscoveryProgressTitle.setText("首次完整抓源 · 100%");
+              initialDiscoveryProgressDetail.setText("完整频道快照已保存；之后只在空闲时维护来源");
+              stopInitialDiscoveryProgressTicker();
+              // Give the user a confirmation, then restore the channel list space.
+              uiHandler.postDelayed(()->{
+                if(initialDiscoveryProgressPanel!=null&&roomFullRebuildCompletedAt>0L)
+                  initialDiscoveryProgressPanel.setVisibility(View.GONE);
+              },12000L);
+              return;
+            }
+            initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
+            initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(99,percent)));
+            initialDiscoveryProgressTitle.setText("首次完整抓源 · "
+                +Math.max(0,Math.min(99,percent))+"%");
+            String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
+            initialDiscoveryProgressDetail.setText(
+                (total>0?"已完成来源 "+Math.max(0,done)+"/"+total
+                    +" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:"准备来源列表")
+                +"\\n已整理频道 "+Math.max(0,staged)+" · 已初筛地址 "+Math.max(0,checked)
+                +"\\n"+phase);
+          });
+        }catch(Throwable error){
+          android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
+        }finally{
+          initialDiscoveryProgressReadPending.set(false);
+        }
+      });
+    }catch(RuntimeException ignored){initialDiscoveryProgressReadPending.set(false);}
+  }
+
+  private static long readRoomProgressLong(android.content.Context context,String key,long fallback){
+    try{
+      return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
+          context,key,Long.toString(fallback)));
+    }catch(NumberFormatException ignored){return fallback;}
+  }
+
   private void observeStartupSourceUpdateResults(){
     // Apply the guarded catalogue snapshot as soon as the startup refresh finishes.
     // This avoids requiring the user to exit and relaunch to see newly found channels.
     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
         .observe(this,workInfos->{
           if(workInfos==null)return;
+          requestInitialDiscoveryProgress();
           boolean allSucceeded=!workInfos.isEmpty();
           for(androidx.work.WorkInfo workInfo:workInfos){
             if(workInfo.getState()!=androidx.work.WorkInfo.State.SUCCEEDED){
@@ -1324,6 +1446,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               runOnUiThread(()->{
                 roomFullRebuildCompletedAt=completed;
                 if(completed>0L)scheduleAutomaticSourceUpdates();
+                requestInitialDiscoveryProgress();
                 reloadChannelsAfterBackgroundUpdateIfNeeded();
               });
             });
@@ -1355,7 +1478,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // simultaneous first-run rebuilds would race on the same Room staging rows
       // and feed cursors. KEEP reuses an already-running startup rebuild.
       manager.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,request);
-      toast("已提交首次全量频道整理；整理期间旧频道照常使用");
+      toast("已提交首次全量频道整理；可以在频道列表查看真实完成百分比");
+      startInitialDiscoveryProgressTicker();
       return;
     }
     manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
@@ -6945,6 +7069,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       startCurrentSource();
     }
     scheduleStartupAutoResume();
+    startInitialDiscoveryProgressTicker();
   }
   private void scheduleStartupAutoResume(){
     if(!startupAutoResumePending||!activityStarted||isFinishing())return;
@@ -7185,6 +7310,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
   }
-  protected void onStop(){stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
