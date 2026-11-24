@@ -118,7 +118,7 @@ public class SourceUpdateWorker extends Worker {
       // may save favorites, edits, imports or playback state while this worker runs.
       // Never let a stale worker snapshot overwrite those newer user changes.
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext());
+          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
       // Room is the only catalogue authority. If first-install seeding has not
       // completed yet, retry rather than resurrecting stale SharedPreferences JSON.
       if(roomSnapshot==null) {
@@ -192,7 +192,7 @@ public class SourceUpdateWorker extends Worker {
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
               getApplicationContext(),resetBuildState,pauseRequested);
         }
-        saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext());
+        saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
@@ -206,6 +206,7 @@ public class SourceUpdateWorker extends Worker {
           getApplicationContext(),"source_probe_failure_streaks_v1","{}"));
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
       }
@@ -221,6 +222,7 @@ public class SourceUpdateWorker extends Worker {
       // TV UI is open; the full rotating health-check pool is retained for background runs.
       if(!foregroundAtStart&&!initialDiscoveryChain){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
           String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
           LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
@@ -232,6 +234,7 @@ public class SourceUpdateWorker extends Worker {
           String primary=channel.optString("url","");
           if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
           for(String u:channelUrls){
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             if(savedPool.size()>=20000)break;
             // A shared URL only needs one network probe, even if several channel
             // entries reference it. Keep the first channel identity for diagnostics.
@@ -1037,6 +1040,7 @@ public class SourceUpdateWorker extends Worker {
       throws JSONException {
     JSONArray result=new JSONArray();
     for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject channel=new JSONObject();
       channel.put("name",row.name);channel.put("url",row.url);channel.put("group",row.group);
       channel.put("tvgId",row.tvgId);channel.put("tvgName",row.tvgName);
@@ -1312,6 +1316,7 @@ public class SourceUpdateWorker extends Worker {
     // filling remaining capacity with older entries.
     LinkedHashSet<String> keep=new LinkedHashSet<>();
     if(savedPool!=null)for(Entry entry:savedPool){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       if(keep.size()>=MAX_PERSISTED_PROBE_SCORES)break;
       String key=scoreKey(entry.url);if(scores.has(key))keep.add(key);
     }

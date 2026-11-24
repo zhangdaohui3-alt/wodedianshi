@@ -18,10 +18,16 @@ public final class RoomCatalogueBuildStore {
     private RoomCatalogueBuildStore() {}
 
     public static JSONArray read(Context context) throws JSONException {
+        return read(context, null);
+    }
+
+    public static JSONArray read(Context context, BooleanSupplier paused) throws JSONException {
+        checkPause(paused);
         List<CatalogueBuildRowEntity> rows = RoomDatabaseProvider.get(context)
                 .channelDao().getCatalogueBuildRows();
         JSONArray result = new JSONArray();
         for (CatalogueBuildRowEntity row : rows) {
+            checkPause(paused);
             JSONObject record = new JSONObject(row.recordJson);
             if (record.optString("name", "").trim().isEmpty()
                     || record.optString("url", "").trim().isEmpty()) {
@@ -29,6 +35,7 @@ public final class RoomCatalogueBuildStore {
             }
             result.put(record);
         }
+        checkPause(paused);
         return result;
     }
 
