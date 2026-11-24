@@ -177,6 +177,10 @@ public class SourceUpdateWorker extends Worker {
       }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
+      // A single failed probe merely reduces its score. It cannot delete an
+      // existing saved backup; three independent failures are needed.
+      JSONObject probeFailureStreaks=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(
+          getApplicationContext(),"source_probe_failure_streaks_v1","{}"));
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
@@ -390,6 +394,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
+      HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
@@ -416,6 +421,13 @@ public class SourceUpdateWorker extends Worker {
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
           measuredScores.remove(legacyScoreKey(e.url));
+        }
+        if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
+          String streakKey=scoreKey(e.url);
+          if(measured.valid)probeFailureStreaks.remove(streakKey);
+          else probeFailureStreaks.put(streakKey,
+              Math.min(SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT,
+                  Math.max(0,probeFailureStreaks.optInt(streakKey,0))+1));
         }
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
         if(!measured.valid&&!initialDiscoveryChain)continue;
@@ -449,12 +461,24 @@ public class SourceUpdateWorker extends Worker {
           String activeUrl=activeIndex<currentUrls.size()
               ?currentUrls.get(activeIndex):target.optString("url","");
           String primaryUrl=target.optString("url","");
-          ArrayList<String> retainedUrls=new ArrayList<>(
-              SourceChannelMergePolicy.attachSharedEndpoint(currentUrls,e.url,
-                  MAX_SOURCES_PER_CHANNEL,
-                  (a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),
-                      combinedScore(a,measuredScores,observedQoe)),
-                  primaryUrl,activeUrl));
+          java.util.Comparator<String> bestFirst=(a,b)->
+              Double.compare(combinedScore(b,measuredScores,observedQoe),
+                  combinedScore(a,measuredScores,observedQoe));
+          ArrayList<String> retainedUrls;
+          if(initialDiscoveryChain){
+            retainedUrls=new ArrayList<>(SourceChannelMergePolicy.attachSharedEndpoint(
+                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,primaryUrl,activeUrl));
+          }else{
+            HashSet<String> eligibleRetirement=new HashSet<>();
+            for(String oldUrl:currentUrls){
+              if(probeFailureStreaks.optInt(scoreKey(oldUrl),0)
+                  >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
+                eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
+            }
+            retainedUrls=new ArrayList<>(SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
+                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,
+                primaryUrl,activeUrl,eligibleRetirement));
+          }
           boolean changed=currentUrls.size()!=retainedUrls.size();
           if(!changed){
             for(int i=0;i<currentUrls.size();i++){
@@ -567,6 +591,7 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
+          .putString("source_probe_failure_streaks_v1",probeFailureStreaks.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
