@@ -601,7 +601,7 @@ public class SourceUpdateWorker extends Worker {
         // Persist only to the isolated staging table between batches. A partial
         // collection can never replace or contaminate the currently playable Room catalogue.
         int stagedRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
-            getApplicationContext(),saved);
+            getApplicationContext(),saved,pauseRequested);
         if(initialDiscoveryComplete){
           if(stagedRows<=0)throw new IllegalStateException(
               "Full catalogue rebuild completed without any validated channels; live catalogue retained");
@@ -619,7 +619,7 @@ public class SourceUpdateWorker extends Worker {
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotAndClearBuild(
-              getApplicationContext(),safePublish,roomSnapshot.catalogueVersion);
+              getApplicationContext(),safePublish,roomSnapshot.catalogueVersion,pauseRequested);
           if(roomRowsWritten!=publishedChannelCount)throw new IllegalStateException(
               "Published Room rows do not match the complete reconciled catalogue");
         }
@@ -632,7 +632,7 @@ public class SourceUpdateWorker extends Worker {
         }
         // Routine updates remain incremental against the current authoritative Room snapshot.
         roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshot(
-            getApplicationContext(),saved,roomSnapshot.catalogueVersion);
+            getApplicationContext(),saved,roomSnapshot.catalogueVersion,pauseRequested);
       }
       if(!initialDiscoveryChain&&saved.length()>0&&roomRowsWritten==0){
         throw new IllegalStateException("Room catalogue update produced no channel rows");
@@ -866,6 +866,9 @@ public class SourceUpdateWorker extends Worker {
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
           ?Result.retry():Result.success();
+    }catch(SourceProbeTimePolicy.PublicationPausedException paused){
+      saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
+      return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
