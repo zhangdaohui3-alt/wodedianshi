@@ -4,6 +4,39 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void observedPauseRemainsLatchedAfterViewerLeaves() {
+        java.util.concurrent.atomic.AtomicBoolean viewing = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(viewing::get);
+        assertFalse(pause.getAsBoolean());
+        viewing.set(true);
+        assertTrue(pause.getAsBoolean());
+        viewing.set(false);
+        assertTrue(pause.getAsBoolean());
+        assertFalse(SourceProbeTimePolicy.latchPause(viewing::get).getAsBoolean());
+    }
+
+    @Test public void shortPlaybackStartIsVisibleEvenBetweenProbeChecks() {
+        SourceUpdateActivityPolicy.setPlaybackActive(false);
+        long start = SourceUpdateActivityPolicy.playbackStartGeneration();
+        java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(
+            () -> SourceUpdateActivityPolicy.playbackStartGeneration() != start);
+        try {
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            assertTrue(pause.getAsBoolean());
+        } finally { SourceUpdateActivityPolicy.setPlaybackActive(false); }
+    }
+
+    @Test public void repeatedActiveSignalsDoNotGenerateNewStarts() {
+        SourceUpdateActivityPolicy.setActivityActive(false);
+        long start = SourceUpdateActivityPolicy.activityStartGeneration();
+        try {
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            assertEquals(start + 1, SourceUpdateActivityPolicy.activityStartGeneration());
+        } finally { SourceUpdateActivityPolicy.setActivityActive(false); }
+    }
+
     @Test public void cooperativePauseIsDistinctFromNetworkFailure() throws Exception {
         SourceProbeTimePolicy.checkPaused(() -> false);
         try {
