@@ -231,6 +231,19 @@ public interface ChannelDao {
     @Query("DELETE FROM categories")
     void clearCategories();
 
+    /** Checkpoint and table counts must describe the same committed snapshot. */
+    @Transaction
+    default CatalogueMigrationEntity getValidatedCheckpoint(String migrationKey) {
+        CatalogueMigrationEntity checkpoint = getMigration(migrationKey);
+        if (checkpoint == null || checkpoint.channelsCount < 0
+                || checkpoint.backupSourcesCount < 0 || checkpoint.favoritesCount < 0
+                || checkpoint.categoriesCount < 0) return null;
+        return countChannels() == checkpoint.channelsCount
+                && countBackupSources() == checkpoint.backupSourcesCount
+                && countFavorites() == checkpoint.favoritesCount
+                && countCategories() == checkpoint.categoriesCount ? checkpoint : null;
+    }
+
     @Query("SELECT COUNT(*) FROM categories")
     int countCategories();
 
