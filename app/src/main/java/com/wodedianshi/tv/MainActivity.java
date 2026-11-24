@@ -1190,7 +1190,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           +" channels="+rows.size());
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
-      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+      favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
       // The writer's transaction performs the final compare-and-swap. This
       // early guard avoids even attempting an inconsistent in-memory copy.
       if(expectedVersion!=loadedRoomCatalogueVersion)
@@ -3858,7 +3858,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // under the same lock used by remote order/persistence; this prevents
     // ConcurrentModificationException during a quick favorite toggle.
     final Set<String> favoriteSnapshot;
-    synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+    favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
     final int requestedPage=livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
@@ -4656,12 +4656,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Single Set calls are synchronized, but contains + toggle must be atomic
   // for concurrent remote-order snapshots and catalogue readers.
   private boolean toggleFavoriteMembership(String channelKey){
-    synchronized(favorites){
-      boolean favorite=!favorites.contains(channelKey);
-      if(favorite)favorites.add(channelKey);
-      else favorites.remove(channelKey);
-      return favorite;
-    }
+    return FavoriteMembershipPolicy.toggle(favorites,channelKey);
   }
   // A favorite toggle changes one Room relation, not the channel catalogue.
   // Serialize it with full catalogue writes so a queued older snapshot cannot
@@ -5147,7 +5142,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Set<String> favoriteSnapshot;
     final int favoritesHash;
     if(favoritesOnly){
-      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+      favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
       favoritesHash=favoriteSnapshot.hashCode();
     }else{
       favoriteSnapshot=java.util.Collections.emptySet();
