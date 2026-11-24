@@ -73,6 +73,11 @@ public final class SourceUpdateSchedulePolicy {
         return manual || initialDiscoveryChain;
     }
 
+    /** Normal viewing deferral is not a failed network attempt. */
+    public static long initialViewingDelaySeconds(boolean stableButWaitingForIdle) {
+        return stableButWaitingForIdle ? 60L : 30L;
+    }
+
     /** Automatic catalogue work must not compete with foreground TV playback or input. */
     public static boolean shouldDeferForegroundAutoUpdate(boolean appForeground, boolean manual) {
         return appForeground && !manual;
