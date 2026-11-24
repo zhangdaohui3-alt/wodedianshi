@@ -871,7 +871,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(source!=null&&!source.isEmpty()&&seen.add(source))keep.backups.add(source);
           }
           keep.mergeBackupOwnership(c);
-          if(favorites.contains(c.key()))favorites.add(keep.key());
+          synchronized(favorites){
+            if(favorites.contains(c.key()))favorites.add(keep.key());
+          }
         }
       }
       channels.clear();channels.addAll(compact);
@@ -1188,7 +1190,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           +" channels="+rows.size());
       if(rows.isEmpty())throw new IllegalStateException("Refusing to persist an empty channel catalogue");
       HashSet<String> favoriteSnapshot;
-      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+      favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
       // The writer's transaction performs the final compare-and-swap. This
       // early guard avoids even attempting an inconsistent in-memory copy.
       if(expectedVersion!=loadedRoomCatalogueVersion)
@@ -3851,7 +3853,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String provinceSnapshot=activeLocalProvince;
     final String citySnapshot=activeLocalCity;
     final Set<String> geoKeys=activeGeoChannelKeys==null?null:new HashSet<>(activeGeoChannelKeys);
-    final Set<String> favoriteSnapshot=new HashSet<>(favorites);
+    // Collections.synchronizedSet synchronizes individual methods, not
+    // iteration by HashSet(Collection). Take the entire favorites snapshot
+    // under the same lock used by remote order/persistence; this prevents
+    // ConcurrentModificationException during a quick favorite toggle.
+    final Set<String> favoriteSnapshot;
+    favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
     final int requestedPage=livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
@@ -4013,12 +4020,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
         new AlertDialog.Builder(this).setItems(new String[]{favorites.contains(channelKey)?"取消收藏":"加入收藏","查看/选择备用源（"+sourceUrls.size()+"个）","删除频道"},(d,w)->{
           if(w==0){
-            boolean nowFavorite;
-            synchronized(favorites){
-              nowFavorite=!favorites.contains(channelKey);
-              if(nowFavorite)favorites.add(channelKey);
-              else favorites.remove(channelKey);
-            }
+            boolean nowFavorite=toggleFavoriteMembership(channelKey);
             // Favorite-only changes must not serialize and CAS-write the entire
             // 6k+ channel directory; the fullscreen favorite path already uses
             // the exact one-row Room mutation queue.
@@ -4032,7 +4034,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{if(j>=0&&j<sourceUrls.size())playChannelSourceByKey(channelKey,sourceUrls.get(j));}).setNegativeButton("关闭",null).show();
           }else{
             synchronized(channels){for(int k=0;k<channels.size();k++){Channel item=channels.get(k);if(item!=null&&channelKey.equals(item.key())){channels.remove(k);break;}}}
-            favorites.remove(channelKey);rebuildChannelIndexes();persist();refresh();
+            synchronized(favorites){favorites.remove(channelKey);}
+            rebuildChannelIndexes();persist();refresh();
           }
         }).show();return true;
       });
@@ -4650,6 +4653,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
+  // Single Set calls are synchronized, but contains + toggle must be atomic
+  // for concurrent remote-order snapshots and catalogue readers.
+  private boolean toggleFavoriteMembership(String channelKey){
+    return FavoriteMembershipPolicy.toggle(favorites,channelKey);
+  }
   // A favorite toggle changes one Room relation, not the channel catalogue.
   // Serialize it with full catalogue writes so a queued older snapshot cannot
   // overwrite the user's latest favorite state.
@@ -4728,9 +4736,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void toggleCurrentLiveFavorite(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
-    boolean favorite=!favorites.contains(c.key());
-    if(favorite){favorites.add(c.key());toast("已加入收藏："+c.name);}
-    else{favorites.remove(c.key());toast("已取消收藏："+c.name);}
+    boolean favorite=toggleFavoriteMembership(c.key());
+    toast((favorite?"已加入收藏：":"已取消收藏：")+c.name);
     queueFavoriteMutation(c.key(),favorite);
 
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
@@ -5135,7 +5142,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Set<String> favoriteSnapshot;
     final int favoritesHash;
     if(favoritesOnly){
-      synchronized(favorites){favoriteSnapshot=new HashSet<>(favorites);}
+      favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
       favoritesHash=favoriteSnapshot.hashCode();
     }else{
       favoriteSnapshot=java.util.Collections.emptySet();
