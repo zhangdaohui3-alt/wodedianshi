@@ -756,11 +756,10 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.AppStateEditor failedBuildReset=
             new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
         for(int feed=0;feed<feeds.length;feed++){
-          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
-              .remove(initialFeedUnavailableKey(feed))
-              .remove(initialFeedFailureCountKey(feed))
-              .remove(initialFeedFailureReasonKey(feed))
-              .remove(initialFeedDisplayLabelKey(feed));
+          // Reset the publish/scan cursors for the next attempt, but leave the
+          // last failure diagnostics visible in Settings until that next attempt
+          // starts and explicitly initializes a fresh build.
+          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -773,9 +772,8 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_percent",0)
             .putInt("source_initial_progress_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
-            .putInt("source_initial_progress_unavailable_feeds",0)
             .putInt("source_initial_progress_validated_urls",0)
-            .putString("source_initial_progress_phase","本轮抓源没有通过验证的来源，未发布快照；可手动重试")
+            .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
