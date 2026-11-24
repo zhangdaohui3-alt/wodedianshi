@@ -32,6 +32,11 @@ public class SourceUpdateWorker extends Worker {
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
   private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
+  // Reuse only committed staging owned by the sole source worker. A borrowed
+  // mutable snapshot is removed from the cache BEFORE any mutation.
+  private static JSONArray committedStaging;
+  private static String committedStagingRevision="";
+  private static long committedStagingAt;
   private boolean slowPlayback;
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
@@ -169,6 +174,7 @@ public class SourceUpdateWorker extends Worker {
           if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
           INITIAL_PROBES.clear();
           LIVE_DIRECTORY_RETRY_AFTER.clear();
+          discardStagingReuse();
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
           // Feed progress is tied to the exact ordered URL list: an app update that
@@ -271,7 +277,7 @@ public class SourceUpdateWorker extends Worker {
         // reloading/ranking staging on each retry while only publication waits.
         if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
           return deferInitialDirectory("线路初筛已完成，等待空闲发布完整快照");
-        saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
+        saved=takeCommittedStaging();
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
@@ -1130,6 +1136,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_validated_urls",0)
             .putInt("source_initial_progress_china_validated_urls",0)
             .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试");
+        discardStagingReuse();
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
             getApplicationContext(),failedBuildReset,pauseRequested);
         saveStatus(prefs,saved.length()==0
@@ -1143,8 +1150,17 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
             getApplicationContext(),saved,pauseRequested,update);
-        else com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
-            getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
+        else {
+          String revision=java.util.UUID.randomUUID().toString();
+          update.putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,revision);
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
+              getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
+          // Remember only after the transaction has returned successfully.
+          if(InitialStagingReusePolicy.canRetain(saved.length(),slowPlayback)){
+            committedStaging=saved;committedStagingRevision=revision;
+            committedStagingAt=android.os.SystemClock.elapsedRealtime();
+          }
+        }
         if(!slowPlayback&&previewLevel>previousPreviewLevel){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
@@ -1185,7 +1201,7 @@ public class SourceUpdateWorker extends Worker {
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
       if(!initialDiscoveryChain)return Result.success();
-      if(initialDiscoveryComplete)INITIAL_PROBES.clear();
+      if(initialDiscoveryComplete){INITIAL_PROBES.clear();discardStagingReuse();}
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
@@ -1194,6 +1210,22 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private static void discardStagingReuse(){
+    committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
+  }
+  private JSONArray takeCommittedStaging() throws JSONException {
+    JSONArray candidate=committedStaging;
+    String revision=committedStagingRevision;
+    long savedAt=committedStagingAt;
+    discardStagingReuse();
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    if(candidate!=null&&InitialStagingReusePolicy.canReuse(candidate.length(),revision,
+        roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,""),
+        savedAt,android.os.SystemClock.elapsedRealtime())){
+      return candidate;
+    }
+    return com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
   }
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(){
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
