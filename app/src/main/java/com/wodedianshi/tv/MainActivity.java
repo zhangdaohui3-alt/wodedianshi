@@ -3719,15 +3719,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return token!=null&&!token.isEmpty()&&metadata.contains(token.toLowerCase(Locale.ROOT));
   }
   private String explicitProvinceIn(String metadata){
-    if(metadata==null||metadata.isEmpty())return "";
-    // ChannelNamePolicy may return null for incomplete legacy/imported metadata.
-    String cityAlias=ChannelNamePolicy.provinceForLocalChannel(metadata);
-    if(cityAlias!=null&&!cityAlias.isEmpty())return cityAlias;
-    String[] names={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-    for(String p:names)if(metadata.contains(p))return p;
-    String[][] aliases={{"beijing","北京"},{"tianjin","天津"},{"hebei","河北"},{"shanxi","山西"},{"inner mongolia","内蒙古"},{"liaoning","辽宁"},{"jilin","吉林"},{"heilongjiang","黑龙江"},{"shanghai","上海"},{"jiangsu","江苏"},{"zhejiang","浙江"},{"anhui","安徽"},{"fujian","福建"},{"jiangxi","江西"},{"shandong","山东"},{"henan","河南"},{"hubei","湖北"},{"hunan","湖南"},{"guangdong","广东"},{"guangxi","广西"},{"hainan","海南"},{"chongqing","重庆"},{"sichuan","四川"},{"guizhou","贵州"},{"yunnan","云南"},{"tibet","西藏"},{"shaanxi","陕西"},{"gansu","甘肃"},{"qinghai","青海"},{"ningxia","宁夏"},{"xinjiang","新疆"}};
-    for(String[] a:aliases)if(metadata.contains(a[0]))return a[1];
-    return "";
+    return ChannelNamePolicy.provinceForLocalChannel(metadata);
   }
   private boolean isSatelliteChannel(Channel c){
     if(c==null)return false;
@@ -3746,15 +3738,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     // The shared classifier also recognizes county stations (e.g. 上虞、固镇、
     // 旺苍) which are not in the UI's prefecture-level city array.
-    // Accept its unambiguous province resolution before checking legacy tokens.
-    if(province.equals(explicit))return true;
-    if(hasRegionalToken(metadata,province))return true;
-    for(String city:citiesForProvince(province)){
-      if(hasRegionalToken(metadata,city))return true;
-    }
-    // Avoid assigning a city-only label to the wrong province when city names collide.
-    if(!explicit.isEmpty())return false;
-    return false;
+    // Only a resolved province belongs in a province-specific directory.
+    // Ambiguous channels remain available under 全部地方台.
+    return province.equals(explicit);
   }
   // Build the province/city token index once. The former implementation
   // recreated every province's city array for every channel; filtering 10k+
@@ -3794,7 +3780,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     if(!java.util.Arrays.asList(citiesForProvince(province)).contains(city))return false;
-    return hasRegionalToken(metadata,city)||(hasRegionalToken(metadata,province)&&citiesForProvince(province).length==1);
+    if(ChannelNamePolicy.matchesLocalCity(metadata,province,city))return true;
+    // Retain Chinese-only coverage for cities not yet in the alias table, but
+    // only with a resolved province, never with ambiguous city-only labels.
+    return province.equals(explicit)&&(hasRegionalToken(metadata,city)
+        ||(province.equals(city)&&citiesForProvince(province).length==1));
   }
   private boolean matchesLocalRegion(Channel c){
     if(!localRegionFilterActive)return true;
