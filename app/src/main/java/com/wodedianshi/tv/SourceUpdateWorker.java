@@ -235,9 +235,20 @@ public class SourceUpdateWorker extends Worker {
               initialDiscoveryChain,initialDiscoveryChain&&feedCursor>0);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
+          final int[] deferredForeign={0};
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
+            // The early county/local aggregator is mixed: probing its foreign
+            // rows would consume China's tiny 24-route budget. The index cursor
+            // still advances across all rows, including those deferred here;
+            // international directories are processed in their own final stage.
+            if(initialDiscoveryChain
+                &&!ChinaDiscoveryCandidatePolicy.shouldProbeInInitialDiscovery(
+                    feedIndex,scope,source.name,source.group,source.tvgName,source.tvgId)){
+              deferredForeign[0]++;
+              return;
+            }
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           });
@@ -270,7 +281,9 @@ public class SourceUpdateWorker extends Worker {
           }
           android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
-              +" candidates="+feedCandidates.size()+" local_metadata="+localMetadataCandidates
+              +" candidates="+feedCandidates.size()
+              +" deferred_nonmainland="+deferredForeign[0]
+              +" local_metadata="+localMetadataCandidates
               +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+scopeForFeed(feed));
           if(!feedCandidates.isEmpty())feedsWithEntries++;
