@@ -51,6 +51,24 @@ public final class PlaylistFeedIndex {
         return page.size();
     }
 
+    /**
+     * Cheap, checked entry count from the already built feed index. Do not
+     * claim a fractional percentage if the cache/index is missing or corrupt.
+     */
+    public static int indexedEntryCount(File playlist) {
+        if (playlist == null) return -1;
+        File records = new File(playlist.getAbsolutePath() + ".index-data");
+        File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
+        if (!isUsableIndex(records, offsets)) return -1;
+        try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
+            if (input.readInt() != OFFSET_INDEX_MAGIC) return -1;
+            long count = input.readLong();
+            return count >= 0L && count <= Integer.MAX_VALUE ? (int)count : -1;
+        } catch (IOException ignored) {
+            return -1;
+        }
+    }
+
     private static List<PlaylistParser.ChannelSource> readIndexedPage(
             File records, File offsets, int startEntry, int maxEntries) throws IOException {
         List<PlaylistParser.ChannelSource> page = new ArrayList<>();

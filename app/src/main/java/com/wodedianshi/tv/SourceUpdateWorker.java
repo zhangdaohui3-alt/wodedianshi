@@ -150,6 +150,15 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_has_validated_source")
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
+              .putInt("source_initial_progress_percent",0)
+              .putInt("source_initial_progress_done_feeds",0)
+              .putInt("source_initial_progress_total_feeds",feeds.length)
+              .putInt("source_initial_progress_staged_channels",0)
+              .putInt("source_initial_progress_checked_urls",0)
+              .putInt("source_initial_progress_feed_index",0)
+              .putInt("source_initial_progress_feed_cursor",0)
+              .putInt("source_initial_progress_feed_entries",0)
+              .putString("source_initial_progress_phase","正在准备首次完整抓源")
               .putInt("source_initial_next_feed_index",0)
               .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
               .apply();
@@ -157,6 +166,8 @@ public class SourceUpdateWorker extends Worker {
               getApplicationContext(),"source_full_rebuild_active","true");
         }
         saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext());
+        com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+            "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
         saved=roomSnapshotToArray(roomSnapshot);
       }
@@ -214,6 +225,7 @@ public class SourceUpdateWorker extends Worker {
         String feed=feeds[feedIndex];
         int feedCursor=roomInt(feedCursorKey(feedIndex),0);
         int[] parsedCount={0};
+        int indexedEntries=-1; // Count from the validated cached playlist index.
         boolean feedReadSucceeded=false;
         boolean feedPermanentlyUnavailable=false;
         if(isStopped())return Result.retry();
@@ -244,6 +256,7 @@ public class SourceUpdateWorker extends Worker {
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           });
+          indexedEntries=PlaylistFeedIndex.indexedEntryCount(cachedFeed);
           // Parsing a cached large playlist can overlap a newly started player.
           // Do not enqueue its candidates for probing or advance any cursor.
           if(isStopped())return Result.retry();
@@ -307,7 +320,7 @@ public class SourceUpdateWorker extends Worker {
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
-              feedReadSucceeded||feedPermanentlyUnavailable));
+              indexedEntries,feedReadSucceeded||feedPermanentlyUnavailable));
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
@@ -573,6 +586,44 @@ public class SourceUpdateWorker extends Worker {
         update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
             .putInt("source_feed_batch_scanned",nextBatchScanned);
       }
+      if(initialDiscoveryChain){
+        // Only count a source feed as done after its entire page was probed and
+        // end-of-feed was observed. A successful HTTP response alone is not done.
+        boolean[] finished=new boolean[feeds.length];
+        int completedFeeds=0;
+        for(int i=0;i<feeds.length;i++)finished[i]=roomBoolean(initialFeedDoneKey(i),false);
+        if(feedBatchComplete){
+          for(FeedBatch batch:feedBatches){
+            if(batch.success&&batch.index>=0&&batch.index<feeds.length
+                &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+              finished[batch.index]=true;
+          }
+        }
+        for(boolean done:finished)if(done)completedFeeds++;
+        int activeFeed=initialNextFeedIndex;
+        int activeCursor=0,activeEntries=-1;
+        for(FeedBatch batch:feedBatches){
+          if(batch.success&&!finished[batch.index]&&batch.indexedEntries>0){
+            activeFeed=batch.index;
+            activeCursor=batch.cursor+(feedBatchComplete?batch.parsed:nextBatchScanned);
+            activeEntries=batch.indexedEntries;
+          }
+        }
+        int progressPercent=FullDiscoveryProgressPolicy.percent(
+            completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
+        int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
+        update.putInt("source_initial_progress_percent",progressPercent)
+            .putInt("source_initial_progress_done_feeds",completedFeeds)
+            .putInt("source_initial_progress_total_feeds",feeds.length)
+            .putInt("source_initial_progress_staged_channels",saved.length())
+            .putInt("source_initial_progress_checked_urls",
+                (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
+            .putInt("source_initial_progress_feed_index",Math.max(0,activeFeed))
+            .putInt("source_initial_progress_feed_cursor",Math.max(0,activeCursor))
+            .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
+            .putString("source_initial_progress_phase",initialDiscoveryComplete
+                ?"完整频道快照已发布":"正在逐个抓取、检测和整理来源");
+      }
       if(initialDiscoveryChain&&initialHasValidatedSource){
         update.putBoolean("source_initial_has_validated_source",true);
       }
@@ -613,6 +664,10 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_feed_batch_fingerprint")
             .remove("source_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
+            .putInt("source_initial_progress_percent",0)
+            .putInt("source_initial_progress_done_feeds",0)
+            .putInt("source_initial_progress_staged_channels",0)
+            .putString("source_initial_progress_phase","本轮抓源没有通过验证的来源，未发布快照；可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
@@ -708,6 +763,11 @@ public class SourceUpdateWorker extends Worker {
   }
 
   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
+    if(initialDiscoveryChain){
+      // The existing counters and cursors stay unchanged while viewing.
+      com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+          "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+    }
     // Do not repeatedly wake the periodic job every few minutes while a user
     // watches television; next week's schedule is the automatic fallback.
     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
@@ -735,8 +795,11 @@ public class SourceUpdateWorker extends Worker {
     }
   }
   private static class FeedBatch{
-    final int index,cursor,parsed;final boolean success;
-    FeedBatch(int i,int c,int p,boolean ok){index=i;cursor=c;parsed=p;success=ok;}
+    final int index,cursor,parsed,indexedEntries;
+    final boolean success;
+    FeedBatch(int i,int c,int p,int total,boolean ok){
+      index=i;cursor=c;parsed=p;indexedEntries=total;success=ok;
+    }
   }
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
