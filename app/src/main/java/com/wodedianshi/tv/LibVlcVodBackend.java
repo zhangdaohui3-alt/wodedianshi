@@ -16,9 +16,16 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     private volatile Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean released = true;
+    private volatile boolean revoked;
+    private volatile boolean playing;
+    private volatile long positionMs, durationMs;
+    private final java.util.concurrent.ExecutorService worker;
+    private final Runnable poll = this::pollTimeline;
 
-    public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout) {
+    public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout,
+                            java.util.concurrent.ExecutorService worker) {
         engine = new LibVlcPlaybackEngine(context, videoLayout);
+        this.worker = worker;
     }
 
     @Override public void setListener(Listener value) {
@@ -26,66 +33,111 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         engine.setListener(new LibVlcPlaybackEngine.Listener() {
             @Override public void onPlaying() {
                 Listener current = listener;
-                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onReady(); });
+                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onReady(); });
             }
             @Override public void onVideoOutput(int count) {
                 Listener current = listener;
-                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onVideoOutput(count > 0); });
+                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onVideoOutput(count > 0); });
             }
             @Override public void onBuffering(float percent) { }
             @Override public void onFailure(String reason) {
                 Listener current = listener;
-                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onFailure(reason); });
+                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onFailure(reason); });
             }
             @Override public void onStopped() { }
             @Override public void onEndReached() {
                 Listener current = listener;
-                if (!released && current != null) mainHandler.post(() -> { if (!released && listener == current) current.onEnded(); });
+                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onEnded(); });
+            }
+        });
+    }
+
+    // All JNI calls use the same serial worker as live VLC. The main thread
+    // only consumes the latest timeline snapshot and enqueues user commands.
+    private void submit(Runnable action) {
+        if (revoked) return;
+        worker.execute(() -> {
+            if (revoked) return;
+            try { action.run(); }
+            catch (RuntimeException | LinkageError error) {
+                Listener current = listener;
+                if (current != null) mainHandler.post(() -> {
+                    if (!revoked && listener == current)
+                        current.onFailure(error.getClass().getSimpleName());
+                });
             }
         });
     }
 
     @Override public void play(String url) {
-        if (released) {
-            engine.initialize();
-            released = false;
-        }
-        engine.play(url);
+        submit(() -> {
+            if (released) {
+                engine.initialize();
+                if (revoked) return;
+                released = false;
+            }
+            if (revoked) return;
+            engine.play(url);
+            mainHandler.post(poll);
+        });
+    }
+
+    private void pollTimeline() {
+        if (revoked || released) return;
+        try {
+            submit(() -> {
+                playing = engine.isPlaying();
+                positionMs = engine.getTimeMs();
+                durationMs = engine.getLengthMs();
+                // Schedule only after the previous poll completes; a slow
+                // decoder cannot accumulate periodic JNI work in the queue.
+                if (!revoked) mainHandler.postDelayed(poll, 500L);
+            });
+        } catch (RuntimeException ignored) { }
     }
 
     @Override public void pause() {
-        if (!released) engine.pause();
+        submit(() -> { if (!released) engine.pause(); });
     }
 
     @Override public void resume() {
-        if (!released) engine.resume();
+        submit(() -> { if (!released) engine.resume(); });
     }
 
     @Override public boolean isPlaying() {
-        return !released && engine.isPlaying();
+        return !revoked && !released && playing;
     }
 
-    @Override public long getPositionMs() {
-        return released ? 0L : engine.getTimeMs();
-    }
+    @Override public long getPositionMs() { return positionMs; }
+    @Override public long getDurationMs() { return durationMs; }
 
-    @Override public long getDurationMs() {
-        return released ? 0L : engine.getLengthMs();
-    }
-
-    @Override public boolean seekToMs(long positionMs) {
-        return !released && engine.seekToMs(positionMs);
+    @Override public boolean seekToMs(long target) {
+        if (revoked || released || durationMs <= 0L) return false;
+        submit(() -> { if (!released) engine.seekToMs(target); });
+        return true; // request accepted, not a synchronous native seek result
     }
 
     public void setVideoScaleMode(int mode) {
-        if (!released) engine.setVideoScaleMode(mode);
+        submit(() -> { if (!released) engine.setVideoScaleMode(mode); });
     }
 
-    @Override public void release() {
+    /** Main-thread revocation precedes posting teardown to the shared worker. */
+    void revoke() {
+        revoked = true;
         released = true;
         listener = null;
         mainHandler.removeCallbacksAndMessages(null);
         engine.setListener(null);
-        engine.release();
+    }
+
+    /** Called only by the shared lifecycle worker, never by the UI. */
+    boolean releaseAndConfirm() {
+        revoke();
+        return engine.release();
+    }
+
+    @Override public void release() {
+        revoke();
+        worker.execute(this::releaseAndConfirm);
     }
 }

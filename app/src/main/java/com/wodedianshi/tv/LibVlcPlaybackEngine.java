@@ -9,7 +9,7 @@ import android.os.Looper;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
@@ -44,28 +44,30 @@ public final class LibVlcPlaybackEngine {
     private volatile Listener listener;
     private volatile boolean released = true;
     private final NativeReleaseConfirmation releaseConfirmation = new NativeReleaseConfirmation();
+    private volatile boolean viewOperationUnconfirmed;
 
     public LibVlcPlaybackEngine(Context context, VLCVideoLayout layout) {
         appContext = context.getApplicationContext();
         videoLayout = layout;
     }
 
-    private static void runViewOperationOnMain(Runnable operation) {
+    private void runViewOperationOnMain(Runnable operation) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             operation.run();
             return;
         }
         CountDownLatch completed = new CountDownLatch(1);
-        AtomicReference<RuntimeException> failure = new AtomicReference<>();
-        // When an 8-second wait expires, the already-posted View operation
-        // must not unexpectedly attach an obsolete VLC Surface minutes later.
-        final AtomicBoolean abandoned = new AtomicBoolean(false);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        // 0=pending, 1=running, 2=finished, 3=cancelled before start.
+        // If JNI has entered the UI operation, a Java timeout cannot stop it.
+        final AtomicInteger phase = new AtomicInteger();
         final Handler handler = new Handler(Looper.getMainLooper());
         final Runnable dispatched = () -> {
             try {
-                if (!abandoned.get()) operation.run();
-            } catch (RuntimeException error) {
-                failure.set(error);
+                if (!phase.compareAndSet(0, 1)) return;
+                try { operation.run(); }
+                catch (RuntimeException | LinkageError error) { failure.set(error); }
+                finally { phase.set(2); }
             } finally {
                 completed.countDown();
             }
@@ -76,12 +78,14 @@ public final class LibVlcPlaybackEngine {
         }
         try {
             if (!completed.await(8, TimeUnit.SECONDS)) {
-                abandoned.set(true);
+                if (!phase.compareAndSet(0, 3) && phase.get() != 2)
+                    viewOperationUnconfirmed = true;
                 handler.removeCallbacks(dispatched);
                 throw new IllegalStateException("Timed out waiting for VLC video surface on UI thread");
             }
         } catch (InterruptedException interrupted) {
-            abandoned.set(true);
+            if (!phase.compareAndSet(0, 3) && phase.get() != 2)
+                viewOperationUnconfirmed = true;
             handler.removeCallbacks(dispatched);
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while attaching VLC video surface", interrupted);
@@ -90,7 +94,9 @@ public final class LibVlcPlaybackEngine {
         if (waited >= 150L) {
             android.util.Log.w("MyTVVLC", "VLC_VIEW_DISPATCH_SLOW waitMs=" + waited);
         }
-        if (failure.get() != null) throw failure.get();
+        Throwable error = failure.get();
+        if (error instanceof RuntimeException) throw (RuntimeException) error;
+        if (error instanceof LinkageError) throw (LinkageError) error;
     }
 
     public boolean isInitialized() {
@@ -348,6 +354,13 @@ public final class LibVlcPlaybackEngine {
         released = true;
         listener = null;
         recordNativeStage("VLC_RELEASE_BEGIN");
+        if (viewOperationUnconfirmed) {
+            // A UI/JNI operation may still own the native player. Do not
+            // touch it concurrently. Keep the process release barrier closed.
+            releaseConfirmation.finishRelease(false);
+            recordNativeStage("VLC_VIEW_OPERATION_UNCONFIRMED");
+            return false;
+        }
 
         MediaPlayer player = mediaPlayer;
         mediaPlayer = null;
@@ -371,6 +384,11 @@ public final class LibVlcPlaybackEngine {
             } catch (RuntimeException | LinkageError error) {
                 nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_DETACH_FAILED_" + error.getClass().getSimpleName());
+            }
+            if (viewOperationUnconfirmed) {
+                releaseConfirmation.finishRelease(false);
+                recordNativeStage("VLC_DETACH_OPERATION_UNCONFIRMED");
+                return false;
             }
             try {
                 player.setEventListener(null);
