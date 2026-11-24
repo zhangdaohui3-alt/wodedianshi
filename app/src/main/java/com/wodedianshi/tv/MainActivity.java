@@ -5591,8 +5591,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Best-effort asynchronous native breadcrumb. A native abort or abrupt
   // process death can occur before SharedPreferences persists it.
   private void saveCriticalEngineStage(String stage,String detail){
-    // Keep this in memory before diagnostic persistence, which can itself stall.
-    noteUiDecoderStage(stage+" "+safeDiagnosticDetail(detail));
     saveLiveDiagnostic(stage,detail,true);
   }
   private static final Object LIVE_DIAGNOSTIC_LOCK=new Object();
@@ -5603,8 +5601,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void saveLiveDiagnostic(String stage,String detail,boolean criticalStage){
     long recordedAt=System.currentTimeMillis();
+    String sanitized=safeDiagnosticDetail(detail);
+    // Capture before persistence without re-sanitizing the diagnostic text.
+    if(criticalStage)noteUiDecoderStage(stage+" "+sanitized);
     String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date(recordedAt))
-        +" | "+stage+" | "+safeDiagnosticDetail(detail);
+        +" | "+stage+" | "+sanitized;
     android.util.Log.w("MyTVLiveDiag",line);
     try{
       android.content.SharedPreferences p=getSharedPreferences("mytv",0);
