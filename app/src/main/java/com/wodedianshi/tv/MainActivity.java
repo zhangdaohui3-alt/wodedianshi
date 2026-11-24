@@ -5337,7 +5337,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(bad.isEmpty()){toast("当前播放源地址为空");return;}
           blockSource(bad);
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          if(next>=0){c.activeSource=next;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{setSourceUpdatePlaybackActive(false);toast("已屏蔽此源，但本频道没有其他未屏蔽源");}
           return;
         }
@@ -5349,7 +5349,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
+        c.activeSource=index;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       fullscreenRemoteDialogOpen=true;
@@ -5372,7 +5372,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     HashSet<String> blocked=new HashSet<>();
     HashSet<String> coolingDown=new HashSet<>();
     for(String url:c.backups){
-      if(isSourceBlocked(url))blocked.add(url);
+      if(isSourceBlocked(url)||failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
       else if(SourceMemoryStore.isCoolingDown(this,url))coolingDown.add(url);
     }
     return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
@@ -5385,6 +5385,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(next<0){toast("本频道备用源都已被屏蔽，请在换源菜单中恢复");return;}
     c.activeSource=next;
     automaticSwitchCount=0;
+    failedEndpointsThisPass.clear();
+    automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
     queueActiveSourceMutation(c.key(),c.backups.get(next));
@@ -5658,6 +5660,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private int automaticSwitchCount=0;
+  private final HashSet<String> failedEndpointsThisPass=new HashSet<>();
+  private long liveTuneRequestSerial=0L;
   // A complete source failure advances through channels at most once per manual play.
   private int automaticChannelSwitchCount=0;
   private Runnable bufferingFallback;
@@ -5704,7 +5708,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     audioTrackCheck=()->{
       audioTrackCheck=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
-          ||player.getPlaybackState()!=Player.STATE_READY)return;
+          ||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
       boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
       boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
@@ -5712,6 +5716,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
           advanceToNextSourceAutomatically("检测到当前源"+reason);
         }
+      }else{
+        // Tracks can disappear after startup; keep checking while READY.
+        scheduleAudioTrackCheck();
       }
     };
     uiHandler.postDelayed(audioTrackCheck,12000L);
@@ -5754,15 +5761,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
       // A source that was healthy for a long time should not consume the startup retry budget forever.
-      boolean confirmedOutput=SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
-          videoTrackPresent,sourceFirstFrameRecorded,audioTrackSelected,audioPositionAdvancing);
+      boolean confirmedOutput=TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,
+          audioTrackSupported,audioTrackSelected,audioPositionAdvancing,videoTrackPresent,
+          videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded);
       if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
-          &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L){
+          &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L
+          &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<20000L){
         sourceStableRecorded=true;
-        recordSourceMetric(currentSourceUrl(),"stable",0L);
+        String goodUrl=currentSourceUrl();
+        recordSourceMetric(goodUrl,"stable",0L);
+        if(selected>=0&&selected<channels.size())
+          SourceMemoryStore.saveLastGood(MainActivity.this,
+              SourceMemoryStore.channelIdentityKey(identity(channels.get(selected))),goodUrl);
       }
-      if(sourceReadyAt>0L && now-sourceReadyAt>=120000L){
+      if(TrackHealthPolicy.canRefreshRecoveryBudget(confirmedOutput,sourceReadyAt,
+          watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)){
         automaticSwitchCount=0;
+        failedEndpointsThisPass.clear();
         automaticChannelSwitchCount=0;
         sameSourceRecoveryCount=0;
         sourceReadyAt=now;
@@ -5884,6 +5899,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Every automatic failover path (buffer timeout, silent freeze, ended stream,
     // track failure or player error) must update the same failure memory. Some
     // paths arrive here without passing through onPlayerError.
+    failedEndpointsThisPass.add(SourceSelectionPolicy.endpointKey(currentSourceUrl()));
     recordCurrentSourceFailure();
     lastAutoFailoverMediaId=failedMediaId;
     cancelBufferingFallback();
@@ -5905,6 +5921,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     automaticSwitchCount++;
+    sameSourceRecoveryCount=0;
     c.activeSource=next;
 
     info.setText(reason+"，正在自动切换备用源 "+(c.activeSource+1)+"/"+c.backups.size());
@@ -5932,6 +5949,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     automaticChannelSwitchCount++;
     automaticSwitchCount=0;
+    failedEndpointsThisPass.clear();
     sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
     int previouslySelected=selected;
@@ -5949,6 +5967,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     automaticSwitchCount=0;
+    failedEndpointsThisPass.clear();
     automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=false;
@@ -5972,6 +5991,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Channel target=channels.get(ix);
     if(target.backups==null||target.backups.isEmpty())return;
     automaticSwitchCount=0;
+    failedEndpointsThisPass.clear();
     automaticChannelSwitchCount=0;
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
@@ -5985,6 +6005,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startCurrentSource(){
     if(selected<0||selected>=channels.size())return;
+    ++liveTuneRequestSerial;
     Channel requested=channels.get(selected);
     saveCriticalEngineStage("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
     try{
@@ -6025,12 +6046,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Multiple rapid tune requests queue behind the same release; only the latest
     // matching playback generation is allowed to continue.
     if(libVlcEngine!=null||libVlcReleaseInProgress){
-      final String expectedMediaId=currentMediaId;
+      final long requestSerial=liveTuneRequestSerial;
       final int expectedChannel=selected;
+      setSourceUpdatePlaybackActive(true);
       releaseLibVlcEngine(()->{
         if(activityStarted&&!isFinishing()&&!isDestroyed()&&currentVodPanel==null
-            &&selected==expectedChannel&&expectedMediaId.equals(currentMediaId))
-          startCurrentSourceInternal();
+            &&selected==expectedChannel&&requestSerial==liveTuneRequestSerial)
+          startCurrentSource();
       });
       return;
     }
@@ -6135,12 +6157,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               +" firstFrameMs="+tuneMs+" postLoadMs="+afterLoadMs
               +" engine=Media3 sourceIndex="+(selected>=0&&selected<channels.size()
                   ?channels.get(selected).activeSource+1:0));
-          if(selected>=0&&selected<channels.size()){
-            Channel renderedChannel=channels.get(selected);
-            SourceMemoryStore.saveLastGood(MainActivity.this,
-                SourceMemoryStore.channelIdentityKey(identity(renderedChannel)),
-                renderedUrl);
-          }
+          // First frame is useful timing evidence, but not yet a healthy TV source.
+          // Last-known-good is recorded only after sustained audio and video checks.
         }
         @Override public void onVideoFrameProcessingOffset(AnalyticsListener.EventTime eventTime,
             long totalProcessingOffsetUs,int frameCount){
@@ -6172,7 +6190,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // video renderer; accept only current-item events with at least one frame.
       player.addListener(new Player.Listener(){
         public void onTracksChanged(Tracks tracks){
-          if(listenerOwner!=MainActivity.this.player)return;
+          if(!isCurrent())return;
           boolean audioPresent=false,audioSupported=false,audioSelected=false,videoPresent=false,videoSupported=false,videoSelected=false;
           for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()==C.TRACK_TYPE_AUDIO){
@@ -6187,6 +6205,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           audioTrackPresent=audioPresent;
           audioTrackSupported=audioSupported;
+          if(!audioSelected||!audioSupported)audioPositionAdvancing=false;
           audioTrackSelected=audioSelected;
           videoTrackPresent=videoPresent;
           videoTrackSupported=videoSupported;
@@ -6629,7 +6648,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(key==null||key.isEmpty())continue;
       String remembered=SourceMemoryStore.getLastGood(this,key);
       int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
-      if(index>=0){c.activeSource=index;return;}
+      if(index>=0&&!isSourceBlocked(c.backups.get(index))
+          &&!SourceMemoryStore.isCoolingDown(this,c.backups.get(index))){c.activeSource=index;return;}
     }
   }
   private void recordSourceMetric(String url,String event,long readyMs){
