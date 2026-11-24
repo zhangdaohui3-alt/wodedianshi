@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void independentlyResumesInterleavedFeedPages() {
+        String first=DiscoveryBatchPolicy.initialBatchPrefix(0);
+        String second=DiscoveryBatchPolicy.initialBatchPrefix(1);
+        org.junit.Assert.assertNotEquals(first,second);
+        java.util.Map<String,Integer> offsets=new java.util.HashMap<>();
+        offsets.put(first+"scanned",7);
+        offsets.put(second+"scanned",2);
+        org.junit.Assert.assertEquals(7,DiscoveryBatchPolicy.scannedForBatch("a","a",offsets.get(first+"scanned"),24));
+        org.junit.Assert.assertEquals(2,DiscoveryBatchPolicy.scannedForBatch("b","b",offsets.get(second+"scanned"),24));
+        org.junit.Assert.assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new-a","a",offsets.get(first+"scanned"),24));
+        offsets.remove(first+"scanned");
+        org.junit.Assert.assertEquals(Integer.valueOf(2),offsets.get(second+"scanned"));
+    }
+
     @Test public void cursorResumesOnlyForIdenticalKnownFeedVersion() {
         org.junit.Assert.assertEquals(24, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:a"));
         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:b"));
