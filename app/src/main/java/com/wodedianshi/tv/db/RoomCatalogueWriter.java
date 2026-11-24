@@ -1,6 +1,8 @@
 package com.wodedianshi.tv.db;
 
 import android.content.Context;
+import com.wodedianshi.tv.SourceProbeTimePolicy;
+import java.util.function.BooleanSupplier;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
@@ -93,6 +95,15 @@ public final class RoomCatalogueWriter {
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
             long[] committedAt) {
+        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+                clearBuildRowsOnCommit, allowEmptyInitialization, committedAt, null);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+            long[] committedAt, BooleanSupplier paused) {
+        checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty() && !allowEmptyInitialization) {
             throw new IllegalArgumentException("refusing to commit an empty catalogue");
@@ -104,6 +115,7 @@ public final class RoomCatalogueWriter {
         // no legacy JSON import or sidecar catalogue is involved.
         final int[] written = {0};
         db.runInTransaction(() -> {
+            checkPause(paused);
             CatalogueMigrationEntity checkpoint =
                     dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
             if (allowEmptyInitialization && (checkpoint != null || dao.countChannels() != 0
@@ -133,6 +145,7 @@ public final class RoomCatalogueWriter {
             HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
             HashSet<String> ambiguousPreviousFavorites = new HashSet<>();
             for (ChannelWithSources favorite : previousFavorites) {
+                checkPause(paused);
                 if (favorite == null || favorite.channel == null) continue;
                 ChannelEntity old = favorite.channel;
                 String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
@@ -150,6 +163,7 @@ public final class RoomCatalogueWriter {
             HashMap<String, Integer> categoryOrders = new HashMap<>();
 
             for (int row = 0; row < snapshot.size(); row++) {
+                checkPause(paused);
                 ChannelSnapshot item = snapshot.get(row);
                 if (item == null || item.name == null || item.name.trim().isEmpty()
                         || item.url == null || item.url.trim().isEmpty()) continue;
@@ -227,6 +241,7 @@ public final class RoomCatalogueWriter {
                 desiredFavoriteIds.addAll(dao.getFavoriteChannelIds());
                 desiredFavoriteIds.retainAll(presentChannelIds);
                 for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
+                    checkPause(paused);
                     if (ambiguousPreviousFavorites.contains(oldFavorite.getKey())) continue;
                     String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
                     if (newId == null || !presentChannelIds.contains(newId)) continue;
@@ -238,15 +253,20 @@ public final class RoomCatalogueWriter {
             // Remove only rows absent from the complete snapshot. FK cascades then
             // clean up the removed channel's own sources/favorite, never its peers.
             previousChannelIds.removeAll(presentChannelIds);
-            for (String staleId : previousChannelIds) dao.deleteChannelById(staleId);
+            for (String staleId : previousChannelIds) {
+                checkPause(paused);
+                dao.deleteChannelById(staleId);
+            }
 
             // Preserve existing favorite timestamps; only apply actual additions/removals.
             HashSet<String> currentFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
             for (String favoriteId : currentFavoriteIds) {
+                checkPause(paused);
                 if (!desiredFavoriteIds.contains(favoriteId)) dao.removeFavorite(favoriteId);
             }
             currentFavoriteIds.retainAll(desiredFavoriteIds);
             for (String favoriteId : desiredFavoriteIds) {
+                checkPause(paused);
                 if (!currentFavoriteIds.contains(favoriteId)) {
                     Long originalAddedAt = preservedFavoriteTimes.get(favoriteId);
                     dao.addFavorite(new FavoriteEntity(favoriteId,
@@ -256,11 +276,13 @@ public final class RoomCatalogueWriter {
 
             previousCategoryIds.removeAll(presentCategoryIds);
             for (String staleCategoryId : previousCategoryIds) {
+                checkPause(paused);
                 // Category rows are RESTRICT parents; deleting only after stale
                 // channels are gone keeps the FK invariant intact.
                 dao.deleteCategoryById(staleCategoryId);
             }
 
+            checkPause(paused);
             long completedAt = Math.max(System.currentTimeMillis(),
                     checkpoint == null ? 1L : checkpoint.completedAt + 1L);
             dao.insertMigration(new CatalogueMigrationEntity(
@@ -285,8 +307,15 @@ public final class RoomCatalogueWriter {
                         Long.toString(publishedAt), publishedAt));
                 db.appStateDao().remove("source_full_rebuild_active");
             }
+            // Throwing from this callback rolls back rows, checkpoint and staging together.
+            checkPause(paused);
         });
         return written[0];
+    }
+
+    private static void checkPause(BooleanSupplier paused) {
+        // UI-requested edits use the original non-cancellable path.
+        if (paused != null) SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
     private static String legacyPrimaryUrl(String legacyKey, String name, String fallback) {
@@ -305,17 +334,32 @@ public final class RoomCatalogueWriter {
     /** Commit only if no user/catalogue mutation has happened since the worker read Room. */
     public static int writeSnapshot(Context context, JSONArray snapshot,
             long expectedCatalogueVersion) throws Exception {
-        return writeSnapshot(context, snapshot, expectedCatalogueVersion, false);
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, false, null);
     }
 
     /** Atomically publish a complete rebuild and clear its staging rows. */
     public static int writeSnapshotAndClearBuild(Context context, JSONArray snapshot,
             long expectedCatalogueVersion) throws Exception {
-        return writeSnapshot(context, snapshot, expectedCatalogueVersion, true);
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, true, null);
+    }
+
+    /** Background-only cancellable publication. The caller must supply a version. */
+    public static int writeSnapshot(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, BooleanSupplier paused) throws Exception {
+        if (expectedCatalogueVersion < 0L) throw new IllegalArgumentException("Missing catalogue version");
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, false, paused);
+    }
+
+    public static int writeSnapshotAndClearBuild(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, BooleanSupplier paused) throws Exception {
+        if (expectedCatalogueVersion < 0L) throw new IllegalArgumentException("Missing catalogue version");
+        return writeSnapshot(context, snapshot, expectedCatalogueVersion, true, paused);
     }
 
     private static int writeSnapshot(Context context, JSONArray snapshot,
-            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit) throws Exception {
+            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+            BooleanSupplier paused) throws Exception {
+        checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
         // Channel count is deliberately not compared with the previous catalogue:
@@ -328,6 +372,7 @@ public final class RoomCatalogueWriter {
         }
         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
         for (int row = 0; row < snapshot.length(); row++) {
+            checkPause(paused);
             JSONObject item = snapshot.optJSONObject(row);
             if (item == null) {
                 throw new IllegalStateException("Background catalogue snapshot contains an invalid row at index " + row);
@@ -363,7 +408,7 @@ public final class RoomCatalogueWriter {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
         return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit);
+                clearBuildRowsOnCommit, false, null, paused);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
