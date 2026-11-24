@@ -31,6 +31,15 @@ public final class FullDiscoveryProgressPolicy {
         return allFeedsInspected && hasValidatedSource && !viewing;
     }
 
+    // Bounded, opportunistic cache. Room is authoritative after every commit.
+    public static boolean canRetainStaging(int rows,boolean viewing) {
+        return rows>=0&&rows<=(viewing?512:1024);
+    }
+    public static boolean canReuseStaging(int rows,String revision,String durableRevision,long savedAt,long now) {
+        return canRetainStaging(rows,false)&&revision!=null&&!revision.isEmpty()
+                &&revision.equals(durableRevision)&&savedAt>=0L&&now>=savedAt&&now-savedAt<=60000L;
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // At most two extra publications: an early useful set, then mainland coverage.
     // A milestone is not a completed full build and does not change the probe policy.
