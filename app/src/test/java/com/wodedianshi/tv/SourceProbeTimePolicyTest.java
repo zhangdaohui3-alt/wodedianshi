@@ -4,6 +4,16 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void viewingDirectoryUsesBoundedSizeAndPacing() {
+        assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(-1L));
+        assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(262144L));
+        assertFalse(SourceProbeTimePolicy.fitsLiveDirectory(262145L));
+        assertEquals(125L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,0L));
+        assertEquals(75L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,50L));
+        assertEquals(0L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,200L));
+        assertEquals(8000L,SourceProbeTimePolicy.liveDirectoryPacingMillis(Long.MAX_VALUE,0L));
+    }
+
     @Test public void stableViewingLeaseExpiresAndRevokesOnNewPlaybackOrStop() {
         SourceUpdateActivityPolicy.setActivityActive(true);
         SourceUpdateActivityPolicy.setPlaybackActive(true);
