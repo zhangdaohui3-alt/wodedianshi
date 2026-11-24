@@ -66,6 +66,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable libVlcStartTimeout;
   private Runnable libVlcWatchdog;
   private Runnable libVlcBufferingTimeout;
+  private boolean libVlcRebuffering;
   private LinearLayout rootLayout, categoryPane, channelPane, mainPane;
   private ScrollView channelScroll;
   private TextView playbackInfo;
@@ -1665,11 +1666,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
-    resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())||(libVlcEngine!=null&&libVlcEngine.isPlaying());
+    if(currentVodPanel!=null||vodCatalogueDialog!=null)return;
+    resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())||libVlcEngine!=null
+        ||liveVlcReleaseContinuation!=null;
     // A VOD catalogue session owns the screen; explicitly revoke live audio before
     // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
     if(player!=null){try{player.setPlayWhenReady(false);}catch(RuntimeException ignored){}}
-    if(libVlcEngine!=null){try{libVlcEngine.pause();}catch(RuntimeException ignored){}}
+    // Revoke live VLC immediately and queue native release on its owner.
+    // No native pause/query is allowed on the UI thread during initialization.
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
+    ++liveTuneRequestSerial;
+    if(liveVlcReleaseContinuation!=null){
+      libVlcReleaseCallbacks.remove(liveVlcReleaseContinuation);
+      liveVlcReleaseContinuation=null;
+    }
+    releaseLibVlcEngine();
     activeVodRegion=getSharedPreferences("mytv",0).getString("vod_search_region","中国");
     if(!"国外".equals(activeVodRegion))activeVodRegion="中国";
     setSourceUpdatePlaybackActive(true);
@@ -1855,7 +1866,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         startCurrentSource();
       }else{
         setSourceUpdatePlaybackActive(
-            (player!=null&&player.isPlaying())||(libVlcEngine!=null&&libVlcEngine.isPlaying()));
+            (player!=null&&player.getPlayWhenReady())||libVlcEngine!=null);
       }
       resumeLiveAfterVod=false;
     });
@@ -3300,11 +3311,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     if(PROCESS_VLC_TEARDOWNS.get()>0){toast("旧播放器仍在释放，请稍后重试");return;}
-    // The VOD catalogue owns live-playback suspension. Keep both live engines
-    // paused while this nested full-screen VOD player is open; the catalogue's
-    // dismiss handler restores the live channel after every VOD surface is gone.
-    try{if(player!=null)player.pause();}catch(RuntimeException error){saveLiveDiagnostic("LIVE_PAUSE_FOR_VOD_ERROR",error.getClass().getSimpleName());}
-    try{if(libVlcEngine!=null)libVlcEngine.pause();}catch(RuntimeException error){saveLiveDiagnostic("VLC_PAUSE_FOR_VOD_ERROR",error.getClass().getSimpleName());}
+    // Both live engines were already revoked above. Do not issue redundant
+    // native pause commands from the UI during the ownership handoff.
     releaseVodFallback();
     if(libVlcReleaseInProgress||media3ReleaseUnconfirmed||PROCESS_VLC_TEARDOWNS.get()>0)return;
     vodSessionGeneration++;vodFallbackAttempted=false;
@@ -6346,7 +6354,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // released. Match both the channel generation and the exact engine instance so
         // a late callback from an old native player cannot revive or fail over a new tune.
         private boolean isCurrent(){return libVlcEngine==engine&&selected==expectedChannel
-            &&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource;}
+            &&expectedMediaId.equals(currentMediaId)&&libVlcAttemptedForSource
+            &&activityStarted&&currentVodPanel==null&&!isAnyPlaybackLockActive();}
         public void onPlaying(){uiHandler.post(()->{
           if(!isCurrent())return;
           if(!libVlcVideoOutputReady)info.setText("VLC 已进入播放状态，正在确认视频输出…");
@@ -6411,6 +6420,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });}
         public void onBuffering(float percent){uiHandler.post(()->{
           if(!isCurrent())return;
+          libVlcRebuffering=percent<100f;
           if(percent>=100f){
             cancelLibVlcBufferingTimeout();
             saveLiveDiagnostic("VLC_BUFFER_RECOVERED","buffering_percent=100");
@@ -6506,7 +6516,44 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     libVlcWatchdog=()->{
       libVlcWatchdog=null;
       if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
-      if(!libVlcVideoOutputReady||!libVlcEngine.isPlaying()){
+      final LibVlcPlaybackEngine expectedEngine=libVlcEngine;
+      // Native health queries may block behind a vendor decoder. Run one
+      // outstanding check on the serial lifecycle worker, with a UI deadline.
+      final Runnable timeout=()->{
+        if(libVlcEngine!=expectedEngine||!currentMediaId.equals(expectedMediaId)
+            ||selected!=expectedChannel||!usingLibVlc)return;
+        libVlcWatchdog=null;
+        saveLiveDiagnostic("VLC_HEALTH_TIMEOUT","native health check exceeded 8 seconds");
+        releaseLibVlcEngine();
+        if(video!=null)video.setVisibility(View.VISIBLE);
+        advanceToNextSourceAutomatically("VLC 状态检测超时");
+      };
+      libVlcWatchdog=timeout;
+      uiHandler.postDelayed(timeout,8000L);
+      libVlcWorker.execute(()->{
+        if(libVlcEngine!=expectedEngine)return;
+        boolean playing;
+        try{playing=expectedEngine.isPlaying();}
+        catch(RuntimeException|LinkageError failure){playing=false;}
+        final boolean reportsPlaying=playing;
+        uiHandler.post(()->{
+          if(libVlcWatchdog!=timeout||libVlcEngine!=expectedEngine
+              ||!currentMediaId.equals(expectedMediaId)||selected!=expectedChannel)return;
+          cancelLibVlcWatchdog();
+          finishLibVlcHealthCheck(expectedMediaId,expectedChannel,reportsPlaying);
+        });
+      });
+    };
+    uiHandler.postDelayed(libVlcWatchdog,12000L);
+  }
+  private void finishLibVlcHealthCheck(String expectedMediaId,int expectedChannel,boolean reportsPlaying){
+      if(libVlcVideoOutputReady&&libVlcRebuffering){
+        // Rebuffering follows the user's timeout setting, not this health poll.
+        libVlcStableChecks=0;
+        scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+        return;
+      }
+      if(!libVlcVideoOutputReady||!reportsPlaying){
         libVlcStableChecks=0;
         saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
@@ -6528,20 +6575,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             +"promoted to last-known-good and no stable-play success was recorded");
       }
       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
-    };
-    uiHandler.postDelayed(libVlcWatchdog,12000L);
   }
   private void scheduleLibVlcBufferingTimeout(String expectedMediaId,int expectedChannel,LibVlcPlaybackEngine expectedEngine){
-    if(libVlcBufferingTimeout!=null)return;
+    if(libVlcBufferingTimeout!=null||!libVlcVideoOutputReady)return;
+    final int seconds=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+    if(seconds<=0)return;
     libVlcBufferingTimeout=()->{
       libVlcBufferingTimeout=null;
       if(libVlcEngine!=expectedEngine||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||!usingLibVlc)return;
       if(!libVlcVideoOutputReady)return; // Initial connection remains governed by the startup deadline.
-      saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for 12000ms after video output");
+      if(!libVlcRebuffering)return;
+      saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for "+seconds+"s after video output");
       releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
-      advanceToNextSourceAutomatically("VLC 连续缓冲超过 12 秒");
+      advanceToNextSourceAutomatically("VLC 连续缓冲超过 "+seconds+" 秒");
     };
-    uiHandler.postDelayed(libVlcBufferingTimeout,12000L);
+    uiHandler.postDelayed(libVlcBufferingTimeout,seconds*1000L);
   }
   private void cancelLibVlcBufferingTimeout(){if(libVlcBufferingTimeout!=null){uiHandler.removeCallbacks(libVlcBufferingTimeout);libVlcBufferingTimeout=null;}}
   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
@@ -6567,7 +6615,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
-    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
+    LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
     if(afterRelease!=null){
       if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
