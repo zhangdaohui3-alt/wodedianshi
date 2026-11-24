@@ -572,6 +572,7 @@ public class SourceUpdateWorker extends Worker {
           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
       boolean initialDiscoveryComplete=initialFeedsExhausted&&initialHasValidatedSource;
       int roomRowsWritten=0;
+      int publishedChannelCount=saved.length();
       if(initialDiscoveryChain){
         // Persist only to the isolated staging table between batches. A partial
         // collection can never replace or contaminate the currently playable Room catalogue.
@@ -580,10 +581,23 @@ public class SourceUpdateWorker extends Worker {
         if(initialDiscoveryComplete){
           if(stagedRows<=0)throw new IllegalStateException(
               "Full catalogue rebuild completed without any validated channels; live catalogue retained");
+          // The independent staging catalogue is complete, but it must not
+          // erase previously playable channels that a public directory missed.
+          // Reconcile the user's Room snapshot only at the final atomic publish.
+          JSONArray safePublish=preservePreviouslyPublishedChannels(saved,roomSnapshot);
+          publishedChannelCount=safePublish.length();
+          // The reconciliation above can take time on a low-memory TV box.
+          // A viewer may have started playback after the earlier gate; in that
+          // case leave all live Room rows untouched and retry the publication.
+          if(isStopped())return Result.retry();
+          if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+            saveStatus(prefs,"节目开始播放，已保留完整候选目录并延后发布",0);
+            return deferredViewingResult(manual,initialDiscoveryChain);
+          }
           roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotAndClearBuild(
-              getApplicationContext(),saved,roomSnapshot.catalogueVersion);
-          if(roomRowsWritten!=stagedRows)throw new IllegalStateException(
-              "Published Room rows do not match the staged full catalogue");
+              getApplicationContext(),safePublish,roomSnapshot.catalogueVersion);
+          if(roomRowsWritten!=publishedChannelCount)throw new IllegalStateException(
+              "Published Room rows do not match the complete reconciled catalogue");
         }
       }else{
         // Routine updates remain incremental against the current authoritative Room snapshot.
@@ -703,7 +717,7 @@ public class SourceUpdateWorker extends Worker {
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
-            .putInt("source_initial_progress_staged_channels",saved.length())
+            .putInt("source_initial_progress_staged_channels",publishedChannelCount)
             .putInt("source_initial_progress_checked_urls",
                 (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
             .putInt("source_initial_progress_validated_urls",
@@ -908,6 +922,116 @@ public class SourceUpdateWorker extends Worker {
       success=ok;this.unavailable=unavailable;
     }
   }
+  /**
+   * Retain existing published channels, backup URLs, selected source and country/
+   * city membership at the first full-rebuild publication boundary. Staging
+   * remains discovery-only until this point, so interrupted builds cannot change
+   * live Room rows. The writer checks its original Room catalogue version.
+   */
+  private JSONArray preservePreviouslyPublishedChannels(JSONArray discovered,
+      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot prior)throws JSONException {
+    if(prior==null||prior.channels==null||prior.channels.isEmpty())return discovered;
+    JSONArray original=roomSnapshotToArray(prior);
+    LinkedHashMap<String,ArrayDeque<JSONObject>> originalsByIdentity=new LinkedHashMap<>();
+    ArrayList<JSONObject> originalInOrder=new ArrayList<>();
+    for(int i=0;i<original.length();i++){
+      JSONObject old=original.getJSONObject(i);
+      String key=identity(old.optString("name"),old.optString("group"),
+          old.optString("url"),old.optString("tvgId"),old.optString("tvgName"));
+      originalsByIdentity.computeIfAbsent(key,k->new ArrayDeque<>()).add(old);
+      originalInOrder.add(old);
+    }
+    Set<JSONObject> matched=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
+    JSONArray publish=new JSONArray();
+    for(int i=0;i<discovered.length();i++){
+      JSONObject fresh=discovered.getJSONObject(i);
+      String key=identity(fresh.optString("name"),fresh.optString("group"),
+          fresh.optString("url"),fresh.optString("tvgId"),fresh.optString("tvgName"));
+      ArrayDeque<JSONObject> matches=originalsByIdentity.get(key);
+      if(matches==null||matches.isEmpty()){
+        publish.put(fresh);
+        continue;
+      }
+      JSONObject old=matches.removeFirst();
+      matched.add(old);
+      publish.put(mergeNewRoutesIntoSavedChannel(old,fresh));
+    }
+    // Keep even a station missing entirely from every new public directory.
+    // Its old sources may still work despite a failed discovery feed.
+    for(JSONObject old:originalInOrder)if(!matched.contains(old))publish.put(old);
+    android.util.Log.i("MyTVSourceDiscovery",
+        "first_full_publish_discovered="+discovered.length()+
+        " preserved_old="+original.length()+" final="+publish.length());
+    return publish;
+  }
+
+  private ArrayList<String> channelSourceUrls(JSONObject row){
+    ArrayList<String> urls=new ArrayList<>();
+    JSONArray sources=row.optJSONArray("sources");
+    if(sources!=null)for(int i=0;i<sources.length();i++){
+      String url=sources.optString(i,"");
+      if(!url.isEmpty())urls.add(url);
+    }
+    if(urls.isEmpty()&&!row.optString("url","").isEmpty())
+      urls.add(row.optString("url",""));
+    return urls;
+  }
+
+  private JSONObject mergeNewRoutesIntoSavedChannel(JSONObject old,JSONObject fresh)
+      throws JSONException {
+    ArrayList<String> oldUrls=channelSourceUrls(old);
+    ArrayList<String> newUrls=channelSourceUrls(fresh);
+    FullRebuildRouteRetentionPolicy.Result retained=FullRebuildRouteRetentionPolicy.merge(
+        oldUrls,old.optInt("activeSource",0),old.optString("url",""),
+        newUrls,MAX_SOURCES_PER_CHANNEL);
+    JSONArray kept=new JSONArray();
+    HashMap<String,String> keptByEndpoint=new HashMap<>();
+    for(String url:retained.urls){
+      kept.put(url);
+      keptByEndpoint.put(SourceSelectionPolicy.endpointKey(url),url);
+    }
+    // Some legacy rows have channel-level geo tags but no per-source provenance.
+    // Attach them to their old URLs before recalculating the ownership union.
+    JSONArray oldOwnership=old.optJSONArray("backupSourceScopes");
+    if(oldOwnership==null||oldOwnership.length()==0){
+      JSONArray oldScopes=old.optJSONArray("sourceScopes");
+      if(oldScopes!=null)for(String url:oldUrls){
+        String keptUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(url));
+        if(keptUrl==null)continue;
+        for(int j=0;j<oldScopes.length();j++)
+          addBackupSourceScope(old,keptUrl,oldScopes.optString(j,""));
+      }
+    }
+    JSONArray freshOwnership=fresh.optJSONArray("backupSourceScopes");
+    if(freshOwnership!=null&&freshOwnership.length()>0){
+      for(int i=0;i<freshOwnership.length();i++){
+        JSONObject ownership=freshOwnership.optJSONObject(i);
+        if(ownership==null)continue;
+        String retainedUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(
+            ownership.optString("url","")));
+        if(retainedUrl==null)continue;
+        JSONArray scopes=ownership.optJSONArray("scopes");
+        if(scopes!=null)for(int j=0;j<scopes.length();j++)
+          addBackupSourceScope(old,retainedUrl,scopes.optString(j,""));
+      }
+    }else{
+      // Older sources may carry only channel-level tags.
+      JSONArray scopes=fresh.optJSONArray("sourceScopes");
+      if(scopes!=null)for(String newUrl:newUrls){
+        String retainedUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(newUrl));
+        if(retainedUrl==null)continue;
+        for(int j=0;j<scopes.length();j++)
+          addBackupSourceScope(old,retainedUrl,scopes.optString(j,""));
+      }
+    }
+    // Keep the exact saved name, TVG, group and stable primary identity.
+    // Enriching them here could change the Room channel ID and lose favorites.
+    old.put("sources",kept);
+    old.put("activeSource",retained.activeIndex);
+    retainBackupSourceScopes(old,kept);
+    return old;
+  }
+
   private String scopeForFeed(String feed){
     return SourceFeedScopePolicy.scopeForFeed(feed);
   }
