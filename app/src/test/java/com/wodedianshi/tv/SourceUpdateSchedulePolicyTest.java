@@ -63,6 +63,29 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.isInitialDiscoveryComplete(144, 144, 0));
     }
 
+    @Test public void routineMaintenanceOnlyFollowsCompleteFirstCatalogue() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true, 0L));
+        assertFalse(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(false, 1234L));
+        assertTrue(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true, 1234L));
+        assertEquals(7L, SourceUpdateSchedulePolicy.ROUTINE_REFRESH_DAYS);
+    }
+
+    @Test public void busyRoutineUpdateSkipsRatherThanRetryingEveryFewMinutes() {
+        assertFalse(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(false, false));
+        assertTrue(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(true, false));
+        assertTrue(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(false, true));
+        assertTrue(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(true, true));
+    }
+
+    @Test public void manualFirstRebuildMustDeferWhenSavedChannelsAlreadyExist() {
+        assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, true, true, true));
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, true, true, false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+                true, true, false, true));
+    }
+
     @Test public void validatedDiscoverySourceCountsAsSuccessful() {
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(1));
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(24));
