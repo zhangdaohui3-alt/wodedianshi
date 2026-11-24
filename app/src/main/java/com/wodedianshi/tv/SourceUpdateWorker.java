@@ -608,7 +608,6 @@ public class SourceUpdateWorker extends Worker {
       // CCTV and satellite channels merge across source hosts.
       for(int i=0;i<saved.length();i++){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
@@ -849,7 +848,6 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&initialDiscoveryComplete){
         FullDiscoveryProgressPolicy.Coverage fresh=new FullDiscoveryProgressPolicy.Coverage();
         for(int i=0;i<saved.length();i++){
-          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=saved.getJSONObject(i);
           fresh.add(row.optString("name"),row.optString("group"),
