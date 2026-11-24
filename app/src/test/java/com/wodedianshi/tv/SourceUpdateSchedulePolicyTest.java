@@ -4,6 +4,19 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void routineRotationCoversEveryFeedWithoutWrappingMidSlice() {
+        int start=0, visited=0;
+        do {
+            int end=SourceUpdateSchedulePolicy.routineSliceEnd(start,26);
+            assertTrue(end>start && end-start<=3);
+            visited+=end-start;
+            assertEquals(start,SourceUpdateSchedulePolicy.routineNextFeed(start,26,false));
+            start=SourceUpdateSchedulePolicy.routineNextFeed(start,26,true);
+        } while(start!=0);
+        assertEquals(26,visited);
+        assertEquals(26,SourceUpdateSchedulePolicy.routineSliceEnd(24,26));
+    }
+
     @Test public void defersAutomaticUpdatesWhileAppIsForegrounded() {
         assertTrue(SourceUpdateSchedulePolicy.shouldDeferForegroundAutoUpdate(true, false));
     }
