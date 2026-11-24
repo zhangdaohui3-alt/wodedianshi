@@ -67,9 +67,8 @@ public class SourceUpdateWorker extends Worker {
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
     // Defer that work while the TV app is active so it cannot compete with playback,
     // channel rendering, or remote-control input. Explicit manual updates remain available.
-    // An empty first-install Room catalogue needs discovery even while the
-    // app is visible. Otherwise the user sees an empty screen until exiting.
-    // Once any catalogue is published, background updates defer as before.
+    // First-run discovery must proceed while browsing, even with seed channels.
+    // Actual playback still pauses discovery; routine automatic updates defer.
     boolean hasPublishedChannels=true;
     if(initialDiscoveryChain){
       hasPublishedChannels=com.wodedianshi.tv.db.RoomDatabaseProvider
