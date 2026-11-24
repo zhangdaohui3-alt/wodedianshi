@@ -8,6 +8,10 @@ package com.wodedianshi.tv;
 public final class RemoteChannelOrderPolicy {
     private RemoteChannelOrderPolicy() {}
 
+    public static int mergeZapSteps(int pending, int delta) {
+        return (int)Math.max(-12L, Math.min(12L, (long)pending + delta));
+    }
+
     public static String normalizeQuery(String query) {
         return query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
     }
