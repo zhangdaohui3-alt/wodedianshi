@@ -53,31 +53,31 @@ final class ChannelNamePolicy {
         {"北京", "BEIJING"}, {"天津", "TIANJIN"},
         {"河北", "石家庄", "唐山", "秦皇岛", "邯郸", "邢台", "保定", "张家口", "承德", "沧州", "廊坊", "衡水", "SHIJIAZHUANG", "TANGSHAN", "QINHUANGDAO", "HANDAN", "XINGTAI", "BAODING", "ZHANGJIAKOU", "CHENGDE", "CANGZHOU", "LANGFANG", "HENGSHUI"},
         {"山西", "太原", "大同", "朔州", "忻州", "阳泉", "长治", "晋城", "晋中", "运城", "临汾", "吕梁", "TAIYUAN", "DATONG", "SHUOZHOU", "XINZHOU", "YANGQUAN", "CHANGZHI", "JINCHENG", "JINZHONG", "YUNCHENG", "LINFEN", "LVLIANG"},
-        {"内蒙古", "呼和浩特", "包头", "乌海", "赤峰", "通辽", "鄂尔多斯", "呼伦贝尔", "巴彦淖尔", "乌兰察布", "HOHHOT", "HUHHOT", "BAOTOU", "WUHAI", "CHIFENG", "TONGLIAO", "ORDOS", "HULUNBUIR", "BAYANNUUR", "ULANQAB"},
+        {"内蒙古", "呼和浩特", "包头", "乌海", "赤峰", "通辽", "鄂尔多斯", "呼伦贝尔", "巴彦淖尔", "乌兰察布", "HOHHOT", "HUHHOT", "BAOTOU", "WUHAI", "CHIFENG", "TONGLIAO", "ORDOS", "HULUNBUIR", "BAYANNUUR", "ULANQAB", "兴安", "锡林郭勒", "阿拉善"},
         {"辽宁", "沈阳", "大连", "鞍山", "抚顺", "本溪", "丹东", "锦州", "营口", "阜新", "辽阳", "盘锦", "铁岭", "朝阳", "葫芦岛", "SHENYANG", "DALIAN", "ANSHAN", "FUSHUN", "BENXI", "DANDONG", "JINZHOU", "YINGKOU", "FUXIN", "LIAOYANG", "PANJIN", "TIELING", "CHAOYANG", "HULUDAO"},
         {"吉林", "长春", "吉林市", "四平", "辽源", "通化", "白山", "松原", "白城", "延边", "CHANGCHUN", "JILIN", "SIPING", "LIAOYUAN", "TONGHUA", "BAISHAN", "SONGYUAN", "BAICHENG", "YANBIAN"},
-        {"黑龙江", "哈尔滨", "齐齐哈尔", "牡丹江", "佳木斯", "大庆", "鸡西", "鹤岗", "双鸭山", "伊春", "七台河", "黑河", "绥化", "HARBIN", "QIQIHAR", "MUDANJIANG", "JIAMUSI", "DAQING", "JIXI", "HEGANG", "SHUANGYASHAN", "YICHUN", "QITAIHE", "HEIHE", "SUIHUA"},
-        {"上海", "SHANGHAI"}, {"江苏", "南京", "苏州", "无锡", "常州", "南通", "镇江", "扬州", "淮安", "连云港", "盐城", "宿迁", "徐州", "NANJING", "SUZHOU", "WUXI", "CHANGZHOU", "NANTONG", "ZHENJIANG", "YANGZHOU", "HUAIAN", "LIANYUNGANG", "YANCHENG", "SUQIAN", "XUZHOU"},
-        {"浙江", "杭州", "宁波", "温州", "嘉兴", "湖州", "绍兴", "金华", "衢州", "舟山", "丽水", "台州", "上虞", "余姚", "兰溪", "庆元", "开化", "文成", "新昌", "HANGZHOU", "NINGBO", "WENZHOU", "JIAXING", "HUZHOU", "SHAOXING", "JINHUA", "QUZHOU", "ZHOUSHAN", "LISHUI", "SHANGYU", "YUYAO", "LANXI", "QINGYUAN", "KAIHUA", "WENCHENG", "XINCHANG"},
-        {"安徽", "合肥", "芜湖", "蚌埠", "淮南", "马鞍山", "淮北", "铜陵", "安庆", "黄山", "滁州", "阜阳", "六安", "亳州", "池州", "宣城", "固镇", "HEFEI", "WUHU", "BENGBU", "HUAINAN", "MAANSHAN", "HUAIBEI", "TONGLING", "ANQING", "HUANGSHAN", "CHUZHOU", "Fuyang", "LIUAN", "BOZHOU", "CHIZHOU", "XUANCHENG", "GUZHEN"},
+        {"黑龙江", "哈尔滨", "齐齐哈尔", "牡丹江", "佳木斯", "大庆", "鸡西", "鹤岗", "双鸭山", "伊春", "七台河", "黑河", "绥化", "HARBIN", "QIQIHAR", "MUDANJIANG", "JIAMUSI", "DAQING", "JIXI", "HEGANG", "SHUANGYASHAN", "YICHUN", "QITAIHE", "HEIHE", "SUIHUA", "大兴安岭"},
+        {"上海", "SHANGHAI"}, {"江苏", "南京", "苏州", "无锡", "常州", "南通", "镇江", "扬州", "淮安", "连云港", "盐城", "宿迁", "徐州", "TAIZHOU", "NANJING", "SUZHOU", "WUXI", "CHANGZHOU", "NANTONG", "ZHENJIANG", "YANGZHOU", "HUAIAN", "LIANYUNGANG", "YANCHENG", "SUQIAN", "XUZHOU"},
+        {"浙江", "杭州", "宁波", "温州", "嘉兴", "湖州", "绍兴", "金华", "衢州", "舟山", "丽水", "台州", "上虞", "余姚", "兰溪", "庆元", "开化", "文成", "新昌", "TAIZHOU", "HANGZHOU", "NINGBO", "WENZHOU", "JIAXING", "HUZHOU", "SHAOXING", "JINHUA", "QUZHOU", "ZHOUSHAN", "LISHUI", "SHANGYU", "YUYAO", "LANXI", "QINGYUAN", "KAIHUA", "WENCHENG", "XINCHANG"},
+        {"安徽", "合肥", "芜湖", "蚌埠", "淮南", "马鞍山", "淮北", "铜陵", "安庆", "黄山", "滁州", "阜阳", "六安", "亳州", "池州", "宣城", "固镇", "宿州", "SUZHOU", "HEFEI", "WUHU", "BENGBU", "HUAINAN", "MAANSHAN", "HUAIBEI", "TONGLING", "ANQING", "HUANGSHAN", "CHUZHOU", "Fuyang", "LIUAN", "BOZHOU", "CHIZHOU", "XUANCHENG", "GUZHEN"},
         {"福建", "福州", "厦门", "莆田", "三明", "泉州", "漳州", "南平", "龙岩", "宁德", "FUZHOU", "XIAMEN", "PUTIAN", "SANMING", "QUANZHOU", "ZHANGZHOU", "NANPING", "LONGYAN", "NINGDE"},
-        {"江西", "南昌", "景德镇", "萍乡", "九江", "新余", "鹰潭", "赣州", "吉安", "宜春", "抚州", "上饶", "NANCHANG", "JINGDEZHEN", "PINGXIANG", "JIUJIANG", "XINYU", "YINGTAN", "GANZHOU", "JIAN", "YICHUN", "SHANGRAO"},
+        {"江西", "南昌", "景德镇", "萍乡", "九江", "新余", "鹰潭", "赣州", "吉安", "宜春", "抚州", "上饶", "FUZHOU", "NANCHANG", "JINGDEZHEN", "PINGXIANG", "JIUJIANG", "XINYU", "YINGTAN", "GANZHOU", "JIAN", "YICHUN", "SHANGRAO"},
         {"山东", "济南", "青岛", "淄博", "枣庄", "东营", "烟台", "潍坊", "济宁", "泰安", "威海", "日照", "临沂", "德州", "聊城", "滨州", "菏泽", "JINAN", "QINGDAO", "ZIBO", "ZAOZHUANG", "DONGYING", "YANTAI", "WEIFANG", "JINING", "TAIAN", "WEIHAI", "RIZHAO", "LINYI", "DEZHOU", "LIAOCHENG", "BINZHOU", "HEZE"},
         {"河南", "郑州", "开封", "洛阳", "平顶山", "安阳", "鹤壁", "新乡", "焦作", "濮阳", "许昌", "漯河", "三门峡", "南阳", "商丘", "信阳", "周口", "驻马店", "ZHENGZHOU", "KAIFENG", "LUOYANG", "PINGDINGSHAN", "ANYANG", "HEBI", "XINXIANG", "JIAOZUO", "PUYANG", "XUCHANG", "LUOHE", "SANMENXIA", "NANYANG", "SHANGQIU", "XINYANG", "ZHOUKOU", "ZHUMADIAN"},
         {"湖北", "武汉", "黄石", "十堰", "宜昌", "襄阳", "鄂州", "荆门", "孝感", "荆州", "黄冈", "咸宁", "随州", "恩施", "WUHAN", "HUANGSHI", "SHIYAN", "YICHANG", "XIANGYANG", "EZHOU", "JINGMEN", "XIAOGAN", "JINGZHOU", "HUANGGANG", "XIANNING", "SUIZHOU", "ENSHI"},
-        {"湖南", "长沙", "株洲", "湘潭", "衡阳", "邵阳", "岳阳", "常德", "张家界", "益阳", "郴州", "永州", "怀化", "娄底", "CHANGSHA", "ZHUZHOU", "XIANGTAN", "HENGYANG", "SHAOYANG", "YUEYANG", "CHANGDE", "ZHANGJIAJIE", "YIYANG", "CHENZHOU", "YONGZHOU", "HUAIHUA", "LOUDI"},
+        {"湖南", "长沙", "株洲", "湘潭", "衡阳", "邵阳", "岳阳", "常德", "张家界", "益阳", "郴州", "永州", "怀化", "娄底", "CHANGSHA", "ZHUZHOU", "XIANGTAN", "HENGYANG", "SHAOYANG", "YUEYANG", "CHANGDE", "ZHANGJIAJIE", "YIYANG", "CHENZHOU", "YONGZHOU", "HUAIHUA", "LOUDI", "湘西"},
         {"广东", "广州", "深圳", "珠海", "汕头", "佛山", "韶关", "湛江", "肇庆", "江门", "茂名", "惠州", "梅州", "汕尾", "河源", "阳江", "清远", "东莞", "中山", "潮州", "揭阳", "云浮", "GUANGZHOU", "SHENZHEN", "ZHUHAI", "SHANTOU", "FOSHAN", "SHAOGUAN", "ZHANJIANG", "ZHAOQING", "JIANGMEN", "MAOMING", "HUIZHOU", "MEIZHOU", "SHANWEI", "HEYUAN", "YANGJIANG", "QINGYUAN", "DONGGUAN", "ZHONGSHAN", "CHAOZHOU", "JIEYANG", "YUNFU"},
-        {"广西", "南宁", "柳州", "桂林", "梧州", "北海", "防城港", "钦州", "贵港", "玉林", "百色", "贺州", "河池", "来宾", "崇左", "NANNING", "LIUZHOU", "GUILIN", "WUZHOU", "BEIHAI", "QINZHOU", "GUIGANG", "BAISE", "HEZHOU", "HECHI", "LAIBIN", "CHONGZUO"},
-        {"海南", "海口", "三亚", "儋州", "HAIKOU", "SANYA", "DANZHOU"}, {"重庆", "CHONGQING"},
-        {"四川", "成都", "自贡", "攀枝花", "泸州", "德阳", "绵阳", "广元", "遂宁", "内江", "乐山", "南充", "眉山", "宜宾", "广安", "达州", "雅安", "巴中", "资阳", "旺苍", "CHENGDU", "ZIGONG", "PZH", "LUZHOU", "DEYANG", "MIANYANG", "GUANGYUAN", "SUINING", "NEIJIANG", "LESHAN", "NANCHONG", "MEISHAN", "YIBIN", "GUANGAN", "DAZHOU", "YAAN", "BAZHONG", "ZIYANG", "WANGCANG"},
-        {"贵州", "贵阳", "六盘水", "遵义", "安顺", "毕节", "铜仁", "GUIYANG", "LIUPANSHUI", "ZUNYI", "ANSHUN", "BIJIE", "TONGREN"},
-        {"云南", "昆明", "曲靖", "玉溪", "保山", "昭通", "丽江", "普洱", "临沧", "楚雄", "红河", "文山", "大理", "KUNMING", "QUJING", "YUXI", "BAOSHAN", "ZHAOTONG", "LIJIANG", "PUER", "LINCANG", "CHUXIONG", "HONGHE", "WENSHAN", "DALI"},
-        {"西藏", "LHASA", "SHIGATSE", "QAMDO", "NYINGCHI", "SHANNAN", "NAGQU"},
-        {"陕西", "西安", "铜川", "宝鸡", "咸阳", "渭南", "延安", "汉中", "榆林", "安康", "商洛", "XIAN", "TONGCHUAN", "BAOJI", "XIANYANG", "WEINAN", "YANAN", "HANZHONG", "ANKANG", "SHANGLUO"},
-        {"甘肃", "兰州", "嘉峪关", "金昌", "白银", "天水", "武威", "张掖", "平凉", "酒泉", "庆阳", "定西", "陇南", "LANZHOU", "JIAYUGUAN", "JINCHANG", "BAIYIN", "TIANSHUI", "Wuwei", "ZHANGYE", "PINGLIANG", "JIUQUAN", "QINGYANG", "DINGXI", "LONGNAN"},
+        {"广西", "南宁", "柳州", "桂林", "梧州", "北海", "防城港", "钦州", "贵港", "玉林", "百色", "贺州", "河池", "来宾", "崇左", "YULIN", "NANNING", "LIUZHOU", "GUILIN", "WUZHOU", "BEIHAI", "QINZHOU", "GUIGANG", "BAISE", "HEZHOU", "HECHI", "LAIBIN", "CHONGZUO"},
+        {"海南", "海口", "三亚", "儋州", "HAIKOU", "SANYA", "DANZHOU", "三沙"}, {"重庆", "CHONGQING"},
+        {"四川", "成都", "自贡", "攀枝花", "泸州", "德阳", "绵阳", "广元", "遂宁", "内江", "乐山", "南充", "眉山", "宜宾", "广安", "达州", "雅安", "巴中", "资阳", "旺苍", "CHENGDU", "ZIGONG", "PZH", "LUZHOU", "DEYANG", "MIANYANG", "GUANGYUAN", "SUINING", "NEIJIANG", "LESHAN", "NANCHONG", "MEISHAN", "YIBIN", "GUANGAN", "DAZHOU", "YAAN", "BAZHONG", "ZIYANG", "WANGCANG", "阿坝", "甘孜", "凉山"},
+        {"贵州", "贵阳", "六盘水", "遵义", "安顺", "毕节", "铜仁", "GUIYANG", "LIUPANSHUI", "ZUNYI", "ANSHUN", "BIJIE", "TONGREN", "黔西南", "黔东南", "黔南"},
+        {"云南", "昆明", "曲靖", "玉溪", "保山", "昭通", "丽江", "普洱", "临沧", "楚雄", "红河", "文山", "大理", "KUNMING", "QUJING", "YUXI", "BAOSHAN", "ZHAOTONG", "LIJIANG", "PUER", "LINCANG", "CHUXIONG", "HONGHE", "WENSHAN", "DALI", "西双版纳", "德宏", "怒江", "迪庆"},
+        {"西藏", "LHASA", "SHIGATSE", "QAMDO", "NYINGCHI", "SHANNAN", "NAGQU", "拉萨", "日喀则", "昌都", "林芝", "山南", "那曲", "阿里"},
+        {"陕西", "西安", "铜川", "宝鸡", "咸阳", "渭南", "延安", "汉中", "榆林", "安康", "商洛", "YULIN", "XIAN", "TONGCHUAN", "BAOJI", "XIANYANG", "WEINAN", "YANAN", "HANZHONG", "ANKANG", "SHANGLUO"},
+        {"甘肃", "兰州", "嘉峪关", "金昌", "白银", "天水", "武威", "张掖", "平凉", "酒泉", "庆阳", "定西", "陇南", "LANZHOU", "JIAYUGUAN", "JINCHANG", "BAIYIN", "TIANSHUI", "Wuwei", "ZHANGYE", "PINGLIANG", "JIUQUAN", "QINGYANG", "DINGXI", "LONGNAN", "临夏", "甘南"},
         {"青海", "西宁", "海东", "海北", "黄南", "海南州", "果洛", "玉树", "海西", "XINING", "HAIDONG", "HAIBEI", "HUANGNAN", "GUOLUO", "YUSHU", "HAIXI"},
         {"宁夏", "银川", "石嘴山", "吴忠", "固原", "中卫", "YINCHUAN", "SHIZUISHAN", "WUZHONG", "GUYUAN", "ZHONGWEI"},
-        {"新疆", "乌鲁木齐", "克拉玛依", "吐鲁番", "哈密", "喀什", "和田", "阿克苏", "库尔勒", "伊宁", "阿勒泰", "URUMQI", "KARAMAY", "TURPAN", "HAMI", "KASHGAR", "HOTAN", "AKSU", "KORLA", "YINING", "ALTAY"}
+        {"新疆", "乌鲁木齐", "克拉玛依", "吐鲁番", "哈密", "喀什", "和田", "阿克苏", "库尔勒", "伊宁", "阿勒泰", "URUMQI", "KARAMAY", "TURPAN", "HAMI", "KASHGAR", "HOTAN", "AKSU", "KORLA", "YINING", "ALTAY", "昌吉", "博尔塔拉", "巴音郭楞", "克孜勒苏", "伊犁", "塔城", "兵团"}
     };
 
     // These names exist in more than one province. Without an explicit province
@@ -105,43 +105,91 @@ final class ChannelNamePolicy {
     }
 
     private static final String[] AMBIGUOUS_LOCAL_CITY_ALIASES = {
-        "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU", "CHAOYANG", "台州", "玉林", "苏州", "福州", "朝阳"
+        "TAIZHOU", "YULIN", "SUZHOU", "FUZHOU", "CHAOYANG", "YICHUN", "台州", "玉林", "苏州", "福州", "朝阳"
+    };
+
+    // Explicit province tokens are evaluated before city aliases, independently
+    // of the order of the province table. Do not guess when explicit tokens conflict.
+    private static final String[] PROVINCE_ENGLISH = {
+        "BEIJING","TIANJIN","HEBEI","SHANXI","INNER MONGOLIA","LIAONING","JILIN",
+        "HEILONGJIANG","SHANGHAI","JIANGSU","ZHEJIANG","ANHUI","FUJIAN","JIANGXI",
+        "SHANDONG","HENAN","HUBEI","HUNAN","GUANGDONG","GUANGXI","HAINAN","CHONGQING",
+        "SICHUAN","GUIZHOU","YUNNAN","TIBET","SHAANXI","GANSU","QINGHAI","NINGXIA","XINJIANG"
     };
 
     static String provinceForLocalChannel(String metadata) {
         String normalized = normalize(metadata);
         if (normalized.isEmpty()) return "";
-        final String uppercaseMetadata = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
-        String matchedProvince = "";
-        boolean explicitProvince = false;
+        String upper = metadata.toUpperCase(Locale.ROOT);
+        String explicit = "";
         for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
-            String[] aliases = LOCAL_CITY_ALIASES[row];
-            String[] normalizedAliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
-            // Some feeds expose only the province in group-title rather than a city.
-            if (containsNormalizedAlias(uppercaseMetadata, normalizedAliases[0], normalized)) {
-                if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
-                matchedProvince = aliases[0];
-                explicitProvince = true;
-            }
-            for (int i = 1; i < aliases.length; i++) {
-                String alias = normalizedAliases[i];
-                if (!containsNormalizedAlias(uppercaseMetadata, alias, normalized)) continue;
-                boolean ambiguousCity = false;
-                for (String ambiguous : AMBIGUOUS_LOCAL_CITY_ALIASES) {
-                    if (alias.equals(ambiguous)) {
-                        ambiguousCity = true;
-                        break;
-                    }
-                }
-                if (ambiguousCity) {
-                    if (!explicitProvince) return "";
-                    continue;
-                }
-                if (!matchedProvince.isEmpty() && !matchedProvince.equals(aliases[0])) return "";
-                matchedProvince = aliases[0];
+            String province = LOCAL_CITY_ALIASES[row][0];
+            String english = PROVINCE_ENGLISH[row];
+            if ((containsNormalizedAlias(upper, NORMALIZED_LOCAL_CITY_ALIASES[row][0], normalized)
+                    && !("海南".equals(province) && normalized.contains("海南州")))
+                    || (english.contains(" ") ? upper.contains(english)
+                    : containsNormalizedAlias(upper, english, normalized))) {
+                if (!explicit.isEmpty() && !explicit.equals(province)) return "";
+                explicit = province;
             }
         }
-        return matchedProvince;
+        String inferred = "";
+        boolean ambiguous = false;
+        for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
+            String province = LOCAL_CITY_ALIASES[row][0];
+            String[] aliases = NORMALIZED_LOCAL_CITY_ALIASES[row];
+            for (int i = 1; i < aliases.length; i++) {
+                String alias = aliases[i];
+                if (!containsNormalizedAlias(upper, alias, normalized)) continue;
+                boolean shared = false;
+                for (String candidate : AMBIGUOUS_LOCAL_CITY_ALIASES) {
+                    if (alias.equals(candidate)) { shared = true; break; }
+                }
+                if (shared) { ambiguous = true; continue; }
+                // A province marker is not evidence for a contradictory unique city.
+                if (!explicit.isEmpty() && !explicit.equals(province)) return "";
+                if (!inferred.isEmpty() && !inferred.equals(province)) return "";
+                inferred = province;
+            }
+        }
+        if (!explicit.isEmpty()) return explicit;
+        return ambiguous ? "" : inferred;
+    }
+
+    // Explicitly paired city aliases, not positional guesses between unequal
+    // Chinese and English alias arrays. Other cities still match Chinese metadata.
+    private static final String[][] CITY_FILTER_ALIASES = {
+        {"福建","福州","FUZHOU"},{"福建","厦门","XIAMEN"},{"福建","莆田","PUTIAN"},
+        {"福建","三明","SANMING"},{"福建","泉州","QUANZHOU"},{"福建","漳州","ZHANGZHOU"},
+        {"福建","南平","NANPING"},{"福建","龙岩","LONGYAN"},{"福建","宁德","NINGDE"},
+        {"江西","抚州","FUZHOU"},{"江西","南昌","NANCHANG"},
+        {"江苏","苏州","SUZHOU"},{"江苏","南京","NANJING"},{"江苏","无锡","WUXI"},
+        {"江苏","泰州","TAIZHOU"},{"浙江","台州","TAIZHOU"},{"浙江","杭州","HANGZHOU"},
+        {"浙江","宁波","NINGBO"},{"浙江","温州","WENZHOU"},{"浙江","绍兴","SHAOXING"},
+        {"广东","广州","GUANGZHOU"},{"广东","深圳","SHENZHEN"},{"广东","珠海","ZHUHAI"},
+        {"广东","佛山","FOSHAN"},{"四川","成都","CHENGDU"},{"四川","广元","GUANGYUAN"},
+        {"湖北","武汉","WUHAN"},{"湖北","襄阳","XIANGYANG"},{"湖南","长沙","CHANGSHA"},
+        {"山东","济南","JINAN"},{"山东","青岛","QINGDAO"},{"河南","郑州","ZHENGZHOU"},
+        {"陕西","西安","XIAN"},{"陕西","榆林","YULIN"},{"广西","玉林","YULIN"},
+        {"安徽","合肥","HEFEI"},{"安徽","宿州","SUZHOU"},{"辽宁","朝阳","CHAOYANG"},
+        {"辽宁","沈阳","SHENYANG"},{"辽宁","大连","DALIAN"},{"河北","石家庄","SHIJIAZHUANG"},
+        {"黑龙江","哈尔滨","HARBIN"},{"吉林","长春","CHANGCHUN"},{"云南","昆明","KUNMING"},
+        {"贵州","贵阳","GUIYANG"},{"甘肃","兰州","LANZHOU"},{"青海","西宁","XINING"},
+        {"宁夏","银川","YINCHUAN"},{"新疆","乌鲁木齐","URUMQI"},{"海南","海口","HAIKOU"},
+        {"内蒙古","呼和浩特","HOHHOT"},{"西藏","拉萨","LHASA"}
+    };
+
+    static boolean matchesLocalCity(String metadata, String province, String city) {
+        if (metadata == null || province == null || city == null || city.isEmpty()) return false;
+        if (!province.equals(provinceForLocalChannel(metadata))) return false;
+        String normalized = normalize(metadata);
+        String upper = metadata.toUpperCase(Locale.ROOT);
+        if (containsAlias(metadata, city, normalized)) return true;
+        for (String[] pair : CITY_FILTER_ALIASES) {
+            if (province.equals(pair[0]) && city.equals(pair[1])
+                    && containsNormalizedAlias(upper, pair[2], normalized)) return true;
+        }
+        return false;
     }
 
     static String localCityForChannel(String metadata) {

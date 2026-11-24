@@ -136,6 +136,32 @@ public class ChannelNamePolicyTest {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yichun TV"));
     }
 
+    @Test public void explicitProvinceIsResolvedBeforeAmbiguousCityAliases() {
+        assertEquals("江西", ChannelNamePolicy.provinceForLocalChannel("Jiangxi Fuzhou TV"));
+        assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("Jiangsu Suzhou TV"));
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("Fujian Fuzhou TV"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("福建 广东 深圳"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Fuzhou TV"));
+    }
+
+    @Test public void previouslyUiOnlyCitiesRemainInProvinceDirectories() {
+        assertEquals("西藏", ChannelNamePolicy.provinceForLocalChannel("拉萨新闻综合"));
+        assertEquals("海南", ChannelNamePolicy.provinceForLocalChannel("三沙电视台"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("甘孜新闻"));
+        assertEquals("青海", ChannelNamePolicy.provinceForLocalChannel("海南州新闻"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("青海 海南州新闻", "青海", "海南州"));
+    }
+
+    @Test public void englishCityMetadataMatchesChineseCityPicker() {
+        assertTrue(ChannelNamePolicy.matchesLocalCity("Fujian Fuzhou TV", "福建", "福州"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("Xiamen News", "福建", "厦门"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("Shenzhen News", "广东", "深圳"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("Jiangxi Fuzhou TV", "江西", "抚州"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("Jiangxi Fuzhou TV", "福建", "福州"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("Fuzhou TV", "福建", "福州"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("Xiangyang News", "陕西", "西安"));
+    }
+
     @Test public void leavesUnknownEnglishChannelNamesUnchanged() {
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("Fuzhou TV"));
         assertEquals("", ChannelNamePolicy.canonicalSatelliteName("CCTV-1"));
