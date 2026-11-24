@@ -8,6 +8,11 @@ package com.wodedianshi.tv;
 public final class DiscoveryBatchPolicy {
     private DiscoveryBatchPolicy() {}
 
+    /** Independent partial page checkpoints enable fair rotation. */
+    public static String initialBatchPrefix(int feedIndex) {
+        return "source_initial_page_"+feedIndex+"_";
+    }
+
     /** Never apply an offset to a different or unidentified feed body. */
     public static int cursorForVersion(int cursor, String savedVersion, String currentVersion) {
         return cursor > 0 && currentVersion != null && !currentVersion.isEmpty()
