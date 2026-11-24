@@ -72,18 +72,15 @@ public final class SourceUpdateSchedulePolicy {
     }
 
     /**
-     * First-install exception: an empty Room catalogue cannot become usable if
-     * every discovery run waits for the TV app to leave the foreground.
-     * Playback activity is checked by the worker separately before this gate.
+     * First-run setup must advance even when seed or previously saved channels exist.
+     * Playback activity is checked separately by the worker before this gate.
      */
     public static boolean shouldDeferForegroundDiscovery(boolean appForeground,
             boolean manual, boolean initialDiscoveryChain, boolean hasPublishedChannels) {
-        // Initial full rebuild may proceed only for an EMPTY published catalogue:
-        // a previously saved catalogue must take priority even for manual initial
-        // work. A true manual routine refresh can run in foreground if playback
-        // itself is inactive.
-        return appForeground && (!manual || initialDiscoveryChain)
-                && !(initialDiscoveryChain && !hasPublishedChannels);
+        // Seed channels are not evidence of a completed initial rebuild.
+        // Keep routine automatic maintenance idle-only, but allow initialization
+        // or explicit manual work while browsing, regardless of catalogue size.
+        return appForeground && !manual && !initialDiscoveryChain;
     }
 
     /** A first-run rebuild is complete only after every candidate and feed was covered. */
