@@ -178,7 +178,7 @@ public class SourceUpdateWorker extends Worker {
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(feedCursorKey(feed)+"_version")
                 .remove(initialFeedProgressKey(feed))
-                .remove(initialBatchPrefix(feed)+"fingerprint").remove(initialBatchPrefix(feed)+"scanned")
+                .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -373,17 +373,13 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"节目播放或频道操作优先，已推迟频道源下载",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
+          if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
           File cachedFeed=slowPlayback?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
               PlaylistFeedCache.obtain(getApplicationContext(),feed,initialDiscoveryChain,feedCursor>0,pauseRequested);
           if(cachedFeed==null&&slowPlayback){
             // Acquisition is its own bounded slice: no stream probe in the same
             // worker. Never advance the verified cursor after a download alone.
-            long now=android.os.SystemClock.elapsedRealtime();
-            if(now<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L)){
-              // Skip this feed only for this execution; never mark it done.
-              continue;
-            }
             noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
             try{
               cachedFeed=PlaylistFeedCache.obtainSmallInitialDuringViewing(
@@ -399,9 +395,15 @@ public class SourceUpdateWorker extends Worker {
               if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
                 return deferredViewingResult(manual,initialDiscoveryChain);
               LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
-              // Allow the next eligible feed to make progress. No source or
-              // directory failure counters are charged for a viewing budget.
-              continue;
+              // One network acquisition per viewing slice, including failures.
+              // Next slice starts at another feed; the deferred page stays intact.
+              SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                  .putInt("source_initial_next_feed_index",InitialFeedRotationPolicy.nextAfterAttempt(feedIndex,feeds.length,false,false))
+                  .putString("source_initial_progress_phase","较大或较慢目录待空闲补查，继续其他目录")
+                  .apply();
+              enqueueInitialContinuation();
+              return Result.success();
             }
           }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
@@ -549,7 +551,7 @@ public class SourceUpdateWorker extends Worker {
       int pageFeed=-1;
       if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
         if(batch.success&&!batch.unavailable){pageFeed=batch.index;break;}
-      String batchPrefix=initialDiscoveryChain?initialBatchPrefix(pageFeed):
+      String batchPrefix=initialDiscoveryChain?DiscoveryBatchPolicy.initialBatchPrefix(pageFeed):
           manualRefresh?"source_manual_feed_batch_":"source_routine_feed_batch_";
       StringBuilder batchIdentity=new StringBuilder();
       appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
@@ -1087,7 +1089,7 @@ public class SourceUpdateWorker extends Worker {
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
               .remove(feedCursorKey(feed)+"_version")
               .remove(initialFeedProgressKey(feed))
-              .remove(initialBatchPrefix(feed)+"fingerprint").remove(initialBatchPrefix(feed)+"scanned");
+              .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned");
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -1415,7 +1417,6 @@ public class SourceUpdateWorker extends Worker {
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
-  private static String initialBatchPrefix(int index){return "source_initial_page_"+index+"_";}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
