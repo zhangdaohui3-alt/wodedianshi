@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void incrementalStagingRequiresEveryAppendedRowAndValidPositions() {
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(5,5,java.util.Collections.emptySet());
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(5,7,
+            new java.util.HashSet<>(java.util.Arrays.asList(0,5,6)));
+        int[][] invalid={{5,4,0},{5,7,5},{5,5,5},{5,5,-1}};
+        for(int[] item:invalid){
+            try{
+                com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(
+                    item[0],item[1],java.util.Collections.singleton(item[2]));
+                org.junit.Assert.fail("Invalid staging mutation accepted");
+            }catch(IllegalArgumentException expected){}
+        }
+    }
+
     @org.junit.Test public void independentlyResumesInterleavedFeedPages() {
         String first=DiscoveryBatchPolicy.initialBatchPrefix(0);
         String second=DiscoveryBatchPolicy.initialBatchPrefix(1);

@@ -266,6 +266,9 @@ public interface ChannelDao {
     @Query("SELECT * FROM catalogue_build_rows ORDER BY sortOrder, rowId")
     List<CatalogueBuildRowEntity> getCatalogueBuildRows();
 
+    @Query("SELECT COUNT(*) FROM catalogue_build_rows")
+    int countCatalogueBuildRows();
+
     @Query("DELETE FROM catalogue_build_rows")
     void clearCatalogueBuildRows();
 

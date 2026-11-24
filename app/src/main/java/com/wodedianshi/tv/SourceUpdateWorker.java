@@ -272,6 +272,9 @@ public class SourceUpdateWorker extends Worker {
       }else{
         saved=roomSnapshotToArray(roomSnapshot);
       }
+      final int previousStagedSize=saved.length();
+      IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
+      HashSet<Integer> touchedStagedRows=new HashSet<>();
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
       // A single failed probe merely reduces its score. It cannot delete an
@@ -281,7 +284,9 @@ public class SourceUpdateWorker extends Worker {
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
+        JSONObject c=saved.getJSONObject(i);
+        if(initialDiscoveryChain)stagedPositions.put(c,i);
+        byIdentity.put(identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
       }
       ArrayList<Entry> candidates=new ArrayList<>();
@@ -702,6 +707,7 @@ public class SourceUpdateWorker extends Worker {
           target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
           target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
           addBackupSourceScope(target,e.url,e.scope);
+          if(initialDiscoveryChain)stagedPositions.put(target,saved.length());
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
           JSONArray currentSources=target.optJSONArray("sources");
@@ -756,6 +762,7 @@ public class SourceUpdateWorker extends Worker {
             addBackupSourceScope(target,retainedEndpointUrl,e.scope);
           }
         }
+        if(initialDiscoveryChain)touchedStagedRows.add(stagedPositions.get(target));
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
@@ -766,7 +773,13 @@ public class SourceUpdateWorker extends Worker {
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
-      for(int i=0;i<saved.length();i++){
+      // Initial staging is append-only and touched rows alone need sorting.
+      // A final idle pass re-ranks the complete snapshot before publication.
+      boolean finalRanking=initialDiscoveryChain&&initialDiscoveryScanned+discoveryScanned>=candidates.size()
+          &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
+      Iterable<Integer> rankingRows=initialDiscoveryChain&&!finalRanking?touchedStagedRows:
+          ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<saved.length();}public Integer next(){return index++;}};
+      for(int i:rankingRows){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
         JSONArray sourceArray=channel.optJSONArray("sources");
@@ -1120,8 +1133,10 @@ public class SourceUpdateWorker extends Worker {
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
-        com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
+        if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
             getApplicationContext(),saved,pauseRequested,update);
+        else com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
+            getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
         if(!slowPlayback&&previewLevel>previousPreviewLevel){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
