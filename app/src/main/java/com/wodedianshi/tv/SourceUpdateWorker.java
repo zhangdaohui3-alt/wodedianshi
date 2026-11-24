@@ -132,6 +132,7 @@ public class SourceUpdateWorker extends Worker {
           for(int feed=0;feed<feeds.length;feed++){
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(feedCursorKey(feed)+"_version")
+                .remove(initialFeedProgressKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -144,6 +145,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_scan_after_key").remove("source_scan_cursor")
               .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
               .remove("source_initial_has_validated_source")
+              .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .putInt("source_initial_progress_percent",0)
@@ -282,7 +284,7 @@ public class SourceUpdateWorker extends Worker {
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           },pauseRequested);
-          if(initialDiscoveryChain&&SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)){
+          if(initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Preserve every address and the exact raw index cursor. Within the
             // current 24-row page, probe mainland candidates first. Java's List
             // sort is stable, so partial-batch fingerprint/resume stays deterministic.
@@ -323,7 +325,7 @@ public class SourceUpdateWorker extends Worker {
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
               +" candidates="+feedCandidates.size()
               +" mainland_priority_page="
-                  +(initialDiscoveryChain&&SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex))
+                  +(initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               +" local_metadata="+localMetadataCandidates
               +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+scopeForFeed(feed));
@@ -746,20 +748,28 @@ public class SourceUpdateWorker extends Worker {
             activeEntries=batch.indexedEntries;
           }
         }
-        int progressPercent=FullDiscoveryProgressPolicy.percent(
-            completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
+        int[] partial=new int[feeds.length];
+        for(int i=0;i<feeds.length;i++)
+          partial[i]=roomInt(initialFeedProgressKey(i),0);
+        for(FeedBatch batch:feedBatches){
+          if(batch.index<0||batch.index>=feeds.length||!batch.success)continue;
+          int basis=finished[batch.index]?10000:
+              FullDiscoveryProgressPolicy.feedProgress(
+                  batch.cursor+(feedBatchComplete?batch.parsed:nextBatchScanned),
+                  batch.indexedEntries);
+          partial[batch.index]=basis;
+          update.putInt(initialFeedProgressKey(batch.index),basis);
+        }
+        int progressPercent=FullDiscoveryProgressPolicy.overallPercent(
+            finished,partial,initialDiscoveryComplete);
         int chinaFeedDone=SourceDiscoveryPriorityPolicy.completedInStage(
             finished,0,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
         int activeStage=SourceDiscoveryPriorityPolicy.activeStage(finished,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT);
         String stageDescription=SourceDiscoveryPriorityPolicy.stageLabel(activeStage);
-        // Fair round-robin scans a different in-progress feed on the next run.
-        // Persist the highest measured percent to avoid a misleading backwards
-        // progress bar while keeping 100% gated on the Room publication.
-        if(!initialDiscoveryComplete)
-          progressPercent=Math.min(99,Math.max(progressPercent,
-              Math.max(0,roomInt("source_initial_progress_percent",0))));
+        // A changed feed version can legitimately reduce the measured work.
+        // Do not preserve an inflated high-water mark after a cursor reset.
         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
         int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
         int chinaValidatedSoFar=Math.max(0,
@@ -800,6 +810,19 @@ public class SourceUpdateWorker extends Worker {
         update.putBoolean("source_initial_has_validated_source",true);
       }
       if(initialDiscoveryChain&&initialDiscoveryComplete){
+        FullDiscoveryProgressPolicy.Coverage fresh=new FullDiscoveryProgressPolicy.Coverage();
+        for(int i=0;i<saved.length();i++){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          JSONObject row=saved.getJSONObject(i);
+          fresh.add(row.optString("name"),row.optString("group"),
+              row.optString("tvgName"),row.optString("tvgId"));
+        }
+        update.putString(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,
+            fresh.summary("本次预检入库目录（合并旧频道之前，非实播验证）"));
+        if(fresh.cctvCount()==0||fresh.satelliteCount()==0||fresh.localCount()==0){
+          update.putString("source_initial_progress_phase",
+              "目录已发布，核心中国频道覆盖不足，待空闲或手动补查");
+        }
         update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
             .remove("source_initial_has_validated_source")
             .remove("source_full_rebuild_active");
@@ -839,7 +862,8 @@ public class SourceUpdateWorker extends Worker {
           // last failure diagnostics visible in Settings until that next attempt
           // starts and explicitly initializes a fresh build.
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
-              .remove(feedCursorKey(feed)+"_version");
+              .remove(feedCursorKey(feed)+"_version")
+              .remove(initialFeedProgressKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -1129,6 +1153,7 @@ public class SourceUpdateWorker extends Worker {
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+  private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
   private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
   private String initialFeedFailureReasonKey(int index){return "source_initial_feed_failure_reason_"+index;}
