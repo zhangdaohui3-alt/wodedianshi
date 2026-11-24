@@ -141,7 +141,11 @@ public class SourceUpdateWorker extends Worker {
           com.wodedianshi.tv.db.AppStateEditor resetBuildState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
           for(int feed=0;feed<feeds.length;feed++){
-            resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+            resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+                .remove(initialFeedUnavailableKey(feed))
+                .remove(initialFeedFailureCountKey(feed))
+                .remove(initialFeedFailureReasonKey(feed))
+                .remove(initialFeedDisplayLabelKey(feed));
           }
           resetBuildState.remove("source_feed_batch_fingerprint")
               .remove("source_feed_batch_scanned")
@@ -155,6 +159,8 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_total_feeds",feeds.length)
               .putInt("source_initial_progress_staged_channels",0)
               .putInt("source_initial_progress_checked_urls",0)
+              .putInt("source_initial_progress_validated_urls",0)
+              .putInt("source_initial_progress_unavailable_feeds",0)
               .putInt("source_initial_progress_feed_index",0)
               .putInt("source_initial_progress_feed_cursor",0)
               .putInt("source_initial_progress_feed_entries",0)
@@ -173,6 +179,10 @@ public class SourceUpdateWorker extends Worker {
       }
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
+      // A single failed probe merely reduces its score. It cannot delete an
+      // existing saved backup; three independent failures are needed.
+      JSONObject probeFailureStreaks=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(
+          getApplicationContext(),"source_probe_failure_streaks_v1","{}"));
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         JSONObject c=saved.getJSONObject(i);byIdentity.put(identity(c.optString("name"),c.optString("group"),
@@ -227,7 +237,7 @@ public class SourceUpdateWorker extends Worker {
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
         boolean feedReadSucceeded=false;
-        boolean feedPermanentlyUnavailable=false;
+        boolean feedTerminalUnavailable=false;
         if(isStopped())return Result.retry();
         if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
           saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
@@ -312,15 +322,29 @@ public class SourceUpdateWorker extends Worker {
           // mix its partial page with another feed's batch, or a later fingerprint
           // change could discard unprobed entries from the partial page.
           String failure=String.valueOf(e.getMessage());
-          // Removed feed endpoints should not hold a complete rebuild open forever.
-          // Treat only definitive 404/410 responses as exhausted; transient/network,
-          // rate-limit, and authorization failures remain retryable.
-          feedPermanentlyUnavailable=initialDiscoveryChain
-              &&(failure.contains("HTTP 404")||failure.contains("HTTP 410"));
+          // A dead/blocked provider is an inspected, UNAVAILABLE outcome rather
+          // than a successful feed. Bound transient failures to three separate
+          // worker attempts; preserve its failure record for later idle/manual retry.
+          if(initialDiscoveryChain){
+            int attempts=InitialFeedFailurePolicy.nextAttempts(
+                roomInt(initialFeedFailureCountKey(feedIndex),0));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedFailureCountKey(feedIndex),Integer.toString(attempts));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedFailureReasonKey(feedIndex),
+                InitialFeedFailurePolicy.userVisibleReason(failure));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
+            feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
+                failure,attempts);
+            if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
+                "first_build_feed_marked_unavailable index="+feedIndex+" attempts="+attempts);
+          }
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
-              indexedEntries,feedReadSucceeded||feedPermanentlyUnavailable));
+              indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
+              feedTerminalUnavailable));
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
@@ -331,11 +355,10 @@ public class SourceUpdateWorker extends Worker {
                 parsedCount[0]>=MAX_INITIAL_DISCOVERY_PER_FEED);
             break;
           }
-          // Definitive 404/410 feeds are marked complete by their successful
-          // FeedBatch marker. Transient failures keep their cursor and are retried
-          // after later feeds have had a chance to contribute.
+          // A bounded failure remains on record as unavailable, not as successful
+          // download. Other feeds can still make a usable complete snapshot.
           initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
-              feedIndex,feeds.length,feedPermanentlyUnavailable,false);
+              feedIndex,feeds.length,feedTerminalUnavailable,false);
           continue;
         }
       }
@@ -378,6 +401,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0;
       HashSet<String> visitedUrls=new HashSet<>();
+      HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
@@ -404,6 +428,13 @@ public class SourceUpdateWorker extends Worker {
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
           measuredScores.remove(legacyScoreKey(e.url));
+        }
+        if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
+          String streakKey=scoreKey(e.url);
+          int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
+              probeFailureStreaks.optInt(streakKey,0),measured.valid);
+          if(streak==0)probeFailureStreaks.remove(streakKey);
+          else probeFailureStreaks.put(streakKey,streak);
         }
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain))discoveryProbesValid++;
         if(!measured.valid&&!initialDiscoveryChain)continue;
@@ -437,12 +468,24 @@ public class SourceUpdateWorker extends Worker {
           String activeUrl=activeIndex<currentUrls.size()
               ?currentUrls.get(activeIndex):target.optString("url","");
           String primaryUrl=target.optString("url","");
-          ArrayList<String> retainedUrls=new ArrayList<>(
-              SourceChannelMergePolicy.attachSharedEndpoint(currentUrls,e.url,
-                  MAX_SOURCES_PER_CHANNEL,
-                  (a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),
-                      combinedScore(a,measuredScores,observedQoe)),
-                  primaryUrl,activeUrl));
+          java.util.Comparator<String> bestFirst=(a,b)->
+              Double.compare(combinedScore(b,measuredScores,observedQoe),
+                  combinedScore(a,measuredScores,observedQoe));
+          ArrayList<String> retainedUrls;
+          if(initialDiscoveryChain){
+            retainedUrls=new ArrayList<>(SourceChannelMergePolicy.attachSharedEndpoint(
+                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,primaryUrl,activeUrl));
+          }else{
+            HashSet<String> eligibleRetirement=new HashSet<>();
+            for(String oldUrl:currentUrls){
+              if(probeFailureStreaks.optInt(scoreKey(oldUrl),0)
+                  >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
+                eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
+            }
+            retainedUrls=new ArrayList<>(SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
+                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,
+                primaryUrl,activeUrl,eligibleRetirement));
+          }
           boolean changed=currentUrls.size()!=retainedUrls.size();
           if(!changed){
             for(int i=0;i<currentUrls.size();i++){
@@ -510,6 +553,7 @@ public class SourceUpdateWorker extends Worker {
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
       trimProbeScores(measuredScores,savedPool,probeCandidates);
+      trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
       // Playback can begin after the last probe-loop check but before persistence.
@@ -555,6 +599,7 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
+          .putString("source_probe_failure_streaks_v1",probeFailureStreaks.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
@@ -569,6 +614,24 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
+          if(!initialDiscoveryChain && batch.parsed>=0
+              && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
+            // A previously unavailable directory has now been fetched and its
+            // candidates have completed this run's probe window. Clear its old
+            // warning; other old source warnings remain intact.
+            update.remove(initialFeedUnavailableKey(batch.index))
+                .remove(initialFeedFailureCountKey(batch.index))
+                .remove(initialFeedFailureReasonKey(batch.index))
+                .remove(initialFeedDisplayLabelKey(batch.index));
+          }
+          if(initialDiscoveryChain&&batch.unavailable){
+            update.putBoolean(initialFeedUnavailableKey(batch.index),true);
+          }else if(initialDiscoveryChain){
+            update.remove(initialFeedUnavailableKey(batch.index))
+                .remove(initialFeedFailureCountKey(batch.index))
+                .remove(initialFeedFailureReasonKey(batch.index))
+                .remove(initialFeedDisplayLabelKey(batch.index));
+          }
           if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(feedCursorKey(batch.index));
@@ -586,6 +649,19 @@ public class SourceUpdateWorker extends Worker {
         update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
             .putInt("source_feed_batch_scanned",nextBatchScanned);
       }
+      if(!initialDiscoveryChain&&feedBatchComplete){
+        int stillUnavailable=0;
+        for(int i=0;i<feeds.length;i++){
+          boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
+          if(wasUnavailable){
+            for(FeedBatch batch:feedBatches){
+              if(batch.index==i&&batch.success){wasUnavailable=false;break;}
+            }
+          }
+          if(wasUnavailable)stillUnavailable++;
+        }
+        update.putInt("source_initial_progress_unavailable_feeds",stillUnavailable);
+      }
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
         // end-of-feed was observed. A successful HTTP response alone is not done.
@@ -600,6 +676,17 @@ public class SourceUpdateWorker extends Worker {
           }
         }
         for(boolean done:finished)if(done)completedFeeds++;
+        boolean[] unavailableFlags=new boolean[feeds.length];
+        for(int i=0;i<feeds.length;i++)
+          unavailableFlags[i]=roomBoolean(initialFeedUnavailableKey(i),false);
+        if(feedBatchComplete){
+          for(FeedBatch batch:feedBatches)
+            if(batch.index>=0&&batch.index<feeds.length&&batch.unavailable
+                &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+              unavailableFlags[batch.index]=true;
+        }
+        int unavailableCount=0;
+        for(boolean missing:unavailableFlags)if(missing)unavailableCount++;
         int activeFeed=initialNextFeedIndex;
         int activeCursor=0,activeEntries=-1;
         for(FeedBatch batch:feedBatches){
@@ -612,17 +699,32 @@ public class SourceUpdateWorker extends Worker {
         int progressPercent=FullDiscoveryProgressPolicy.percent(
             completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
+        int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
             .putInt("source_initial_progress_staged_channels",saved.length())
             .putInt("source_initial_progress_checked_urls",
                 (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
+            .putInt("source_initial_progress_validated_urls",
+                (int)Math.min(Integer.MAX_VALUE,
+                    (long)validatedSoFar+Math.max(0,discoveryProbesValid)))
+            .putInt("source_initial_progress_unavailable_feeds",unavailableCount)
             .putInt("source_initial_progress_feed_index",Math.max(0,activeFeed))
             .putInt("source_initial_progress_feed_cursor",Math.max(0,activeCursor))
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
-                ?"完整频道快照已发布":"正在逐个抓取、检测和整理来源");
+                ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
+                :("正在逐个抓取、检测和整理来源；暂不可用 "+unavailableCount+" 个"))
+            .putString("source_update_result",initialDiscoveryComplete
+                ?("首次全量目录检查已完成并发布；成功处理 "
+                    +(completedFeeds-unavailableCount)+"/"+feeds.length
+                    +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
+                    +(validatedSoFar+Math.max(0,discoveryProbesValid))
+                    +" 次（非实机播放验证）。")
+                :("首次完整抓源进度 "+progressPercent+"%；已处理 "
+                    +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
+                    +unavailableCount+" 个；旧频道目录保持不变。"));
       }
       if(initialDiscoveryChain&&initialHasValidatedSource){
         update.putBoolean("source_initial_has_validated_source",true);
@@ -654,6 +756,9 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.AppStateEditor failedBuildReset=
             new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
         for(int feed=0;feed<feeds.length;feed++){
+          // Reset the publish/scan cursors for the next attempt, but leave the
+          // last failure diagnostics visible in Settings until that next attempt
+          // starts and explicitly initializes a fresh build.
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
@@ -667,7 +772,8 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_percent",0)
             .putInt("source_initial_progress_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
-            .putString("source_initial_progress_phase","本轮抓源没有通过验证的来源，未发布快照；可手动重试")
+            .putInt("source_initial_progress_validated_urls",0)
+            .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试")
             .apply();
         saveStatus(prefs,saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
@@ -796,9 +902,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private static class FeedBatch{
     final int index,cursor,parsed,indexedEntries;
-    final boolean success;
-    FeedBatch(int i,int c,int p,int total,boolean ok){
-      index=i;cursor=c;parsed=p;indexedEntries=total;success=ok;
+    final boolean success,unavailable;
+    FeedBatch(int i,int c,int p,int total,boolean ok,boolean unavailable){
+      index=i;cursor=c;parsed=p;indexedEntries=total;
+      success=ok;this.unavailable=unavailable;
     }
   }
   private String scopeForFeed(String feed){
@@ -806,6 +913,18 @@ public class SourceUpdateWorker extends Worker {
   }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+  private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
+  private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
+  private String initialFeedFailureReasonKey(int index){return "source_initial_feed_failure_reason_"+index;}
+  private String initialFeedDisplayLabelKey(int index){return "source_initial_feed_label_"+index;}
+
+  private static String safeFeedLabel(String url){
+    try{
+      java.net.URL parsed=new java.net.URL(url);
+      String path=parsed.getPath(),name=path.substring(path.lastIndexOf('/')+1);
+      return parsed.getHost()+"/"+(name.isEmpty()?"目录":name);
+    }catch(Exception ignored){return "公开来源目录";}
+  }
   private String canonicalDisplayName(Entry entry){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         entry.name,entry.tvgName,entry.tvgId,entry.group);
