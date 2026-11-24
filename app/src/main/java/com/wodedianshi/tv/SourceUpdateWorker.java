@@ -431,7 +431,12 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain&&ChinaDiscoveryCandidatePolicy.isClearlyMainland(
               e.scope,e.name,e.group,e.tvgName,e.tvgId))chinaPreflightsValid++;
         }
-        if(!measured.valid&&!initialDiscoveryChain)continue;
+        // Whether this is the first full build or routine discovery, a
+        // newly discovered URL must pass the media preflight before it may
+        // become a published channel or a new backup. Failed saved sources
+        // remain protected by the independent Room retention policy above.
+        if(!SourceDiscoveryAcceptancePolicy.mayPromoteNewCandidate(measured.valid))
+          continue;
         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
         if(target!=null){
           String canonical=ChannelNamePolicy.canonicalBroadcasterName(
@@ -807,7 +812,9 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_next_feed_index",0)
             .putInt("source_initial_progress_percent",0)
             .putInt("source_initial_progress_done_feeds",0)
+            .putInt("source_initial_progress_china_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
+            .putInt("source_initial_progress_checked_urls",0)
             .putInt("source_initial_progress_validated_urls",0)
             .putInt("source_initial_progress_china_validated_urls",0)
             .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试")
@@ -852,6 +859,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private String discoveryFeedsFingerprint(String[] feeds){
     StringBuilder value=new StringBuilder();
+    // A prior pending full build may contain dead routes from the old
+    // "stage even if probe failed" behavior. Restart only that isolated build
+    // after the acceptance policy changes; never discard published Room rows.
+    appendFingerprintPart(value,SourceDiscoveryAcceptancePolicy.BUILD_POLICY_VERSION);
     if(feeds!=null)for(String feed:feeds)appendFingerprintPart(value,feed);
     return CatalogueFingerprint.sha256(value.toString());
   }
