@@ -1641,6 +1641,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     VodItem(String t,String id,String u,String l,String poster){title=t;identifier=id;url=u;license=l;posterUrl=poster==null?"":poster;}
   }
   private Dialog vodPlayerDialog;
+  private Dialog vodCatalogueDialog;
   // Keep explicit references to the active VOD view model; never infer controls by child index.
   private LinearLayout currentVodPanel,currentVodResults;
   private TextView currentVodStatus;
@@ -1666,6 +1667,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private View vodCategoryFocusTarget;
   private void vodDialog(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())||(libVlcEngine!=null&&libVlcEngine.isPlaying());
     // A VOD catalogue session owns the screen; explicitly revoke live audio before
@@ -1789,6 +1791,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     currentVodPanel=panel;currentVodStatus=status;currentVodResults=results;
     panel.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));
     Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+    vodCatalogueDialog=dialog;
     dialog.setContentView(panel);
     closeButton.setOnClickListener(v->dialog.dismiss());
     backToVodCategories.setOnClickListener(v->{
@@ -1838,12 +1841,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     // Initial catalogue loading is deferred until after dialog.show().
     dialog.setOnDismissListener(d->{
+      if(vodCatalogueDialog==dialog)vodCatalogueDialog=null;
       cancelActiveVodCatalogue();
       // Activity stop also dismisses this dialog. In that path leave live
       // restoration to onStart(); starting a decoder while onStop() is tearing
       // it down creates a start/release race on Android TV.
       boolean shouldResumeLive=activityStarted&&!isFinishing()&&resumeLiveAfterVod
-          &&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive();
+          &&selected>=0&&selected<channels.size()&&!isAnyPlaybackLockActive();
       // Release the VOD catalogue ownership before attempting to resume live.
       // The asynchronous VLC release continuation also checks this owner.
       if(currentVodPanel==panel){currentVodPanel=null;currentVodStatus=null;currentVodResults=null;}
@@ -1876,7 +1880,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     dialog.show();
     // Show the full-screen VOD window before parsing the potentially large cache.
     panel.post(()->{
-      if(!dialog.isShowing()||currentVodPanel!=panel)return;
+      if(!dialog.isShowing()||currentVodPanel!=panel||isAnyPlaybackLockActive())return;
       // Pause happened before construction; now that the VOD window is visible,
       // release both live decoder backends before starting catalogue work.
       releaseLivePlayerSafely();
@@ -1884,7 +1888,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // firmware blocks during decoder teardown. Do not expose playable VOD
       // cards until the live backend has actually released its audio session.
       releaseLibVlcEngine(()->{
-        if(dialog.isShowing()&&currentVodPanel==panel)
+        if(dialog.isShowing()&&currentVodPanel==panel&&!isAnyPlaybackLockActive())
           loadVodCatalogue("电影",panel,status,results);
       });
     });
@@ -2474,7 +2478,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long vodDurationMs(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.getDurationMs();return vodPlayer==null?0L:Math.max(0L,vodPlayer.getDuration());}
   private boolean vodIsPlaying(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.isPlaying();return vodPlayer!=null&&vodPlayer.isPlaying();}
   private void vodPause(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.pause();else if(vodPlayer!=null)vodPlayer.pause();}
-  private void vodResume(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
+  private void vodResume(){if(isAnyPlaybackLockActive())return;if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
   private boolean vodSeekTo(long position){long duration=vodDurationMs();if(duration<=0L)return false;long target=VodTimelinePolicy.clampPosition(position,duration);if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.seekToMs(target);if(vodPlayer!=null){vodPlayer.seekTo(target);return true;}return false;}
   // Release VOD Media3 in independent stages. A vendor player may throw from
   // pause()/stop(); one failed teardown call must never skip clearMediaItems()
@@ -2504,7 +2508,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void releaseVodFallback(){if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}if(vodFallbackStartupWatchdog!=null){uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;}if(vodFallbackBackend!=null){try{vodFallbackBackend.release();}catch(RuntimeException|LinkageError ignored){}vodFallbackBackend=null;}vodUsingLibVlc=false;if(vodVlcVideoLayout!=null)vodVlcVideoLayout.setVisibility(View.GONE);}
   private void fallbackVodToLibVlc(Dialog dialog,VodItem item,PlayerView media3View,VLCVideoLayout vlcLayout,long resumePosition,Runnable onEnded,Runnable onFailure){
-    if(vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
+    if(isAnyPlaybackLockActive()||!activityStarted||vodFallbackAttempted||vodPlayerDialog!=dialog||activeVodItem!=item||dialog==null||!dialog.isShowing())return;
     final long session=vodSessionGeneration;final long fallbackStartedAt=android.os.SystemClock.elapsedRealtime();vodFallbackAttempted=true;
     // Stop the Media3 watchdog before releasing its player; no stale tick may race the LibVLC session.
     if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
@@ -3232,6 +3236,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void playVodInside(VodItem item){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     long resumeAt=0;for(org.json.JSONObject o:readVodHistory())if(item.identifier.equals(o.optString("id",""))){resumeAt=o.optLong("position",0);break;}
     final long savedPosition=resumeAt;
     if(savedPosition>10000){new AlertDialog.Builder(this).setTitle("继续观看？").setMessage("《"+item.title+"》上次看到 "+formatVodTime(savedPosition)+"，要从上次位置继续吗？").setPositiveButton("继续观看",(x,y)->startVodPlayback(item,savedPosition)).setNegativeButton("从头播放",(x,y)->startVodPlayback(item,0)).setNeutralButton("取消",null).show();return;}
@@ -3255,6 +3260,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startVodPlayback(VodItem item,long startPosition){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     if(currentVodPanel==null||!activityStarted||isFinishing()||isDestroyed())return;
     if(player!=null||libVlcEngine!=null||libVlcReleaseInProgress){
       toast("直播播放器正在释放，请稍后再选择影片");return;
@@ -5894,6 +5900,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.postDelayed(bufferingFallback,seconds*1000L);
   }
   private void advanceToNextSourceAutomatically(String reason){
+    if(isAnyPlaybackLockActive()||currentVodPanel!=null||!activityStarted)return;
     if(selected<0||selected>=channels.size())return;
     String failedMediaId=currentMediaId;
     if(failedMediaId.isEmpty()||failedMediaId.equals(lastAutoFailoverMediaId))return;
@@ -5944,6 +5951,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     showChannelZapMessage(reason);
   }
   private void advanceToNextChannelAutomatically(String reason){
+    if(isAnyPlaybackLockActive()||currentVodPanel!=null||!activityStarted)return;
     if(selected<0||selected>=channels.size()||channels.isEmpty())return;
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
@@ -5978,6 +5986,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void play(int ix){
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     automaticSwitchCount=0;
     failedEndpointsThisPass.clear();
     automaticChannelSwitchCount=0;
@@ -6000,6 +6009,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void play(int ix,int requestedSourceIndex){
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     Channel target=channels.get(ix);
     if(target.backups==null||target.backups.isEmpty())return;
     automaticSwitchCount=0;
@@ -6016,6 +6026,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void startCurrentSource(){
+    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(selected<0||selected>=channels.size())return;
     ++liveTuneRequestSerial;
     Channel requested=channels.get(selected);
@@ -6075,6 +6086,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     libVlcAttemptedForSource=false;
     if(video!=null)video.setVisibility(View.VISIBLE);
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     setSourceUpdatePlaybackActive(true);
     closeFullscreenChannelMenu();
     saveCriticalEngineStage("TUNE_STAGE","fullscreen layout enter begin");
@@ -6351,6 +6363,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private boolean tryStartLibVlcFallback(String reason){
+    if(isAnyPlaybackLockActive()||currentVodPanel!=null||!activityStarted)return false;
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
     libVlcAttemptedForSource=true;
     libVlcVideoOutputReady=false;
@@ -6913,18 +6926,56 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void refreshChildLockState(){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
+    if(isRemotePlaybackLockActive())return;
     if(childLockDialog!=null&&childLockDialog.isShowing()){
       childLockDialog.dismiss();childLockDialog=null;
       toast("限制时段已结束，可以继续使用");
       if(!resumeLiveAfterVod&&selected>=0&&selected<channels.size()){resumePlaybackOnStart=false;startCurrentSource();}
     }
   }
+  private boolean isRemotePlaybackLockActive(){
+    return remoteLockOverlayShowing
+        ||(remoteParentLockManager!=null&&remoteParentLockManager.isLocked());
+  }
+  private boolean isAnyPlaybackLockActive(){
+    return isRemotePlaybackLockActive()||isChildLockCurrentlyActive();
+  }
+  /** Revoke all pending playback before closing dialogs, whose dismissal can otherwise resume live. */
+  private void stopAllPlayersForLock(){
+    ++liveTuneRequestSerial;
+    ++playbackGeneration;
+    currentMediaId="";
+    ++vodSessionGeneration;
+    resumeLiveAfterVod=false;
+    resumePlaybackOnStart=false;
+    startupAutoResumePending=false;
+    startupResumeIndex=-1;
+    startupResumeChannel=null;
+    if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}
+    if(liveVlcReleaseContinuation!=null){
+      libVlcReleaseCallbacks.remove(liveVlcReleaseContinuation);
+      liveVlcReleaseContinuation=null;
+    }
+    libVlcReleaseCallbacks.clear();
+    pendingRemoteZapSteps=0;
+    pendingRemoteZapGeneration=-1L;
+    pendingRemoteZapMutationGeneration=-1L;
+    cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
+    if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
+    cancelActiveVodCatalogue();
+    if(player!=null)releaseLivePlayerSafely();
+    if(libVlcEngine!=null)releaseLibVlcEngine();
+    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
+    releaseVodFallback();
+    if(vodPlayer!=null)releaseVodPlayerSafely(null);
+    if(vodCatalogueDialog!=null&&vodCatalogueDialog.isShowing())vodCatalogueDialog.dismiss();
+    if(fullScreenPlayback)exitFullScreenPlayback();
+    setSourceUpdatePlaybackActive(libVlcReleaseInProgress);
+  }
   private void enforceChildLock(){
     if(!isChildLockCurrentlyActive()||isFinishing()||isDestroyed())return;
-    if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
-    if(vodPlayer!=null){try{vodPlayer.pause();vodPlayer.stop();}catch(Exception ignored){}}
-    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
-    if(fullScreenPlayback)exitFullScreenPlayback();
+    stopAllPlayersForLock();
     if(childLockDialog!=null&&childLockDialog.isShowing())return;
     EditText pin=new EditText(this);
     pin.setSingleLine(true);
@@ -7113,10 +7164,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(dpm!=null&&dpm.isLockTaskPermitted(getPackageName())){startLockTask();remoteLockTaskActive=true;}
       }catch(Exception e){android.util.Log.w("MyTVRemoteLock","Lock Task unavailable");}
     }
-    if(player!=null){try{player.pause();player.stop();}catch(Exception ignored){}}
-    if(vodPlayer!=null){try{vodPlayer.pause();vodPlayer.stop();}catch(Exception ignored){}}
-    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
-    if(fullScreenPlayback)exitFullScreenPlayback();
+    stopAllPlayersForLock();
     if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())return;
     EditText pin=new EditText(this);
     pin.setSingleLine(true);
@@ -7216,7 +7264,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(startupAutoResumeTask!=null)uiHandler.removeCallbacks(startupAutoResumeTask);
     startupAutoResumeTask=()->{
       startupAutoResumeTask=null;
-      if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed())return;
+      if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive())return;
       startupAutoResumePending=false;
       int index=startupResumeIndex;
       Channel expected=startupResumeChannel;
