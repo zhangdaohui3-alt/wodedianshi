@@ -58,8 +58,16 @@ public class SourceUpdateWorker extends Worker {
           getInputData().getBoolean("initial_discovery_chain",false))
           ?Result.retry():Result.success();
     }
-    try{noteInitialStage("准备本轮目录整理");return runOwnedWork();}
-    finally{initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);}
+    try{
+      long now=android.os.SystemClock.elapsedRealtime();
+      if(!getInputData().getBoolean("initial_discovery_chain",false)
+          ||now<committedStagingAt||now-committedStagingAt>60000L)discardStagingReuse();
+      noteInitialStage("准备本轮目录整理");
+      return runOwnedWork();
+    }finally{
+      if(isStopped()||Thread.currentThread().isInterrupted())discardStagingReuse();
+      initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);
+    }
   }
   private Result runOwnedWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
