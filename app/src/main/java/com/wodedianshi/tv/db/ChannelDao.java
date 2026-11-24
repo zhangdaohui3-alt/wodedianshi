@@ -36,13 +36,20 @@ public interface ChannelDao {
     @Query("UPDATE channels SET legacyKey = :legacyKey, name = :name, "
             + "primaryUrl = :primaryUrl, groupName = :groupName, categoryId = :categoryId, "
             + "tvgId = :tvgId, tvgName = :tvgName, channelScopesJson = :scopesJson, "
-            + "activeSource = :activeSource, sortOrder = :sortOrder WHERE id = :id")
+            + "activeSource = :activeSource, sortOrder = :sortOrder WHERE id = :id "
+            + "AND (legacyKey != :legacyKey OR name != :name OR primaryUrl != :primaryUrl "
+            + "OR groupName != :groupName OR categoryId != :categoryId OR tvgId != :tvgId "
+            + "OR tvgName != :tvgName OR channelScopesJson != :scopesJson "
+            + "OR activeSource != :activeSource OR sortOrder != :sortOrder)")
     void updateChannelFields(String id, String legacyKey, String name, String primaryUrl,
             String groupName, String categoryId, String tvgId, String tvgName,
             String scopesJson, int activeSource, int sortOrder);
 
     @Query("DELETE FROM backup_sources WHERE channelId = :channelId")
     void clearBackupSourcesForChannel(String channelId);
+
+    @Query("DELETE FROM backup_sources WHERE channelId = :channelId AND url = :url")
+    void deleteBackupSource(String channelId, String url);
 
     @Transaction
     default void writeChannelWithSources(CategoryEntity category, ChannelEntity channel,
@@ -79,7 +86,8 @@ public interface ChannelDao {
     @Query("SELECT id FROM categories")
     List<String> getAllCategoryIds();
 
-    @Query("UPDATE categories SET name = :name, sortOrder = :sortOrder WHERE id = :id")
+    @Query("UPDATE categories SET name = :name, sortOrder = :sortOrder WHERE id = :id "
+            + "AND (name != :name OR sortOrder != :sortOrder)")
     void updateCategoryFields(String id, String name, int sortOrder);
 
     @Query("DELETE FROM categories WHERE id = :id")
@@ -222,6 +230,19 @@ public interface ChannelDao {
 
     @Query("DELETE FROM categories")
     void clearCategories();
+
+    /** Checkpoint and table counts must describe the same committed snapshot. */
+    @Transaction
+    default CatalogueMigrationEntity getValidatedCheckpoint(String migrationKey) {
+        CatalogueMigrationEntity checkpoint = getMigration(migrationKey);
+        if (checkpoint == null || checkpoint.channelsCount < 0
+                || checkpoint.backupSourcesCount < 0 || checkpoint.favoritesCount < 0
+                || checkpoint.categoriesCount < 0) return null;
+        return countChannels() == checkpoint.channelsCount
+                && countBackupSources() == checkpoint.backupSourcesCount
+                && countFavorites() == checkpoint.favoritesCount
+                && countCategories() == checkpoint.categoriesCount ? checkpoint : null;
+    }
 
     @Query("SELECT COUNT(*) FROM categories")
     int countCategories();

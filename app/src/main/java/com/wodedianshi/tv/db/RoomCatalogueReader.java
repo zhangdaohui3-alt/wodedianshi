@@ -112,15 +112,13 @@ public final class RoomCatalogueReader {
      */
     public static Snapshot read(Context context, PageConsumer consumer) {
         if (context == null) throw new IllegalArgumentException("context is null");
-        MasterCatalogueRepository repository = new MasterCatalogueRepository(context);
-        if (!repository.isSnapshotReady()) return null;
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
         CatalogueMigrationEntity initialCheckpoint =
-                dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+                dao.getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY);
         if (initialCheckpoint == null) return null;
         final long catalogueVersion = initialCheckpoint.completedAt;
         ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
-        int total = dao.countChannels();
+        int total = initialCheckpoint.channelsCount;
         int loaded = 0;
         for (int offset = 0; offset < total; offset += PAGE_SIZE) {
             List<ChannelWithSources> page = dao.getAllChannelsPage(PAGE_SIZE, offset);

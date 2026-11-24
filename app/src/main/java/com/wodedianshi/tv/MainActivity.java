@@ -726,7 +726,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
   // Only transient optimistic read conflicts and temporarily unavailable
   // checkpoints are retried. Structural errors still fail closed. Each
-  // attempt clears its partial in-memory pages; this runs on the startup worker.
+  // attempt uses private staging pages; this runs on the startup worker.
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueWithStartupRetry(){
     for(int attempt=0;attempt<3;attempt++){
       try{
@@ -747,24 +747,29 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
   /** Read all Room pages and publish them to the in-memory UI model only on success. */
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueIntoMemory(){
-    synchronized(channels){channels.clear();}
-    return com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
-      synchronized(channels){
-        for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-          Channel channel=new Channel(row.name,row.url,row.group);
-          channel.tvgId=row.tvgId;
-          channel.tvgName=row.tvgName;
-          channel.backups.clear();
-          channel.backups.addAll(row.sources);
-          channel.sourceScopes.addAll(row.sourceScopes);
-          for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-            channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-          }
-          channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-          channels.add(channel);
+    final ArrayList<Channel> prepared=new ArrayList<>();
+    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
+        com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+      for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+        Channel channel=new Channel(row.name,row.url,row.group);
+        channel.tvgId=row.tvgId;
+        channel.tvgName=row.tvgName;
+        channel.backups.clear();
+        channel.backups.addAll(row.sources);
+        channel.sourceScopes.addAll(row.sourceScopes);
+        for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+          channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
         }
+        channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+        prepared.add(channel);
       }
     });
+    // The consumer above is private staging. A failed or stale read discards
+    // it without exposing any partial page to the shared catalogue.
+    if(snapshot!=null){
+      synchronized(channels){channels.clear();channels.addAll(prepared);}
+    }
+    return snapshot;
   }
 
   private void loadRoomAppState(){
