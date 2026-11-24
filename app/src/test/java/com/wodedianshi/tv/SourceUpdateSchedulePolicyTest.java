@@ -4,6 +4,13 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void normalInitialViewingDeferralUsesFixedDelay() {
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(false));
+        assertEquals(60L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(true));
+        assertTrue(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(true,false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(false,false));
+    }
+
     @Test public void firstDiscoveryProbeReuseIsShortLivedAndClockSafe() {
         assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, 1000, 301000));
         assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, 1000, 301001));
