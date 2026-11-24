@@ -1285,10 +1285,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-    // Run the one-time China-first discovery through the complete first candidate
-    // pass. Later launches use the 24-hour periodic worker instead of repeating it.
+    // The one-time full rebuild publishes an entire catalogue before routine
+    // maintenance is eligible. Existing channels remain usable during this build.
     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
         enabled,roomFullRebuildCompletedAt)){
+      wm.cancelUniqueWork("mytv_periodic_source_update");
       // The first discovery is part of first-run setup, not a routine background
       // refresh. Let it run while the catalogue screen is open; playback-active
       // protection inside the Worker still pauses it if the user starts watching.
@@ -1297,10 +1298,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           .setInputData(new Data.Builder().putBoolean("manual",true).putBoolean("initial_discovery_chain",true).build())
           .build();
       wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
+      return; // Never run a routine refresh concurrently with the first full build.
     }
-    PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,24,TimeUnit.HOURS)
+    if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(
+        enabled,roomFullRebuildCompletedAt))return;
+    PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,
+        SourceUpdateSchedulePolicy.ROUTINE_REFRESH_DAYS,TimeUnit.DAYS)
         .setConstraints(constraints).build();
-    wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.KEEP,request);
+    // UPDATE changes the interval on existing installations. KEEP would leave
+    // older users' 24-hour jobs running indefinitely after this app update.
+    wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
   }
   private void observeStartupSourceUpdateResults(){
     // Apply the guarded catalogue snapshot as soon as the startup refresh finishes.
@@ -1322,6 +1329,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
               runOnUiThread(()->{
                 roomFullRebuildCompletedAt=completed;
+                if(completed>0L)scheduleAutomaticSourceUpdates();
                 reloadChannelsAfterBackgroundUpdateIfNeeded();
               });
             });
@@ -1337,7 +1345,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       wm.cancelUniqueWork("mytv_periodic_source_update");
       wm.cancelUniqueWork("mytv_startup_source_refresh");
     }
-    toast(enabled?"后台自动更新已开启（有网络时约每 24 小时检查）":"后台自动更新已关闭；仍可在设置中手动更新");
+    toast(enabled?"后台自动更新已开启（完整建库后约每 7 天、空闲时维护）":"后台自动更新已关闭；仍可在设置中手动更新");
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
@@ -1387,7 +1395,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         runOnUiThread(()->{
           if(isFinishing()||isDestroyed())return;
           new AlertDialog.Builder(this).setTitle("频道源更新状态")
-            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（有网络时约每 24 小时检查一次）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：首次全量整理期间继续使用旧目录，完成后整体替换；日常更新再增量维护。媒体预检只代表地址可访问，不代表播放稳定或获得播放授权。")
+            .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")+"（完整建库后约每 7 天，播放或前台使用时跳过）\\n上次检查："+time+"\\n更新结果："+result+"\\n\\n说明：首次全量整理期间继续使用旧目录，完成后整体替换；日常更新再增量维护。媒体预检只代表地址可访问，不代表播放稳定或获得播放授权。")
             .setPositiveButton("立即更新",(d,w)->startManualSourceUpdate()).setNegativeButton("关闭",null).show();
         });
       });
