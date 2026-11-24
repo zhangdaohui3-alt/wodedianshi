@@ -22,4 +22,15 @@ public final class RoomCatalogueReloadPolicy {
         return activityActive && latestRequest && retriesRemaining > 0
             && capturedMutationGeneration != currentMutationGeneration;
     }
+
+    /**
+     * Paged Room reads may race a transaction even if no Activity mutation
+     * generation changed (for example, SourceUpdateWorker published Room).
+     * A null readiness result can also be transient. Retry once at most, and
+     * only for the current visible Activity request.
+     */
+    public static boolean shouldRetryAfterReadConflict(boolean activityActive,
+            boolean latestRequest, int retriesRemaining) {
+        return activityActive && latestRequest && retriesRemaining > 0;
+    }
 }

@@ -13,6 +13,15 @@ import java.util.Set;
 public final class RoomCatalogueReader {
     private static final int PAGE_SIZE = 200;
 
+    /** A concurrent Room write invalidated a paged read, not a broken database.
+     * The caller may retry after outstanding user mutations finish, but must
+     * never render the partial snapshot. */
+    public static final class StaleSnapshotException extends IllegalStateException {
+        public StaleSnapshotException() {
+            super("Room catalogue changed while its snapshot was being read");
+        }
+    }
+
     public static final class ChannelRecord {
         public final String name;
         public final String url;
@@ -125,16 +134,18 @@ public final class RoomCatalogueReader {
             if (consumer == null) allRows.addAll(records);
             else consumer.accept(records);
         }
-        // Never publish a partial directory as a valid startup snapshot. A missing
-        // middle page, concurrent truncation, or malformed row must fail closed so
-        // callers can retain the previous complete local directory instead.
-        CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
         CatalogueMigrationEntity finalCheckpoint =
                 dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        // Check the optimistic checkpoint BEFORE classifying a page-count
+        // mismatch. A full snapshot committed between pages can legitimately
+        // change the row count: that is a retryable conflict, not data damage.
         if (finalCheckpoint == null || finalCheckpoint.completedAt != catalogueVersion) {
-            throw new IllegalStateException("Room catalogue changed while its snapshot was being read");
+            throw new StaleSnapshotException();
         }
+        // A truncated read without any intervening write is a real structural
+        // failure. Do not retry it endlessly or publish a partial directory.
+        CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
                 favorites, loaded, catalogueVersion);
     }

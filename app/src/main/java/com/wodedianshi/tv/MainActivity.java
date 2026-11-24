@@ -7267,7 +7267,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // A concurrent favorite/source selection invalidates the prepared Room
   // catalogue before UI publication. Retry once only AFTER the narrow writer
   // queue drains, so a stale favorites/source snapshot cannot reappear.
-  private void scheduleRoomReloadAfterUserMutation(long invalidatedGeneration,
+  private void scheduleRoomReloadAfterWriteConflict(long invalidatedGeneration,
       int retriesRemaining){
     try{
       cataloguePersistWorker.execute(()->uiHandler.post(()->{
@@ -7280,6 +7280,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       saveLiveDiagnostic("BACKGROUND_CATALOGUE_RETRY_REJECTED",
           rejected.getClass().getSimpleName());
     }
+  }
+  // If the page-by-page Room read itself raced an independent transaction,
+  // nothing may be published. Request at most one fresh read after the user's
+  // narrow write queue has drained, without blocking the UI or playback.
+  private void requestRoomReloadAfterReadConflict(long generation,int retriesRemaining){
+    uiHandler.post(()->{
+      boolean active=activityStarted&&!isFinishing()&&!isDestroyed();
+      boolean latest=generation==backgroundCatalogueReloadGeneration;
+      if(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+          active,latest,retriesRemaining)){
+        android.util.Log.i("MyTVStartup","room_paged_read_conflict_retry_once");
+        scheduleRoomReloadAfterWriteConflict(generation,retriesRemaining-1);
+      }
+    });
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
@@ -7313,7 +7327,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 }
               });
           if(roomSnapshot==null){
-            android.util.Log.d("MyTVStartup","Room reload skipped: one-time seed is not ready");
+            // A concurrent Room commit can transiently make separate
+            // readiness-count queries disagree. Do not show partial data.
+            android.util.Log.d("MyTVStartup",
+                "Room reload snapshot not ready; retain visible channels");
+            requestRoomReloadAfterReadConflict(generation,retriesRemaining);
             return;
           }
           if(generation!=backgroundCatalogueReloadGeneration)return;
@@ -7336,7 +7354,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   currentMutation,retriesRemaining)){
                 android.util.Log.i("MyTVStartup",
                     "room_reload_deferred_until_user_mutation_committed");
-                scheduleRoomReloadAfterUserMutation(generation,retriesRemaining-1);
+                scheduleRoomReloadAfterWriteConflict(generation,retriesRemaining-1);
               }
               return;
             }
@@ -7352,7 +7370,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 // Rare second race between the preceding UI gate and taking
                 // the short channel lock. Do not publish the stale read.
                 if(retriesRemaining>0)
-                  scheduleRoomReloadAfterUserMutation(generation,retriesRemaining-1);
+                  scheduleRoomReloadAfterWriteConflict(generation,retriesRemaining-1);
                 return;
               }
               if(selected>=0&&selected<channels.size()){
@@ -7402,6 +7420,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             android.util.Log.i("MyTVStartup","reloaded Room catalogue channels="
                 +roomSnapshot.channelCount+" favorites="+prepared.favorites.size());
           });
+        }catch(com.wodedianshi.tv.db.RoomCatalogueReader.StaleSnapshotException concurrentWrite){
+          // SourceUpdateWorker can commit while a large directory is being
+          // read, without changing the Activity's mutation generation. This
+          // is an expected optimistic read conflict, not a broken catalogue.
+          android.util.Log.i("MyTVStartup",
+              "Room paged read superseded by concurrent catalogue write");
+          requestRoomReloadAfterReadConflict(generation,retriesRemaining);
         }catch(Throwable reloadFailure){
           android.util.Log.e("MyTVStartup","Room catalogue reload failed",reloadFailure);
           saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",
