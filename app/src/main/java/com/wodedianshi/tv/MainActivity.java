@@ -121,7 +121,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // false until the complete saved JSON has parsed and indexes have rebuilt.
   private volatile boolean catalogueSnapshotTrusted=false;
   // Invalidates a queued reload when a newer foreground return supersedes it.
-  private Runnable sourceUpdateActivityHeartbeat;
   private boolean activityStarted=false;
   private static volatile boolean crashHandlerInstalled=false;
   private boolean startupAutoResumePending=false;
@@ -379,7 +378,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           android.util.Log.i("MyTVRoom","discarded legacy non-authoritative business data committed="+cleared);
         }
         recordPreviousProcessExitReason();
-        setSourceUpdatePlaybackActive(false);
         android.util.Log.i("MyTVStartup","preferences_warm_ms="
             +(android.os.SystemClock.elapsedRealtime()-prefsWarmStarted));
       } catch (Throwable warmFailure) {
@@ -659,14 +657,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     synchronized(favorites){favorites.clear();}
     try{
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
-          readRoomCatalogueIntoMemory();
+          readRoomCatalogueWithStartupRetry();
       if(roomSnapshot==null){
         // A first install starts with a valid empty Room checkpoint, not a tiny
         // bundled playlist masquerading as the completed channel catalogue.
         // The full China-first discovery worker owns the first real publication.
         android.util.Log.i("MyTVRoom","fresh Room database; creating empty initialization checkpoint");
         com.wodedianshi.tv.db.RoomCatalogueWriter.initializeEmptyCatalogue(getApplicationContext());
-        roomSnapshot=readRoomCatalogueIntoMemory();
+        roomSnapshot=readRoomCatalogueWithStartupRetry();
       }
       if(roomSnapshot==null){
         throw new IllegalStateException("Room catalogue initialization did not produce a valid checkpoint");
@@ -692,6 +690,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage()));
       throw new IllegalStateException("频道目录初始化失败，未载入不完整目录，请重试",failure);
     }
+  }
+
+  // Only transient optimistic read conflicts and temporarily unavailable
+  // checkpoints are retried. Structural errors still fail closed. Each
+  // attempt clears its partial in-memory pages; this runs on the startup worker.
+  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueWithStartupRetry(){
+    for(int attempt=0;attempt<3;attempt++){
+      try{
+        com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=readRoomCatalogueIntoMemory();
+        if(snapshot!=null||attempt==2)return snapshot;
+      }catch(com.wodedianshi.tv.db.RoomCatalogueReader.StaleSnapshotException conflict){
+        if(attempt==2)throw conflict;
+      }
+      android.util.Log.i("MyTVStartup","room_startup_read_retry="+(attempt+1));
+      try{Thread.sleep(100L*(attempt+1));}
+      catch(InterruptedException interrupted){
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Room startup read interrupted",interrupted);
+      }
+    }
+    throw new IllegalStateException("Room startup retry exhausted");
   }
 
   /** Read all Room pages and publish them to the in-memory UI model only on success. */
@@ -1337,10 +1356,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(
         enabled,roomFullRebuildCompletedAt))return;
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,
-        SourceUpdateSchedulePolicy.ROUTINE_REFRESH_DAYS,TimeUnit.DAYS)
+        SourceUpdateSchedulePolicy.ROUTINE_ELIGIBILITY_CHECK_DAYS,TimeUnit.DAYS)
         .setConstraints(constraints).build();
-    // UPDATE changes the interval on existing installations. KEEP would leave
-    // older users' 24-hour jobs running indefinitely after this app update.
+    // The daily job only checks whether a weekly maintenance pass is due.
+    // The worker exits before discovery while busy or not due.
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
   }
   private void startInitialDiscoveryProgressTicker(){
@@ -7156,28 +7175,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private void setSourceUpdateActivityActive(boolean active){
-    android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
-    if(sourceUpdateActivityHeartbeat!=null){
-      uiHandler.removeCallbacks(sourceUpdateActivityHeartbeat);
-      sourceUpdateActivityHeartbeat=null;
-    }
-    if(!active){
-      prefs.edit().putBoolean("source_update_activity_active",false)
-          .putLong("source_update_activity_heartbeat",0L).apply();
-      return;
-    }
-    prefs.edit().putBoolean("source_update_activity_active",true)
-        .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
-    sourceUpdateActivityHeartbeat=new Runnable(){
-      @Override public void run(){
-        if(isFinishing())return;
-        getSharedPreferences("mytv",0).edit()
-            .putBoolean("source_update_activity_active",true)
-            .putLong("source_update_activity_heartbeat",System.currentTimeMillis()).apply();
-        uiHandler.postDelayed(this,30_000L);
-      }
-    };
-    uiHandler.postDelayed(sourceUpdateActivityHeartbeat,30_000L);
+    SourceUpdateActivityPolicy.setActivityActive(active);
   }
 
   // A Worker may safely refresh the persisted catalogue only while this Activity is
@@ -7439,7 +7437,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private void setSourceUpdatePlaybackActive(boolean active){
-    getSharedPreferences("mytv",0).edit().putBoolean("source_update_playback_active",active).apply();
+    SourceUpdateActivityPolicy.setPlaybackActive(active);
   }
   protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(video!=null)video.setPlayer(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();if(video!=null)video.setPlayer(null);releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}

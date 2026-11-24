@@ -17,6 +17,15 @@ public final class SourceUpdateSchedulePolicy {
     // A completed Room snapshot is the default directory. Periodic discovery is
     // deliberately infrequent; WorkManager's timing is inexact by design.
     public static final long ROUTINE_REFRESH_DAYS = 7L;
+    public static final long ROUTINE_ELIGIBILITY_CHECK_DAYS = 1L;
+    private static final long ROUTINE_REFRESH_MS = ROUTINE_REFRESH_DAYS * 24L * 60L * 60L * 1000L;
+
+    /** A skipped busy check must not advance the weekly maintenance deadline. */
+    public static boolean isRoutineMaintenanceDue(long fullRebuildAt, long lastRoutineAt, long now) {
+        if (fullRebuildAt <= 0L || now <= 0L) return false;
+        long last = Math.max(fullRebuildAt, lastRoutineAt);
+        return now < last || now - last >= ROUTINE_REFRESH_MS;
+    }
 
     /** Only a completed first rebuild enables low-priority routine maintenance. */
     public static boolean shouldScheduleRoutineMaintenance(boolean automaticEnabled,
@@ -25,8 +34,7 @@ public final class SourceUpdateSchedulePolicy {
     }
 
     /**
-     * A routine automatic pass is optional and can be skipped until the next
-     * weekly interval. Never build a 10-minute retry loop while the TV is busy.
+     * A routine busy check is skipped until the next daily eligibility check. Never build a 10-minute retry loop while the TV is busy.
      * First-run and explicitly requested work should retain their queued intent.
      */
     public static boolean shouldRetryWhenBusy(boolean manual, boolean initialDiscoveryChain) {
