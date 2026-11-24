@@ -25,6 +25,13 @@ public final class PlaylistFeedIndex {
 
     public static int readPage(File playlist, int startEntry, int maxEntries,
                                PlaylistParser.EntryConsumer consumer) throws IOException {
+        return readPage(playlist, startEntry, maxEntries, consumer, () -> false);
+    }
+
+    public static int readPage(File playlist, int startEntry, int maxEntries,
+                               PlaylistParser.EntryConsumer consumer,
+                               java.util.function.BooleanSupplier paused) throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
         if (playlist == null || !playlist.isFile() || startEntry < 0
                 || maxEntries <= 0 || consumer == null) {
             throw new IllegalArgumentException("Invalid playlist page arguments");
@@ -33,7 +40,7 @@ public final class PlaylistFeedIndex {
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
         if (!isUsableIndex(records, offsets)) {
             deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets);
+            buildIndex(playlist, records, offsets, paused);
         }
 
         // Decode the whole page before invoking the consumer. If a sidecar is
@@ -43,10 +50,11 @@ public final class PlaylistFeedIndex {
             page = readIndexedPage(records, offsets, startEntry, maxEntries);
         } catch (IOException corruptIndex) {
             deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets);
+            buildIndex(playlist, records, offsets, paused);
             // A second failure is a real I/O/source-data problem; preserve the cursor.
             page = readIndexedPage(records, offsets, startEntry, maxEntries);
         }
+        SourceProbeTimePolicy.checkPaused(paused);
         for (PlaylistParser.ChannelSource source : page) consumer.accept(source);
         return page.size();
     }
@@ -126,8 +134,8 @@ public final class PlaylistFeedIndex {
         }
     }
 
-    private static void buildIndex(File playlist, File records, File offsets)
-            throws IOException {
+    private static void buildIndex(File playlist, File records, File offsets,
+            java.util.function.BooleanSupplier paused) throws IOException {
         File recordsTemporary = new File(records.getAbsolutePath() + ".tmp");
         File offsetsTemporary = new File(offsets.getAbsolutePath() + ".tmp");
         final IOException[] writeFailure = new IOException[1];
@@ -145,7 +153,7 @@ public final class PlaylistFeedIndex {
             if (header == null || !header.replace("\uFEFF", "").trim().startsWith("#EXTM3U")) {
                 throw new IOException("Cached resource is not a valid M3U playlist");
             }
-            PlaylistParser.parseEach(reader, Integer.MAX_VALUE, source -> {
+            PlaylistParser.parseEach(reader, 0, Integer.MAX_VALUE, source -> {
                 if (writeFailure[0] != null) return;
                 try {
                     offsetFile.writeLong(recordFile.getFilePointer());
@@ -154,7 +162,8 @@ public final class PlaylistFeedIndex {
                 } catch (IOException error) {
                     writeFailure[0] = error;
                 }
-            });
+            }, paused);
+            SourceProbeTimePolicy.checkPaused(paused);
             if (writeFailure[0] != null) throw writeFailure[0];
             offsetFile.seek(4L);
             offsetFile.writeLong(written[0]);
