@@ -14,6 +14,25 @@ public final class SourceUpdateSchedulePolicy {
         return automaticUpdatesEnabled && fullRebuildCompletedAtMillis <= 0L;
     }
 
+    // A completed Room snapshot is the default directory. Periodic discovery is
+    // deliberately infrequent; WorkManager's timing is inexact by design.
+    public static final long ROUTINE_REFRESH_DAYS = 7L;
+
+    /** Only a completed first rebuild enables low-priority routine maintenance. */
+    public static boolean shouldScheduleRoutineMaintenance(boolean automaticEnabled,
+            long fullRebuildCompletedAtMillis) {
+        return automaticEnabled && fullRebuildCompletedAtMillis > 0L;
+    }
+
+    /**
+     * A routine automatic pass is optional and can be skipped until the next
+     * weekly interval. Never build a 10-minute retry loop while the TV is busy.
+     * First-run and explicitly requested work should retain their queued intent.
+     */
+    public static boolean shouldRetryWhenBusy(boolean manual, boolean initialDiscoveryChain) {
+        return manual || initialDiscoveryChain;
+    }
+
     /** Automatic catalogue work must not compete with foreground TV playback or input. */
     public static boolean shouldDeferForegroundAutoUpdate(boolean appForeground, boolean manual) {
         return appForeground && !manual;
@@ -26,7 +45,11 @@ public final class SourceUpdateSchedulePolicy {
      */
     public static boolean shouldDeferForegroundDiscovery(boolean appForeground,
             boolean manual, boolean initialDiscoveryChain, boolean hasPublishedChannels) {
-        return shouldDeferForegroundAutoUpdate(appForeground, manual)
+        // Initial full rebuild may proceed only for an EMPTY published catalogue:
+        // a previously saved catalogue must take priority even for manual initial
+        // work. A true manual routine refresh can run in foreground if playback
+        // itself is inactive.
+        return appForeground && (!manual || initialDiscoveryChain)
                 && !(initialDiscoveryChain && !hasPublishedChannels);
     }
 
