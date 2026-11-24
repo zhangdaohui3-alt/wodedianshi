@@ -157,11 +157,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
   private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
-  private volatile String roomLastChannelIdentity="";
-  private volatile String roomLastChannelUrl="";
-  private volatile String roomLastChannelName="";
-  private volatile String roomLastChannelGroup="";
-  private volatile String roomLastChannelTvgId="";
+  private static final LatestStateWriter<LastChannelState> LAST_CHANNEL_WRITER=new LatestStateWriter<>();
+  private volatile LastChannelState roomLastChannel=new LastChannelState("","","","","");
+  private static final class LastChannelState {
+    final String identity,url,name,group,tvgId;
+    LastChannelState(String identity,String url,String name,String group,String tvgId){
+      this.identity=identity==null?"":identity;
+      this.url=url==null?"":url;
+      this.name=name==null?"":name;
+      this.group=group==null?"":group;
+      this.tvgId=tvgId==null?"":tvgId;
+    }
+    @Override public boolean equals(Object other){
+      if(!(other instanceof LastChannelState))return false;
+      LastChannelState s=(LastChannelState)other;
+      return identity.equals(s.identity)&&url.equals(s.url)&&name.equals(s.name)
+          &&group.equals(s.group)&&tvgId.equals(s.tvgId);
+    }
+    @Override public int hashCode(){return java.util.Objects.hash(identity,url,name,group,tvgId);}
+  }
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
   private volatile String roomSourceProbeJson="{}";
@@ -754,16 +768,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private void loadRoomAppState(){
-    roomLastChannelIdentity=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_IDENTITY,"");
-    roomLastChannelUrl=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_URL,"");
-    roomLastChannelName=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_NAME,"");
-    roomLastChannelGroup=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_GROUP,"");
-    roomLastChannelTvgId=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_LAST_CHANNEL_TVG_ID,"");
+    java.util.HashMap<String,String> saved=new java.util.HashMap<>();
+    for(com.wodedianshi.tv.db.AppStateEntity row:
+        com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).appStateDao()
+            .getValues(java.util.Arrays.asList(ROOM_STATE_LAST_CHANNEL_IDENTITY,ROOM_STATE_LAST_CHANNEL_URL,
+                ROOM_STATE_LAST_CHANNEL_NAME,ROOM_STATE_LAST_CHANNEL_GROUP,ROOM_STATE_LAST_CHANNEL_TVG_ID))){
+      saved.put(row.key,row.stateValue);
+    }
+    roomLastChannel=LAST_CHANNEL_WRITER.initialize(new LastChannelState(
+        saved.get(ROOM_STATE_LAST_CHANNEL_IDENTITY),saved.get(ROOM_STATE_LAST_CHANNEL_URL),
+        saved.get(ROOM_STATE_LAST_CHANNEL_NAME),saved.get(ROOM_STATE_LAST_CHANNEL_GROUP),
+        saved.get(ROOM_STATE_LAST_CHANNEL_TVG_ID)));
     roomVodFavoritesJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
@@ -1032,39 +1047,30 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    // Source failover and same-channel recovery call this method repeatedly.
-    // Only queue Room writes when the actual saved channel changes, so channel
-    // switching does not enqueue five redundant database transactions per attempt.
-    String nextIdentity=identity(c);
-    String nextUrl=c.url==null?"":c.url;
-    String nextName=c.name==null?"":c.name;
-    String nextGroup=c.group==null?"":c.group;
-    String nextTvgId=c.tvgId==null?"":c.tvgId;
-    if(!nextIdentity.equals(roomLastChannelIdentity)){
-      roomLastChannelIdentity=nextIdentity;
-      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_IDENTITY,nextIdentity);
-    }
-    if(!nextUrl.equals(roomLastChannelUrl)){
-      roomLastChannelUrl=nextUrl;
-      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_URL,nextUrl);
-    }
-    if(!nextName.equals(roomLastChannelName)){
-      roomLastChannelName=nextName;
-      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_NAME,nextName);
-    }
-    if(!nextGroup.equals(roomLastChannelGroup)){
-      roomLastChannelGroup=nextGroup;
-      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_GROUP,nextGroup);
-    }
-    if(!nextTvgId.equals(roomLastChannelTvgId)){
-      roomLastChannelTvgId=nextTvgId;
-      queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,nextTvgId);
-    }
+    LastChannelState next=new LastChannelState(identity(c),c.url,c.name,c.group,c.tvgId);
+    roomLastChannel=next;
+    final Context app=getApplicationContext();
+    // One latest-value slot per process, with a serial transactional write.
+    // Identical failed values remain eligible for retry.
+    LAST_CHANNEL_WRITER.offer(next,cataloguePersistWorker,state->{
+      try{
+        new com.wodedianshi.tv.db.AppStateEditor(app)
+            .putString(ROOM_STATE_LAST_CHANNEL_IDENTITY,state.identity)
+            .putString(ROOM_STATE_LAST_CHANNEL_URL,state.url)
+            .putString(ROOM_STATE_LAST_CHANNEL_NAME,state.name)
+            .putString(ROOM_STATE_LAST_CHANNEL_GROUP,state.group)
+            .putString(ROOM_STATE_LAST_CHANNEL_TVG_ID,state.tvgId).apply();
+      }catch(RuntimeException failure){
+        android.util.Log.e("MyTVRoomState","last channel transaction failed",failure);
+        throw failure;
+      }
+    });
   }
   private int findLastChannelForResume(){
-    String savedIdentity=roomLastChannelIdentity;
-    if(savedIdentity==null||savedIdentity.isEmpty())return -1;
-    String savedUrl=roomLastChannelUrl;
+    LastChannelState resume=roomLastChannel;
+    String savedIdentity=resume.identity;
+    if(savedIdentity.isEmpty())return -1;
+    String savedUrl=resume.url;
     int found=-1;
     for(int i=0;i<channels.size();i++){
       Channel c=channels.get(i);
@@ -1088,14 +1094,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // If a generic station's primary host changed and it has no trustworthy TVG id,
     // restore only when its saved display name + category identifies exactly one
     // channel. Ambiguous same-name stations are deliberately not guessed.
-    if(found<0&&!roomLastChannelName.isEmpty()){
+    if(found<0&&!resume.name.isEmpty()){
       int unique=-1;
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
-        if(!canonicalChannelName(c.name).equals(canonicalChannelName(roomLastChannelName)))continue;
-        if(!normalizeResumeGroup(c.group).equals(normalizeResumeGroup(roomLastChannelGroup)))continue;
-        if(!roomLastChannelTvgId.isEmpty()
-            &&!normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(roomLastChannelTvgId)))continue;
+        if(!canonicalChannelName(c.name).equals(canonicalChannelName(resume.name)))continue;
+        if(!normalizeResumeGroup(c.group).equals(normalizeResumeGroup(resume.group)))continue;
+        if(!resume.tvgId.isEmpty()
+            &&!normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)))continue;
         if(unique>=0){unique=-2;break;}
         unique=i;
       }
