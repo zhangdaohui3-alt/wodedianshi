@@ -41,8 +41,14 @@ public class ChinaDiscoveryCandidatePolicyTest {
         assertEquals("CNN",ordered.get(4)[0]);
     }
 
-    @Test public void dedicatedCountryFeedsKeepOriginalCandidateOrder() {
-        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
+    @Test public void allMainlandStageFeedsPrioritizeChinaButLaterStagesKeepOrder() {
+        for(int i=0;i<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT;i++){
+            assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
+                i,"china","福建福州综合","福建","",""));
+            assertEquals(2,ChinaDiscoveryCandidatePolicy.initialProbePriority(
+                i,"global","BBC News","News","",""));
+        }
+        assertEquals(2,ChinaDiscoveryCandidatePolicy.initialProbePriority(
                 0,"global","Mislabelled HD","News","",""));
         assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,
