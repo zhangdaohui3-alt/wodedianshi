@@ -133,14 +133,15 @@ public class SourceUpdateWorker extends Worker {
           reset.apply();
         }
       }
-      // Snapshot the user's current catalogue before discovery/probing. The Activity
-      // may save favorites, edits, imports or playback state while this worker runs.
-      // Never let a stale worker snapshot overwrite those newer user changes.
+      // First discovery works solely on isolated staging. Do not deserialize
+      // the published catalogue every slice; read it afresh at publication.
+      // Routine maintenance still needs its original optimistic snapshot.
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
-      // Room is the only catalogue authority. If first-install seeding has not
-      // completed yet, retry rather than resurrecting stale SharedPreferences JSON.
-      if(roomSnapshot==null) {
+          initialDiscoveryChain?null:
+              com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+      if(initialDiscoveryChain
+          ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
+          :roomSnapshot==null) {
         saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
         return Result.retry();
       }
@@ -843,6 +844,9 @@ public class SourceUpdateWorker extends Worker {
       boolean initialHasValidatedSource=initialDiscoveryChain
           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
       boolean initialDiscoveryComplete=initialFeedsExhausted&&initialHasValidatedSource;
+      // No final merge or full catalogue read while a stable viewer is watching.
+      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
+      if(initialDiscoveryComplete)roomSnapshot=readPublishedForInitialCommit();
       // Prepare the full publication and all progress before opening a write transaction.
       JSONArray publication=initialDiscoveryComplete
           ?preservePreviouslyPublishedChannels(saved,roomSnapshot):saved;
@@ -860,8 +864,8 @@ public class SourceUpdateWorker extends Worker {
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
-              ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，正式目录保持不变；")
-              :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未验证地址仅作为低优先级备用保留；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+              ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
+              :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       if(initialDiscoveryChain){
         update.putInt("source_initial_next_feed_index",initialNextFeedIndex);
       }
@@ -1085,8 +1089,6 @@ public class SourceUpdateWorker extends Worker {
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
-      // Final publication or failed-build reset must wait until viewing ends.
-      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
       if(initialFeedsExhausted&&!initialHasValidatedSource){
         // Every feed and every current candidate has had its probe turn. Do not
         // retry an exhausted, unpublishable build forever merely because the TV
@@ -1140,6 +1142,7 @@ public class SourceUpdateWorker extends Worker {
         if(!slowPlayback&&previewLevel>previousPreviewLevel){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
+          roomSnapshot=readPublishedForInitialCommit();
           JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
           com.wodedianshi.tv.db.AppStateEditor previewState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
@@ -1184,6 +1187,13 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+  }
+  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(){
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
+        com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+    if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
+    return snapshot;
   }
   private void enqueueInitialContinuation() throws Exception {
     androidx.work.OneTimeWorkRequest continuation=
