@@ -99,10 +99,8 @@ public final class RoomCatalogueBuildStore {
             java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress)
             throws JSONException {
         checkPause(paused);
-        if(snapshot==null||touched==null||progress==null||previousSize<0||snapshot.length()<previousSize)
-            throw new IllegalArgumentException("Invalid incremental build");
-        for(int i=previousSize;i<snapshot.length();i++)
-            if(!touched.contains(i))throw new IllegalArgumentException("Missing appended row");
+        if(snapshot==null||progress==null)throw new IllegalArgumentException("Invalid incremental build");
+        validateTouchedRows(previousSize,snapshot.length(),touched);
         ArrayList<CatalogueBuildRowEntity> changed=new ArrayList<>();
         for(int i:touched){
             checkPause(paused);
@@ -129,6 +127,15 @@ public final class RoomCatalogueBuildStore {
             checkPause(paused);
         });
         return snapshot.length();
+    }
+
+    public static void validateTouchedRows(int previousSize,int nextSize,java.util.Set<Integer> touched) {
+        if(touched==null||previousSize<0||nextSize<previousSize)
+            throw new IllegalArgumentException("Invalid incremental build");
+        for(Integer row:touched)
+            if(row==null||row<0||row>=nextSize)throw new IllegalArgumentException("Invalid touched row");
+        for(int i=previousSize;i<nextSize;i++)
+            if(!touched.contains(i))throw new IllegalArgumentException("Missing appended row");
     }
 
     private static void checkPause(BooleanSupplier paused) {
