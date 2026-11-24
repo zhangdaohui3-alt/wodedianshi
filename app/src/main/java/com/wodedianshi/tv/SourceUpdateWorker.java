@@ -1164,7 +1164,7 @@ public class SourceUpdateWorker extends Worker {
         if(written!=publishedChannelCount)
           throw new IllegalStateException("Committed directory count mismatch");
       }
-      if(awaitingIdleFinalization)return Result.retry();
+      if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
         enqueueInitialContinuation();
       }
@@ -1203,9 +1203,12 @@ public class SourceUpdateWorker extends Worker {
     return snapshot;
   }
   private void enqueueInitialContinuation() throws Exception {
+    enqueueInitialContinuation(slowPlayback?20L:0L);
+  }
+  private void enqueueInitialContinuation(long delaySeconds) throws Exception {
     androidx.work.OneTimeWorkRequest continuation=
         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
-            .setInitialDelay(slowPlayback?20L:0L,java.util.concurrent.TimeUnit.SECONDS)
+            .setInitialDelay(delaySeconds,java.util.concurrent.TimeUnit.SECONDS)
             .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
             .setConstraints(new androidx.work.Constraints.Builder()
                 .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
@@ -1294,13 +1297,26 @@ public class SourceUpdateWorker extends Worker {
 
   private Result deferInitialDirectory(String reason){
     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_initial_progress_phase",reason);
-    return Result.retry();
+    return continueAfterViewingDelay(true);
+  }
+  private Result continueAfterViewingDelay(boolean waitingForIdle){
+    // Never append work after cancellation. If the enqueue itself fails, retain
+    // the current durable WorkManager request via its normal retry mechanism.
+    if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
+    try{
+      enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialViewingDelaySeconds(waitingForIdle));
+      return Result.success();
+    }catch(Exception failure){
+      android.util.Log.w("MyTVSourceDiscovery","Unable to schedule deferred initial slice",failure);
+      return Result.retry();
+    }
   }
   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
     if(initialDiscoveryChain){
       // The existing counters and cursors stay unchanged while viewing.
       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
           "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+      return continueAfterViewingDelay(false);
     }
     // Do not repeatedly wake the periodic job every few minutes while a user
     // watches television; the next daily check retains the overdue weekly intent.
