@@ -27,6 +27,22 @@ public final class SourceUpdateSchedulePolicy {
         return now < last || now - last >= ROUTINE_REFRESH_MS;
     }
 
+    // Three 4-entry feed pages fit the 12 discovery slots even when saved
+    // routes consume half of the 24-probe budget. No wrap inside one slice.
+    public static final int ROUTINE_FEEDS_PER_SLICE = 3;
+
+    public static int routineSliceEnd(int start, int feedCount) {
+        if (feedCount <= 0) return 0;
+        int safe = InitialFeedRotationPolicy.normalizeStart(start, feedCount);
+        return Math.min(feedCount, safe + ROUTINE_FEEDS_PER_SLICE);
+    }
+
+    public static int routineNextFeed(int start, int feedCount, boolean batchComplete) {
+        if (feedCount <= 0) return 0;
+        int safe = InitialFeedRotationPolicy.normalizeStart(start, feedCount);
+        return batchComplete ? routineSliceEnd(safe, feedCount) % feedCount : safe;
+    }
+
     /** Only a completed first rebuild enables low-priority routine maintenance. */
     public static boolean shouldScheduleRoutineMaintenance(boolean automaticEnabled,
             long fullRebuildCompletedAtMillis) {
