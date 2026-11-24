@@ -187,11 +187,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
   private final ArrayList<Channel> channels = new ArrayList<>();
-  // Snapshot of the last catalogue JSON this Activity restored or persisted.
-  // It lets onStart detect safe background-worker updates while this Activity was stopped.
-  // A partially restored catalogue is browseable for recovery, but it must never
-  // be serialized over the original SharedPreferences snapshot. This remains
-  // false until the complete saved JSON has parsed and indexes have rebuilt.
+  // Trust the restored Room catalogue only after its complete snapshot and indexes are ready.
+  // Incomplete in-memory data must never replace the last committed directory.
   private volatile boolean catalogueSnapshotTrusted=false;
   // Invalidates a queued reload when a newer foreground return supersedes it.
   private boolean activityStarted=false;
@@ -212,8 +209,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean localRegionFilterActive=false;
   private String activeLocalProvince=null;
   private String activeLocalCity=null;
-  // SharedPreferences persistence now runs on a background writer; synchronize
-  // the wrapper so UI favorite toggles cannot race its detached snapshot.
+  // Synchronize in-memory favorites while the Room writer consumes detached state.
   private final Set<String> favorites = Collections.synchronizedSet(new HashSet<String>());
   // Durable business state is loaded from Room on the startup worker.
   private static final String ROOM_STATE_LAST_CHANNEL_IDENTITY="last_channel_identity";
@@ -253,7 +249,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile boolean roomChinaDirectoryCommitted=false;
   private volatile long roomGlobalSupplementLastSuccess=0L;
   private final Map<String,Long> roomVodCacheTimes=Collections.synchronizedMap(new HashMap<String,Long>());
-  private final ArrayList<Button> menuButtons = new ArrayList<>();
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
@@ -262,8 +257,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // serial writer coalesces bursts of remote-control actions into the newest state.
   private final ExecutorService cataloguePersistWorker = Executors.newSingleThreadExecutor();
   private final Object cataloguePersistLock = new Object();
-  // Serializes disk commits with background-candidate preference publication.
-  // UI persistence requests use cataloguePersistLock only, never this I/O lock.
+  // Track and coalesce asynchronous Room catalogue persistence requests.
   private long cataloguePersistRequestedGeneration=0L;
   private long cataloguePersistCompletedGeneration=0L;
   private boolean cataloguePersistLastSuccess=true;
@@ -280,8 +274,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long pendingRemoteZapGeneration=-1L;
   // Pending DPAD actions belong to one immutable directory generation.
   private long pendingRemoteZapMutationGeneration=-1L;
-  // Parsed source-quality JSON is reused until a playback metric actually updates
-  // the backing preference strings; channel zapping must not reparse a large map.
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
 
@@ -646,26 +638,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
     updateLiveChannelOverlay();
-  }
-  private void styleVodPageButton(Button b,int normalColor){
-    b.setFocusable(true);b.setFocusableInTouchMode(true);b.setTextColor(Color.WHITE);
-    b.setBackground(makeButtonBg(normalColor,false));
-    b.setOnFocusChangeListener((v,focused)->{
-      if(!b.isHovered())b.setBackground(makeButtonBg(normalColor,focused));
-      b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
-    });
-    b.setOnHoverListener((v,event)->{
-      int action=event.getActionMasked();
-      if(action==android.view.MotionEvent.ACTION_HOVER_ENTER||action==android.view.MotionEvent.ACTION_HOVER_MOVE){
-        GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(32,92,145));
-        bg.setCornerRadius(dp(7));bg.setStroke(dp(2),Color.rgb(120,195,250));
-        b.setBackground(bg);b.setScaleX(1.04f);b.setScaleY(1.04f);b.setElevation(dp(8));
-      }else if(action==android.view.MotionEvent.ACTION_HOVER_EXIT){
-        boolean focused=b.hasFocus();b.setBackground(makeButtonBg(normalColor,focused));
-        b.setScaleX(focused?1.04f:1f);b.setScaleY(focused?1.04f:1f);b.setElevation(focused?dp(8):0);
-      }
-      return false;
-    });
   }
   // DPAD and mouse focus callbacks must not write diagnostic preferences on every input.
   private void styleTvButton(Button b,int normalColor){
@@ -1417,7 +1389,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Last-channel restoration is scheduled after asynchronous catalogue recovery in onCreate.
     updateNetworkSpeedMonitor();
   }
-  private void addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setTextSize(17);b.setMinHeight(dp(54));b.setFocusable(true);b.setFocusableInTouchMode(true);b.setOnFocusChangeListener((v,has)->{v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(has?Color.rgb(38,110,190):Color.rgb(35,45,62)));});b.setOnClickListener(l);b.setId(View.generateViewId());b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(35,45,62)));b.setTextColor(Color.WHITE);menuButtons.add(b);p.addView(b,new LinearLayout.LayoutParams(-1,dp(58)));}
   // Do not forward every remote-control key to PlayerView.
   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
   private void scheduleAutomaticSourceUpdates(){
@@ -2117,26 +2088,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(delta==0)delta=wheel>0?-dp(96):dp(96);
     grid.smoothScrollBy(delta,180);
     return true;
-  }
-  private void scrollVodGridPage(GridView grid,int direction){
-    if(grid==null||grid.getAdapter()==null||grid.getAdapter().getCount()==0||direction==0)return;
-    final int count=grid.getAdapter().getCount();
-    final int first=grid.getFirstVisiblePosition();
-    final int last=grid.getLastVisiblePosition();
-    if(direction>0&&last>=count-1)return;
-    if(direction<0&&first<=0)return;
-    final int columns=Math.max(1,grid.getNumColumns());
-    final int firstRow=first/columns;
-    final int lastRow=Math.max(firstRow,last/columns);
-    final int visibleRows=Math.max(1,lastRow-firstRow+1);
-    // Keep one row of context on screen while advancing by the actual visible rows.
-    final int pageRows=Math.max(1,visibleRows-1);
-    final int targetRow=direction>0?firstRow+pageRows:firstRow-pageRows;
-    final int targetPosition=Math.max(0,Math.min(count-1,targetRow*columns));
-    if(targetPosition==first)return;
-    // Position-based paging is deterministic on Android 9 GridView; pixel scrolling
-    // could stop early when only a partial row had been laid out by the device.
-    grid.post(()->grid.smoothScrollToPositionFromTop(targetPosition,0,260));
   }
   private GridView ensureVodGrid(LinearLayout host,int columns){
     GridView grid=null;
@@ -2915,7 +2866,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
     final int request=++vodRequestId;
     final String requestRegion=activeVodRegion;
-    // SharedPreferences may contain a very large catalogue JSON. Read and parse it
+    // Room may contain a large VOD cache. Read and parse it
     // away from the UI thread; only publish the resulting list on the main thread.
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> cached=readVodCache(category);
@@ -3332,9 +3283,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String encodeArchivePath(String path){
     try{String[] parts=path.split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(out.length()>0)out.append("/");out.append(URLEncoder.encode(p,"UTF-8").replace("+","%20"));}return out.toString();}catch(Exception e){return path;}
-  }
-  private String httpGet(String address)throws Exception{
-    HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","MyTV/1.19 (Android TV)");try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);return out.toString("UTF-8");}finally{c.disconnect();}
   }
   private void playVodInside(VodItem item){
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
@@ -3945,12 +3893,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return province.equals(explicit)&&(hasRegionalToken(metadata,city)
         ||(province.equals(city)&&citiesForProvince(province).length==1));
   }
-  private boolean matchesLocalRegion(Channel c){
-    if(!localRegionFilterActive)return true;
-    if(activeLocalProvince==null)return isLocalChannel(c);
-    if(activeLocalCity==null)return matchesProvinceLocal(c,activeLocalProvince);
-    return matchesProvinceCity(c,activeLocalProvince,activeLocalCity);
-  }
   private boolean categoryMatch(Channel c,String cat){
     if(c==null||cat==null)return false;
     // Legacy/imported M3U entries may omit group or metadata fields. Category
@@ -4341,9 +4283,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     });
   }
-  private void focusFirstChannelInMenu(){
-    focusSelectedChannelInMenu();
-  }
   private void chooseFile(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
   // Category entry is a pure Room-cache operation. Only the first complete
   // rebuild and explicit/idle WorkManager jobs perform network discovery.
@@ -4523,7 +4462,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         android.util.Log.e("MyTVImport","large playlist import failed; restoring last saved catalogue",failure);
         // parse() merges rows into live channel objects. If an unexpected parser,
         // allocation or persistence failure occurs mid-import, reload the last
-        // committed SharedPreferences snapshot so the in-memory catalogue cannot
+        // committed Room snapshot so the in-memory catalogue cannot
         // remain half-imported while the next save overwrites the good copy.
         try{restore();}
         catch(Throwable rollbackFailure){
@@ -4539,7 +4478,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     });
   }
-  private int extinfComma(String line){ boolean quoted=false; for(int i=0;i<line.length();i++){ char ch=line.charAt(i); if(ch=='"')quoted=!quoted; else if(ch==','&&!quoted)return i; } return -1; }
   private int parse(String data){
     return parse(data,null,"custom");
   }
@@ -6872,10 +6810,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     return scores;
   }
-  private double observedSourceScore(String url){
-    Double score=observedSourceScores(java.util.Collections.singletonList(url)).get(url);
-    return score==null?sourceQualityScore(url)*0.01:score;
-  }
   private void sortSourcesByObservedQuality(Channel c){
     if(c==null||c.backups==null||c.backups.size()<2)return;
     String active=c.activeSource>=0&&c.activeSource<c.backups.size()?c.backups.get(c.activeSource):c.url;
@@ -6951,7 +6885,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Calendar cal=Calendar.getInstance();
     return cal.get(Calendar.YEAR)+"-"+cal.get(Calendar.DAY_OF_YEAR);
   }
-  private int childDayBit(Calendar cal){return 1<<(cal.get(Calendar.DAY_OF_WEEK)-Calendar.SUNDAY);}
   private boolean childQuietTimeNow(){
     android.content.SharedPreferences p=childPrefs();
     if(!p.getBoolean("child_block_enabled",false))return false;
