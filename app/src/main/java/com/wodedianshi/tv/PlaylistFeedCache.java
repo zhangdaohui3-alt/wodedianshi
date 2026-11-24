@@ -60,14 +60,24 @@ public final class PlaylistFeedCache {
         File cached = new File(directory, key + ".m3u");
         File metadata = new File(directory, key + ".m3u.properties");
         Properties old = readProperties(metadata);
-        long cachedAt = parseLong(old.getProperty("cachedAt"), 0L);
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
                 && isPlaylistFile(cached);
+        // Do not trust validators or index files after a body replacement crash,
+        // eviction, or migration from an older cache format.
+        if (hasValidCache && !matchesBody(old, cached)) {
+            invalidateIndex(cached);
+            old = new Properties();
+            describeBody(old, cached, contentDigest(cached, paused));
+            writePropertiesAtomically(metadata, new File(metadata.getPath()+".tmp"), old);
+        } else if (!hasValidCache) {
+            old = new Properties();
+        }
+        long cachedAt = parseLong(old.getProperty("cachedAt"), 0L);
 
         if (hasValidCache && (preserveExistingSnapshot
                 || (System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
-            cached.setLastModified(System.currentTimeMillis());
+            metadata.setLastModified(System.currentTimeMillis());
             pruneOldEntries(directory, cached);
             return cached;
         }
@@ -101,7 +111,7 @@ public final class PlaylistFeedCache {
             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
-                cached.setLastModified(System.currentTimeMillis());
+                metadata.setLastModified(System.currentTimeMillis());
                 pruneOldEntries(directory, cached);
                 return cached;
             }
@@ -114,8 +124,10 @@ public final class PlaylistFeedCache {
                 throw new IOException("Playlist exceeds cache size limit");
             }
             long copied = 0L;
+            MessageDigest digest = newDigest();
             try (InputStream input = new BufferedInputStream(connection.getInputStream());
-                 OutputStream output = new BufferedOutputStream(new FileOutputStream(temporary))) {
+                 FileOutputStream fileOutput = new FileOutputStream(temporary);
+                 OutputStream output = new BufferedOutputStream(fileOutput)) {
                 byte[] buffer = new byte[32 * 1024];
                 int count;
                 while (true) {
@@ -128,7 +140,10 @@ public final class PlaylistFeedCache {
                         throw new IOException("Playlist exceeds cache size limit");
                     }
                     output.write(buffer, 0, count);
+                    digest.update(buffer, 0, count);
                 }
+                output.flush();
+                fileOutput.getFD().sync();
             }
             if (copied == 0L || !isPlaylistFile(temporary)) {
                 throw new IOException("Downloaded resource is not a valid M3U playlist");
@@ -138,15 +153,16 @@ public final class PlaylistFeedCache {
             // that body so a later page can never seek into records from an older feed.
             checkDownloadBudget(paused, deadline);
             invalidateIndex(cached);
-            // Publish the new snapshot only after the complete response passed validation.
-            if (cached.exists() && !cached.delete()) {
-                throw new IOException("Cannot replace old playlist cache");
+            // Remove the old body's metadata BEFORE the atomic replacement.
+            // A crash leaves either the old or new body, with no stale validator.
+            // The next obtain can reconstruct its content identity safely.
+            if (metadata.exists() && !metadata.delete()) {
+                throw new IOException("Cannot invalidate old playlist metadata");
             }
-            if (!temporary.renameTo(cached)) {
-                throw new IOException("Cannot publish playlist cache snapshot");
-            }
+            atomicReplace(temporary, cached);
 
             Properties fresh = new Properties();
+            describeBody(fresh, cached, hex(digest.digest()));
             fresh.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
             String responseEtag = connection.getHeaderField("ETag");
             String responseModified = connection.getHeaderField("Last-Modified");
@@ -188,7 +204,7 @@ public final class PlaylistFeedCache {
         for (File file : files) total += cacheEntrySize(file);
         if (total <= MAX_CACHE_BYTES) return;
         java.util.Arrays.sort(files, (left, right) ->
-                Long.compare(left.lastModified(), right.lastModified()));
+                Long.compare(lastAccess(left), lastAccess(right)));
         for (File file : files) {
             if (total <= MAX_CACHE_BYTES) break;
             if (file.equals(keep)) continue;
@@ -248,15 +264,79 @@ public final class PlaylistFeedCache {
 
     private static void writePropertiesAtomically(File target, File temporary,
                                                    Properties properties) throws IOException {
-        try (OutputStream output = new FileOutputStream(temporary)) {
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
             properties.store(output, "My TV playlist cache metadata");
             output.flush();
+            output.getFD().sync();
         }
-        if (target.exists() && !target.delete()) {
-            throw new IOException("Cannot replace playlist cache metadata");
+        atomicReplace(temporary, target);
+    }
+
+    /** Version identifies the exact cached feed body and its URL-derived slot. */
+    public static String contentVersion(File playlist) throws IOException {
+        Properties properties = readProperties(new File(playlist.getPath()+".properties"));
+        if (!matchesBody(properties, playlist))
+            throw new IOException("Playlist content identity is unavailable");
+        return playlist.getName()+":"+properties.getProperty("bodySha256");
+    }
+
+    private static boolean matchesBody(Properties p, File body) {
+        String digest=p.getProperty("bodySha256","");
+        return body.isFile() && digest.matches("[0-9a-f]{64}")
+            && parseLong(p.getProperty("bodyLength"),-1L)==body.length()
+            && parseLong(p.getProperty("bodyModified"),-1L)==body.lastModified();
+    }
+
+    private static void describeBody(Properties p, File body, String digest) {
+        p.setProperty("bodySha256",digest);
+        p.setProperty("bodyLength",Long.toString(body.length()));
+        p.setProperty("bodyModified",Long.toString(body.lastModified()));
+    }
+
+    private static long lastAccess(File body) {
+        File metadata=new File(body.getPath()+".properties");
+        return Math.max(body.lastModified(),metadata.lastModified());
+    }
+
+    private static String contentDigest(File body, java.util.function.BooleanSupplier paused)
+            throws IOException {
+        MessageDigest digest=newDigest();
+        try (InputStream input=new BufferedInputStream(new FileInputStream(body))) {
+            byte[] buffer=new byte[32*1024];
+            while(true) {
+                SourceProbeTimePolicy.checkPaused(paused);
+                int n=input.read(buffer);
+                if(n<0)break;
+                digest.update(buffer,0,n);
+            }
         }
-        if (!temporary.renameTo(target)) {
-            throw new IOException("Cannot publish playlist cache metadata");
+        return hex(digest.digest());
+    }
+
+    private static MessageDigest newDigest() throws IOException {
+        try { return MessageDigest.getInstance("SHA-256"); }
+        catch(java.security.NoSuchAlgorithmException failure) {
+            throw new IOException("SHA-256 unavailable",failure);
+        }
+    }
+
+    private static String hex(byte[] digest) {
+        char[] alphabet="0123456789abcdef".toCharArray();
+        char[] result=new char[digest.length*2];
+        for(int i=0;i<digest.length;i++) {
+            int value=digest[i]&255;
+            result[i*2]=alphabet[value>>>4];
+            result[i*2+1]=alphabet[value&15];
+        }
+        return new String(result);
+    }
+
+    private static void atomicReplace(File temporary,File target) throws IOException {
+        // Both paths are in the same private directory; POSIX rename replaces
+        // the destination atomically, without an unlink-first failure window.
+        try { android.system.Os.rename(temporary.getAbsolutePath(),target.getAbsolutePath()); }
+        catch(android.system.ErrnoException failure) {
+            throw new IOException("Cannot atomically replace playlist cache file",failure);
         }
     }
 
