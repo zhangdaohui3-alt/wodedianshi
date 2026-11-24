@@ -267,6 +267,10 @@ public class SourceUpdateWorker extends Worker {
           enqueueInitialContinuation();
           return Result.success();
         }
+        // Last viewing slice may already have committed every feed. Avoid
+        // reloading/ranking staging on each retry while only publication waits.
+        if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
+          return deferInitialDirectory("线路初筛已完成，等待空闲发布完整快照");
         saved=com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
@@ -843,9 +847,11 @@ public class SourceUpdateWorker extends Worker {
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
       boolean initialHasValidatedSource=initialDiscoveryChain
           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
-      boolean initialDiscoveryComplete=initialFeedsExhausted&&initialHasValidatedSource;
-      // No final merge or full catalogue read while a stable viewer is watching.
-      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
+      boolean awaitingIdleFinalization=FullDiscoveryProgressPolicy.awaitingIdleFinalization(initialFeedsExhausted,slowPlayback);
+      boolean initialDiscoveryComplete=FullDiscoveryProgressPolicy.canPublishInitialSnapshot(
+          initialFeedsExhausted,initialHasValidatedSource,slowPlayback);
+      // Save the last probed page in staging even while viewing. Only merging
+      // the live snapshot (or resetting an unsuccessful build) requires idle.
       if(initialDiscoveryComplete)roomSnapshot=readPublishedForInitialCommit();
       // Prepare the full publication and all progress before opening a write transaction.
       JSONArray publication=initialDiscoveryComplete
@@ -1015,7 +1021,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :(stageDescription+"；暂不可用 "+unavailableCount+" 个"))
+                :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":stageDescription+"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
@@ -1089,7 +1095,7 @@ public class SourceUpdateWorker extends Worker {
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
-      if(initialFeedsExhausted&&!initialHasValidatedSource){
+      if(initialFeedsExhausted&&!initialHasValidatedSource&&!awaitingIdleFinalization){
         // Every feed and every current candidate has had its probe turn. Do not
         // retry an exhausted, unpublishable build forever merely because the TV
         // Activity happens to remain open; discard staging and retain the live DB.
@@ -1158,6 +1164,7 @@ public class SourceUpdateWorker extends Worker {
         if(written!=publishedChannelCount)
           throw new IllegalStateException("Committed directory count mismatch");
       }
+      if(awaitingIdleFinalization)return Result.retry();
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
         enqueueInitialContinuation();
       }
