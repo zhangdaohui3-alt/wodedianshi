@@ -1472,23 +1472,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         try{
           final android.content.Context context=getApplicationContext();
           final String prefix="source_initial_progress_";
-          final long completed=readRoomProgressLong(context,"source_full_rebuild_completed_at",0L);
-          final int done=(int)readRoomProgressLong(context,prefix+"done_feeds",0L);
-          final int total=(int)readRoomProgressLong(context,prefix+"total_feeds",0L);
-          final int chinaDone=(int)readRoomProgressLong(context,prefix+"china_done_feeds",0L);
-          final int chinaTotal=(int)readRoomProgressLong(context,prefix+"china_total_feeds",0L);
-          final int chinaValidated=(int)readRoomProgressLong(context,prefix+"china_validated_urls",0L);
-          final int staged=(int)readRoomProgressLong(context,prefix+"staged_channels",0L);
-          final int checked=(int)readRoomProgressLong(context,prefix+"checked_urls",0L);
-          final int validated=(int)readRoomProgressLong(context,prefix+"validated_urls",0L);
-          final int unavailable=(int)readRoomProgressLong(context,prefix+"unavailable_feeds",0L);
-          final int feedIndex=(int)readRoomProgressLong(context,prefix+"feed_index",0L);
-          final int cursor=(int)readRoomProgressLong(context,prefix+"feed_cursor",0L);
-          final int entries=(int)readRoomProgressLong(context,prefix+"feed_entries",0L);
-          final int percent=(int)readRoomProgressLong(context,prefix+"percent",0L);
-
-          final String phase=com.wodedianshi.tv.db.AppStateStore.get(
-              context,prefix+"phase","尚未开始首次完整抓源");
+          java.util.ArrayList<String> keys=new java.util.ArrayList<>();
+          keys.add("source_full_rebuild_completed_at");
+          for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
+              "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
+              "validated_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
+              "percent","phase"})keys.add(prefix+suffix);
+          final Map<String,String> snapshot=readRoomStateValues(context,keys);
+          final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+          final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
+          final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
+          final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
+          final int chinaTotal=(int)readStateLong(snapshot,prefix+"china_total_feeds",0L);
+          final int chinaValidated=(int)readStateLong(snapshot,prefix+"china_validated_urls",0L);
+          final int staged=(int)readStateLong(snapshot,prefix+"staged_channels",0L);
+          final int checked=(int)readStateLong(snapshot,prefix+"checked_urls",0L);
+          final int validated=(int)readStateLong(snapshot,prefix+"validated_urls",0L);
+          final int unavailable=(int)readStateLong(snapshot,prefix+"unavailable_feeds",0L);
+          final int feedIndex=(int)readStateLong(snapshot,prefix+"feed_index",0L);
+          final int cursor=(int)readStateLong(snapshot,prefix+"feed_cursor",0L);
+          final int entries=(int)readStateLong(snapshot,prefix+"feed_entries",0L);
+          final int percent=(int)readStateLong(snapshot,prefix+"percent",0L);
+          final String phase=snapshot.getOrDefault(prefix+"phase","尚未开始首次完整抓源");
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
@@ -1534,6 +1539,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }catch(RuntimeException ignored){initialDiscoveryProgressReadPending.set(false);}
   }
 
+  private static Map<String,String> readRoomStateValues(Context context,List<String> keys){
+    Map<String,String> values=new HashMap<>();
+    for(com.wodedianshi.tv.db.AppStateEntity row:
+        com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).appStateDao().getValues(keys))
+      values.put(row.key,row.stateValue);
+    return values;
+  }
+  private static long readStateLong(Map<String,String> state,String key,long fallback){
+    try{return Long.parseLong(state.getOrDefault(key,Long.toString(fallback)));}
+    catch(NumberFormatException invalid){return fallback;}
+  }
   private static long readRoomProgressLong(android.content.Context context,String key,long fallback){
     try{
       return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
@@ -5518,8 +5534,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     clean=clean.replaceAll("[\\r\\n\\t]+"," ");
     return clean.length()>260?clean.substring(0,260):clean;
   }
-  // Persist the last native transition synchronously: a native abort/SIGSEGV bypasses
-  // Java uncaught-exception handlers, so asynchronous diagnostic writes can be lost.
+  // Best-effort asynchronous native breadcrumb. A native abort or abrupt
+  // process death can occur before SharedPreferences persists it.
   private void saveCriticalEngineStage(String stage,String detail){
     String safe=safeDiagnosticDetail(detail);
     String value=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
@@ -5535,18 +5551,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           .apply();
     }catch(RuntimeException ignored){}
   }
+  private static final Object LIVE_DIAGNOSTIC_LOCK=new Object();
+  private static final java.util.ArrayDeque<String> LIVE_DIAGNOSTIC_LINES=new java.util.ArrayDeque<>();
+  private static boolean liveDiagnosticLoaded;
   private void saveLiveDiagnostic(String stage,String detail){
     String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
         +" | "+stage+" | "+safeDiagnosticDetail(detail);
     android.util.Log.w("MyTVLiveDiag",line);
     try{
       android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-      String old=p.getString("live_diagnostics_v1","");
-      ArrayList<String> entries=new ArrayList<>();
-      if(old!=null&&!old.isEmpty())entries.addAll(Arrays.asList(old.split("\\n")));
-      entries.add(line);
-      while(entries.size()>30)entries.remove(0);
-      p.edit().putString("live_diagnostics_v1",android.text.TextUtils.join("\n",entries)).apply();
+      synchronized(LIVE_DIAGNOSTIC_LOCK){
+        if(!liveDiagnosticLoaded){
+          String old=p.getString("live_diagnostics_v1","");
+          if(old!=null&&!old.isEmpty())LIVE_DIAGNOSTIC_LINES.addAll(Arrays.asList(old.split("\\n")));
+          liveDiagnosticLoaded=true;
+        }
+        LIVE_DIAGNOSTIC_LINES.addLast(line);
+        while(LIVE_DIAGNOSTIC_LINES.size()>30)LIVE_DIAGNOSTIC_LINES.removeFirst();
+        p.edit().putString("live_diagnostics_v1",
+            android.text.TextUtils.join("\n",LIVE_DIAGNOSTIC_LINES)).apply();
+      }
     }catch(Exception ignored){}
   }
   private void recordDecoderInventoryOnce(){
