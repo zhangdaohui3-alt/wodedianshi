@@ -143,7 +143,9 @@ public class SourceUpdateWorker extends Worker {
           for(int feed=0;feed<feeds.length;feed++){
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
-                .remove(initialFeedFailureCountKey(feed));
+                .remove(initialFeedFailureCountKey(feed))
+                .remove(initialFeedFailureReasonKey(feed))
+                .remove(initialFeedDisplayLabelKey(feed));
           }
           resetBuildState.remove("source_feed_batch_fingerprint")
               .remove("source_feed_batch_scanned")
@@ -328,6 +330,11 @@ public class SourceUpdateWorker extends Worker {
                 roomInt(initialFeedFailureCountKey(feedIndex),0));
             com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
                 initialFeedFailureCountKey(feedIndex),Integer.toString(attempts));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedFailureReasonKey(feedIndex),
+                InitialFeedFailurePolicy.userVisibleReason(failure));
+            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
             feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
                 failure,attempts);
             if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
@@ -611,7 +618,9 @@ public class SourceUpdateWorker extends Worker {
             update.putBoolean(initialFeedUnavailableKey(batch.index),true);
           }else if(initialDiscoveryChain){
             update.remove(initialFeedUnavailableKey(batch.index))
-                .remove(initialFeedFailureCountKey(batch.index));
+                .remove(initialFeedFailureCountKey(batch.index))
+                .remove(initialFeedFailureReasonKey(batch.index))
+                .remove(initialFeedDisplayLabelKey(batch.index));
           }
           if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
@@ -726,7 +735,9 @@ public class SourceUpdateWorker extends Worker {
         for(int feed=0;feed<feeds.length;feed++){
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
               .remove(initialFeedUnavailableKey(feed))
-              .remove(initialFeedFailureCountKey(feed));
+              .remove(initialFeedFailureCountKey(feed))
+              .remove(initialFeedFailureReasonKey(feed))
+              .remove(initialFeedDisplayLabelKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -883,6 +894,16 @@ public class SourceUpdateWorker extends Worker {
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
   private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
+  private String initialFeedFailureReasonKey(int index){return "source_initial_feed_failure_reason_"+index;}
+  private String initialFeedDisplayLabelKey(int index){return "source_initial_feed_label_"+index;}
+
+  private static String safeFeedLabel(String url){
+    try{
+      java.net.URL parsed=new java.net.URL(url);
+      String path=parsed.getPath(),name=path.substring(path.lastIndexOf('/')+1);
+      return parsed.getHost()+"/"+(name.isEmpty()?"目录":name);
+    }catch(Exception ignored){return "公开来源目录";}
+  }
   private String canonicalDisplayName(Entry entry){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         entry.name,entry.tvgName,entry.tvgId,entry.group);
