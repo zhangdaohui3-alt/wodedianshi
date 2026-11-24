@@ -16,6 +16,12 @@ public class SourceUpdateWorker extends Worker {
   // task in this process under one nonblocking ownership gate.
   private static final java.util.concurrent.atomic.AtomicBoolean SOURCE_WORK_ACTIVE=
       new java.util.concurrent.atomic.AtomicBoolean();
+  // Transient, same-process status only; durable progress stays in Room.
+  private static volatile String initialLiveStage="";
+  public static String currentInitialLiveStage(){return initialLiveStage;}
+  private void noteInitialStage(String stage){
+    if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
+  }
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
@@ -36,8 +42,8 @@ public class SourceUpdateWorker extends Worker {
           getInputData().getBoolean("initial_discovery_chain",false))
           ?Result.retry():Result.success();
     }
-    try{return runOwnedWork();}
-    finally{SOURCE_WORK_ACTIVE.set(false);}
+    try{noteInitialStage("准备本轮目录整理");return runOwnedWork();}
+    finally{initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);}
   }
   private Result runOwnedWork(){
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
@@ -298,6 +304,7 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"节目播放或频道操作优先，已推迟频道源下载",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
+          noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
               initialDiscoveryChain,feedCursor>0,pauseRequested);
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
@@ -305,6 +312,7 @@ public class SourceUpdateWorker extends Worker {
               roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?MAX_PROBES_PER_RUN/2:MAX_DISCOVERY_PER_FEED;
+          noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
@@ -492,6 +500,7 @@ public class SourceUpdateWorker extends Worker {
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
           checked++;
+          noteInitialStage("本批检测第 "+checked+" 条（尚未提交）");
           measured=probe(e.url,probeDeadline);
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
@@ -947,6 +956,7 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+      noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
             getApplicationContext(),saved,pauseRequested,update);
