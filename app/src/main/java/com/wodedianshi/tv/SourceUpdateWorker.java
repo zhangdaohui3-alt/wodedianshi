@@ -31,6 +31,7 @@ public class SourceUpdateWorker extends Worker {
     final ProbeResult result; final long at;
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
+  private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
   private boolean slowPlayback;
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
@@ -166,6 +167,7 @@ public class SourceUpdateWorker extends Worker {
         if(rebuildProgressMustReset){
           if(slowPlayback)return deferredViewingResult(manual,initialDiscoveryChain);
           INITIAL_PROBES.clear();
+          LIVE_DIRECTORY_RETRY_AFTER.clear();
           // Start from an empty isolated Room staging set. The live catalogue is
           // intentionally not read as input and remains untouched until publish.
           // Feed progress is tied to the exact ordered URL list: an app update that
@@ -373,9 +375,29 @@ public class SourceUpdateWorker extends Worker {
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
           File cachedFeed=slowPlayback?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
               PlaylistFeedCache.obtain(getApplicationContext(),feed,initialDiscoveryChain,feedCursor>0,pauseRequested);
-          if(cachedFeed==null){
-            saveStatus(prefs,"稳定播放中：未缓存目录等待空闲下载",0);
-            return deferredViewingResult(manual,initialDiscoveryChain);
+          if(cachedFeed==null&&slowPlayback){
+            // Acquisition is its own bounded slice: no stream probe in the same
+            // worker. Never advance the verified cursor after a download alone.
+            long now=android.os.SystemClock.elapsedRealtime();
+            if(now<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))
+              return deferInitialDirectory("稳定直播中：较慢或较大目录等待空闲补查");
+            noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
+            try{
+              cachedFeed=PlaylistFeedCache.obtainSmallInitialDuringViewing(
+                  getApplicationContext(),feed,feedCursor>0,pauseRequested);
+              PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
+              SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+              LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);
+              com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+                  "source_initial_progress_phase","已低速准备目录，下一批继续线路初筛");
+              enqueueInitialContinuation();
+              return Result.success();
+            }catch(Exception failure){
+              if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
+                return deferredViewingResult(manual,initialDiscoveryChain);
+              LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
+              return deferInitialDirectory("稳定直播中：目录超过低速预算或暂不可用，待空闲补查");
+            }
           }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
@@ -1128,6 +1150,7 @@ public class SourceUpdateWorker extends Worker {
     androidx.work.OneTimeWorkRequest continuation=
         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
             .setInitialDelay(slowPlayback?20L:0L,java.util.concurrent.TimeUnit.SECONDS)
+            .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
             .setConstraints(new androidx.work.Constraints.Builder()
                 .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
             .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
@@ -1213,6 +1236,10 @@ public class SourceUpdateWorker extends Worker {
             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
   }
 
+  private Result deferInitialDirectory(String reason){
+    com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_initial_progress_phase",reason);
+    return Result.retry();
+  }
   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
     if(initialDiscoveryChain){
       // The existing counters and cursors stay unchanged while viewing.
