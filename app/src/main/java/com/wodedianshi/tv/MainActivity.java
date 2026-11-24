@@ -1550,12 +1550,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{return Long.parseLong(state.getOrDefault(key,Long.toString(fallback)));}
     catch(NumberFormatException invalid){return fallback;}
   }
-  private static long readRoomProgressLong(android.content.Context context,String key,long fallback){
-    try{
-      return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
-          context,key,Long.toString(fallback)));
-    }catch(NumberFormatException ignored){return fallback;}
-  }
 
   private void observeStartupSourceUpdateResults(){
     // Apply the guarded catalogue snapshot as soon as the startup refresh finishes.
@@ -1624,40 +1618,39 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
     try{
       worker.execute(()->{
-        String time=com.wodedianshi.tv.db.AppStateStore.get(
-            getApplicationContext(),"source_update_time","尚未更新");
-        String result=com.wodedianshi.tv.db.AppStateStore.get(
-            getApplicationContext(),"source_update_result","尚无更新记录");
-        int unavailable=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_unavailable_feeds",0L);
-        int validated=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_validated_urls",0L);
-        int staged=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_staged_channels",0L);
-        int chinaDone=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_china_done_feeds",0L);
-        int chinaTotal=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_china_total_feeds",0L);
-        int chinaValidated=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_china_validated_urls",0L);
-        int feedTotal=(int)readRoomProgressLong(getApplicationContext(),
-            "source_initial_progress_total_feeds",0L);
-        String coverage=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
-            FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,"");
-        String freshCoverage=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
-            FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
+        final String prefix="source_initial_progress_";
+        ArrayList<String> keys=new ArrayList<>(Arrays.asList("source_update_time","source_update_result",
+            FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY));
+        for(String suffix:new String[]{"unavailable_feeds","validated_urls","staged_channels",
+            "china_done_feeds","china_total_feeds","china_validated_urls","total_feeds"})
+          keys.add(prefix+suffix);
+        int configuredCount=SourceDiscoveryFeedCatalog.feeds().length;
+        for(int i=0;i<configuredCount;i++){
+          keys.add("source_initial_feed_unavailable_"+i);
+          keys.add("source_initial_feed_label_"+i);
+          keys.add("source_initial_feed_failure_reason_"+i);
+          keys.add("source_initial_feed_failure_count_"+i);
+        }
+        Map<String,String> snapshot=readRoomStateValues(getApplicationContext(),keys);
+        String time=snapshot.getOrDefault("source_update_time","尚未更新");
+        String result=snapshot.getOrDefault("source_update_result","尚无更新记录");
+        int unavailable=(int)readStateLong(snapshot,prefix+"unavailable_feeds",0L);
+        int validated=(int)readStateLong(snapshot,prefix+"validated_urls",0L);
+        int staged=(int)readStateLong(snapshot,prefix+"staged_channels",0L);
+        int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
+        int chinaTotal=(int)readStateLong(snapshot,prefix+"china_total_feeds",0L);
+        int chinaValidated=(int)readStateLong(snapshot,prefix+"china_validated_urls",0L);
+        int feedTotal=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
+        String coverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,"");
+        String freshCoverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
         StringBuilder failedDetails=new StringBuilder();
         int failedShown=0;
-        for(int i=0;i<feedTotal&&i<100;i++){
-          if(!Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
-              getApplicationContext(),"source_initial_feed_unavailable_"+i,"false")))continue;
+        for(int i=0;i<feedTotal&&i<configuredCount;i++){
+          if(!Boolean.parseBoolean(snapshot.getOrDefault("source_initial_feed_unavailable_"+i,"false")))continue;
           if(failedShown>=5)break;
-          String label=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
-              "source_initial_feed_label_"+i,"来源 "+(i+1));
-          String reason=com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
-              "source_initial_feed_failure_reason_"+i,"尚无失败说明");
-          int attempts=(int)readRoomProgressLong(getApplicationContext(),
-              "source_initial_feed_failure_count_"+i,0L);
+          String label=snapshot.getOrDefault("source_initial_feed_label_"+i,"来源 "+(i+1));
+          String reason=snapshot.getOrDefault("source_initial_feed_failure_reason_"+i,"尚无失败说明");
+          int attempts=(int)readStateLong(snapshot,"source_initial_feed_failure_count_"+i,0L);
           failedDetails.append("\n").append(i+1).append(". ")
               .append(label).append("：").append(reason).append("（尝试 ")
               .append(Math.max(0,attempts)).append(" 次）");
