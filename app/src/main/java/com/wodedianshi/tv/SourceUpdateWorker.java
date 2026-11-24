@@ -43,6 +43,9 @@ public class SourceUpdateWorker extends Worker {
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     final boolean manual=getInputData().getBoolean("manual",false);
     final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
+    final boolean manualRefresh=manual&&!initialDiscoveryChain;
+    final String manualId=getInputData().getString("manual_refresh_id")==null
+        ?getId().toString():getInputData().getString("manual_refresh_id");
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     // No full catalogue yet: the one-time chain owns discovery; a periodic
     // worker must neither compete with it nor publish a partial replacement.
@@ -91,6 +94,26 @@ public class SourceUpdateWorker extends Worker {
     // A feed-list fingerprint change intentionally restarts first-build cursors.
     String[] feeds=SourceDiscoveryFeedCatalog.feeds();
     try{
+      if(manualRefresh){
+        if(manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
+        String config=discoveryFeedsFingerprint(feeds);
+        if(!manualId.equals(roomString("source_manual_active_id",""))
+            ||!config.equals(roomString("source_manual_feed_config",""))){
+          com.wodedianshi.tv.db.AppStateEditor reset=
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+              .putString("source_manual_active_id",manualId)
+              .putString("source_manual_feed_config",config)
+              .putInt("source_manual_next_feed",0)
+              .putInt("source_manual_failed_feeds",0)
+              .putInt("source_manual_feed_attempts",0)
+              .remove("source_manual_feed_batch_fingerprint")
+              .remove("source_manual_feed_batch_scanned");
+          for(int i=0;i<feeds.length;i++)
+            reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          reset.apply();
+        }
+      }
       // Snapshot the user's current catalogue before discovery/probing. The Activity
       // may save favorites, edits, imports or playback state while this worker runs.
       // Never let a stale worker snapshot overwrite those newer user changes.
@@ -230,8 +253,9 @@ public class SourceUpdateWorker extends Worker {
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
       }
       int routineStart=InitialFeedRotationPolicy.normalizeStart(
-          roomInt("source_routine_next_feed_index",0),feeds.length);
-      int routineEnd=SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
+          roomInt(manualRefresh?"source_manual_next_feed":"source_routine_next_feed_index",0),feeds.length);
+      int routineEnd=manualRefresh?Math.min(feeds.length,routineStart+1):
+          SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
@@ -246,7 +270,8 @@ public class SourceUpdateWorker extends Worker {
         // Rotate fairly within a stage and resume each feed's saved page cursor.
         // Keep the 24-probe budget and yield to playback in every stage.
         String feed=feeds[feedIndex];
-        String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
+        String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):
+            manualRefresh?manualFeedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
         int feedCursor=roomInt(cursorKey,0);
         String feedVersion="";
         int[] parsedCount={0};
@@ -277,14 +302,14 @@ public class SourceUpdateWorker extends Worker {
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
               roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
-              ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
+              ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?MAX_PROBES_PER_RUN/2:MAX_DISCOVERY_PER_FEED;
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           },pauseRequested);
-          if(initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
+          if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Preserve every address and the exact raw index cursor. Within the
             // current 24-row page, probe mainland candidates first. Java's List
             // sort is stable, so partial-batch fingerprint/resume stays deterministic.
@@ -325,7 +350,7 @@ public class SourceUpdateWorker extends Worker {
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
               +" candidates="+feedCandidates.size()
               +" mainland_priority_page="
-                  +(initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
+                  +((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               +" local_metadata="+localMetadataCandidates
               +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+scopeForFeed(feed));
@@ -369,6 +394,12 @@ public class SourceUpdateWorker extends Worker {
             if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
                 "first_build_feed_marked_unavailable index="+feedIndex+" attempts="+attempts);
           }
+          if(manualRefresh){
+            int attempts=InitialFeedFailurePolicy.nextAttempts(
+                roomInt("source_manual_feed_attempts",0));
+            update.putInt("source_manual_feed_attempts",attempts);
+            feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(failure,attempts);
+          }
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
@@ -401,7 +432,8 @@ public class SourceUpdateWorker extends Worker {
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
       int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      String batchPrefix=initialDiscoveryChain?"source_initial_feed_batch_":"source_routine_feed_batch_";
+      String batchPrefix=initialDiscoveryChain?"source_initial_feed_batch_":
+          manualRefresh?"source_manual_feed_batch_":"source_routine_feed_batch_";
       StringBuilder batchIdentity=new StringBuilder();
       appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
       for(FeedBatch batch:feedBatches){
@@ -680,7 +712,8 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedFailureReasonKey(batch.index))
                 .remove(initialFeedDisplayLabelKey(batch.index));
           }
-          String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):routineFeedCursorKey(batch.index);
+          String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):
+              manualRefresh?manualFeedCursorKey(batch.index):routineFeedCursorKey(batch.index);
           if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(cursorKey).remove(cursorKey+"_version");
@@ -836,7 +869,27 @@ public class SourceUpdateWorker extends Worker {
       }
       // A completed, committed probe pass advances the weekly deadline;
       // skipped or failed work leaves the due date unchanged.
-      if(!initialDiscoveryChain){
+      boolean manualComplete=false;
+      if(manualRefresh){
+        FeedBatch page=feedBatches.isEmpty()?null:feedBatches.get(0);
+        boolean advance=page!=null&&feedBatchComplete&&page.success
+            &&(page.unavailable||SourceUpdateSchedulePolicy.manualFeedFinished(
+                page.cursor,page.parsed,page.indexedEntries,MAX_PROBES_PER_RUN/2));
+        int next=advance?routineStart+1:routineStart;
+        int failed=Math.max(0,roomInt("source_manual_failed_feeds",0));
+        if(advance&&page.unavailable)failed++;
+        if(advance||page!=null&&page.success&&!page.unavailable)
+          update.putInt("source_manual_feed_attempts",0);
+        manualComplete=next>=feeds.length;
+        update.putInt("source_manual_next_feed",next)
+            .putInt("source_manual_failed_feeds",failed)
+            .putString("source_update_result","手动完整目录轮检：已处理 "+next+"/"+feeds.length
+                +" 个来源，暂不可用 "+failed+" 个。"
+                +(manualComplete?"本轮目录处理结束；":"已保存断点，空闲时继续；")
+                +"旧频道保留，媒体预检不等于实播。");
+        if(manualComplete)update.putString("source_manual_completed_id",manualId)
+            .remove("source_manual_active_id");
+      }else if(!initialDiscoveryChain){
         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
         update.putInt("source_routine_next_feed_index",nextRoutine);
         if(!manual&&feedBatchComplete&&nextRoutine==0&&publishedChannelCount>0&&checked>0)
@@ -912,6 +965,20 @@ public class SourceUpdateWorker extends Worker {
                 .build();
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
             "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
+      }
+      if(manualRefresh&&!manualComplete){
+        // Each bounded slice commits before a successor is enqueued. A retry
+        // after process death reads the committed cursor, not an old input offset.
+        androidx.work.OneTimeWorkRequest continuation=
+            new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+                .setConstraints(new androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+                .setInitialDelay(10,java.util.concurrent.TimeUnit.SECONDS)
+                .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+                    .putString("manual_refresh_id",manualId).build()).build();
+        androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
+            "mytv_manual_source_update",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+            .getResult().get();
       }
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
@@ -1152,6 +1219,7 @@ public class SourceUpdateWorker extends Worker {
   }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
+  private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}

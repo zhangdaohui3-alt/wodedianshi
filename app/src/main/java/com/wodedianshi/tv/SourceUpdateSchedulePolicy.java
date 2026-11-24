@@ -43,6 +43,15 @@ public final class SourceUpdateSchedulePolicy {
         return batchComplete ? routineSliceEnd(safe, feedCount) % feedCount : safe;
     }
 
+    /** Manual refresh advances only at EOF, never just because a page was processed. */
+    public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
+            int pageSize) {
+        if (cursor < 0 || parsed < 0 || pageSize <= 0) return false;
+        return indexedEntries >= 0
+                ? (long)cursor + parsed >= indexedEntries
+                : parsed < pageSize;
+    }
+
     /** Only a completed first rebuild enables low-priority routine maintenance. */
     public static boolean shouldScheduleRoutineMaintenance(boolean automaticEnabled,
             long fullRebuildCompletedAtMillis) {

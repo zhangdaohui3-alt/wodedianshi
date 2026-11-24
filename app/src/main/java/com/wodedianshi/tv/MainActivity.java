@@ -34,7 +34,6 @@ import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.Data;
-import androidx.work.WorkInfo;
 import java.util.concurrent.TimeUnit;
 
 @UnstableApi
@@ -1548,25 +1547,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       startInitialDiscoveryProgressTicker();
       return;
     }
-    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.REPLACE,request);
-    toast("已提交频道源更新；更新完成后会自动合并，不会打断当前播放");
-    manager.getWorkInfoById(request.getId()).addListener(()->{
-      try{
-        WorkInfo result=WorkManager.getInstance(this).getWorkInfoById(request.getId()).get();
-        if(result!=null&&result.getState()==WorkInfo.State.SUCCEEDED){
-          long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
-          runOnUiThread(()->{
-            roomFullRebuildCompletedAt=completed;
-            if(!needsInitialFullRebuild||completed>0L){
-              reloadChannelsAfterBackgroundUpdateIfNeeded();
-            }
-            showSourceUpdateStatus();
-          });
-        }else if(result!=null&&result.getState()==WorkInfo.State.FAILED){
-          runOnUiThread(()->toast("频道源更新失败，请检查网络后重试"));
-        }
-      }catch(Exception ignored){}
-    },worker);
+    manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.KEEP,request);
+    toast("已请求完整频道轮检；已有任务将继续，播放优先，可在更新状态查看进度");
+    // The first WorkInfo is only one bounded slice, not the whole refresh.
+    // Existing Room reload-on-resume and status view consume committed state.
   }
   private void showSourceUpdateStatus(){
     final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
