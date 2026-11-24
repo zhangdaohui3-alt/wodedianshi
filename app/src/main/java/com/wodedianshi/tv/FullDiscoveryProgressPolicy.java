@@ -10,6 +10,7 @@ public final class FullDiscoveryProgressPolicy {
     private FullDiscoveryProgressPolicy() {}
 
     public static final String PUBLISHED_COVERAGE_KEY = "source_initial_published_coverage_v1";
+    public static final String FRESH_COVERAGE_KEY = "source_initial_fresh_coverage_v1";
     private static final String[] PROVINCES = {"北京","天津","河北","山西","内蒙古","辽宁","吉林",
         "黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南",
         "广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
@@ -48,11 +49,15 @@ public final class FullDiscoveryProgressPolicy {
         public int localCount() { return local; }
 
         public String summary() {
+            return summary("首次发布目录（含保留旧频道，非实播验证）");
+        }
+
+        public String summary(String label) {
             java.util.ArrayList<String> missing = new java.util.ArrayList<>();
             for (String province : PROVINCES) if (!provinces.contains(province)) missing.add(province);
             String warning = cctv == 0 || satellite == 0 || local == 0 || !missing.isEmpty()
                     ? "覆盖有缺口，待补查" : "各省级地区均有记录，仍待实播验收";
-            return "首次发布目录（含保留旧频道，非实播验证）：" + total + " 条"
+            return label + "：" + total + " 条"
                     + "\n央视 " + cctv + " · 卫视 " + satellite + " · 识别地方台 " + local
                     + "\n省级地区覆盖 " + provinceCount() + "/31 · 地方台省份未识别 " + unresolvedLocal
                     + "\n" + warning + (missing.isEmpty() ? "" : "；无已识别地方台记录：" + String.join("、", missing));
