@@ -31,12 +31,36 @@ public final class FullRebuildRouteRetentionPolicy {
         String active = existing != null && previousActiveIndex >= 0
                 && previousActiveIndex < existing.size()
                 ? existing.get(previousActiveIndex) : stablePrimary;
-        // An exact signed active URL is protected even if it points at the same
-        // endpoint as the separately saved primary.
-        addPinned(urls, endpointKeys, stablePrimary, maximum);
-        addPinned(urls, endpointKeys, active, maximum);
-        if (existing != null) {
-            for (String url : existing) addBackup(urls, endpointKeys, url, maximum);
+        // Preserve the saved source order for remote LEFT/RIGHT navigation.
+        // Reserve space for the primary and selected URL before adding optional
+        // old backups. An active signed alias is not silently canonicalized
+        // away even if its endpoint matches a different primary spelling.
+        if (maximum == 1 && http(active)) {
+            addPinned(urls, endpointKeys, active, maximum);
+            return new Result(urls, 0);
+        }
+        ArrayList<String> oldInOrder = new ArrayList<>();
+        if (http(stablePrimary)
+                && (existing == null || !existing.contains(stablePrimary))) {
+            oldInOrder.add(stablePrimary);
+        }
+        if (existing != null) oldInOrder.addAll(existing);
+        if (http(active) && !oldInOrder.contains(active)) oldInOrder.add(active);
+        for (String old : oldInOrder) {
+            if (!http(old)) continue;
+            boolean required = old.equals(stablePrimary) || old.equals(active);
+            if (required) {
+                addPinned(urls, endpointKeys, old, maximum);
+                continue;
+            }
+            int pendingRequired = 0;
+            if (http(stablePrimary) && !urls.contains(stablePrimary)
+                    && !old.equals(stablePrimary)) pendingRequired++;
+            if (http(active) && !active.equals(stablePrimary)
+                    && !urls.contains(active) && !old.equals(active)) pendingRequired++;
+            if (urls.size() + pendingRequired < maximum) {
+                addBackup(urls, endpointKeys, old, maximum);
+            }
         }
         if (discovered != null) {
             for (String url : discovered) addBackup(urls, endpointKeys, url, maximum);
