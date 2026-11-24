@@ -43,6 +43,7 @@ public final class LibVlcPlaybackEngine {
     // Native VLC events arrive off the UI thread; lifecycle writes must be visible to callbacks.
     private volatile Listener listener;
     private volatile boolean released = true;
+    private final NativeReleaseConfirmation releaseConfirmation = new NativeReleaseConfirmation();
 
     public LibVlcPlaybackEngine(Context context, VLCVideoLayout layout) {
         appContext = context.getApplicationContext();
@@ -102,14 +103,16 @@ public final class LibVlcPlaybackEngine {
 
     public void initialize() {
         recordNativeStage("VLC_INIT_BEGIN");
-        // A freshly constructed adapter owns no native objects. Avoid running a
-        // full stop/detach/release sequence (and synchronous diagnostic writes)
-        // before its first initialization.
-        if (mediaPlayer != null || libVlc != null) {
-            release();
-        } else {
-            released = true;
+        // Each adapter owns one native lifetime. A retired or uncertain
+        // adapter must never allocate another decoder.
+        if (!releaseConfirmation.mayInitialize()) {
+            throw new IllegalStateException("LibVLC engine has been retired");
         }
+        if (isInitialized()) return;
+        if (mediaPlayer != null || libVlc != null) {
+            throw new IllegalStateException("LibVLC initialization already in progress");
+        }
+        released = true;
         try {
             // release() hides the layout while tearing down any previous native session.
             // Make it visible before attaching VLC's native video surfaces.
@@ -164,7 +167,7 @@ public final class LibVlcPlaybackEngine {
             recordNativeStage("VLC_INIT_FAILED_" + error.getClass().getSimpleName());
             // Constructors and attachViews can fail independently. Tear down whichever
             // native objects were successfully created before reporting the failure.
-            release();
+            if (!release()) recordNativeStage("VLC_INIT_CLEANUP_UNCONFIRMED");
             throw error;
         }
     }
@@ -335,6 +338,9 @@ public final class LibVlcPlaybackEngine {
     }
 
     public boolean release() {
+        // Only the first caller owns teardown. In-flight and failed releases
+        // are never reported as success by a second, empty release.
+        if (!releaseConfirmation.beginRelease()) return releaseConfirmation.isConfirmed();
         // Mark the engine dead and detach the app callback before touching JNI.
         boolean nativeReleaseSucceeded = true;
         // A callback already in flight may finish, but MainActivity also checks
@@ -363,6 +369,7 @@ public final class LibVlcPlaybackEngine {
                     }
                 });
             } catch (RuntimeException | LinkageError error) {
+                nativeReleaseSucceeded = false;
                 recordNativeStage("VLC_DETACH_FAILED_" + error.getClass().getSimpleName());
             }
             try {
@@ -393,8 +400,9 @@ public final class LibVlcPlaybackEngine {
         try {
             if (videoLayout != null) runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
         } catch (RuntimeException ignored) { }
+        releaseConfirmation.finishRelease(nativeReleaseSucceeded);
         recordNativeStage(nativeReleaseSucceeded ? "VLC_RELEASE_COMPLETED" : "VLC_RELEASE_INCOMPLETE");
-        return nativeReleaseSucceeded;
+        return releaseConfirmation.isConfirmed();
     }
 
     // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves
