@@ -19,13 +19,13 @@ public final class ChinaDiscoveryCandidatePolicy {
     }
 
     /**
-     * Stable sort rank within a page of the known mixed public directory.
+     * Stable sort rank within a page of any mainland-stage discovery directory.
      * The caller must retain ALL candidates: foreign rows are checked after
      * mainland rows, not deleted or silently skipped from the full catalogue.
      */
     public static int initialProbePriority(int feedIndex, String scope,
             String name, String group, String tvgName, String tvgId) {
-        if (!SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex)) return 0;
+        if (feedIndex < 0 || feedIndex >= SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT) return 0;
         if (isClearlyMainland(scope, name, group, tvgName, tvgId)) return 0;
         String metadata = safe(name) + " " + safe(tvgName) + " " + safe(tvgId);
         if (RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group)) return 1;
