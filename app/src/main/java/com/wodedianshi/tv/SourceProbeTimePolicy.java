@@ -28,6 +28,19 @@ public final class SourceProbeTimePolicy {
             throw new PausedException();
     }
 
+    public static final long LIVE_DIRECTORY_MAX_BYTES=256L*1024L;
+    public static final long LIVE_DIRECTORY_BYTES_PER_SECOND=32L*1024L;
+    public static final long LIVE_DIRECTORY_BUDGET_MS=15000L;
+    /** Negative content lengths are unknown; enforce the same cap as bytes arrive. */
+    public static boolean fitsLiveDirectory(long bytes) {
+        return bytes<=LIVE_DIRECTORY_MAX_BYTES;
+    }
+    public static long liveDirectoryPacingMillis(long copied,long elapsed) {
+        long bounded=Math.max(0L,Math.min(LIVE_DIRECTORY_MAX_BYTES,copied));
+        return Math.max(0L,(bounded*1000L+LIVE_DIRECTORY_BYTES_PER_SECOND-1L)
+                /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
+    }
+
     // First build prioritizes breadth. Keep one difficult HLS address from
     // monopolizing an entire slice. A timed-out probe is inconclusive.
     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
