@@ -1156,7 +1156,7 @@ public class SourceUpdateWorker extends Worker {
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
               getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
           // Remember only after the transaction has returned successfully.
-          if(InitialStagingReusePolicy.canRetain(saved.length(),slowPlayback)){
+          if(FullDiscoveryProgressPolicy.canRetainStaging(saved.length(),slowPlayback)){
             committedStaging=saved;committedStagingRevision=revision;
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
@@ -1220,7 +1220,8 @@ public class SourceUpdateWorker extends Worker {
     long savedAt=committedStagingAt;
     discardStagingReuse();
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-    if(candidate!=null&&InitialStagingReusePolicy.canReuse(candidate.length(),revision,
+    if(candidate!=null&&FullDiscoveryProgressPolicy.canRetainStaging(candidate.length(),slowPlayback)
+        &&FullDiscoveryProgressPolicy.canReuseStaging(candidate.length(),revision,
         roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,""),
         savedAt,android.os.SystemClock.elapsedRealtime())){
       return candidate;
