@@ -180,7 +180,7 @@ public final class PlaylistFeedCache {
 
     /** Stable viewing may read an already indexed, matching snapshot only.
      * No network, pruning, hash rebuild or index construction on this path. */
-    public static File findIndexedInitial(Context context,String feedUrl) {
+    public static File findIndexedInitial(Context context,String feedUrl) throws IOException {
         File directory=new File(context.getFilesDir(),"playlist-feed-cache");
         File cached=new File(directory,sha256("initial|"+feedUrl)+".m3u");
         Properties metadata=readProperties(new File(cached.getPath()+".properties"));
