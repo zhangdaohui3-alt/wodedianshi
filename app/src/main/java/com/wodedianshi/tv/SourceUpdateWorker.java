@@ -1027,6 +1027,8 @@ public class SourceUpdateWorker extends Worker {
       update.remove("source_update_pending_base_fingerprint")
           .remove("source_update_pending_base")
           .remove("source_update_pending_channels");
+      // Final publication or failed-build reset must wait until viewing ends.
+      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
       if(initialFeedsExhausted&&!initialHasValidatedSource){
         // Every feed and every current candidate has had its probe turn. Do not
         // retry an exhausted, unpublishable build forever merely because the TV
@@ -1070,9 +1072,6 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
-      // Never swap the live catalogue during low-rate viewing work. The final
-      // page stays resumable until an idle worker can atomically publish it.
-      if(slowPlayback&&initialFeedsExhausted)return deferredViewingResult(manual,initialDiscoveryChain);
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
