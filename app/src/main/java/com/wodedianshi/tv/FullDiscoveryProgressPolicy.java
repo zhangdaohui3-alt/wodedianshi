@@ -9,6 +9,16 @@ package com.wodedianshi.tv;
 public final class FullDiscoveryProgressPolicy {
     private FullDiscoveryProgressPolicy() {}
 
+    public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
+    // At most two extra publications: an early useful set, then mainland coverage.
+    // A milestone is not a completed full build and does not change the probe policy.
+    public static int nextPreviewLevel(int previous, int stagedChannels,
+            int mainlandValidated, boolean mainlandInspected) {
+        if (stagedChannels <= 0 || mainlandValidated <= 0) return previous;
+        if (mainlandInspected) return Math.max(previous, 2);
+        return stagedChannels >= 12 ? Math.max(previous, 1) : previous;
+    }
+
     public static final String PUBLISHED_COVERAGE_KEY = "source_initial_published_coverage_v1";
     public static final String FRESH_COVERAGE_KEY = "source_initial_fresh_coverage_v1";
     private static final String[] PROVINCES = {"北京","天津","河北","山西","内蒙古","辽宁","吉林",

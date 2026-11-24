@@ -176,6 +176,7 @@ public class SourceUpdateWorker extends Worker {
               .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
+              .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
               .putInt("source_initial_progress_percent",0)
               .putInt("source_initial_progress_done_feeds",0)
               .putInt("source_initial_progress_total_feeds",feeds.length)
@@ -758,6 +759,7 @@ public class SourceUpdateWorker extends Worker {
         }
         update.putInt("source_initial_progress_unavailable_feeds",stillUnavailable);
       }
+      int previewLevel=0, previousPreviewLevel=0;
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
         // end-of-feed was observed. A successful HTTP response alone is not done.
@@ -818,6 +820,9 @@ public class SourceUpdateWorker extends Worker {
         int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
         int chinaValidatedSoFar=Math.max(0,
             roomInt("source_initial_progress_china_validated_urls",0));
+        previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
+        previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,saved.length(),
+            (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
         update.putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
@@ -848,7 +853,7 @@ public class SourceUpdateWorker extends Worker {
                     +" 次（非实机播放验证）。")
                 :("首次完整抓源进度 "+progressPercent+"%；已处理 "
                     +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
-                    +unavailableCount+" 个；旧频道目录保持不变。"));
+                    +unavailableCount+" 个；已发布频道保留，未完成线路继续检测。"));
       }
       if(initialDiscoveryChain&&initialHasValidatedSource){
         update.putBoolean("source_initial_has_validated_source",true);
@@ -960,6 +965,17 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
             getApplicationContext(),saved,pauseRequested,update);
+        if(previewLevel>previousPreviewLevel){
+          // First commit staging and cursors. A failed preview never loses that work.
+          noteInitialStage("正在发布阶段性已预检频道");
+          JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
+          com.wodedianshi.tv.db.AppStateEditor previewState=
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel);
+          int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+              getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
+          if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
+        }
       }else{
         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
             getApplicationContext(),publication,roomSnapshot.catalogueVersion,
@@ -976,7 +992,8 @@ public class SourceUpdateWorker extends Worker {
                     .putBoolean("initial_discovery_chain",true).build())
                 .build();
         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-            "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation);
+            "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+            .getResult().get();
       }
       if(manualRefresh&&!manualComplete){
         // Each bounded slice commits before a successor is enqueued. A retry

@@ -184,6 +184,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView initialDiscoveryProgressTitle,initialDiscoveryProgressDetail;
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
+  private int displayedInitialPreviewLevel;
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
   private final ArrayList<Channel> channels = new ArrayList<>();
@@ -1461,12 +1462,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final String prefix="source_initial_progress_";
           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
           keys.add("source_full_rebuild_completed_at");
+          keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
               "validated_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
               "percent","phase"})keys.add(prefix+suffix);
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+          final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
           final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
           final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
@@ -1484,8 +1487,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
+            if(startupDataReady&&previewLevel!=displayedInitialPreviewLevel){
+              displayedInitialPreviewLevel=previewLevel;
+              if(previewLevel>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
+            }
             if(completed>0L){
               roomFullRebuildCompletedAt=completed;
+              reloadChannelsAfterBackgroundUpdateIfNeeded();
               initialDiscoveryProgressBar.setProgress(100);
               initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
               initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
@@ -1512,7 +1520,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                     :"正在准备来源列表")
-                +"\n已整理频道 "+Math.max(0,staged)+" · 中国初筛通过 "
+                +"\n已整理频道 "+Math.max(0,staged)+(previewLevel>0?" · 阶段目录已发布":"")+" · 中国初筛通过 "
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个"
