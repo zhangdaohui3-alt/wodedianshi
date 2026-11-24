@@ -224,7 +224,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
   private final ExecutorService vodSourceWorker = Executors.newFixedThreadPool(4);
   // Serialize LibVLC JNI startup/teardown away from the UI thread.
-  private final ExecutorService libVlcWorker = Executors.newSingleThreadExecutor();
+  private static final ExecutorService libVlcWorker = Executors.newSingleThreadExecutor();
   private volatile Future<?> activeVodCatalogueTask;
   // Bound poster memory on low-RAM TV boxes. Cache is measured in KiB and
   // capped independently of large heaps so image browsing cannot crowd playback.
@@ -3285,7 +3285,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(currentVodPanel==null||!activityStarted||isFinishing()||isDestroyed())return;
     if(media3ReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
     if(player!=null||libVlcEngine!=null){toast("直播播放器正在释放，请稍后再选择影片");return;}
-    if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();
+    if(vodPlayerDialog!=null){
+      // Dialog dismissal posts its listener; do not build a new player before
+      // the old listener finishes clearing its fields and releasing ownership.
+      final Dialog previous=vodPlayerDialog;
+      final LinearLayout expectedPanel=currentVodPanel;
+      if(previous.isShowing())previous.dismiss();
+      uiHandler.post(()->{
+        if(vodPlayerDialog==null&&currentVodPanel==expectedPanel&&!isAnyPlaybackLockActive())
+          startVodPlayback(item,startPosition);
+      });
+      return;
+    }
     if(libVlcReleaseInProgress){
       final long expectedSession=vodSessionGeneration;
       final LinearLayout expectedPanel=currentVodPanel;
@@ -6705,12 +6716,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{libVlcWorker.execute(teardown);}
     catch(RuntimeException rejected){
       saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());
-      // Preserve decoder teardown even if the worker is shutting down.
-      try{new Thread(teardown,"MyTV-VLC-Release").start();}
-      catch(Throwable threadRejected){
-        saveLiveDiagnostic("VLC_RELEASE_FALLBACK_ERROR",threadRejected.getClass().getSimpleName());
-        // No native release ran. Never open the barrier or resume queued tunes.
-      }
+      // Never bypass the serial native queue: an earlier JNI operation may
+      // still be running. Keep the process barrier closed on rejection.
     }
   }
   private String currentSourceUrl(){
@@ -7609,6 +7616,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void setSourceUpdatePlaybackActive(boolean active){
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||media3ReleaseUnconfirmed);
   }
-  protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();libVlcWorker.shutdown();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();remoteChannelOrderWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
