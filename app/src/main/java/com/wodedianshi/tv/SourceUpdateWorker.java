@@ -586,6 +586,14 @@ public class SourceUpdateWorker extends Worker {
           // Reconcile the user's Room snapshot only at the final atomic publish.
           JSONArray safePublish=preservePreviouslyPublishedChannels(saved,roomSnapshot);
           publishedChannelCount=safePublish.length();
+          // The reconciliation above can take time on a low-memory TV box.
+          // A viewer may have started playback after the earlier gate; in that
+          // case leave all live Room rows untouched and retry the publication.
+          if(isStopped())return Result.retry();
+          if(shouldYieldToViewing(prefs,manual,initialDiscoveryChain,hasPublishedChannels)){
+            saveStatus(prefs,"节目开始播放，已保留完整候选目录并延后发布",0);
+            return deferredViewingResult(manual,initialDiscoveryChain);
+          }
           roomRowsWritten=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotAndClearBuild(
               getApplicationContext(),safePublish,roomSnapshot.catalogueVersion);
           if(roomRowsWritten!=publishedChannelCount)throw new IllegalStateException(
