@@ -3511,8 +3511,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     for(Button action:new Button[]{replayEnded,nextEnded,backEnded}){action.setFocusable(true);action.setTextSize(14);action.setPadding(dp(8),0,dp(8),0);endedActions.addView(action,new LinearLayout.LayoutParams(-2,dp(48)));}
     endedPanel.addView(endedTitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedSubtitle,new LinearLayout.LayoutParams(-1,-2));endedPanel.addView(endedActions,new LinearLayout.LayoutParams(-1,-2));
     FrameLayout.LayoutParams endedParams=new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER);endedParams.leftMargin=dp(24);endedParams.rightMargin=dp(24);stage.addView(endedPanel,endedParams);
-    replayEnded.setOnClickListener(v->{endedPanel.setVisibility(View.GONE);if(vodPlayer==null&&vodFallbackBackend==null){d.dismiss();stage.postDelayed(()->startVodPlayback(item,0),250L);return;}if(vodUsingLibVlc&&vodFallbackBackend!=null){vodSeekTo(0);vodResume();saveVodHistory(item,0,vodDurationMs());}else if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
-    nextEnded.setOnClickListener(v->{VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}d.dismiss();stage.postDelayed(()->startVodPlayback(next,0),250);});
+    replayEnded.setOnClickListener(v->{if(vodPlayerDialog!=d||!d.isShowing()||!activityStarted||isAnyPlaybackLockActive())return;endedPanel.setVisibility(View.GONE);if(vodPlayer==null&&vodFallbackBackend==null){startVodPlayback(item,0);return;}if(vodUsingLibVlc&&vodFallbackBackend!=null){vodSeekTo(0);vodResume();saveVodHistory(item,0,vodDurationMs());}else if(vodPlayer!=null){vodPlayer.seekTo(0);vodPlayer.play();saveVodHistory(item,0,vodPlayer.getDuration());}stage.requestFocus();});
+    nextEnded.setOnClickListener(v->{if(vodPlayerDialog!=d||!d.isShowing()||!activityStarted||isAnyPlaybackLockActive())return;VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}startVodPlayback(next,0);});
     backEnded.setOnClickListener(v->d.dismiss());
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
     TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");});
@@ -3583,11 +3583,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Button back=new Button(this);back.setText("返回目录");back.setAllCaps(false);back.setTextSize(14);back.setFocusable(true);back.setFocusableInTouchMode(true);styleVodTopControl(back);back.setOnClickListener(v->d.dismiss());FrameLayout.LayoutParams backParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);backParams.topMargin=dp(4);backParams.rightMargin=dp(8);stage.addView(back,backParams);vodTopControls[2]=back;
      Button aspect=new Button(this);aspect.setText("画面比例");aspect.setAllCaps(false);aspect.setTextSize(14);aspect.setFocusable(true);aspect.setFocusableInTouchMode(true);styleVodTopControl(aspect);aspect.setOnClickListener(v->showVodAspectRatioDialog(pv,"vod_aspect_mode"));FrameLayout.LayoutParams aspectParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);aspectParams.topMargin=dp(4);aspectParams.rightMargin=dp(220);stage.addView(aspect,aspectParams);vodTopControls[3]=aspect;
     d.setOnKeyListener((dialog,keyCode,event)->{if(keyCode==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP){d.dismiss();}return true;}return false;});
-     d.setContentView(stage);stage.post(()->normalizeFrameLayoutChildren(stage));d.setOnDismissListener(x->{if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);vodSeekHolder[0]=null;vodControlsHolder[0]=null;if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();releaseVodPlayerSafely(pv);
+     d.setContentView(stage);stage.post(()->normalizeFrameLayoutChildren(stage));
+    // The old dialog may deliver its dismissal after a failed start or a new session.
+    // Only the current owner may clear shared timers and decoder references.
+    Runnable cleanupVodSession=()->{
+      if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);
+      vodSeekHolder[0]=null;vodControlsHolder[0]=null;
+      if(vodPlayerDialog!=d)return;
+      if(vodProgressSaver!=null){uiHandler.removeCallbacks(vodProgressSaver);vodProgressSaver=null;}if(vodUiUpdater!=null){uiHandler.removeCallbacks(vodUiUpdater);vodUiUpdater=null;}if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}vodSeekBar=null;vodPositionLabel=null;vodDurationLabel=null;if(activeVodItem!=null)saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());releaseVodFallback();releaseVodPlayerSafely(pv);
       // Do not resume live playback here: the VOD catalogue dialog is still
       // visible. Its own dismiss handler restores the channel after the whole
       // nested VOD session has closed.
-      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;if(revealVodControlsAction!=null)revealVodControlsAction=null;});
+      vodSessionGeneration++;activeVodItem=null;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(vodPlayerDialog==d)vodPlayerDialog=null;if(backVodToCatalogueAction!=null)backVodToCatalogueAction=null;if(revealVodControlsAction!=null)revealVodControlsAction=null;
+    };
+    d.setOnDismissListener(x->cleanupVodSession.run());
     try{
       recordDecoderInventoryOnce();
       if(!acquireDecoderOwnership())throw new IllegalStateException("旧播放器仍在使用资源");
@@ -3625,7 +3634,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
          private void showEnded(){if(!isCurrent())return;saveVodHistory(item,0,vodListenerOwner.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}
          @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
          @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);}
-       });vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(activeVodItem!=null&&(vodPlayer!=null||vodFallbackBackend!=null)){saveVodHistory(activeVodItem,vodPositionMs(),vodDurationMs());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
+       });vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(activityStarted&&vodPlayerDialog==d&&activeVodItem==item&&d.isShowing()&&!isAnyPlaybackLockActive()&&(vodPlayer!=null||vodFallbackBackend!=null)){saveVodHistory(item,vodPositionMs(),vodDurationMs());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       vodPlaybackWatchdog=new Runnable(){
         @Override public void run(){
           if(vodListenerOwner!=vodPlayer||vodPlayerDialog!=d||activeVodItem!=item||!d.isShowing()||vodFallbackAttempted||vodUsingLibVlc)return;
@@ -3657,9 +3666,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
       d.show();d.getWindow().setLayout(-1,-1);stage.post(()->{controls.setVisibility(View.VISIBLE);controls.bringToFront();vodSeekBar.requestFocus();});d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);d.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);uiHandler.post(vodUiUpdater);
     }catch(Exception|LinkageError e){
-      releaseVodFallback();releaseVodPlayerSafely(pv);
-      vodSessionGeneration++;activeVodItem=null;
-      if(vodPlayerDialog==d)vodPlayerDialog=null;
+      cleanupVodSession.run();
       toast("影片无法播放："+e.getMessage());d.dismiss();
     }
   }
