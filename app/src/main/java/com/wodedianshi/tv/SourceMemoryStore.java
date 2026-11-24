@@ -1,19 +1,40 @@
 package com.wodedianshi.tv;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+import com.wodedianshi.tv.db.AppStateStore;
 import org.json.JSONObject;
 import java.util.Iterator;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Persistent memory for proven live sources and temporary automatic-failover cooldowns. */
+/** In-memory source memory backed durably by the single Room app-state table. */
 public final class SourceMemoryStore {
-    private static final String PREFS = "mytv";
     private static final String LAST_GOOD = "source_last_good_v1";
     private static final String COOLDOWNS = "source_cooldowns_v1";
     private static final long LAST_GOOD_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L;
     private static final int MAX_ENTRIES = 500;
+    private static final Object LOCK = new Object();
+    private static final ExecutorService WRITER = Executors.newSingleThreadExecutor();
+    private static JSONObject lastGood = new JSONObject();
+    private static JSONObject cooldowns = new JSONObject();
+    private static volatile boolean initialized = false;
 
     private SourceMemoryStore() {}
+
+    /** Must be called on a background thread before playback begins. */
+    public static void initialize(Context context) {
+        if (context == null) throw new IllegalArgumentException("context is null");
+        Context application = context.getApplicationContext();
+        String savedGood = AppStateStore.get(application, LAST_GOOD, "{}");
+        String savedCooldowns = AppStateStore.get(application, COOLDOWNS, "{}");
+        synchronized (LOCK) {
+            try { lastGood = new JSONObject(savedGood); }
+            catch (Exception malformed) { lastGood = new JSONObject(); }
+            try { cooldowns = new JSONObject(savedCooldowns); }
+            catch (Exception malformed) { cooldowns = new JSONObject(); }
+            initialized = true;
+        }
+    }
 
     public static String channelKey(String name, String group, String primaryUrl) {
         return StableKey.channel(name, group, primaryUrl);
@@ -23,19 +44,27 @@ public final class SourceMemoryStore {
         return StableKey.legacyChannel(name, group, primaryUrl);
     }
 
+    public static String channelIdentityKey(String identity) {
+        if (identity == null || identity.isEmpty()) return "";
+        return StableKey.channelIdentity(identity);
+    }
+
     public static void saveLastGood(Context context, String channelKey, String url) {
         if (context == null || channelKey == null || channelKey.isEmpty()
                 || url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
-        try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            JSONObject all = new JSONObject(prefs.getString(LAST_GOOD, "{}"));
-            JSONObject entry = new JSONObject();
-            entry.put("url", url);
-            entry.put("at", System.currentTimeMillis());
-            all.put(channelKey, entry);
-            trimOldest(all);
-            prefs.edit().putString(LAST_GOOD, all.toString()).apply();
-        } catch (Exception ignored) {}
+        String snapshot;
+        synchronized (LOCK) {
+            if (!initialized) return;
+            try {
+                JSONObject entry = new JSONObject();
+                entry.put("url", url);
+                entry.put("at", System.currentTimeMillis());
+                lastGood.put(channelKey, entry);
+                trimOldest(lastGood);
+                snapshot = lastGood.toString();
+            } catch (Exception ignored) { return; }
+        }
+        persist(context, LAST_GOOD, snapshot);
     }
 
     public static String getLastGood(Context context, String channelKey) {
@@ -43,53 +72,74 @@ public final class SourceMemoryStore {
     }
 
     public static String getLastGood(Context context, String channelKey, String legacyChannelKey) {
+        return getLastGood(context, channelKey, null, legacyChannelKey);
+    }
+
+    public static String getLastGood(Context context, String channelKey,
+                                     String previousChannelKey, String legacyChannelKey) {
         if (context == null || channelKey == null || channelKey.isEmpty()) return null;
-        try {
-            JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getString(LAST_GOOD, "{}"));
-            JSONObject entry = all.optJSONObject(channelKey);
-            if (entry == null && legacyChannelKey != null) entry = all.optJSONObject(legacyChannelKey);
-            if (entry == null) return null;
-            long age = System.currentTimeMillis() - entry.optLong("at", 0L);
-            if (age < 0L || age > LAST_GOOD_MAX_AGE_MS) return null;
-            String url = entry.optString("url", "");
-            return url.startsWith("http://") || url.startsWith("https://") ? url : null;
-        } catch (Exception ignored) { return null; }
+        synchronized (LOCK) {
+            if (!initialized) return null;
+            try {
+                JSONObject entry = lastGood.optJSONObject(channelKey);
+                if (entry == null && previousChannelKey != null) entry = lastGood.optJSONObject(previousChannelKey);
+                if (entry == null && legacyChannelKey != null) entry = lastGood.optJSONObject(legacyChannelKey);
+                if (entry == null) return null;
+                long age = System.currentTimeMillis() - entry.optLong("at", 0L);
+                if (age < 0L || age > LAST_GOOD_MAX_AGE_MS) return null;
+                String url = entry.optString("url", "");
+                return url.startsWith("http://") || url.startsWith("https://") ? url : null;
+            } catch (Exception ignored) { return null; }
+        }
     }
 
     public static void coolDown(Context context, String url, long durationMs) {
         if (context == null || url == null || url.isEmpty() || durationMs <= 0L) return;
-        try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            JSONObject all = new JSONObject(prefs.getString(COOLDOWNS, "{}"));
-            long now = System.currentTimeMillis();
-            Iterator<String> it = all.keys();
-            while (it.hasNext()) {
-                String key = it.next();
-                if (all.optLong(key, 0L) <= now) it.remove();
-            }
-            String canonicalKey = StableKey.url(SourceSelectionPolicy.endpointKey(url));
-            String originalKey = StableKey.url(url);
-            all.put(canonicalKey, now + durationMs);
-            // Remove an older raw-key entry only when it is distinct from the new key.
-            if (!canonicalKey.equals(originalKey)) all.remove(originalKey);
-            all.remove(StableKey.legacyUrl(url));
-            trimOldest(all);
-            prefs.edit().putString(COOLDOWNS, all.toString()).apply();
-        } catch (Exception ignored) {}
+        String snapshot;
+        synchronized (LOCK) {
+            if (!initialized) return;
+            try {
+                long now = System.currentTimeMillis();
+                Iterator<String> it = cooldowns.keys();
+                while (it.hasNext()) {
+                    String key = it.next();
+                    if (cooldowns.optLong(key, 0L) <= now) it.remove();
+                }
+                String canonicalKey = StableKey.url(SourceSelectionPolicy.endpointKey(url));
+                String originalKey = StableKey.url(url);
+                cooldowns.put(canonicalKey, now + durationMs);
+                if (!canonicalKey.equals(originalKey)) cooldowns.remove(originalKey);
+                cooldowns.remove(StableKey.legacyUrl(url));
+                trimOldest(cooldowns);
+                snapshot = cooldowns.toString();
+            } catch (Exception ignored) { return; }
+        }
+        persist(context, COOLDOWNS, snapshot);
     }
 
     public static boolean isCoolingDown(Context context, String url) {
         if (context == null || url == null || url.isEmpty()) return false;
-        try {
-            JSONObject all = new JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getString(COOLDOWNS, "{}"));
-            long until = all.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
-            // Read pre-canonical v2 and legacy keys so existing cooldowns survive upgrades.
-            if (until <= 0L) until = all.optLong(StableKey.url(url), 0L);
-            if (until <= 0L) until = all.optLong(StableKey.legacyUrl(url), 0L);
+        synchronized (LOCK) {
+            if (!initialized) return false;
+            long until = cooldowns.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
+            if (until <= 0L) until = cooldowns.optLong(StableKey.url(url), 0L);
+            if (until <= 0L) until = cooldowns.optLong(StableKey.legacyUrl(url), 0L);
             return until > System.currentTimeMillis();
-        } catch (Exception ignored) { return false; }
+        }
+    }
+
+    private static void persist(Context context, String key, String value) {
+        Context application = context.getApplicationContext();
+        try {
+            WRITER.execute(() -> {
+                try { AppStateStore.put(application, key, value); }
+                catch (Throwable failure) {
+                    android.util.Log.e("MyTVSourceMemory", "Room source-memory write failed: " + key, failure);
+                }
+            });
+        } catch (RuntimeException rejected) {
+            android.util.Log.e("MyTVSourceMemory", "source-memory writer rejected key=" + key, rejected);
+        }
     }
 
     private static void trimOldest(JSONObject object) throws Exception {

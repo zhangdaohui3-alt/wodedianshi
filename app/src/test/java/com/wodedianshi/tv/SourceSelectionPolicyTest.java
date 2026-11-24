@@ -99,6 +99,27 @@ public class SourceSelectionPolicyTest {
                 Collections.singleton("b"), Collections.emptySet()));
     }
 
+    @Test public void rememberedSourceMatchesHostCaseAndDefaultPortAliases() {
+        assertEquals(1, SourceSelectionPolicy.findEquivalentSource(
+                Arrays.asList("http://other/live", "HTTP://Example.COM:80/live.m3u8"),
+                "http://example.com/live.m3u8"));
+    }
+
+    @Test public void rememberedSourceDoesNotIgnoreSignedPathOrQueryDifferences() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/live?token=old"),
+                "https://example.com/live?token=new"));
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/Live"),
+                "https://example.com/live"));
+    }
+
+    @Test public void missingRememberedSourceDoesNotInventAnIndex() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/current"),
+                "https://example.com/removed"));
+    }
+
     @Test public void scanCursorFollowsLastUrlWhenPlaylistEntriesAreInserted() {
         java.util.List<String> oldList = Arrays.asList("a", "b", "c");
         String last = SourceSelectionPolicy.lastScannedKey(oldList, 0, 2);
@@ -120,5 +141,23 @@ public class SourceSelectionPolicyTest {
     @Test public void emptyScanDoesNotCreateCursorKey() {
         assertEquals("", SourceSelectionPolicy.lastScannedKey(
                 Arrays.asList("a", "b"), 0, 0));
+    }
+
+    @Test public void channelFailoverStopsWhenThereIsOnlyOneChannel() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(1, 0, 0));
+    }
+
+    @Test public void channelFailoverStopsAfterEveryOtherChannelWasTried() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(4, 2, 3));
+    }
+
+    @Test public void channelFailoverAdvancesAndWrapsAround() {
+        assertEquals(0, ChannelFailoverPolicy.nextChannelIndex(4, 3, 1));
+        assertEquals(2, ChannelFailoverPolicy.nextChannelIndex(4, 1, 0));
+    }
+
+    @Test public void channelFailoverRejectsEmptyListAndInvalidIndex() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(0, 0, 0));
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(3, -1, 0));
     }
 }
