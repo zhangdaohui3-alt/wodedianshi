@@ -1534,6 +1534,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             "source_initial_progress_validated_urls",0L);
         int staged=(int)readRoomProgressLong(getApplicationContext(),
             "source_initial_progress_staged_channels",0L);
+        int chinaDone=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_china_done_feeds",0L);
+        int chinaTotal=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_china_total_feeds",0L);
+        int chinaValidated=(int)readRoomProgressLong(getApplicationContext(),
+            "source_initial_progress_china_validated_urls",0L);
         int feedTotal=(int)readRoomProgressLong(getApplicationContext(),
             "source_initial_progress_total_feeds",0L);
         StringBuilder failedDetails=new StringBuilder();
@@ -1561,7 +1567,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")
                 +"（完整建库后约每 7 天，播放或前台使用时跳过）\n上次检查："+time
                 +"\n更新结果："+result
-                +"\n已整理频道："+Math.max(0,staged)+" · 预检通过："
+                +"\n中国大陆目录："+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
+                +" · 中国线路预检通过："+Math.max(0,chinaValidated)+" 次"
+                +"\n已整理频道："+Math.max(0,staged)+" · 全部预检通过："
                 +Math.max(0,validated)+" 次 · 暂不可用来源："+Math.max(0,unavailable)
                 +failedList
                 +"\n\n说明：失败目录按上限重试，记录后不阻碍其他有效目录发布。旧频道及已选线路优先保留；预检不等于真实播放稳定或获得授权。")
