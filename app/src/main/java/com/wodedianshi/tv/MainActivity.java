@@ -125,6 +125,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static volatile boolean crashHandlerInstalled=false;
   private boolean startupAutoResumePending=false;
   private Runnable startupAutoResumeTask;
+  private int startupResumeIndex=-1;
+  private Channel startupResumeChannel;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private volatile Set<String> activeGeoChannelKeys=null;
   // An isolated country/region worker must not queue behind startup Room restore,
@@ -396,6 +398,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         android.util.Log.e("MyTVStartup","saved catalogue restore failed; retained_channels="+channels.size(),failure);
       }
       final boolean restoreSucceeded=restoreFailure==null;
+      // Resolve the saved identity on the restore worker, before enabling
+      // channel input. Never repeat the full regex/alias scan on the UI thread.
+      int resumeIndex=-1;
+      Channel resumeChannel=null;
+      if(restoreSucceeded){
+        try{
+          resumeIndex=findLastChannelForResume();
+          if(resumeIndex>=0)resumeChannel=channels.get(resumeIndex);
+        }catch(RuntimeException resumeFailure){
+          android.util.Log.w("MyTVStartup","last-channel lookup failed",resumeFailure);
+        }
+      }
+      final int resolvedResumeIndex=resumeIndex;
+      final Channel resolvedResumeChannel=resumeChannel;
       final String restoreFailureMessage=restoreFailure==null?"":restoreFailure.getClass().getSimpleName()+": "+String.valueOf(restoreFailure.getMessage());
       // Room is the only startup source. A failed seed is surfaced, never hidden
       // by an in-memory fallback that cannot be persisted consistently.
@@ -439,8 +455,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Resume the last saved live channel after Room restoration. The directory
         // renders independently; a failed resume must not block manual selection.
         // First installs and empty catalogues have nothing to resume.
-        startupAutoResumePending=restoreSucceeded && !channels.isEmpty()
-            && roomLastChannelIdentity!=null && !roomLastChannelIdentity.isEmpty();
+        startupResumeIndex=resolvedResumeIndex;
+        startupResumeChannel=resolvedResumeChannel;
+        startupAutoResumePending=restoreSucceeded && startupResumeChannel!=null;
         scheduleStartupAutoResume();
         // Do not show the first-run progress box on later completed launches.
         if(roomFullRebuildCompletedAt>0L&&initialDiscoveryProgressPanel!=null){
@@ -1043,9 +1060,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       queueRoomAppStateWrite(ROOM_STATE_LAST_CHANNEL_TVG_ID,nextTvgId);
     }
   }
-  private void restoreLastChannel(){
+  private int findLastChannelForResume(){
     String savedIdentity=roomLastChannelIdentity;
-    if(savedIdentity.isEmpty())return;
+    if(savedIdentity==null||savedIdentity.isEmpty())return -1;
     String savedUrl=roomLastChannelUrl;
     int found=-1;
     for(int i=0;i<channels.size();i++){
@@ -1083,11 +1100,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       if(unique>=0)found=unique;
     }
-    if(found<0)return;
-    // Never resume a source merely because it was the last attempted one. It may
-    // have timed out before the app closed. Start from the channel's primary source.
-    channels.get(found).activeSource=0;
-    play(found);
+    return found;
   }
   private String normalizeResumeGroup(String value){
     return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
@@ -3858,6 +3871,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Release the catalogue lock before player setup, persistence, or UI work.
     play(index,sourceIndex);
   }
+  /** One category/region membership path for both directory rendering and DPAD order. */
+  private boolean matchesDirectoryScope(Channel c,String category,boolean regionOnly,
+      String province,String city,Set<String> geoKeys,boolean favoritesOnly,Set<String> favoriteKeys){
+    if(c==null||!RemoteChannelOrderPolicy.matchesMembership(c.key(),geoKeys,favoritesOnly,favoriteKeys))return false;
+    if(regionOnly)return province==null?isLocalChannel(c):
+        city==null?matchesProvinceLocal(c,province):matchesProvinceCity(c,province,city);
+    return "全部".equals(category)||"收藏".equals(category)||categoryMatch(c,category);
+  }
+
   private void refresh(){
     if(list==null||search==null)return;
     final long generation=++catalogueFilterGeneration;
@@ -3865,7 +3887,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(previousFilter!=null)previousFilter.cancel(true);
     if(livePreviousPageButton!=null)livePreviousPageButton.setEnabled(false);
     if(liveNextPageButton!=null)liveNextPageButton.setEnabled(false);
-    final String query=search.getText().toString().toLowerCase(Locale.ROOT);
+    final String query=RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
     final String categorySnapshot=activeCategory;
     final boolean favoriteOnly=favoriteMode;
     final boolean regionOnly=localRegionFilterActive&&"地方".equals(categorySnapshot);
@@ -3919,20 +3941,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(c.tvgName==null)nullTvgNames++;
           if(c.tvgId==null)nullTvgIds++;
           if(c.url==null)nullUrls++;
-          if(geoKeys!=null&&!geoKeys.contains(c.key()))continue;
-          if(favoriteOnly&&!favoriteSnapshot.contains(c.key()))continue;
-          if(regionOnly){
-            boolean matches=provinceSnapshot==null?isLocalChannel(c):
-                citySnapshot==null?matchesProvinceLocal(c,provinceSnapshot):
-                matchesProvinceCity(c,provinceSnapshot,citySnapshot);
-            if(!matches)continue;
-          }else if(!categorySnapshot.equals("全部")&&!categorySnapshot.equals("收藏")&&!categoryMatch(c,categorySnapshot))continue;
+          if(!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
+              geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
           String display=displayChannelName(c);
-          String safeName=c.name==null?"":c.name;
-          String safeGroup=c.group==null?"":c.group;
-          if(!safeName.toLowerCase(Locale.ROOT).contains(query)&&!safeGroup.toLowerCase(Locale.ROOT).contains(query)
-              &&!display.toLowerCase(Locale.ROOT).contains(query))continue;
+          if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
           queryMatches++;
           visible.add(c);
           String key=c.key();
@@ -3943,6 +3956,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if("地方".equals(categorySnapshot) && visible.isEmpty()) {
           int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
           for(Channel candidate:sources) {
+            if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
             if(candidate==null)continue;
             if(isSatelliteChannel(candidate)){satelliteExcluded++;continue;}
             if(isLocalChannel(candidate))localCandidates++;
@@ -5103,7 +5117,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
   private RemoteChannelOrder buildRemoteChannelOrder(String key,String category,String query,
-      boolean favoritesOnly,Set<String> favoriteSnapshot,long expectedMutationGeneration){
+      boolean favoritesOnly,Set<String> favoriteSnapshot,long expectedMutationGeneration,
+      long expectedFilterGeneration,boolean regionOnly,String province,String city,Set<String> geoKeys){
     // Critical ANR fix: thread 37 used to hold synchronized(channels) while
     // running 6k+ expensive categoryMatch / canonicalSatelliteName calls.
     // MainActivity.prewarmRemoteChannelOrder then blocked on the same lock.
@@ -5117,22 +5132,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int[] cctvOrders="央视".equals(category)?new int[snapshot.size()]:null;
     final String[] cctvNames=cctvOrders==null?null:new String[snapshot.size()];
     for(int i=0;i<snapshot.size();i++){
-      if((i&63)==0&&!RemoteChannelOrderPolicy.complete(
+      if((i&63)==0&&(expectedFilterGeneration!=catalogueFilterGeneration||!RemoteChannelOrderPolicy.complete(
           Thread.currentThread().isInterrupted(),expectedMutationGeneration,
-          catalogueMutationGeneration))return null;
+          catalogueMutationGeneration)))return null;
       Channel c=snapshot.get(i);
-      if(c==null)continue;
-      if(favoritesOnly&&!favoriteSnapshot.contains(c.key()))continue;
-      if(!"全部".equals(category)&&!"收藏".equals(category)&&!categoryMatch(c,category))continue;
-      String name=c.name==null?"":c.name;
-      String group=c.group==null?"":c.group;
-      if(!name.toLowerCase(Locale.ROOT).contains(query)
-          &&!group.toLowerCase(Locale.ROOT).contains(query)
-          &&!displayChannelName(name).toLowerCase(Locale.ROOT).contains(query))continue;
+      if(!matchesDirectoryScope(c,category,regionOnly,province,city,geoKeys,favoritesOnly,favoriteSnapshot))continue;
+      String display=displayChannelName(c);
+      if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
       order.add(i);
       if(cctvOrders!=null){
         cctvOrders[i]=cctvSortOrder(c);
-        cctvNames[i]=displayChannelName(name);
+        cctvNames[i]=display;
       }
     }
     if(!RemoteChannelOrderPolicy.complete(
@@ -5153,8 +5163,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void prewarmRemoteChannelOrder(){
     final String category=activeCategory==null?"全部":activeCategory;
-    final String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    final String query=search==null?"":RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
     final boolean favoritesOnly=favoriteMode;
+    final boolean regionOnly=localRegionFilterActive&&"地方".equals(category);
+    final String province=activeLocalProvince,city=activeLocalCity;
+    final Set<String> geoKeys=activeGeoChannelKeys; // Published by replacement, never mutated in place.
     final long filterGeneration=catalogueFilterGeneration;
     final long mutationGeneration=catalogueMutationGeneration;
     final int count; synchronized(channels){count=channels.size();}
@@ -5179,7 +5192,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{remoteChannelOrderWorker.execute(()->{
       try{
       RemoteChannelOrder ready=buildRemoteChannelOrder(key,category,query,favoritesOnly,
-          favoriteSnapshot,mutationGeneration);
+          favoriteSnapshot,mutationGeneration,filterGeneration,regionOnly,province,city,geoKeys);
       if(ready==null){
         if(!Thread.currentThread().isInterrupted())
           uiHandler.post(()->retryPendingRemoteZapAfterInvalidation(filterGeneration));
@@ -5237,7 +5250,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private RemoteChannelOrder currentRemoteChannelOrder(){
     String category=activeCategory==null?"全部":activeCategory;
-    String query=search==null?"":search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    String query=search==null?"":RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
     int count; synchronized(channels){count=channels.size();}
     int favoritesHash=0;
     if(favoriteMode){synchronized(favorites){favoritesHash=favorites.hashCode();}}
@@ -7163,8 +7176,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       startupAutoResumeTask=null;
       if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed())return;
       startupAutoResumePending=false;
-      if(selected>=0)return;
-      try{restoreLastChannel();}
+      int index=startupResumeIndex;
+      Channel expected=startupResumeChannel;
+      startupResumeChannel=null;startupResumeIndex=-1;
+      Channel current=index>=0&&index<channels.size()?channels.get(index):null;
+      if(!RemoteChannelOrderPolicy.canResume(selected>=0,currentVodPanel!=null,expected,current))return;
+      try{play(index);}
       catch(Throwable resumeFailure){
         android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
         saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
