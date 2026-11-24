@@ -21,6 +21,16 @@ public final class FullDiscoveryProgressPolicy {
                 && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
     }
 
+    /** Finishing discovery is independent of permission to replace live rows. */
+    public static boolean awaitingIdleFinalization(boolean allFeedsInspected, boolean viewing) {
+        return allFeedsInspected && viewing;
+    }
+
+    public static boolean canPublishInitialSnapshot(boolean allFeedsInspected,
+            boolean hasValidatedSource, boolean viewing) {
+        return allFeedsInspected && hasValidatedSource && !viewing;
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // At most two extra publications: an early useful set, then mainland coverage.
     // A milestone is not a completed full build and does not change the probe policy.
