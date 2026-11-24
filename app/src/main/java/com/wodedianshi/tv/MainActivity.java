@@ -5530,25 +5530,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Best-effort asynchronous native breadcrumb. A native abort or abrupt
   // process death can occur before SharedPreferences persists it.
   private void saveCriticalEngineStage(String stage,String detail){
-    String safe=safeDiagnosticDetail(detail);
-    String value=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
-        +" | "+stage+" | "+safe;
-    saveLiveDiagnostic(stage,detail);
-    try{
-      getSharedPreferences("mytv",0).edit()
-          .putString("last_native_engine_stage_v1",value)
-          .putLong("last_native_engine_stage_time_v1",System.currentTimeMillis())
-          // apply() updates the in-memory snapshot immediately and writes on the
-          // preferences worker. commit() here ran on the UI thread for every
-          // player stage and could stall tune/startup on slower TV storage.
-          .apply();
-    }catch(RuntimeException ignored){}
+    saveLiveDiagnostic(stage,detail,true);
   }
   private static final Object LIVE_DIAGNOSTIC_LOCK=new Object();
   private static final java.util.ArrayDeque<String> LIVE_DIAGNOSTIC_LINES=new java.util.ArrayDeque<>();
   private static boolean liveDiagnosticLoaded;
   private void saveLiveDiagnostic(String stage,String detail){
-    String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date())
+    saveLiveDiagnostic(stage,detail,false);
+  }
+  private void saveLiveDiagnostic(String stage,String detail,boolean criticalStage){
+    long recordedAt=System.currentTimeMillis();
+    String line=java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM,Locale.getDefault()).format(new Date(recordedAt))
         +" | "+stage+" | "+safeDiagnosticDetail(detail);
     android.util.Log.w("MyTVLiveDiag",line);
     try{
@@ -5561,8 +5553,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         LIVE_DIAGNOSTIC_LINES.addLast(line);
         while(LIVE_DIAGNOSTIC_LINES.size()>30)LIVE_DIAGNOSTIC_LINES.removeFirst();
-        p.edit().putString("live_diagnostics_v1",
-            android.text.TextUtils.join("\n",LIVE_DIAGNOSTIC_LINES)).apply();
+        android.content.SharedPreferences.Editor editor=p.edit().putString("live_diagnostics_v1",
+            android.text.TextUtils.join("\n",LIVE_DIAGNOSTIC_LINES));
+        // One formatting pass and one asynchronous preferences edit per stage.
+        // The last critical breadcrumb and ring now share the same timestamp
+        // and update together; persistence before abrupt process death is best effort.
+        if(criticalStage)editor.putString("last_native_engine_stage_v1",line)
+            .putLong("last_native_engine_stage_time_v1",recordedAt);
+        editor.apply();
       }
     }catch(Exception ignored){}
   }
