@@ -215,6 +215,8 @@ public class SourceUpdateWorker extends Worker {
           }
         }
       }
+      com.wodedianshi.tv.db.AppStateEditor update=
+          new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       int initialFeedStartIndex=InitialFeedRotationPolicy.normalizeStart(
           roomInt("source_initial_next_feed_index",0),feeds.length);
@@ -356,13 +358,10 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain){
             int attempts=InitialFeedFailurePolicy.nextAttempts(
                 roomInt(initialFeedFailureCountKey(feedIndex),0));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedFailureCountKey(feedIndex),Integer.toString(attempts));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedFailureReasonKey(feedIndex),
-                InitialFeedFailurePolicy.userVisibleReason(failure));
-            com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
+            update.putInt(initialFeedFailureCountKey(feedIndex),attempts)
+                .putString(initialFeedFailureReasonKey(feedIndex),
+                    InitialFeedFailurePolicy.userVisibleReason(failure))
+                .putString(initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
             feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
                 failure,attempts);
             if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
@@ -641,8 +640,7 @@ public class SourceUpdateWorker extends Worker {
         throw new IllegalStateException("Full rebuild has no validated channels");
       if(pauseRequested.getAsBoolean())
         return deferredViewingResult(manual,initialDiscoveryChain);
-      com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-          .putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+      update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
