@@ -7509,6 +7509,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 selectedUrl=current.activeSource>=0&&current.activeSource<current.backups.size()
                     ?current.backups.get(current.activeSource):current.url;
               }
+              // A new snapshot may arrive during the startup auto-resume delay.
+              // Resolve the exact old channel against the prepared identity index;
+              // never resume an unrelated station that inherited its old position.
+              if(startupAutoResumePending){
+                Channel oldAtIndex=startupResumeIndex>=0&&startupResumeIndex<channels.size()
+                    ?channels.get(startupResumeIndex):null;
+                int remapped=RemoteChannelOrderPolicy.remapResumeIndex(
+                    selected>=0,currentVodPanel!=null,startupResumeChannel,oldAtIndex,
+                    identity(startupResumeChannel),prepared.positionByIdentity,prepared.entries.size());
+                startupResumeIndex=remapped;
+                startupResumeChannel=remapped>=0?prepared.entries.get(remapped):null;
+                startupAutoResumePending=remapped>=0;
+              }
               channels.clear();
               channels.addAll(prepared.entries);
               channelsByUrl.clear();
