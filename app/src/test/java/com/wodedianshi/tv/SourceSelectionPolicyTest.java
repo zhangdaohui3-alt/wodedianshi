@@ -99,6 +99,18 @@ public class SourceSelectionPolicyTest {
                 Collections.singleton("b"), Collections.emptySet()));
     }
 
+    @Test public void sourceMenuFollowsExactUrlAfterReorderingButRejectsStaleChannel() {
+        Object channel = new Object();
+        java.util.List<String> reordered = Arrays.asList("b", "a", "c");
+        assertEquals(0, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, "b"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, new Object(), reordered, "b"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, "removed"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, ""));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel,
+                Collections.singletonList("https://example.com/live?token=new"),
+                "https://example.com/live?token=old"));
+    }
+
     @Test public void rememberedSourceMatchesHostCaseAndDefaultPortAliases() {
         assertEquals(1, SourceSelectionPolicy.findEquivalentSource(
                 Arrays.asList("http://other/live", "HTTP://Example.COM:80/live.m3u8"),
