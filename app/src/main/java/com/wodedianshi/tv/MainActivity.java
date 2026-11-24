@@ -7255,6 +7255,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
 
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(){
+    reloadChannelsAfterBackgroundUpdateIfNeeded(1);
+  }
+  // A concurrent favorite/source selection invalidates the prepared Room
+  // catalogue before UI publication. Retry once only AFTER the narrow writer
+  // queue drains, so a stale favorites/source snapshot cannot reappear.
+  private void scheduleRoomReloadAfterUserMutation(long invalidatedGeneration,
+      int retriesRemaining){
+    try{
+      cataloguePersistWorker.execute(()->uiHandler.post(()->{
+        if(activityStarted&&!isFinishing()&&!isDestroyed()
+            &&invalidatedGeneration==backgroundCatalogueReloadGeneration)
+          reloadChannelsAfterBackgroundUpdateIfNeeded(retriesRemaining);
+      }));
+    }catch(RuntimeException rejected){
+      android.util.Log.w("MyTVStartup","Room reload retry queue rejected",rejected);
+      saveLiveDiagnostic("BACKGROUND_CATALOGUE_RETRY_REJECTED",
+          rejected.getClass().getSimpleName());
+    }
+  }
+  private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
     if(!catalogueSnapshotTrusted){
       android.util.Log.w("MyTVStartup","Room reload skipped: startup catalogue restore was incomplete");
@@ -7299,6 +7319,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // Room has atomically committed this snapshot. Only swap the prepared
           // array/maps in the UI callback; normalization and deduplication are done.
           uiHandler.post(()->{
+            boolean activityActive=activityStarted&&!isFinishing()&&!isDestroyed();
+            boolean currentRequest=generation==backgroundCatalogueReloadGeneration;
+            long currentMutation=catalogueMutationGeneration;
+            if(!RoomCatalogueReloadPolicy.mayPublish(activityActive,currentRequest,
+                expectedMutationGeneration,currentMutation)){
+              if(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+                  activityActive,currentRequest,expectedMutationGeneration,
+                  currentMutation,retriesRemaining)){
+                android.util.Log.i("MyTVStartup",
+                    "room_reload_deferred_until_user_mutation_committed");
+                scheduleRoomReloadAfterUserMutation(generation,retriesRemaining-1);
+              }
+              return;
+            }
             long publishStarted=android.os.SystemClock.elapsedRealtime();
             String selectedIdentity="";
             String selectedName="";
@@ -7306,8 +7340,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             String selectedUrl="";
             synchronized(channels){
               if(!activityStarted||isFinishing()||isDestroyed()
-                  ||generation!=backgroundCatalogueReloadGeneration
-                  ||catalogueMutationGeneration!=expectedMutationGeneration)return;
+                  ||generation!=backgroundCatalogueReloadGeneration)return;
+              if(catalogueMutationGeneration!=expectedMutationGeneration){
+                // Rare second race between the preceding UI gate and taking
+                // the short channel lock. Do not publish the stale read.
+                if(retriesRemaining>0)
+                  scheduleRoomReloadAfterUserMutation(generation,retriesRemaining-1);
+                return;
+              }
               if(selected>=0&&selected<channels.size()){
                 Channel current=channels.get(selected);
                 selectedIdentity=identity(current);
