@@ -8,6 +8,12 @@ package com.wodedianshi.tv;
 public final class DiscoveryBatchPolicy {
     private DiscoveryBatchPolicy() {}
 
+    /** Never apply an offset to a different or unidentified feed body. */
+    public static int cursorForVersion(int cursor, String savedVersion, String currentVersion) {
+        return cursor > 0 && currentVersion != null && !currentVersion.isEmpty()
+                && currentVersion.equals(savedVersion) ? cursor : 0;
+    }
+
     public static int scannedForBatch(String fingerprint, String previousFingerprint,
             int previousScanned, int candidateCount) {
         if (candidateCount <= 0 || fingerprint == null

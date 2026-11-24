@@ -132,6 +132,7 @@ public class SourceUpdateWorker extends Worker {
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
           for(int feed=0;feed<feeds.length;feed++){
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+                .remove(feedCursorKey(feed)+"_version")
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -139,6 +140,8 @@ public class SourceUpdateWorker extends Worker {
           }
           resetBuildState.remove("source_feed_batch_fingerprint")
               .remove("source_feed_batch_scanned")
+              .remove("source_initial_feed_batch_fingerprint")
+              .remove("source_initial_feed_batch_scanned")
               .remove("source_scan_after_key").remove("source_scan_cursor")
               .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
               .remove("source_initial_has_validated_source")
@@ -240,7 +243,9 @@ public class SourceUpdateWorker extends Worker {
         // Rotate fairly within a stage and resume each feed's saved page cursor.
         // Keep the 24-probe budget and yield to playback in every stage.
         String feed=feeds[feedIndex];
-        int feedCursor=roomInt(initialDiscoveryChain?feedCursorKey(feedIndex):routineFeedCursorKey(feedIndex),0);
+        String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
+        int feedCursor=roomInt(cursorKey,0);
+        String feedVersion="";
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
         boolean feedReadSucceeded=false;
@@ -265,6 +270,9 @@ public class SourceUpdateWorker extends Worker {
           }
           File cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,
               initialDiscoveryChain,feedCursor>0,pauseRequested);
+          feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
+          feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
+              roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:MAX_DISCOVERY_PER_FEED;
           parsedCount[0]=PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,source->{
@@ -365,7 +373,7 @@ public class SourceUpdateWorker extends Worker {
         }finally{
           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
               indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
-              feedTerminalUnavailable));
+              feedTerminalUnavailable,feedVersion));
           if(initialDiscoveryChain)attemptedFeedsThisRun[feedIndex]=true;
         }
         if(initialDiscoveryChain){
@@ -393,11 +401,22 @@ public class SourceUpdateWorker extends Worker {
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
       int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
-      String discoveryFingerprint=discoveryFingerprint(candidates);
-      String previousDiscoveryFingerprint=roomString("source_feed_batch_fingerprint","");
+      String batchPrefix=initialDiscoveryChain?"source_initial_feed_batch_":"source_routine_feed_batch_";
+      StringBuilder batchIdentity=new StringBuilder();
+      appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
+      for(FeedBatch batch:feedBatches){
+        // Only pages that actually contributed candidates determine probe
+        // resume. A preceding unavailable feed must not invalidate the same page.
+        if(!batch.success||batch.unavailable||batch.parsed<=0)continue;
+        appendFingerprintPart(batchIdentity,Integer.toString(batch.index));
+        appendFingerprintPart(batchIdentity,batch.version);
+        appendFingerprintPart(batchIdentity,Integer.toString(batch.cursor));
+      }
+      String discoveryFingerprint=CatalogueFingerprint.sha256(batchIdentity.toString());
+      String previousDiscoveryFingerprint=roomString(batchPrefix+"fingerprint","");
       int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
           discoveryFingerprint,previousDiscoveryFingerprint,
-          roomInt("source_feed_batch_scanned",0),candidates.size());
+          roomInt(batchPrefix+"scanned",0),candidates.size());
       // Resume by exact position inside an unchanged batch. URL-based cursors are
       // unsafe because distinct channel identities can share one endpoint; choosing
       // the last duplicate URL can skip entries that were not yet scanned.
@@ -696,25 +715,26 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedFailureReasonKey(batch.index))
                 .remove(initialFeedDisplayLabelKey(batch.index));
           }
+          String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):routineFeedCursorKey(batch.index);
           if(initialDiscoveryChain&&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
-                .remove(feedCursorKey(batch.index));
+                .remove(cursorKey).remove(cursorKey+"_version");
           }else if(batch.parsed>0){
-            String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):routineFeedCursorKey(batch.index);
             if(!initialDiscoveryChain&&batch.indexedEntries>=0&&batch.cursor+batch.parsed>=batch.indexedEntries)
-              update.remove(cursorKey);
-            else update.putInt(cursorKey,batch.cursor+batch.parsed);
+              update.remove(cursorKey).remove(cursorKey+"_version");
+            else update.putInt(cursorKey,batch.cursor+batch.parsed)
+                .putString(cursorKey+"_version",batch.version);
           }else if(initialDiscoveryChain){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
-                .remove(feedCursorKey(batch.index));
+                .remove(cursorKey).remove(cursorKey+"_version");
           }else{
-            update.remove(routineFeedCursorKey(batch.index));
+            update.remove(cursorKey).remove(cursorKey+"_version");
           }
         }
-        update.remove("source_feed_batch_fingerprint").remove("source_feed_batch_scanned");
+        update.remove(batchPrefix+"fingerprint").remove(batchPrefix+"scanned");
       }else if(candidates.size()>0){
-        update.putString("source_feed_batch_fingerprint",discoveryFingerprint)
-            .putInt("source_feed_batch_scanned",nextBatchScanned);
+        update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
+            .putInt(batchPrefix+"scanned",nextBatchScanned);
       }
       if(!initialDiscoveryChain&&feedBatchComplete){
         int stillUnavailable=0;
@@ -858,7 +878,8 @@ public class SourceUpdateWorker extends Worker {
           // Reset the publish/scan cursors for the next attempt, but leave the
           // last failure diagnostics visible in Settings until that next attempt
           // starts and explicitly initializes a fresh build.
-          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed));
+          failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+              .remove(feedCursorKey(feed)+"_version");
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -867,6 +888,8 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_initial_discovery_scanned")
             .remove("source_feed_batch_fingerprint")
             .remove("source_feed_batch_scanned")
+            .remove("source_initial_feed_batch_fingerprint")
+            .remove("source_initial_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
             .putInt("source_initial_progress_percent",0)
             .putInt("source_initial_progress_done_feeds",0)
@@ -1011,9 +1034,10 @@ public class SourceUpdateWorker extends Worker {
   private static class FeedBatch{
     final int index,cursor,parsed,indexedEntries;
     final boolean success,unavailable;
-    FeedBatch(int i,int c,int p,int total,boolean ok,boolean unavailable){
+    final String version;
+    FeedBatch(int i,int c,int p,int total,boolean ok,boolean unavailable,String version){
       index=i;cursor=c;parsed=p;indexedEntries=total;
-      success=ok;this.unavailable=unavailable;
+      success=ok;this.unavailable=unavailable;this.version=version;
     }
   }
   /**
