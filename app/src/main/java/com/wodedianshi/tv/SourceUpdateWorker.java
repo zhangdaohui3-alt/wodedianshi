@@ -58,48 +58,9 @@ public class SourceUpdateWorker extends Worker {
     }
     int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,feedsFailed=0,checked=0;
     StringBuilder errors=new StringBuilder();
-     String[] feeds={
-       // China-first discovery: domestic and regional channels are read before the global index.
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv.m3u8",
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_cctv_status.m3u8",
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province.m3u8",
-       "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_province_status.m3u8",
-       // Mainland China playlist includes CCTV, provincial satellite and hundreds of local stations.
-       "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u",
-       // Curated mainland and Chinese-language indexes complement raw stream files.
-       // Keep them early so local/provincial candidates are discovered before global feeds.
-       "https://iptv-org.github.io/iptv/countries/cn.m3u",
-       "https://iptv-org.github.io/iptv/languages/zho.m3u",
-       // Independently generated China-first result, validated again on this device.
-       "https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u",
-       // Independent mainland regional catalogue; its provenance is discovery-only,
-       // and individual streams still require reachability checks before publication.
-       "https://live.zbds.top/tv/iptv4.m3u",
-       "https://iptv-org.github.io/iptv/countries/hk.m3u",
-       "https://iptv-org.github.io/iptv/countries/mo.m3u",
-       "https://iptv-org.github.io/iptv/countries/tw.m3u",
-       // The current test region is included after China and its neighboring regions.
-       "https://iptv-org.github.io/iptv/countries/us.m3u",
-       "https://iptv-org.github.io/iptv/categories/news.m3u",
-       "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-       "https://iptv-org.github.io/iptv/categories/movies.m3u",
-       "https://iptv-org.github.io/iptv/categories/music.m3u",
-       "https://iptv-org.github.io/iptv/categories/kids.m3u",
-       "https://iptv-org.github.io/iptv/categories/documentary.m3u",
-       "https://iptv-org.github.io/iptv/categories/weather.m3u",
-       "https://iptv-org.github.io/iptv/categories/education.m3u",
-       // These are public discovery indexes, not proof of redistribution rights.
-       // A successful media preflight confirms reachability only, never authorization.
-       "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
-       "https://biskyt.github.io/legalFreeIPTVplaylist/live.m3u",
-       "https://raw.githubusercontent.com/freecasthub/public-iptv/main/playlist.m3u",
-       // The large worldwide index is late so it cannot starve regional/category feeds.
-       "https://iptv-org.github.io/iptv/index.m3u",
-       // Additional independent aggregator: contains county/local stations and
-       // EXT BURL backup entries. It is last so its large mixed-region list cannot
-       // delay the dedicated China, HMT, US, and category feeds above.
-       "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u"
-     };
+    // Centralized, testable feed order: China local-first, then global.
+    // A feed-list fingerprint change intentionally restarts first-build cursors.
+    String[] feeds=SourceDiscoveryFeedCatalog.feeds();
     try{
       // Snapshot the user's current catalogue before discovery/probing. The Activity
       // may save favorites, edits, imports or playback state while this worker runs.
@@ -226,9 +187,9 @@ public class SourceUpdateWorker extends Worker {
       for(int feedOffset=0;feedOffset<feeds.length;feedOffset++){
         int feedIndex=initialDiscoveryChain
             ?(initialFeedStartIndex+feedOffset)%feeds.length:feedOffset;
-        // A one-time full rebuild must eventually cover every configured feed,
-        // even while the TV screen is open. It still probes only 24 URLs/run and
-        // pauses immediately if playback starts. Routine refreshes keep stricter limits.
+        // A full rebuild visits every configured feed in round-robin order.
+        // Per-run probing remains capped at 24 URLs and immediately yields
+        // when actual playback begins. Routine refreshes use stricter limits.
         if(!initialDiscoveryChain&&foregroundAtStart&&feedIndex>=8)break;
         if(!initialDiscoveryChain&&!foregroundAtStart&&feedIndex>=6&&isActivityActive(prefs))break;
         if(initialDiscoveryChain&&roomBoolean(initialFeedDoneKey(feedIndex),false))continue;
@@ -348,8 +309,8 @@ public class SourceUpdateWorker extends Worker {
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
-            // Stay on a full page until its next page is exhausted. A short page
-            // means EOF, so the next worker proceeds to the next configured feed.
+            // A completed page yields to the next unfinished directory. The
+            // per-feed cursor persists even if the directory has many pages.
             initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
                 feedIndex,feeds.length,true,
                 parsedCount[0]>=MAX_INITIAL_DISCOVERY_PER_FEED);
@@ -566,6 +527,14 @@ public class SourceUpdateWorker extends Worker {
       if(isStopped())return Result.retry();
       int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
+      if(initialDiscoveryChain&&!feedBatches.isEmpty()){
+        // If a 90-second deadline paused probing inside the current feed page,
+        // resume this exact feed and its fingerprint before rotating onward.
+        // Otherwise its prefix would be rescanned and the tail could starve.
+        int attemptedFeed=feedBatches.get(feedBatches.size()-1).index;
+        initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterProbeBatch(
+            attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
+      }
       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
       boolean initialHasValidatedSource=initialDiscoveryChain
@@ -712,6 +681,12 @@ public class SourceUpdateWorker extends Worker {
         }
         int progressPercent=FullDiscoveryProgressPolicy.percent(
             completedFeeds,feeds.length,activeCursor,activeEntries,initialDiscoveryComplete);
+        // Fair round-robin scans a different in-progress feed on the next run.
+        // Persist the highest measured percent to avoid a misleading backwards
+        // progress bar while keeping 100% gated on the Room publication.
+        if(!initialDiscoveryComplete)
+          progressPercent=Math.min(99,Math.max(progressPercent,
+              Math.max(0,roomInt("source_initial_progress_percent",0))));
         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
         int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
         update.putInt("source_initial_progress_percent",progressPercent)
