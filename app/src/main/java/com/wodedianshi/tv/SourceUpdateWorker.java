@@ -110,6 +110,10 @@ public class SourceUpdateWorker extends Worker {
       catch(NumberFormatException ignored){}
       if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
         return Result.success();
+      // A manual chain may be between slices or paused for playback while the
+      // Activity is in the background. Do not occupy its next source-work slot
+      // or replace its cached feed. Preserve the routine due date when yielding.
+      if(!manual&&!routineMayStartWithManualChain())return Result.success();
     }
     final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
     final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
@@ -1396,6 +1400,30 @@ public class SourceUpdateWorker extends Worker {
             .build();
     enqueueSingleSuccessor("mytv_startup_source_refresh",continuation);
   }
+  /** Low-priority maintenance must yield to every unfinished manual request,
+   * including ENQUEUED/BLOCKED continuations. Run only on the background owner.
+   * If the scheduler cannot confirm eligibility, leave maintenance due. */
+  private boolean routineMayStartWithManualChain(){
+    if(isStopped()||Thread.currentThread().isInterrupted())return false;
+    try{
+      List<androidx.work.WorkInfo> infos=androidx.work.WorkManager.getInstance(getApplicationContext())
+          .getWorkInfosForUniqueWork("mytv_manual_source_update")
+          .get(3L,java.util.concurrent.TimeUnit.SECONDS);
+      for(androidx.work.WorkInfo info:infos){
+        if(!info.getState().isFinished()){
+          android.util.Log.i("MyTVSourceDiscovery","routine_deferred_manual_chain");
+          return false;
+        }
+      }
+      return !isStopped()&&!Thread.currentThread().isInterrupted();
+    }catch(InterruptedException interrupted){
+      Thread.currentThread().interrupt();return false;
+    }catch(Exception unavailable){
+      android.util.Log.w("MyTVSourceDiscovery","routine_manual_chain_status_unavailable",unavailable);
+      return false;
+    }
+  }
+
   /** Called only by the source-work owner, after durable slice progress.
    * A retry after an ambiguous enqueue must reuse an existing unfinished
    * successor. Never revive a cancelled chain with APPEND_OR_REPLACE.
