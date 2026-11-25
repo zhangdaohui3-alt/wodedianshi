@@ -42,6 +42,13 @@ public final class SourceProbeTimePolicy {
     }
 
     public static final long LIVE_RESUMABLE_MAX_BYTES=8L*1024L*1024L;
+    /** A fully downloaded range is also a valid durable checkpoint, pending local finalization. */
+    public static boolean validDirectoryCheckpoint(long offset,long total,long fileLength,
+            String etag,String location) {
+        return offset>0L&&total>=offset&&total<=LIVE_RESUMABLE_MAX_BYTES
+                &&fileLength>=offset&&strongDirectoryValidator(etag)
+                &&location!=null&&!location.isEmpty();
+    }
     public static boolean strongDirectoryValidator(String etag) {
         return etag!=null&&etag.length()>=2&&etag.startsWith("\"")&&etag.endsWith("\"")
                 &&etag.substring(1,etag.length()-1).indexOf('"')<0

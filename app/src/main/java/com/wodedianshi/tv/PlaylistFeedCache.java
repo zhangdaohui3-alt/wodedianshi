@@ -127,10 +127,8 @@ public final class PlaylistFeedCache {
         String oldLocation=previous.getProperty("location","");
         long offset=parseLong(previous.getProperty("length"),0L);
         long total=parseLong(previous.getProperty("total"),-1L);
-        if(!partial.isFile()||offset<=0L||offset>=total
-                ||total>SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES
-                ||partial.length()<offset||!SourceProbeTimePolicy.strongDirectoryValidator(oldTag)
-                ||oldLocation.isEmpty()){
+        if(!partial.isFile()||!SourceProbeTimePolicy.validDirectoryCheckpoint(
+                offset,total,partial.length(),oldTag,oldLocation)){
             clearRangeCheckpoint(checkpoint,partial);offset=0L;total=-1L;oldTag="";oldLocation="";
         }else if(partial.length()!=offset){
             try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
@@ -138,6 +136,11 @@ public final class PlaylistFeedCache {
         HttpURLConnection connection=null;
         final long deadline=android.os.SystemClock.elapsedRealtime()+(lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
         try{
+            if(offset>0L&&offset==total){
+                if(lowRate&&!SourceProbeTimePolicy.fitsLiveDirectory(total))
+                    throw new IOException("Complete directory awaits idle validation");
+                return publishRangeBody(directory,cached,partial,checkpoint,oldTag,paused,deadline);
+            }
             connection=(HttpURLConnection)new URL(feedUrl).openConnection();
             connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
             connection.setUseCaches(false);connection.setInstanceFollowRedirects(true);
@@ -195,35 +198,51 @@ public final class PlaylistFeedCache {
             }
             checkDownloadBudget(paused,deadline);
             long length=offset+copied;
-            if(status==206&&length<total){
+            if(status==206){
                 Properties next=new Properties();
                 next.setProperty("etag",tag);next.setProperty("location",location);
                 next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
                 writePropertiesAtomically(checkpoint,checkpointTemp,next);
-                return null;
+                if(length<total)return null;
+                // Preserve the final bytes before any expensive digest/index work.
+                // A large completed range is finalized only when playback is idle.
+                if(!SourceProbeTimePolicy.fitsLiveDirectory(length)){
+                    if(lowRate)throw new IOException("Complete directory awaits idle validation");
+                    // Give the local digest its own fresh idle budget.
+                    return null;
+                }
             }
-            // No partial body is ever parsed or published.
-            if(!isPlaylistFile(partial))throw new IOException("Downloaded resource is not M3U");
-            String digest=contentDigest(partial,paused);
-            checkDownloadBudget(paused,deadline);
-            invalidateIndex(cached);
-            File metadata=new File(cached.getPath()+".properties");
-            if(metadata.exists()&&!metadata.delete())throw new IOException("Cannot invalidate old metadata");
-            atomicReplace(partial,cached);
-            Properties fresh=new Properties();
-            describeBody(fresh,cached,digest);
-            fresh.setProperty("cachedAt",Long.toString(System.currentTimeMillis()));
-            if(tag!=null)fresh.setProperty("etag",tag);
-            writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
-            checkpoint.delete();
-            pruneOldEntries(directory,cached);
-            return cached;
+            return publishRangeBody(directory,cached,partial,checkpoint,tag,paused,deadline);
         }finally{
             if(connection!=null)connection.disconnect();
             checkpointTemp.delete();
             // Uncommitted tail is truncated on next attempt, never trusted.
             if(!checkpoint.isFile())partial.delete();
         }
+    }
+
+    private static File publishRangeBody(File directory,File cached,File partial,File checkpoint,
+            String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
+        checkDownloadBudget(paused,deadline);
+        // No partial body is ever parsed or published.
+        if(!isPlaylistFile(partial)){
+            clearRangeCheckpoint(checkpoint,partial);
+            throw new IOException("Downloaded resource is not M3U");
+        }
+        String digest=contentDigest(partial,paused);
+        checkDownloadBudget(paused,deadline);
+        invalidateIndex(cached);
+        File metadata=new File(cached.getPath()+".properties");
+        if(metadata.exists()&&!metadata.delete())throw new IOException("Cannot invalidate old metadata");
+        atomicReplace(partial,cached);
+        Properties fresh=new Properties();
+        describeBody(fresh,cached,digest);
+        fresh.setProperty("cachedAt",Long.toString(System.currentTimeMillis()));
+        if(tag!=null)fresh.setProperty("etag",tag);
+        writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
+        checkpoint.delete();
+        pruneOldEntries(directory,cached);
+        return cached;
     }
 
     private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
@@ -468,8 +487,9 @@ public final class PlaylistFeedCache {
         if (!file.isFile()) return properties;
         try (InputStream input = new FileInputStream(file)) {
             properties.load(input);
-        } catch (IOException ignored) {
-            // A broken metadata sidecar only forces a safe revalidation/download.
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Never trust even the successfully parsed prefix of corrupt metadata.
+            properties.clear();
         }
         return properties;
     }
