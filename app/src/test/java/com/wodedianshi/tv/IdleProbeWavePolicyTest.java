@@ -1,0 +1,39 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.concurrent.FutureTask;
+
+public class IdleProbeWavePolicyTest {
+    @Test public void hostLimitAndGlobalLimitAreIndependent() {
+        IdleProbeWavePolicy wave=new IdleProbeWavePolicy();
+        wave.add("a","one"); wave.add("b","one");
+        assertFalse(wave.canAdd("c","one"));
+        wave.add("c","two"); wave.add("d","three");
+        assertFalse(wave.canAdd("e","four"));
+    }
+    @Test public void duplicateEndpointAndInvalidHostNeverAdmitted() {
+        IdleProbeWavePolicy wave=new IdleProbeWavePolicy();
+        wave.add("a","one");
+        assertFalse(wave.canAdd("a","two"));
+        assertFalse(wave.canAdd("b",""));
+        assertFalse(wave.canAdd("","two"));
+        assertTrue(wave.canAdd("b","one"));
+    }
+    @Test public void incompleteSuffixCannotBeDiscardedForCommit() {
+        FutureTask<Integer> first=new FutureTask<>(()->1);
+        FutureTask<Integer> last=new FutureTask<>(()->2);
+        last.run();
+        assertFalse(IdleProbeWavePolicy.allFinished(Arrays.asList(first,last)));
+        first.run();
+        assertTrue(IdleProbeWavePolicy.allFinished(Arrays.asList(first,last)));
+    }
+    @Test public void cancelledFutureIsNotProofOfNetworkRelease() {
+        FutureTask<Integer> cancelled=new FutureTask<>(()->1);
+        cancelled.cancel(true);
+        assertFalse(IdleProbeWavePolicy.allFinished(Collections.singletonList(cancelled)));
+        assertTrue(IdleProbeWavePolicy.allFinished(Collections.emptyList()));
+    }
+}
