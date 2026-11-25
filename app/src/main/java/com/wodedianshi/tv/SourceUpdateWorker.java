@@ -232,6 +232,7 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_index_ready",0)
               .putLong("source_initial_index_entries",0L)
               .putInt("source_initial_progress_percent",0)
+              .putInt("source_initial_progress_basis_points",0)
               .putInt("source_initial_progress_done_feeds",0)
               .putInt("source_initial_progress_total_feeds",feeds.length)
               .putInt("source_initial_progress_china_done_feeds",0)
@@ -1064,8 +1065,9 @@ public class SourceUpdateWorker extends Worker {
           partial[batch.index]=basis;
           update.putInt(initialFeedProgressKey(batch.index),basis);
         }
-        int progressPercent=FullDiscoveryProgressPolicy.overallPercent(
+        int progressBasisPoints=FullDiscoveryProgressPolicy.overallBasisPoints(
             finished,partial,initialDiscoveryComplete);
+        int progressPercent=progressBasisPoints/100;
         int chinaFeedDone=SourceDiscoveryPriorityPolicy.completedInStage(
             finished,0,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
         int activeStage=SourceDiscoveryPriorityPolicy.activeStage(finished,
@@ -1084,6 +1086,7 @@ public class SourceUpdateWorker extends Worker {
         int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
         update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
             .putInt("source_initial_progress_percent",progressPercent)
+            .putInt("source_initial_progress_basis_points",progressBasisPoints)
             .putInt("source_initial_progress_done_feeds",completedFeeds)
             .putInt("source_initial_progress_total_feeds",feeds.length)
             .putInt("source_initial_progress_china_done_feeds",chinaFeedDone)
@@ -1111,7 +1114,7 @@ public class SourceUpdateWorker extends Worker {
                     +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
                     +(validatedSoFar+Math.max(0,discoveryProbesValid))
                     +" 次（含近期重复地址复用，非实机播放验证）；预算超时未确认 "+timeoutTotal+" 次，待后续补查。")
-                :("首次完整抓源进度 "+progressPercent+"%；已处理 "
+                :("首次完整抓源进度 "+FullDiscoveryProgressPolicy.formatIncompleteProgress(progressBasisPoints)+"；已处理 "
                     +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
                     +unavailableCount+" 个；预算超时未确认 "+timeoutTotal+" 次；已发布频道保留，未完成线路继续检测。"));
       }
@@ -1207,6 +1210,7 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_initial_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
             .putInt("source_initial_progress_percent",0)
+              .putInt("source_initial_progress_basis_points",0)
             .putInt("source_initial_progress_done_feeds",0)
             .putInt("source_initial_progress_china_done_feeds",0)
             .putInt("source_initial_progress_staged_channels",0)
