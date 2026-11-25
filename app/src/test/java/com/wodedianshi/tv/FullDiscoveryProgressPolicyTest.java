@@ -5,6 +5,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void durablePublicationMarkerAloneConfirmsCompletion() {
+        assertTrue(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(1L));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(0L));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(-1L));
+    }
+
     @Test public void playingSeedDoesNotBlockEmptyStagingOrOptionalBootstrap() {
         assertTrue(FullDiscoveryProgressPolicy.canResetInitialStaging(true,0));
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canResetInitialStaging(true,1));
