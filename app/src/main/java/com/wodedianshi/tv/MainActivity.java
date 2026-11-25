@@ -564,7 +564,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Register periodic source maintenance only after the saved catalogue
         // has been restored and the home screen is usable. WorkManager performs
         // refreshes independently; no network discovery is part of app entry.
-        try{scheduleAutomaticSourceUpdates();observeStartupSourceUpdateResults();}
+        try{scheduleAutomaticSourceUpdates();observeStartupSourceUpdateResults();observeManualSourceUpdateResults();}
         catch(RuntimeException schedulingFailure){
           android.util.Log.w("MyTVStartup","background source scheduling deferred",schedulingFailure);
         }
@@ -1615,6 +1615,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           requestInitialDiscoveryProgress();
         });
   }
+  private void observeManualSourceUpdateResults(){
+    // One lifecycle-bound observer; a historical terminal WorkInfo alone is
+    // not a new refresh. Read only committed Room state after an active manual
+    // chain becomes terminal, including partial commits before cancellation.
+    final boolean[] sawUnfinished={false};
+    WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_manual_source_update")
+        .observe(this,workInfos->{
+          if(workInfos==null)return;
+          boolean unfinished=false;
+          for(androidx.work.WorkInfo workInfo:workInfos){
+            if(!workInfo.getState().isFinished()){unfinished=true;break;}
+          }
+          if(unfinished){sawUnfinished[0]=true;return;}
+          if(!sawUnfinished[0])return;
+          sawUnfinished[0]=false;
+          if(activityStarted&&!isFinishing()&&!isDestroyed())
+            reloadChannelsAfterBackgroundUpdateIfNeeded();
+        });
+  }
   private void toggleAutomaticSourceUpdates(){
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     boolean enabled=!p.getBoolean("auto_source_update",true);
@@ -1646,8 +1665,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.KEEP,request);
     toast("已请求完整频道轮检；已有任务将继续，播放优先，可在更新状态查看进度");
-    // The first WorkInfo is only one bounded slice, not the whole refresh.
-    // Existing Room reload-on-resume and status view consume committed state.
+    // The lifecycle observer waits for the unique chain to become terminal,
+    // then reloads only committed Room state, subject to playback protection.
   }
   private void showSourceUpdateStatus(){
     final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
@@ -1976,6 +1995,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             (player!=null&&player.getPlayWhenReady())||libVlcEngine!=null);
       }
       resumeLiveAfterVod=false;
+      reloadDeferredCatalogueIfIdle();
     });
     dialog.setOnShowListener(d->{
       if(dialog.getWindow()!=null){
