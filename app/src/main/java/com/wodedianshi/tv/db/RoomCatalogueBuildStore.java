@@ -19,6 +19,17 @@ public final class RoomCatalogueBuildStore {
     public static final String STAGING_REVISION_KEY="source_initial_staging_revision";
     public static final String MANUAL_OWNER_KEY="source_manual_staging_owner";
     public static final String MANUAL_BASE_VERSION_KEY="source_manual_staging_base_version";
+    public static final String MANUAL_BASE_STRUCTURE_KEY="source_manual_staging_base_structure";
+
+    /** Never authorize a final publish solely from a fresh total version: a
+     * structural edit may have changed the old directory since staging began. */
+    static void requireUnchangedManualStructure(AppDatabase db,String owner){
+        requireManualOwner(db,owner);
+        AppStateDao state=db.appStateDao();
+        if(!CatalogueVersionPolicy.structureMatches(state.getValue(MANUAL_BASE_STRUCTURE_KEY),
+                state.getValue(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY)))
+            throw new RoomCatalogueWriter.StaleCatalogueException();
+    }
 
     static void requireManualOwner(AppDatabase db,String owner){
         if(!db.inTransaction())throw new IllegalStateException("Manual staging requires transaction");
@@ -33,6 +44,7 @@ public final class RoomCatalogueBuildStore {
         db.channelDao().clearCatalogueBuildRows();
         db.appStateDao().remove(MANUAL_OWNER_KEY);
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
+        db.appStateDao().remove(MANUAL_BASE_STRUCTURE_KEY);
     }
 
     /** Seed an isolated manual build only from a still-current published snapshot.
@@ -157,6 +169,13 @@ public final class RoomCatalogueBuildStore {
                 long now=System.currentTimeMillis();
                 db.appStateDao().put(new AppStateEntity(MANUAL_OWNER_KEY,manualOwner,now));
                 db.appStateDao().put(new AppStateEntity(MANUAL_BASE_VERSION_KEY,Long.toString(baseVersion),now));
+                // Seed the structural epoch from the checked live version on upgrade.
+                // Favorite/source mutations keep the general checkpoint advancing,
+                // but do not update this independent complete-write epoch.
+                String stored=db.appStateDao().getValue(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY);
+                long structure=CatalogueVersionPolicy.readStructureVersion(stored,baseVersion);
+                db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,Long.toString(structure),now));
+                db.appStateDao().put(new AppStateEntity(MANUAL_BASE_STRUCTURE_KEY,Long.toString(structure),now));
             }
             checkPause(paused);
         });
