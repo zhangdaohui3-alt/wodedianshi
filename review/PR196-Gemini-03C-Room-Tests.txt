@@ -1,0 +1,647 @@
+# 《我的电视》2.74.5（PR #196）第三组 C：Room 与快照策略相关单元测试
+
+固定审查提交：adcb720f2caf04ec7cca94bba632589c14a8ed2e。请与第三组 A、B 一起分析测试覆盖及缺口，不把纯策略测试等同 Room 事务集成测试或实机验收。
+
+## 文件清单
+- app/src/test/java/com/wodedianshi/tv/RoomCatalogueReloadPolicyTest.java L1–63 | blob f62e6418d674cdd48d372a65afa675f41718956d
+- app/src/test/java/com/wodedianshi/tv/FullDiscoveryProgressPolicyTest.java L1–128 | blob 3e4a0bd5addd15418cd53a83b951d69f757a23c7
+- app/src/test/java/com/wodedianshi/tv/FullRebuildRouteRetentionPolicyTest.java L1–74 | blob c7fd5593ab145e9cd80ce31d61655ce50d20d277
+- app/src/test/java/com/wodedianshi/tv/RemoteChannelOrderPolicyTest.java L1–95 | blob 2c88ca8050f883071521c72cadaa9824fe0eb43b
+- app/src/test/java/com/wodedianshi/tv/db/BackgroundSnapshotPolicyTest.java L1–27 | blob cec58c05c763448f5cd127ad94b543acea61025d
+- app/src/test/java/com/wodedianshi/tv/db/CatalogueVersionPolicyTest.java L1–22 | blob f2b28ee61d8b45da7610cff262f5ac8074e8e980
+- app/src/test/java/com/wodedianshi/tv/db/CatalogueReadCompletenessPolicyTest.java L1–37 | blob 68965ec4269d854c05552810c83d821cf31f9158
+- app/src/test/java/com/wodedianshi/tv/DiscoveryBatchPolicyTest.java L1–90 | blob 39bc0e1e6612a1f8d01e10593a61bfdaa0d117b2
+- app/src/test/java/com/wodedianshi/tv/FavoriteMembershipPolicyTest.java L1–44 | blob 5760df381e12a118f6902cead4e453dd63e2f00d
+
+## app/src/test/java/com/wodedianshi/tv/RoomCatalogueReloadPolicyTest.java — 原始行 1–63
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class RoomCatalogueReloadPolicyTest {
+    7 |     @Test public void unchangedCheckpointSkipsOnlyKnownMatchingVersion() {
+    8 |         assertTrue(RoomCatalogueReloadPolicy.isUnchanged(42L, 42L));
+    9 |         assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, 43L));
+   10 |         assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, 41L));
+   11 |         assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, null));
+   12 |         assertFalse(RoomCatalogueReloadPolicy.isUnchanged(-1L, -1L));
+   13 |     }
+   14 | 
+   15 |     @Test public void stableRoomSnapshotCanReplaceUi() {
+   16 |         assertTrue(RoomCatalogueReloadPolicy.mayPublish(true, true, 10L, 10L));
+   17 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   18 |                 true, true, 10L, 10L, 1));
+   19 |     }
+   20 | 
+   21 |     @Test public void concurrentFavoriteOrSourceChangeCannotPublishOldRoomRead() {
+   22 |         // A user action is already shown locally but its one-row Room
+   23 |         // mutation may still be queued when the catalogue reader finishes.
+   24 |         assertFalse(RoomCatalogueReloadPolicy.mayPublish(true, true, 10L, 11L));
+   25 |         assertTrue(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   26 |                 true, true, 10L, 11L, 1));
+   27 |     }
+   28 | 
+   29 |     @Test public void mutationRetryIsBoundedToOneAttempt() {
+   30 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   31 |                 true, true, 10L, 11L, 0));
+   32 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   33 |                 true, true, 10L, 11L, -1));
+   34 |     }
+   35 | 
+   36 |     @Test public void concurrentWorkerPublishDuringPagedReadCanRetryOnce() {
+   37 |         // No Activity mutation need occur: the independent source worker can
+   38 |         // change Room while the reader is walking a large channel directory.
+   39 |         assertTrue(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+   40 |                 true, true, 1));
+   41 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+   42 |                 true, true, 0));
+   43 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+   44 |                 true, true, -1));
+   45 |     }
+   46 | 
+   47 |     @Test public void staleReadNeverRestartsAfterNewRequestOrStop() {
+   48 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+   49 |                 false, true, 1));
+   50 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterReadConflict(
+   51 |                 true, false, 1));
+   52 |     }
+   53 | 
+   54 |     @Test public void newerReloadOrStoppedActivityPreventsStaleRetry() {
+   55 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   56 |                 false, true, 10L, 11L, 1));
+   57 |         assertFalse(RoomCatalogueReloadPolicy.shouldRetryAfterUserMutation(
+   58 |                 true, false, 10L, 11L, 1));
+   59 |         assertFalse(RoomCatalogueReloadPolicy.mayPublish(false, true, 10L, 10L));
+   60 |         assertFalse(RoomCatalogueReloadPolicy.mayPublish(true, false, 10L, 10L));
+   61 |     }
+   62 | }
+   63 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/FullDiscoveryProgressPolicyTest.java — 原始行 1–128
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.assertEquals;
+    5 | import static org.junit.Assert.assertTrue;
+    6 | 
+    7 | public class FullDiscoveryProgressPolicyTest {
+    8 |     @Test public void playingSeedDoesNotBlockEmptyStagingOrOptionalBootstrap() {
+    9 |         assertTrue(FullDiscoveryProgressPolicy.canResetInitialStaging(true,0));
+   10 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canResetInitialStaging(true,1));
+   11 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canResetInitialStaging(true,-1));
+   12 |         assertTrue(FullDiscoveryProgressPolicy.canResetInitialStaging(false,100));
+   13 |         assertTrue(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(false,0,10,0,0,false));
+   14 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(true,0,10,0,0,false));
+   15 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(false,2,10,0,0,false));
+   16 |     }
+   17 | 
+   18 |     @Test public void stagingReuseRequiresMatchingCommittedRevisionAndFreshBoundedRows() {
+   19 |         assertTrue(FullDiscoveryProgressPolicy.canRetainStaging(512,true));
+   20 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canRetainStaging(513,true));
+   21 |         assertTrue(FullDiscoveryProgressPolicy.canRetainStaging(1024,false));
+   22 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canRetainStaging(1025,false));
+   23 |         assertTrue(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,61000));
+   24 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,61001));
+   25 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","b",1000,1100));
+   26 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"","",1000,1100));
+   27 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(20,"a","a",1000,999));
+   28 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canReuseStaging(-1,"a","a",1000,1100));
+   29 |     }
+   30 | 
+   31 |     @Test public void finalizationDoesNotConfuseInspectedWithPublished() {
+   32 |         assertTrue(FullDiscoveryProgressPolicy.awaitingIdleFinalization(true,true));
+   33 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.awaitingIdleFinalization(false,true));
+   34 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.awaitingIdleFinalization(true,false));
+   35 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,true));
+   36 |         assertTrue(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,false));
+   37 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(false,true,false));
+   38 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,false,false));
+   39 |         assertEquals(99,FullDiscoveryProgressPolicy.overallPercent(new boolean[]{true,true},new int[]{0,0},false));
+   40 |     }
+   41 | 
+   42 |     @Test public void mainlandIndexPhaseIsSeparateFromVerifiedProgress() {
+   43 |         assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,0,false));
+   44 |         assertTrue(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,0,0,false));
+   45 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(2,10,0,0,false));
+   46 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,0,5,false));
+   47 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(1,10,1,0,false));
+   48 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,10,0,0,true));
+   49 |         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.isMainlandIndexPhase(0,0,0,0,false));
+   50 |         assertEquals(2,FullDiscoveryProgressPolicy.bootstrapIndexLimit(10));
+   51 |         assertEquals(1,FullDiscoveryProgressPolicy.bootstrapIndexLimit(1));
+   52 |         assertEquals(0,FullDiscoveryProgressPolicy.bootstrapIndexLimit(-1));
+   53 |     }
+   54 | 
+   55 |     @org.junit.Test public void earlyPreviewMilestonesNeverPretendToCompleteFullDiscovery() {
+   56 |         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 11, 3, false));
+   57 |         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 20, 0, true));
+   58 |         org.junit.Assert.assertEquals(1, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 12, 3, false));
+   59 |         org.junit.Assert.assertEquals(1, FullDiscoveryProgressPolicy.nextPreviewLevel(1, 40, 20, false));
+   60 |         org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(1, 40, 20, true));
+   61 |         org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(0, 3, 3, true));
+   62 |         org.junit.Assert.assertEquals(2, FullDiscoveryProgressPolicy.nextPreviewLevel(2, 40, 20, true));
+   63 |     }
+   64 | 
+   65 |     @Test public void overallProgressIncludesEveryPartialFeed() {
+   66 |         boolean[] done={true,false,false,false};
+   67 |         int[] partial={0,5000,2500,0};
+   68 |         assertEquals(43,FullDiscoveryProgressPolicy.overallPercent(done,partial,false));
+   69 |         partial[1]=0;
+   70 |         assertEquals(31,FullDiscoveryProgressPolicy.overallPercent(done,partial,false));
+   71 |         assertEquals(99,FullDiscoveryProgressPolicy.overallPercent(
+   72 |             new boolean[]{true,true},new int[]{0,0},false));
+   73 |         assertEquals(100,FullDiscoveryProgressPolicy.overallPercent(done,partial,true));
+   74 |         assertEquals(5000,FullDiscoveryProgressPolicy.feedProgress(12,24));
+   75 |         assertEquals(0,FullDiscoveryProgressPolicy.feedProgress(12,-1));
+   76 |         assertEquals(10000,FullDiscoveryProgressPolicy.feedProgress(Integer.MAX_VALUE,1));
+   77 |     }
+   78 | 
+   79 |     @Test public void coverageSeparatesMainlandCategoriesAndDoesNotCountForeignLocal() {
+   80 |         FullDiscoveryProgressPolicy.Coverage c = new FullDiscoveryProgressPolicy.Coverage();
+   81 |         c.add("CCTV-2","央视","","");
+   82 |         c.add("福建东南卫视","卫视","","");
+   83 |         c.add("厦门新闻","福建","","");
+   84 |         c.add("Shenzhen News","广东","","");
+   85 |         c.add("Local News","US","","");
+   86 |         c.add("香港新闻","香港","","");
+   87 |         assertEquals(1,c.cctvCount());
+   88 |         assertEquals(1,c.satelliteCount());
+   89 |         assertEquals(2,c.localCount());
+   90 |         assertEquals(2,c.provinceCount());
+   91 |         assertTrue(c.summary().contains("覆盖有缺口"));
+   92 |         assertTrue(c.summary().contains("非实播验证"));
+   93 |     }
+   94 |     @Test public void emptyCoverageNeverClaimsSuccess() {
+   95 |         FullDiscoveryProgressPolicy.Coverage c = new FullDiscoveryProgressPolicy.Coverage();
+   96 |         assertEquals(0,c.provinceCount());
+   97 |         assertTrue(c.summary().contains("0/31"));
+   98 |         assertTrue(c.summary().contains("覆盖有缺口"));
+   99 |     }
+  100 | 
+  101 |     @Test public void countsCompletedFeedsAndIndexedCursor() {
+  102 |         assertEquals(0, FullDiscoveryProgressPolicy.percent(0, 20, 0, 500, false));
+  103 |         assertEquals(12, FullDiscoveryProgressPolicy.percent(2, 20, 250, 500, false));
+  104 |         assertEquals(25, FullDiscoveryProgressPolicy.percent(5, 20, 0, 0, false));
+  105 |     }
+  106 | 
+  107 |     @Test public void aUnpublishedSnapshotNeverShowsOneHundredPercent() {
+  108 |         assertEquals(99, FullDiscoveryProgressPolicy.percent(20, 20, 0, 0, false));
+  109 |         assertEquals(100, FullDiscoveryProgressPolicy.percent(20, 20, 0, 0, true));
+  110 |     }
+  111 | 
+  112 |     @Test public void missingOrInvalidIndexNeverInventsFractionalProgress() {
+  113 |         assertEquals(15, FullDiscoveryProgressPolicy.percent(3, 20, 50, -1, false));
+  114 |         assertEquals(15, FullDiscoveryProgressPolicy.percent(3, 20, -5, 100, false));
+  115 |         assertEquals(0, FullDiscoveryProgressPolicy.percent(3, 0, 50, 100, false));
+  116 |     }
+  117 | 
+  118 |     @Test public void corruptOrOverflowingCursorIsClamped() {
+  119 |         assertEquals(20, FullDiscoveryProgressPolicy.percent(3, 20, 5000, 100, false));
+  120 |         assertEquals(99, FullDiscoveryProgressPolicy.percent(Integer.MAX_VALUE, 20,
+  121 |                 Integer.MAX_VALUE, Integer.MAX_VALUE, false));
+  122 |     }
+  123 | 
+  124 |     @Test public void completedPercentRequiresActualPublication() {
+  125 |         assertEquals(100, FullDiscoveryProgressPolicy.percent(0, 20, 0, 0, true));
+  126 |     }
+  127 | }
+  128 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/FullRebuildRouteRetentionPolicyTest.java — 原始行 1–74
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import java.util.Arrays;
+    4 | import java.util.Collections;
+    5 | import java.util.List;
+    6 | import org.junit.Test;
+    7 | import static org.junit.Assert.*;
+    8 | 
+    9 | public class FullRebuildRouteRetentionPolicyTest {
+   10 |     @Test public void protectsSavedPrimaryActiveAndBackupsWhileAddingNewChannelsSources() {
+   11 |         List<String> old=Arrays.asList("[URL_REDACTED]",
+   12 |                 "[URL_REDACTED]");
+   13 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   14 |                 old,1,old.get(0),Arrays.asList("[URL_REDACTED]","[URL_REDACTED]"),4);
+   15 |         assertEquals(Arrays.asList(old.get(0),old.get(1),
+   16 |                 "[URL_REDACTED]","[URL_REDACTED]"),r.urls);
+   17 |         assertEquals(1,r.activeIndex);
+   18 |     }
+   19 | 
+   20 |     @Test public void fullChannelDoesNotLoseOldBackupForUnprovenNewFeed() {
+   21 |         List<String> old=Arrays.asList("[URL_REDACTED]","[URL_REDACTED]",
+   22 |                 "[URL_REDACTED]");
+   23 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   24 |                 old,2,old.get(0),Collections.singletonList("[URL_REDACTED]"),3);
+   25 |         assertEquals(old,r.urls);
+   26 |         assertEquals(2,r.activeIndex);
+   27 |     }
+   28 | 
+   29 |     @Test public void preservesExactPreviouslySelectedAlias() {
+   30 |         List<String> old=Arrays.asList("[URL_REDACTED]",
+   31 |                 "[URL_REDACTED]","[URL_REDACTED]");
+   32 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   33 |                 old,1,old.get(0),Collections.singletonList("[URL_REDACTED]"),4);
+   34 |         assertEquals(old.get(1),r.urls.get(1));
+   35 |         assertEquals(1,r.activeIndex);
+   36 |     }
+   37 | 
+   38 |     @Test public void oversizedOldSourceListKeepsLateSelectedRoute() {
+   39 |         List<String> old=Arrays.asList(
+   40 |                 "[URL_REDACTED]","[URL_REDACTED]",
+   41 |                 "[URL_REDACTED]","[URL_REDACTED]");
+   42 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   43 |                 old,3,old.get(0),Collections.singletonList("[URL_REDACTED]"),3);
+   44 |         assertEquals(Arrays.asList(old.get(0),old.get(1),old.get(3)),r.urls);
+   45 |         assertEquals(2,r.activeIndex);
+   46 |     }
+   47 | 
+   48 |     @Test public void singleAvailableSlotPrefersExplicitlySelectedRoute() {
+   49 |         List<String> old=Arrays.asList("[URL_REDACTED]",
+   50 |                 "[URL_REDACTED]");
+   51 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   52 |                 old,1,old.get(0),Collections.emptyList(),1);
+   53 |         assertEquals(Collections.singletonList(old.get(1)),r.urls);
+   54 |         assertEquals(0,r.activeIndex);
+   55 |     }
+   56 | 
+   57 |     @Test public void skipsInvalidAndDuplicateNewEndpoints() {
+   58 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   59 |                 Collections.singletonList("[URL_REDACTED]"),0,
+   60 |                 "[URL_REDACTED]",Arrays.asList("not-an-url",
+   61 |                         "[URL_REDACTED]","[URL_REDACTED]"),3);
+   62 |         assertEquals(Arrays.asList("[URL_REDACTED]","[URL_REDACTED]"),r.urls);
+   63 |     }
+   64 | 
+   65 |     @Test public void handlesExistingPrimaryOmittedFromBackupArray() {
+   66 |         FullRebuildRouteRetentionPolicy.Result r=FullRebuildRouteRetentionPolicy.merge(
+   67 |                 Collections.singletonList("[URL_REDACTED]"),0,
+   68 |                 "[URL_REDACTED]",Collections.singletonList("[URL_REDACTED]"),3);
+   69 |         assertEquals(Arrays.asList("[URL_REDACTED]",
+   70 |                 "[URL_REDACTED]","[URL_REDACTED]"),r.urls);
+   71 |         assertEquals(1,r.activeIndex);
+   72 |     }
+   73 | }
+   74 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/RemoteChannelOrderPolicyTest.java — 原始行 1–95
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.assertFalse;
+    5 | import static org.junit.Assert.assertTrue;
+    6 | 
+    7 | public class RemoteChannelOrderPolicyTest {
+    8 |     @Test public void pendingKeyStepsAreMergedAndBounded() {
+    9 |         org.junit.Assert.assertEquals(4, RemoteChannelOrderPolicy.mergeZapSteps(3, 1));
+   10 |         org.junit.Assert.assertEquals(0, RemoteChannelOrderPolicy.mergeZapSteps(1, -1));
+   11 |         org.junit.Assert.assertEquals(12, RemoteChannelOrderPolicy.mergeZapSteps(12, 1));
+   12 |         org.junit.Assert.assertEquals(-12, RemoteChannelOrderPolicy.mergeZapSteps(-12, -1));
+   13 |     }
+   14 | 
+   15 |     @Test public void countryAndFavoriteMembershipAreBothRequired() {
+   16 |         java.util.Set<String> geo = java.util.Collections.singleton("fujian");
+   17 |         java.util.Set<String> fav = java.util.Collections.singleton("other");
+   18 |         assertTrue(RemoteChannelOrderPolicy.matchesMembership("fujian", geo, false, fav));
+   19 |         assertFalse(RemoteChannelOrderPolicy.matchesMembership("other", geo, false, fav));
+   20 |         assertFalse(RemoteChannelOrderPolicy.matchesMembership("fujian", geo, true, fav));
+   21 |         assertTrue(RemoteChannelOrderPolicy.matchesMembership("other", null, true, fav));
+   22 |     }
+   23 | 
+   24 |     @Test public void displayAliasAndWhitespaceAreHandledConsistently() {
+   25 |         assertTrue(RemoteChannelOrderPolicy.matchesQuery(" CCTV-2 ", "Finance", null, "CCTV-2"));
+   26 |         assertFalse(RemoteChannelOrderPolicy.matchesQuery("CCTV-3", "Finance", null, "CCTV-2"));
+   27 |         assertTrue(RemoteChannelOrderPolicy.matchesQuery(" ", null, null, null));
+   28 |     }
+   29 | 
+   30 |     @Test public void autoResumeCannotUseReplacedPositionOrInterruptVod() {
+   31 |         Object original = new Object();
+   32 |         assertTrue(RemoteChannelOrderPolicy.canResume(false, false, original, original));
+   33 |         assertFalse(RemoteChannelOrderPolicy.canResume(false, false, original, new Object()));
+   34 |         assertFalse(RemoteChannelOrderPolicy.canResume(true, false, original, original));
+   35 |         assertFalse(RemoteChannelOrderPolicy.canResume(false, true, original, original));
+   36 |     }
+   37 | 
+   38 |     @Test public void pendingResumeFollowsIdentityInsteadOfOldPosition() {
+   39 |         Object original = new Object();
+   40 |         java.util.Map<String,Integer> positions = java.util.Collections.singletonMap("CCTV-2|cctv", 4);
+   41 |         org.junit.Assert.assertEquals(4, RemoteChannelOrderPolicy.remapResumeIndex(
+   42 |                 false, false, original, original, "CCTV-2|cctv", positions, 5));
+   43 |         org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+   44 |                 false, false, original, original, "CCTV-3|cctv", positions, 5));
+   45 |         org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+   46 |                 false, false, original, new Object(), "CCTV-2|cctv", positions, 5));
+   47 |         org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+   48 |                 true, false, original, original, "CCTV-2|cctv", positions, 5));
+   49 |         org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+   50 |                 false, true, original, original, "CCTV-2|cctv", positions, 5));
+   51 |         org.junit.Assert.assertEquals(-1, RemoteChannelOrderPolicy.remapResumeIndex(
+   52 |                 false, false, original, original, "CCTV-2|cctv", positions, 4));
+   53 |     }
+   54 | 
+   55 |     @Test public void queuedZapCannotInterruptNewInteraction() {
+   56 |         assertTrue(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, false, false));
+   57 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(false, true, false, false, false, false));
+   58 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, false, false, false, false, false));
+   59 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, true, false, false, false));
+   60 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, true, false, false));
+   61 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, true, false));
+   62 |         assertFalse(RemoteChannelOrderPolicy.canApplyQueuedZap(true, true, false, false, false, true));
+   63 |     }
+   64 | 
+   65 |     @Test public void completedOrderCanPublish() {
+   66 |         assertTrue(RemoteChannelOrderPolicy.mayPublish(
+   67 |                 false, 31L, 31L, 4L, 4L, 6861, 6861, true, true, 123, 123));
+   68 |     }
+   69 | 
+   70 |     @Test public void interruptedPartialOrderMustNotPublish() {
+   71 |         assertFalse(RemoteChannelOrderPolicy.complete(true, 31L, 31L));
+   72 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   73 |                 true, 31L, 31L, 4L, 4L, 6861, 6861, false, false, 0, 0));
+   74 |     }
+   75 | 
+   76 |     @Test public void equalRowCountDoesNotMakeReorderedCatalogueSafe() {
+   77 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   78 |                 false, 31L, 32L, 4L, 4L, 6861, 6861, false, false, 0, 0));
+   79 |     }
+   80 | 
+   81 |     @Test public void oldCategoryOrChangedFavoriteSetMustNotPublish() {
+   82 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   83 |                 false, 31L, 31L, 4L, 5L, 6861, 6861, false, false, 0, 0));
+   84 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   85 |                 false, 31L, 31L, 4L, 4L, 6861, 6861, true, true, 123, 124));
+   86 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   87 |                 false, 31L, 31L, 4L, 4L, 6861, 6861, false, true, 0, 0));
+   88 |     }
+   89 | 
+   90 |     @Test public void differentRowCountNeverPublishesOldPositions() {
+   91 |         assertFalse(RemoteChannelOrderPolicy.mayPublish(
+   92 |                 false, 31L, 31L, 4L, 4L, 6861, 6862, false, false, 0, 0));
+   93 |     }
+   94 | }
+   95 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/db/BackgroundSnapshotPolicyTest.java — 原始行 1–27
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.assertFalse;
+    5 | import static org.junit.Assert.assertTrue;
+    6 | 
+    7 | public class BackgroundSnapshotPolicyTest {
+    8 |     @Test public void firstRunMaySeedNonEmptyDatabase() {
+    9 |         assertTrue(BackgroundSnapshotPolicy.isComplete(0, 3800));
+   10 |     }
+   11 | 
+   12 |     @Test public void completeRefreshMayKeepOrGrowDirectory() {
+   13 |         assertTrue(BackgroundSnapshotPolicy.isComplete(3800, 3800));
+   14 |         assertTrue(BackgroundSnapshotPolicy.isComplete(3800, 3810));
+   15 |     }
+   16 | 
+   17 |     @Test public void completeRefreshMayShrinkAfterRemovingDeadOrDuplicateChannels() {
+   18 |         assertTrue(BackgroundSnapshotPolicy.isComplete(3800, 3799));
+   19 |         assertTrue(BackgroundSnapshotPolicy.isComplete(3800, 120));
+   20 |     }
+   21 | 
+   22 |     @Test public void emptySnapshotIsNeverACompleteCatalogue() {
+   23 |         assertFalse(BackgroundSnapshotPolicy.isComplete(3800, 0));
+   24 |         assertFalse(BackgroundSnapshotPolicy.isComplete(0, 0));
+   25 |     }
+   26 | }
+   27 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/db/CatalogueVersionPolicyTest.java — 原始行 1–22
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.assertFalse;
+    5 | import static org.junit.Assert.assertTrue;
+    6 | 
+    7 | /** Pure policy test; full Room transaction still requires Android instrumentation. */
+    8 | public class CatalogueVersionPolicyTest {
+    9 |     @Test public void currentVersionCanCommit() {
+   10 |         assertTrue(CatalogueVersionPolicy.matches(1234L, 1234L));
+   11 |     }
+   12 | 
+   13 |     @Test public void staleMemoryMustNeverReplaceNewerRoomDirectory() {
+   14 |         assertFalse(CatalogueVersionPolicy.matches(1234L, 1235L));
+   15 |     }
+   16 | 
+   17 |     @Test public void missingOrUninitializedCheckpointIsNotCurrent() {
+   18 |         assertFalse(CatalogueVersionPolicy.matches(12L, null));
+   19 |         assertFalse(CatalogueVersionPolicy.matches(-1L, 12L));
+   20 |     }
+   21 | }
+   22 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/db/CatalogueReadCompletenessPolicyTest.java — 原始行 1–37
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class CatalogueReadCompletenessPolicyTest {
+    7 |     @Test public void acceptsExactCount() {
+    8 |         assertTrue(CatalogueReadCompletenessPolicy.isComplete(1200, 1200));
+    9 |     }
+   10 | 
+   11 |     @Test public void acceptsEmptyCatalogueCountAsCompleteRead() {
+   12 |         assertTrue(CatalogueReadCompletenessPolicy.isComplete(0, 0));
+   13 |     }
+   14 | 
+   15 |     @Test public void rejectsTruncatedRead() {
+   16 |         assertFalse(CatalogueReadCompletenessPolicy.isComplete(1200, 800));
+   17 |     }
+   18 | 
+   19 |     @Test public void rejectsUnexpectedExtraRows() {
+   20 |         assertFalse(CatalogueReadCompletenessPolicy.isComplete(1200, 1201));
+   21 |     }
+   22 | 
+   23 |     @Test public void rejectsInvalidExpectedCount() {
+   24 |         assertFalse(CatalogueReadCompletenessPolicy.isComplete(-1, 0));
+   25 |     }
+   26 | 
+   27 |     @Test public void requireCompleteExplainsTruncatedRead() {
+   28 |         try {
+   29 |             CatalogueReadCompletenessPolicy.requireComplete(200, 199);
+   30 |             fail("truncated read must not be published");
+   31 |         } catch (IllegalStateException expected) {
+   32 |             assertTrue(expected.getMessage().contains("expected 200"));
+   33 |             assertTrue(expected.getMessage().contains("loaded 199"));
+   34 |         }
+   35 |     }
+   36 | }
+   37 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/DiscoveryBatchPolicyTest.java — 原始行 1–90
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.assertEquals;
+    5 | 
+    6 | public class DiscoveryBatchPolicyTest {
+    7 |     @org.junit.Test public void acquisitionMarkerRequiresExactNonemptyBodyVersion() {
+    8 |         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.isPreparedInitialFeed("feed:hash","feed:hash"));
+    9 |         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.isPreparedInitialFeed("feed:old","feed:new"));
+   10 |         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.isPreparedInitialFeed("",""));
+   11 |         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.isPreparedInitialFeed(null,"feed:hash"));
+   12 |         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.isPreparedInitialFeed("feed:hash",null));
+   13 |     }
+   14 | 
+   15 |     @org.junit.Test public void incrementalStagingRequiresEveryAppendedRowAndValidPositions() {
+   16 |         com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(5,5,java.util.Collections.emptySet());
+   17 |         com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(5,7,
+   18 |             new java.util.HashSet<>(java.util.Arrays.asList(0,5,6)));
+   19 |         int[][] invalid={{5,4,0},{5,7,5},{5,5,5},{5,5,-1}};
+   20 |         for(int[] item:invalid){
+   21 |             try{
+   22 |                 com.wodedianshi.tv.db.RoomCatalogueBuildStore.validateTouchedRows(
+   23 |                     item[0],item[1],java.util.Collections.singleton(item[2]));
+   24 |                 org.junit.Assert.fail("Invalid staging mutation accepted");
+   25 |             }catch(IllegalArgumentException expected){}
+   26 |         }
+   27 |     }
+   28 | 
+   29 |     @org.junit.Test public void independentlyResumesInterleavedFeedPages() {
+   30 |         String first=DiscoveryBatchPolicy.initialBatchPrefix(0);
+   31 |         String second=DiscoveryBatchPolicy.initialBatchPrefix(1);
+   32 |         org.junit.Assert.assertNotEquals(first,second);
+   33 |         java.util.Map<String,Integer> offsets=new java.util.HashMap<>();
+   34 |         offsets.put(first+"scanned",7);
+   35 |         offsets.put(second+"scanned",2);
+   36 |         org.junit.Assert.assertEquals(7,DiscoveryBatchPolicy.scannedForBatch("a","a",offsets.get(first+"scanned"),24));
+   37 |         org.junit.Assert.assertEquals(2,DiscoveryBatchPolicy.scannedForBatch("b","b",offsets.get(second+"scanned"),24));
+   38 |         org.junit.Assert.assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new-a","a",offsets.get(first+"scanned"),24));
+   39 |         offsets.remove(first+"scanned");
+   40 |         org.junit.Assert.assertEquals(Integer.valueOf(2),offsets.get(second+"scanned"));
+   41 |     }
+   42 | 
+   43 |     @Test public void cursorResumesOnlyForIdenticalKnownFeedVersion() {
+   44 |         org.junit.Assert.assertEquals(24, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:a"));
+   45 |         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:b"));
+   46 |         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"","feed:b"));
+   47 |         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"",""));
+   48 |         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a",null));
+   49 |         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(-1,"feed:a","feed:a"));
+   50 |     }
+   51 | 
+   52 |     @Test public void resumesByPositionEvenWhenSeveralChannelsShareTheSameUrl() {
+   53 |         String fingerprint = "same-batch";
+   54 |         int scanned = DiscoveryBatchPolicy.scannedForBatch(
+   55 |                 fingerprint, fingerprint, 2, 5);
+   56 |         assertEquals(2, DiscoveryBatchPolicy.startIndex(scanned, 5));
+   57 |         assertEquals(3, DiscoveryBatchPolicy.remaining(scanned, 5));
+   58 |     }
+   59 | 
+   60 |     @Test public void duplicateEndpointDoesNotSkipUnscannedChannelAfterIt() {
+   61 |         java.util.List<String> channelEndpoints = java.util.Arrays.asList(
+   62 |                 "[URL_REDACTED]",
+   63 |                 "[URL_REDACTED]",
+   64 |                 "[URL_REDACTED]",
+   65 |                 "[URL_REDACTED]");
+   66 |         int scanned = DiscoveryBatchPolicy.scannedForBatch(
+   67 |                 "batch", "batch", 1, channelEndpoints.size());
+   68 |         assertEquals("[URL_REDACTED]",
+   69 |                 channelEndpoints.get(DiscoveryBatchPolicy.startIndex(
+   70 |                         scanned, channelEndpoints.size())));
+   71 |     }
+   72 | 
+   73 |     @Test public void changedBatchResetsPositionInsteadOfReusingOldCursor() {
+   74 |         int scanned = DiscoveryBatchPolicy.scannedForBatch(
+   75 |                 "new-batch", "old-batch", 4, 7);
+   76 |         assertEquals(0, scanned);
+   77 |         assertEquals(0, DiscoveryBatchPolicy.startIndex(scanned, 7));
+   78 |         assertEquals(7, DiscoveryBatchPolicy.remaining(scanned, 7));
+   79 |     }
+   80 | 
+   81 |     @Test public void clampsProgressAndHandlesAnExhaustedBatch() {
+   82 |         int scanned = DiscoveryBatchPolicy.scannedForBatch(
+   83 |                 "batch", "batch", 99, 3);
+   84 |         assertEquals(0, DiscoveryBatchPolicy.startIndex(scanned, 3));
+   85 |         assertEquals(0, DiscoveryBatchPolicy.remaining(scanned, 3));
+   86 |         assertEquals(0, DiscoveryBatchPolicy.scannedForBatch(
+   87 |                 "batch", "batch", 2, 0));
+   88 |     }
+   89 | }
+   90 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/FavoriteMembershipPolicyTest.java — 原始行 1–44
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import java.util.Arrays;
+    4 | import java.util.Collections;
+    5 | import java.util.HashSet;
+    6 | import java.util.Set;
+    7 | import org.junit.Test;
+    8 | import static org.junit.Assert.*;
+    9 | 
+   10 | public class FavoriteMembershipPolicyTest {
+   11 |     @Test public void toggleIsAtomicAndReturnsNewMembership() {
+   12 |         Set<String> favorites = Collections.synchronizedSet(new HashSet<>());
+   13 |         assertTrue(FavoriteMembershipPolicy.toggle(favorites, "CCTV-1"));
+   14 |         assertTrue(favorites.contains("CCTV-1"));
+   15 |         assertFalse(FavoriteMembershipPolicy.toggle(favorites, "CCTV-1"));
+   16 |         assertFalse(favorites.contains("CCTV-1"));
+   17 |     }
+   18 | 
+   19 |     @Test public void snapshotCopiesCompleteSetAndDoesNotShareMutability() {
+   20 |         Set<String> favorites = Collections.synchronizedSet(new HashSet<>(
+   21 |                 Arrays.asList("CCTV-1", "湖南卫视", "福州新闻")));
+   22 |         Set<String> before=FavoriteMembershipPolicy.snapshot(favorites);
+   23 |         assertEquals(3,before.size());
+   24 |         favorites.remove("CCTV-1");
+   25 |         favorites.add("浙江卫视");
+   26 |         assertTrue(before.contains("CCTV-1"));
+   27 |         assertFalse(before.contains("浙江卫视"));
+   28 |         assertEquals(3,FavoriteMembershipPolicy.snapshot(favorites).size());
+   29 |     }
+   30 | 
+   31 |     @Test public void invalidInputCannotCorruptExistingFavorites() {
+   32 |         Set<String> favorites=Collections.synchronizedSet(new HashSet<>());
+   33 |         assertThrowsIllegalArgument(() -> FavoriteMembershipPolicy.toggle(favorites,""));
+   34 |         assertThrowsIllegalArgument(() -> FavoriteMembershipPolicy.toggle(null,"CCTV-1"));
+   35 |         assertThrowsIllegalArgument(() -> FavoriteMembershipPolicy.snapshot(null));
+   36 |         assertTrue(favorites.isEmpty());
+   37 |     }
+   38 | 
+   39 |     private static void assertThrowsIllegalArgument(Runnable action) {
+   40 |         try { action.run(); fail("Expected IllegalArgumentException"); }
+   41 |         catch (IllegalArgumentException expected) { /* pass */ }
+   42 |     }
+   43 | }
+   44 | 
+```
