@@ -1759,23 +1759,22 @@ public class SourceUpdateWorker extends Worker {
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       ArrayList<Entry> wave=new ArrayList<>();
-      HashSet<String> endpoints=new HashSet<>();
-      HashMap<String,Integer> hosts=new HashMap<>();
+      IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy();
       long now=android.os.SystemClock.elapsedRealtime();
-      for(int i=offset;i<entries.size()&&wave.size()<4;i++){
+      for(int i=offset;i<entries.size()&&wave.size()<IdleProbeWavePolicy.MAX_CONCURRENT;i++){
         Entry entry=entries.get(i);
         if(entry.savedSource||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
         String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=host(entry.url);
-        if(host.isEmpty()||endpoints.contains(endpoint)||hosts.getOrDefault(host,0)>=2)break;
+        if(!wavePolicy.canAdd(endpoint,host))break;
         if(i!=offset){
           RecentProbe cached=INITIAL_PROBES.get(StableKey.url(entry.url));
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
         }
-        endpoints.add(endpoint);hosts.put(host,hosts.getOrDefault(host,0)+1);wave.add(entry);
+        wavePolicy.add(endpoint,host);wave.add(entry);
       }
       if(wave.size()<2||!SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,deadline))return false;
-      if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(4,r->{
+      if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(IdleProbeWavePolicy.MAX_CONCURRENT,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
           catch(RuntimeException ignored){}
@@ -1809,7 +1808,13 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     void finishBeforeCommit()throws java.util.concurrent.TimeoutException{
-      if(!pending.isEmpty())throw new java.util.concurrent.TimeoutException("Unconsumed probe wave at slice deadline");
+      // The owner has consumed only a contiguous prefix. A completed but
+      // unconsumed suffix can be discarded safely; its cursor is not advanced.
+      // Never write while a speculative request is still running.
+      if(!IdleProbeWavePolicy.allFinished(pending.values()))
+        throw new java.util.concurrent.TimeoutException("Unconsumed probe wave still running");
+      pending.clear();
+      if(executor!=null)executor.shutdown();
     }
     void close(){
       if(executor==null)return;
