@@ -11,6 +11,11 @@ import java.util.Locale;
 public final class SourceQualityScorer {
     private SourceQualityScorer() {}
 
+    /** The worker persists -500 when a current media preflight fails. */
+    public static boolean isFailedProbeScore(double probeScore) {
+        return probeScore <= -500.0d;
+    }
+
     public static int labelScore(String source) {
         if (source == null) return 0;
         String u = source.toLowerCase(Locale.ROOT);
