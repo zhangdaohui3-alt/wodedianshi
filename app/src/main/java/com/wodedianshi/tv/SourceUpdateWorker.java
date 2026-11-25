@@ -716,6 +716,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       HashSet<String> visitedUrls=new HashSet<>();
+      HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
@@ -785,7 +786,12 @@ public class SourceUpdateWorker extends Worker {
             // penalize, cache or increment the retirement streak of a saved route.
             // The candidate had its probe opportunity; later maintenance may retry.
             initialTimeouts++;
-            visitedUrls.remove(endpoint);
+            int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
+            inconclusiveAttempts.put(endpoint,attempts);
+            // A shared endpoint gets one further opportunity within this slice.
+            // After that keep it visited, without a measured/cache result. Later
+            // slices are free to retry; no duplicate identity is promoted.
+            if(SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts))visitedUrls.remove(endpoint);
             continue;
           }
           if(initialDiscoveryChain&&!reuse){
@@ -1314,7 +1320,8 @@ public class SourceUpdateWorker extends Worker {
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
             +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
-            +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned);
+            +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
+            +" inconclusive_endpoints="+inconclusiveAttempts.size());
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
