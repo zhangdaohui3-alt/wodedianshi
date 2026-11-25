@@ -78,4 +78,10 @@ public class SourceRankingRetentionPolicyTest {
                 Collections.singletonList("https://ok.example/live.m3u8"),
                 "https://ok.example/live.m3u8", "", 0));
     }
+    @org.junit.Test public void mergeRestoresSelectionByUrlInsteadOfStaleIndex(){
+        java.util.List<String> reordered=java.util.Arrays.asList("https://example.invalid/b","https://example.invalid/a");
+        org.junit.Assert.assertEquals(1,SourceRankingRetentionPolicy.restoreSelectedIndex(reordered,"https://example.invalid/a"));
+        org.junit.Assert.assertEquals(1,SourceRankingRetentionPolicy.restoreSelectedIndex(reordered,"https://EXAMPLE.invalid:443/a"));
+        org.junit.Assert.assertEquals(0,SourceRankingRetentionPolicy.restoreSelectedIndex(reordered,"https://example.invalid/a?token=other"));
+    }
 }
