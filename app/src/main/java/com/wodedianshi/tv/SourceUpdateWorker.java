@@ -1259,7 +1259,9 @@ public class SourceUpdateWorker extends Worker {
           update.putInt("source_manual_feed_attempts",0);
         if(advance)update.remove("source_manual_prepared_feed_version");
         int savedCovered=Math.min(savedPool.size(),manualSavedStart+savedScanned);
-        manualComplete=SourceUpdateSchedulePolicy.manualRoundComplete(next,feeds.length,savedCovered,savedPool.size());
+        // A directory slice can add or retire routes after its saved pool was
+        // built. Only a saved-only slice may certify the post-discovery pool.
+        manualComplete=SourceUpdateSchedulePolicy.manualRoundComplete(manualSavedOnly,next,feeds.length,savedCovered,savedPool.size());
         update.putString("source_manual_saved_pool_fingerprint",manualSavedFingerprint)
             .putInt("source_manual_saved_scanned",savedCovered)
             .putInt("source_manual_next_feed",next)
