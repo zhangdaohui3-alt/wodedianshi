@@ -13,6 +13,15 @@ public final class TrackHealthPolicy {
                 && videoPresent && videoSupported && videoSelected && firstFrameRendered;
     }
 
+    /** Keep continuous READY time independent from the recurring recovery-budget refresh. */
+    public static boolean canGrantStableDiscovery(boolean confirmedOutput,
+            long readyAt, long lastInteractionAt, long lastAdvanceAt, long lastVideoAt, long now) {
+        return confirmedOutput && readyAt > 0L && now - readyAt >= 30000L
+                && now - lastInteractionAt >= 20000L
+                && lastAdvanceAt > 0L && now >= lastAdvanceAt && now - lastAdvanceAt < 5000L
+                && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 5000L;
+    }
+
     public static boolean canRefreshRecoveryBudget(boolean confirmedOutput,
             long readyAt, long lastAdvanceAt, long lastVideoAt, long now) {
         return confirmedOutput && readyAt > 0L && now - readyAt >= 120000L
