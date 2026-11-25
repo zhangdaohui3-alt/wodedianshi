@@ -5818,7 +5818,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         scheduleAudioTrackCheck();
       }
     };
-    uiHandler.postDelayed(audioTrackCheck,12000L);
+    // Earlier check for missing/unsupported tracks; keep the longer audio
+    // advancement grace when both tracks are already selected.
+    uiHandler.postDelayed(audioTrackCheck,
+        audioTrackPresent&&audioTrackSupported&&audioTrackSelected
+            &&videoTrackPresent&&videoTrackSupported&&videoTrackSelected?12000L:8000L);
   }
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
@@ -5850,10 +5854,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // that, decoder metadata activity is used as a lightweight stall signal.
       // Start monitoring as soon as a supported video track is selected.
       if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,sourceFirstFrameRecorded,
-          videoTrackSelectedAt,lastVideoPipelineActivityAt,now,20000L)){
+          videoTrackSelectedAt,lastVideoPipelineActivityAt,now,sourceFirstFrameRecorded?20000L:15000L)){
         recoverFromSilentFreeze(sourceFirstFrameRecorded
             ?"检测到视频帧连续 20 秒没有输出"
-            :"播放器已连接，但 20 秒内没有渲染出首帧画面");
+            :"播放器已连接，但 15 秒内没有渲染出首帧画面");
         return;
       }
       // After two minutes of uninterrupted playback, replenish the failover budget.
@@ -5892,7 +5896,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       schedulePlaybackWatchdog();
     };
-    uiHandler.postDelayed(playbackWatchdog,10000L);
+    uiHandler.postDelayed(playbackWatchdog,sourceFirstFrameRecorded?10000L:5000L);
   }
   private void recoverFromSilentFreeze(String reason){
     if(sameSourceRecoveryCount<1){
@@ -6075,6 +6079,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void play(int ix){
+    pauseStableDiscovery();
     clearPendingRemoteZap();
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
@@ -6099,6 +6104,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep this path separate from normal channel selection, which intentionally applies
   // the remembered last-good source.
   private void play(int ix,int requestedSourceIndex){
+    pauseStableDiscovery();
     clearPendingRemoteZap();
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
@@ -6340,6 +6346,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           videoTrackSupported=videoSupported;
           boolean videoWasSelected=videoTrackSelected;
           videoTrackSelected=videoSelected;
+          if(!TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,audioTrackSupported,
+              audioTrackSelected,audioPositionAdvancing,videoTrackPresent,videoTrackSupported,
+              videoTrackSelected,sourceFirstFrameRecorded))pauseStableDiscovery();
           if(videoSelected&&(!videoWasSelected||videoTrackSelectedAt<=0L)){
             videoTrackSelectedAt=listenerOwner.getPlaybackState()==Player.STATE_READY
                 ?android.os.SystemClock.elapsedRealtime():0L;
@@ -6374,7 +6383,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String errorName=e.getErrorCodeName();
           int httpStatus=extractHttpStatusCode(e.getCause());
           sourceFailureCooldownMs=PlaybackErrorPolicy.cooldownMs(errorName,httpStatus);
-          if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName)){
+          if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName,httpStatus)){
             // A failed connection/timeout is endpoint availability, not a codec
             // compatibility problem. Trying the same URL through a second engine
             // can add another full connection timeout before we reach a backup.
@@ -6385,6 +6394,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(!tryStartLibVlcFallback("Media3 播放错误（代码 "+e.errorCode+"）")){
             advanceToNextSourceAutomatically("当前播放源失效（错误代码 "+e.errorCode+"）");
           }
+        }
+        @Override public void onIsPlayingChanged(boolean playing){
+          if(isCurrent()&&!playing)pauseStableDiscovery();
         }
         public void onPlaybackStateChanged(int st){
           if(!isCurrent())return;
@@ -6433,10 +6445,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             cancelPlaybackWatchdog();
             if(st==Player.STATE_IDLE)cancelBufferingFallback();
             if(st==Player.STATE_ENDED){
-              // A live URL may end because of a Media3 demuxer/decoder
-              // incompatibility even when the same stream works in VLC.
-              // Try the independent engine once before consuming a backup URL.
-              if(!tryStartLibVlcFallback("Media3 检测到直播流已结束")){
+              // A previously producing stream ending is primarily an endpoint
+              // problem. Preserve a compatibility attempt for unproven output.
+              if(!PlaybackErrorPolicy.shouldTryVlcForEndedLive(sourceFirstFrameRecorded,audioPositionAdvancing)
+                  ||!tryStartLibVlcFallback("Media3 检测到直播流已结束")){
                 advanceToNextSourceAutomatically("当前播放流已结束");
               }
             }
