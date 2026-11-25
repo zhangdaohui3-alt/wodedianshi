@@ -201,6 +201,7 @@ public class SourceUpdateWorker extends Worker {
           // throwing away already committed network work at every slice.
           manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
         }
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualQueue(getApplicationContext(),manualId,manualWorkingRows,pauseRequested);
         if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
           return publishReadyManual(manualId,manualWorkingRows);
       }
@@ -406,7 +407,7 @@ public class SourceUpdateWorker extends Worker {
       // manual refresh must check old routes even when requested from the TV UI;
       // otherwise a user reporting dead backups can scan only new candidates.
       // The viewing pause gate and the per-slice saved probe allotment still apply.
-      if(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(initialDiscoveryChain,manualRefresh,foregroundAtStart)){
+      if(!manualRefresh&&SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(initialDiscoveryChain,false,foregroundAtStart)){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -702,42 +703,26 @@ public class SourceUpdateWorker extends Worker {
         }
       }
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
-      // Persist exact per-round endpoint opportunities, rather than invalidating
-      // every completed check when discovery adds or retires a different route.
-      ManualSavedCoverage manualCoverage=null;
       ArrayList<String> manualSavedKeys=new ArrayList<>();
-      int manualSavedStart=0;
       if(manualRefresh){
-        Map<String,String> persisted=new HashMap<>();
-        for(com.wodedianshi.tv.db.AppStateEntity state:com.wodedianshi.tv.db.RoomDatabaseProvider
-            .get(getApplicationContext()).appStateDao().getValues(ManualSavedCoverage.keys()))
-          persisted.put(state.key,state.stateValue);
-        manualCoverage=new ManualSavedCoverage(persisted);
-        ArrayList<Entry> covered=new ArrayList<>(),uncovered=new ArrayList<>();
-        ArrayList<String> uncoveredKeys=new ArrayList<>();
-        HashSet<String> currentKeys=new HashSet<>();
-        for(Entry entry:savedPool){
+        int limit=manualSavedOnly?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:12;
+        for(com.wodedianshi.tv.db.ManualProbeQueueEntity row:com.wodedianshi.tv.db.RoomDatabaseProvider
+            .get(getApplicationContext()).manualProbeQueueDao().pending(manualId,limit)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          String id=manualCoverage.identity(SourceSelectionPolicy.endpointKey(entry.url));
-          currentKeys.add(id);
-          if(manualCoverage.contains(id)){covered.add(entry);manualSavedKeys.add(id);}
-          else{uncovered.add(entry);uncoveredKeys.add(id);}
+          savedPool.add(new Entry(row.name,row.url,row.groupName,true,"",row.tvgId,row.tvgName));
+          manualSavedKeys.add(row.endpoint);
         }
-        manualCoverage.retainOnly(currentKeys);
-        manualSavedStart=covered.size();
-        savedPool.clear();savedPool.addAll(covered);savedPool.addAll(uncovered);
-        manualSavedKeys.addAll(uncoveredKeys);
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
-      int savedScanStart=manualRefresh?manualSavedStart:SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
+      int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
       // During a full rebuild every probe slot belongs to newly discovered feed
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
       int savedWindow=initialDiscoveryChain?0:manualRefresh?
-          SourceUpdateSchedulePolicy.manualSavedWindow(savedPool.size(),manualSavedStart,manualSavedOnly):
+          savedPool.size():
           Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
       int pageFeed=-1;
       if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
@@ -892,6 +877,9 @@ public class SourceUpdateWorker extends Worker {
           if(streak==0)probeFailureStreaks.remove(streakKey);
           else probeFailureStreaks.put(streakKey,streak);
         }
+        // A queued old endpoint may have been retired after enqueue. Health
+        // checks update its score/streak but cannot resurrect it as a discovery.
+        if(manualRefresh&&e.savedSource)continue;
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain)){
           discoveryProbesValid++;
           if(initialDiscoveryChain&&ChinaDiscoveryCandidatePolicy.isClearlyMainland(
@@ -1078,10 +1066,10 @@ public class SourceUpdateWorker extends Worker {
       if(pauseRequested.getAsBoolean())
         return deferredViewingResult(manual,initialDiscoveryChain);
       update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
-          .putInt("source_saved_scan_cursor",savedScanned>0&&!savedPool.isEmpty()
+          .putInt("source_saved_scan_cursor",!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()
               ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
-          .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
+          .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           .putString(scoresKey,measuredScores.toString())
           .putString(streaksKey,probeFailureStreaks.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
@@ -1282,6 +1270,7 @@ public class SourceUpdateWorker extends Worker {
       // A completed, committed probe pass advances the 30-day deadline;
       // skipped or failed work leaves the due date unchanged.
       boolean manualComplete=false;
+      int manualNextFeed=0,manualFailedFeeds=0;
       if(manualRefresh){
         FeedBatch page=feedBatches.isEmpty()?null:feedBatches.get(0);
         boolean advance=page!=null&&feedBatchComplete&&page.success
@@ -1293,29 +1282,10 @@ public class SourceUpdateWorker extends Worker {
         if(advance||page!=null&&page.success&&!page.unavailable)
           update.putInt("source_manual_feed_attempts",0);
         if(advance)update.remove("source_manual_prepared_feed_version");
-        int savedCovered=Math.min(savedPool.size(),manualSavedStart+savedScanned);
-        // A directory slice can add or retire routes after its saved pool was
-        // built. Only a saved-only slice may certify the post-discovery pool.
-        manualComplete=SourceUpdateSchedulePolicy.manualRoundComplete(manualSavedOnly,next,feeds.length,savedCovered,savedPool.size());
-        for(int i=manualSavedStart;i<savedCovered;i++)manualCoverage.mark(manualSavedKeys.get(i));
-        for(Map.Entry<String,String> change:manualCoverage.changes().entrySet()){
-          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          if(change.getValue().isEmpty())update.remove(change.getKey());
-          else update.putString(change.getKey(),change.getValue());
-        }
+        manualNextFeed=next;manualFailedFeeds=failed;
         update.remove("source_manual_saved_pool_fingerprint")
-            .putInt("source_manual_saved_scanned",savedCovered)
             .putInt("source_manual_next_feed",next)
-            .putInt("source_manual_failed_feeds",failed)
-            .putString("source_update_result","手动完整目录轮检：已处理 "+next+"/"+feeds.length
-                +" 个来源，暂不可用 "+failed+" 个。"
-                +"旧线路检测池已处理 "+savedCovered+"/"+savedPool.size()+" 个不同地址；"
-                +(savedPool.size()>=20000?"检测池达到本轮容量上限；":"")
-                +(manualComplete?"检测完成，等待整体发布；":"已保存暂存断点，空闲时继续；")
-                +"超时未确认不等于有效，旧频道保留，媒体预检不等于实播。");
-        if(manualComplete){
-          update.putBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,true);
-        }
+            .putInt("source_manual_failed_feeds",failed);
       }else if(!initialDiscoveryChain){
         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
         update.putInt("source_routine_next_feed_index",nextRoutine);
@@ -1406,8 +1376,9 @@ public class SourceUpdateWorker extends Worker {
           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
         }
       }else if(manualRefresh){
-        com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouched(
-            getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId);
+        manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouched(
+            getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId,
+            new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),manualSavedOnly,manualNextFeed,feeds.length,manualFailedFeeds);
         // Commit completion of detection first. A preference conflict or process
         // death during final publication retries only publication, not probes.
         if(manualComplete)return publishReadyManual(manualId,saved);
