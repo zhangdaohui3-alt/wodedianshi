@@ -89,6 +89,12 @@ public final class SourceProbeTimePolicy {
         return socketTimedOut || finishedAt>=addressDeadline;
     }
 
+    /** One additional attempt for a duplicate timed-out endpoint in the same
+     * slice. Never persist this budget as a negative score or a cache entry. */
+    static boolean retryInconclusiveWithinSlice(int attempts) {
+        return attempts==1;
+    }
+
     /** Reserve a small owner-merge margin rather than starting a last-second parallel wave. */
     public static boolean hasWaveDrainMargin(long batchDeadline,long addressDeadline) {
         return addressDeadline>=0L && batchDeadline>=addressDeadline
