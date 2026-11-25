@@ -70,6 +70,21 @@ public class DiscoveryBatchPolicyTest {
                         scanned, channelEndpoints.size())));
     }
 
+    @Test public void largerInitialPageKeepsOrdinaryAndViewingProbeLimits() {
+        assertEquals(48,DiscoveryBatchPolicy.INITIAL_PAGE_SIZE);
+        assertEquals(48,DiscoveryBatchPolicy.probeLimit(true,false,24));
+        assertEquals(1,DiscoveryBatchPolicy.probeLimit(true,true,24));
+        assertEquals(24,DiscoveryBatchPolicy.probeLimit(false,false,24));
+        assertEquals(24,DiscoveryBatchPolicy.probeLimit(false,true,24));
+    }
+
+    @Test public void expandedPageRechecksPartialOldPageWithoutSkippingRawCursor() {
+        assertEquals(240,DiscoveryBatchPolicy.cursorForVersion(240,"feed:a","feed:a"));
+        assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("page:48","page:24",18,48));
+        assertEquals(18,DiscoveryBatchPolicy.scannedForBatch("page:48","page:48",18,48));
+        assertEquals(30,DiscoveryBatchPolicy.remaining(18,48));
+    }
+
     @Test public void changedBatchResetsPositionInsteadOfReusingOldCursor() {
         int scanned = DiscoveryBatchPolicy.scannedForBatch(
                 "new-batch", "old-batch", 4, 7);
