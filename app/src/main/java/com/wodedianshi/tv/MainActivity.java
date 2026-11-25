@@ -169,7 +169,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable revealVodControlsAction;
   private Runnable backVodToCatalogueAction;
   private TextView channelZapOverlay;
-  private TextView channelNameOverlay;
   private TextView networkSpeedOverlay;
   private Runnable networkSpeedUpdater;
   // Detect pauses in Activity input responsiveness while the video decoder may
@@ -226,7 +225,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile Set<String> activeGeoChannelKeys=null;
   // An isolated country/region worker must not queue behind startup Room restore,
   // nor publish an obsolete country selection after the user changes categories.
-  private final ExecutorService geoCatalogueWorker=Executors.newSingleThreadExecutor();
+  private final ExecutorService geoCatalogueWorker=newLatestRequestWorker();
   private volatile long geoDirectoryRequestGeneration=0L;
   private volatile Future<?> activeGeoCatalogueTask=null;
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
@@ -289,7 +288,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean cataloguePersistScheduled=false;
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
-  private final ExecutorService catalogueFilterWorker = Executors.newSingleThreadExecutor();
+  private final ExecutorService catalogueFilterWorker = newLatestRequestWorker();
   // The directory filter publishes the one order shared by rows and remote zapping.
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
   private String directoryFilterInFlightKey;
@@ -297,8 +296,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
   private long pendingRemoteZapGeneration=-1L;
-  // Pending DPAD actions belong to one immutable directory generation.
-  private long pendingRemoteZapMutationGeneration=-1L;
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
 
@@ -311,7 +308,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       2,2,0L,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(48),
       new ThreadPoolExecutor.AbortPolicy());
   // Keep catalogue orchestration separate from metadata I/O: nested tasks on one pool can starve each other.
-  private final ExecutorService vodWorker = Executors.newSingleThreadExecutor();
+  private final ExecutorService vodWorker = newLatestRequestWorker();
   private final ExecutorService vodMetadataWorker = Executors.newFixedThreadPool(5);
   private final ExecutorService vodSourceWorker = Executors.newFixedThreadPool(4);
   // Serialize LibVLC JNI startup/teardown away from the UI thread.
@@ -641,12 +638,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     button.setContentDescription(index==selected?"当前正在播放："+title:title);
     applyLiveChannelRowStyle(button,Color.rgb(35,45,62));
   }
-  private void updateLiveChannelOverlay(){
-    // Keep the picture unobstructed during fullscreen playback. The transient
-    // channelZapOverlay already shows a channel name for 1.8s after a DPAD zap;
-    // a permanently visible second box is redundant and was explicitly unwanted.
-    if(channelNameOverlay!=null)channelNameOverlay.setVisibility(View.GONE);
-  }
   private void updateLiveChannelPresentation(){
     if(list!=null){
       for(int i=0;i<list.getChildCount();i++){
@@ -655,7 +646,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           updateLiveChannelRow((Button)child,(Integer)child.getTag());
       }
     }
-    updateLiveChannelOverlay();
   }
   private void updateLiveChannelSelection(int previousSelected){
     if(list!=null){
@@ -667,7 +657,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           updateLiveChannelRow((Button)child,index);
       }
     }
-    updateLiveChannelOverlay();
   }
   // DPAD and mouse focus callbacks must not write diagnostic preferences on every input.
   private void styleTvButton(Button b,int normalColor){
@@ -1410,7 +1399,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     liveStage=new FrameLayout(this);liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
-    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);liveStage.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
+    video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
@@ -2378,7 +2367,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       holder.poster.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.title.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
       holder.meta.setOnGenericMotionListener((v,event)->handleVodGridScroll(v,event));
-      holder.poster.setImageBitmap(createVodFallbackPoster(item.title,item.identifier));
       loadVodPoster(holder.poster,item.identifier,item.title,item.posterUrl);
       // Mouse hover highlights exactly one card but never changes D-pad focus.
       // Explicit arrow pointer avoids an invisible/default cursor on Android TV.
@@ -2932,6 +2920,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadVodCatalogue(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh){
     Future<?> previous=activeVodCatalogueTask;if(previous!=null)previous.cancel(true);
+    purgeCancelledTasks(vodWorker);
     final int request=++vodRequestId;
     final String requestRegion=activeVodRegion;
     // Room may contain a large VOD cache. Read and parse it
@@ -3222,6 +3211,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     });
   }
+  // These three existing serial request workers are independently owned.
+  // Unlike Executors.newSingleThreadExecutor's wrapper, the concrete executor
+  // allows cancelled queued FutureTasks to be removed before submitting again.
+  private static ExecutorService newLatestRequestWorker(){
+    return new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<Runnable>());
+  }
   private void purgeCancelledTasks(ExecutorService executor){
     if(executor instanceof ThreadPoolExecutor)((ThreadPoolExecutor)executor).purge();
   }
@@ -3231,6 +3227,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Future<?> pending=activeVodCatalogueTask;
     if(pending!=null)pending.cancel(true);
     activeVodCatalogueTask=null;
+    purgeCancelledTasks(vodWorker);
     purgeCancelledTasks(vodMetadataWorker);
     purgeCancelledTasks(vodSourceWorker);
   }
@@ -3305,6 +3302,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.setTag(identifier);
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
+    // Do not allocate a placeholder when a real cached image is available.
+    target.setImageBitmap(createVodFallbackPoster(title,identifier));
     if(!vodPosterRequests.add(identifier))return;
     try{posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
@@ -3339,13 +3338,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }
           }
         }
-      }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();vodPosterRequests.remove(identifier);}
+      }catch(Exception ignored){}finally{if(connection!=null)connection.disconnect();}
       final Bitmap image=bitmap;
-      uiHandler.post(()->{
-        if(identifier.equals(target.getTag())){
-          if(image!=null){vodPosterCache.put(identifier,image);target.setImageBitmap(image);}
-          else target.setImageBitmap(createVodFallbackPoster(title,identifier));
-        }
+      // Populate the bounded cache even if the original cell was recycled.
+      // Publish before releasing the in-flight key so a new binding cannot
+      // launch a duplicate download between completion and UI dispatch.
+      if(image!=null)vodPosterCache.put(identifier,image);
+      vodPosterRequests.remove(identifier);
+      if(image!=null)uiHandler.post(()->{
+        if(!isFinishing()&&!isDestroyed()&&identifier.equals(target.getTag()))
+          target.setImageBitmap(image);
       });
     });}catch(RejectedExecutionException ignored){vodPosterRequests.remove(identifier);}
   }
@@ -4069,6 +4071,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long mutation=catalogueMutationGeneration;
     java.util.concurrent.Future<?> previousFilter=pendingCatalogueFilter;
     if(previousFilter!=null)previousFilter.cancel(true);
+    purgeCancelledTasks(catalogueFilterWorker);
     if(livePreviousPageButton!=null)livePreviousPageButton.setEnabled(false);
     if(liveNextPageButton!=null)liveNextPageButton.setEnabled(false);
     final String query=RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
@@ -4504,6 +4507,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long request=++geoDirectoryRequestGeneration;
     Future<?> older=activeGeoCatalogueTask;
     if(older!=null)older.cancel(true);
+    purgeCancelledTasks(geoCatalogueWorker);
     if(info!=null)info.setText("正在读取已保存的 "+label+" 频道…");
     try{
       activeGeoCatalogueTask=geoCatalogueWorker.submit(()->{
@@ -4890,7 +4894,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     categoryPane.setVisibility(View.VISIBLE);
     channelPane.setVisibility(View.VISIBLE);
     playbackInfo.setVisibility(View.VISIBLE);
-    if(channelNameOverlay!=null)channelNameOverlay.setVisibility(View.GONE);
     rootLayout.setPadding(dp(10),dp(8),dp(10),dp(8));
     mainPane.setPadding(dp(10),0,0,0);
     mainPane.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1));
@@ -5372,7 +5375,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void clearPendingRemoteZap(){
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
-    pendingRemoteZapMutationGeneration=-1L;
   }
   private String currentDirectoryOrderKey(){
     String category=activeCategory==null?"全部":activeCategory;
@@ -5408,7 +5410,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!canApplyRemoteZap())return;
     long started=android.os.SystemClock.elapsedRealtime();
     long generation=catalogueFilterGeneration;
-    long mutationGeneration=catalogueMutationGeneration;
     // Keep accepted steps within the same user-selected filter. A catalogue
     // replacement can rebase them onto a new complete order, not a stale index.
     if(pendingRemoteZapGeneration!=generation)clearPendingRemoteZap();
@@ -5417,7 +5418,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(order==null){
       pendingRemoteZapSteps=steps;
       pendingRemoteZapGeneration=generation;
-      pendingRemoteZapMutationGeneration=mutationGeneration;
       if(steps!=0)prewarmRemoteChannelOrder();
       android.util.Log.i("MyTVZap","channel_order_cache_miss_async total_ms="
           +(android.os.SystemClock.elapsedRealtime()-started));
@@ -7139,7 +7139,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     revokePendingVodStart();
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
-    pendingRemoteZapMutationGeneration=-1L;
     cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
