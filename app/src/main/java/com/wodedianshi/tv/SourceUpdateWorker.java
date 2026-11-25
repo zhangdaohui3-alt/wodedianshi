@@ -426,7 +426,15 @@ public class SourceUpdateWorker extends Worker {
             // The acquisition-only slice is independent of the probe cursor.
             // Never reuse a marker if eviction or a changed body invalidated it.
             noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
-            cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,true,feedCursor>0,pauseRequested);
+            cachedFeed=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feed,feedCursor>0,pauseRequested);
+            if(cachedFeed==null){
+              SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                  .putInt("source_initial_next_feed_index",feedIndex)
+                  .putString("source_initial_progress_phase","空闲时继续已保存目录分段")
+                  .apply();
+              return continueAfterAcquisition();
+            }
             PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
