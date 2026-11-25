@@ -9,6 +9,17 @@ import java.util.concurrent.Future;
 final class IdleProbeWavePolicy {
     static final int MAX_CONCURRENT=4;
     static final int MAX_PER_HOST=2;
+    // Viewing work stays serial or paused under the existing playback gate.
+    // Explicit manual refresh may use the same bounded executor as first build.
+    static boolean permitsParallel(boolean initial,boolean manual,boolean viewing) {
+        return !viewing&&(initial||manual);
+    }
+    static boolean canStart(boolean initial,long now,long addressDeadline,long batchDeadline) {
+        if(initial)return SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,addressDeadline);
+        // Manual probes retain their original full remaining stage budget (not
+        // the first-build 15s address cap). Avoid speculative waves near its end.
+        return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
+    }
     private final HashSet<String> endpoints=new HashSet<>();
     private final HashMap<String,Integer> hosts=new HashMap<>();
     boolean canAdd(String endpoint,String host) {
