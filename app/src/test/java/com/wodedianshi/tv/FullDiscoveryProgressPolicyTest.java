@@ -5,6 +5,16 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void subPercentProgressIsVisibleWithoutPrematureCompletion() {
+        boolean[] finished={false,false,false,false};
+        int[] partial={100,0,0,0};
+        assertEquals(25,FullDiscoveryProgressPolicy.overallBasisPoints(finished,partial,false));
+        assertEquals("0.25%",FullDiscoveryProgressPolicy.formatIncompleteProgress(25));
+        assertEquals(0,FullDiscoveryProgressPolicy.overallPercent(finished,partial,false));
+        assertEquals(9999,FullDiscoveryProgressPolicy.overallBasisPoints(new boolean[]{true},null,false));
+        assertEquals(10000,FullDiscoveryProgressPolicy.overallBasisPoints(finished,partial,true));
+    }
+
     @Test public void durablePublicationMarkerAloneConfirmsCompletion() {
         assertTrue(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(1L));
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(0L));
