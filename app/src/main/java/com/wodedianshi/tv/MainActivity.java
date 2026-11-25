@@ -1691,6 +1691,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
         .setConstraints(constraints)
+        .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,TimeUnit.SECONDS)
         .setInputData(new Data.Builder().putBoolean("manual",true)
             .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
         .build();
