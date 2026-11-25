@@ -1403,7 +1403,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
-    liveStage=new FrameLayout(this);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+    liveStage=new FrameLayout(this);liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);channelNameOverlay=new TextView(this);channelNameOverlay.setTextColor(Color.WHITE);channelNameOverlay.setTextSize(15);channelNameOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelNameOverlay.setPadding(dp(12),dp(8),dp(12),dp(8));channelNameOverlay.setMaxWidth(dp(420));channelNameOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);GradientDrawable nameBg=new GradientDrawable();nameBg.setColor(0xD9101A2A);nameBg.setCornerRadius(dp(8));nameBg.setStroke(dp(2),Color.rgb(255,190,70));channelNameOverlay.setBackground(nameBg);channelNameOverlay.setElevation(dp(15));channelNameOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams nameParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);nameParams.leftMargin=dp(14);nameParams.bottomMargin=dp(16);liveStage.addView(channelNameOverlay,nameParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
@@ -4181,6 +4181,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // restoring the buttons here, one transient exception strands the user
           // on the old page with no way to navigate it.
           updateLivePaging(lastFilteredMatchCount);
+          // Do not replay old remote keys after a failed filter on the next
+          // unrelated user action. A fresh press can start a fresh filter.
+          if(pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
+            clearPendingRemoteZap();
+            if(canApplyRemoteZap())showChannelZapMessage("频道顺序暂未更新，请重新按上下键");
+          }
           if(info!=null)info.setText("频道目录筛选遇到问题，已保留上一次频道列表；可以继续翻页或重试。");
         });
       }
@@ -4692,12 +4698,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       fullscreenMenuPopup=null;
       if(fullscreenAspectMenuItem!=null&&fullscreenAspectMenuItem.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)fullscreenAspectMenuItem.getParent()).removeView(fullscreenAspectMenuItem);
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
-      if(video!=null&&!isTouchDevice())video.requestFocus();
+      if(!isTouchDevice())restoreFullscreenInputFocus();
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
     fullscreenMenuButton.setVisibility(View.GONE);
     // 弹出层挂载后，直接滚动到当前正在播放的频道，并把遥控器焦点放在该行。
     focusSelectedChannelInMenu();
+  }
+  // VLC hides the Media3 PlayerView. The shared stage is an engine-neutral
+  // focus anchor and must remain available during native teardown.
+  private void restoreFullscreenInputFocus(){
+    if(!activityStarted||!fullScreenPlayback||currentVodPanel!=null
+        ||fullscreenRemoteDialogOpen||isAnyPlaybackLockActive()
+        ||(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()))return;
+    if(video!=null&&video.isShown()&&video.requestFocus())return;
+    if(liveStage!=null&&liveStage.isShown())liveStage.requestFocus();
   }
   private boolean isTouchDevice(){
     return getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN);
@@ -4823,7 +4838,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
       View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|
       View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-    video.requestFocus();
+    restoreFullscreenInputFocus();
     startLiveUiStallProbe();
   }
   private void exitFullScreenPlayback(){
@@ -5270,7 +5285,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // While the parental overlay is active, consume all keys delivered to this app window.
     // Android reserves HOME for the system; ordinary apps cannot reliably intercept it.
     if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return true;
-    if(fullScreenPlayback&&event.getKeyCode()==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_DOWN){if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())closeFullscreenChannelMenu();else exitFullScreenPlayback();}return true;}
+    if(fullScreenPlayback&&event.getKeyCode()==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())closeFullscreenChannelMenu();else exitFullScreenPlayback();}return true;}
     if(fullScreenPlayback&&!fullscreenRemoteDialogOpen&&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())){
       int key=event.getKeyCode();
       if(key==KeyEvent.KEYCODE_MENU||key==KeyEvent.KEYCODE_SETTINGS){
@@ -5483,6 +5498,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
+    if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
     int next=findNextUnblockedSource(c,c.activeSource,delta>=0?1:-1);
     if(next<0){toast("本频道备用源都已被屏蔽，请在换源菜单中恢复");return;}
@@ -6113,6 +6129,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
+    // Close the selector as soon as a valid manual request is accepted,
+    // rather than waiting for asynchronous native decoder release.
+    closeFullscreenChannelMenu();
     startCurrentSource();
   }
   // Explicit backup selection must not be reset to the channel's default/last-good source.
@@ -6137,6 +6156,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     updateLiveChannelSelection(previouslySelected);
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     queueActiveSourceMutation(target.key(),target.backups.get(target.activeSource));
+    // Close the selector as soon as a valid manual request is accepted,
+    // rather than waiting for asynchronous native decoder release.
+    closeFullscreenChannelMenu();
     startCurrentSource();
   }
   private void startCurrentSource(){
@@ -6510,6 +6532,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return true;
     }
     if(video!=null)video.setVisibility(View.GONE);
+    if(!isTouchDevice())restoreFullscreenInputFocus();
     if(vlcVideoLayout==null){if(video!=null)video.setVisibility(View.VISIBLE);return false;}
     vlcVideoLayout.setVisibility(View.VISIBLE);
     info.setText(reason+"，正在切换独立 VLC 播放器…");
