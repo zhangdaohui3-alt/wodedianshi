@@ -513,7 +513,7 @@ public class SourceUpdateWorker extends Worker {
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
               roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
-              ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?MAX_PROBES_PER_RUN/2:MAX_DISCOVERY_PER_FEED;
+              ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
           PlaylistParser.EntryConsumer consume=source->{
             String scope=RegionCategoryPolicy.catalogueScope(
@@ -685,7 +685,8 @@ public class SourceUpdateWorker extends Worker {
       // the last duplicate URL can skip entries that were not yet scanned.
       int discoveryScanStart=DiscoveryBatchPolicy.startIndex(
           initialDiscoveryScanned,candidates.size());
-      final int runProbeLimit=DiscoveryBatchPolicy.probeLimit(initialDiscoveryChain,slowPlayback,MAX_PROBES_PER_RUN);
+      final int runProbeLimit=manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE+savedWindow:
+          DiscoveryBatchPolicy.probeLimit(initialDiscoveryChain,slowPlayback,MAX_PROBES_PER_RUN);
       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
           initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
       if(slowPlayback)discoveryWindow=Math.min(1,discoveryWindow);
@@ -1186,7 +1187,7 @@ public class SourceUpdateWorker extends Worker {
         FeedBatch page=feedBatches.isEmpty()?null:feedBatches.get(0);
         boolean advance=page!=null&&feedBatchComplete&&page.success
             &&(page.unavailable||SourceUpdateSchedulePolicy.manualFeedFinished(
-                page.cursor,page.parsed,page.indexedEntries,MAX_PROBES_PER_RUN/2));
+                page.cursor,page.parsed,page.indexedEntries,DiscoveryBatchPolicy.MANUAL_PAGE_SIZE));
         int next=advance?routineStart+1:routineStart;
         int failed=Math.max(0,roomInt("source_manual_failed_feeds",0));
         if(advance&&page.unavailable)failed++;
@@ -1296,14 +1297,14 @@ public class SourceUpdateWorker extends Worker {
         if(written!=publishedChannelCount)
           throw new IllegalStateException("Committed directory count mismatch");
       }
-      if(initialDiscoveryChain){
+      if(initialDiscoveryChain||manualRefresh){
         final long commitFinishedAt=android.os.SystemClock.elapsedRealtime();
         android.util.Log.i("MyTVSourceDiscovery","slice_committed prepare_ms="+(probeStartedAt-sliceStartedAt)
             +" probe_merge_ms="+(probesFinishedAt-probeStartedAt)
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback);
+            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh);
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
@@ -1319,7 +1320,8 @@ public class SourceUpdateWorker extends Worker {
             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
                 .setConstraints(new androidx.work.Constraints.Builder()
                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
-                .setInitialDelay(10,java.util.concurrent.TimeUnit.SECONDS)
+                .setInitialDelay(SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(
+                    feedsOk>0,discoveryScanned,feedBatchComplete),java.util.concurrent.TimeUnit.SECONDS)
                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                     .putString("manual_refresh_id",manualId).build()).build();
         enqueueSingleSuccessor("mytv_manual_source_update",continuation);
