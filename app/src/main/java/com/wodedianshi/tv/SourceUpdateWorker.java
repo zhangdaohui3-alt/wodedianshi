@@ -215,7 +215,8 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
-              .putInt("source_initial_index_attempted",slowPlayback?FullDiscoveryProgressPolicy.bootstrapIndexLimit(Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)):0)
+              .putInt("source_initial_index_attempted",0)
+              .putBoolean("source_initial_index_bypassed",slowPlayback)
               .putInt("source_initial_index_ready",0)
               .putLong("source_initial_index_entries",0L)
               .putInt("source_initial_progress_percent",0)
@@ -249,7 +250,8 @@ public class SourceUpdateWorker extends Worker {
         long indexedEntriesSoFar=0L;
         try{indexedEntriesSoFar=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
         catch(NumberFormatException ignored){}
-        if(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(slowPlayback,nextIndex,mainlandCount,
+        boolean bootstrapBypassed=roomBoolean("source_initial_index_bypassed",false);
+        if(!bootstrapBypassed&&FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(slowPlayback,nextIndex,mainlandCount,
             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
           int count=-1;
           noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
@@ -285,13 +287,13 @@ public class SourceUpdateWorker extends Worker {
           enqueueInitialContinuation();
           return Result.success();
         }
-        if(slowPlayback&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
+        if(slowPlayback&&!bootstrapBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
           // Mark only the optional bootstrap as bypassed, not any feed done.
           // The regular bounded feed path still reads and checks every feed.
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-              .putInt("source_initial_index_attempted",mainlandLimit)
+              .putBoolean("source_initial_index_bypassed",true)
               .putString("source_initial_progress_phase","稳定直播：开始低速准备中国目录")
               .apply();
         }
