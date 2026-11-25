@@ -28,6 +28,17 @@ public class TrackHealthPolicyTest {
         assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,100000L,121000L));
     }
 
+    @Test public void earlyTrackCheckPreservesBoundedAudioGrace() {
+        assertEquals(8000L,TrackHealthPolicy.initialTrackCheckDelayMs(false,true));
+        assertEquals(8000L,TrackHealthPolicy.initialTrackCheckDelayMs(true,false));
+        assertEquals(12000L,TrackHealthPolicy.initialTrackCheckDelayMs(true,true));
+        assertEquals(4000L,TrackHealthPolicy.remainingAudioGraceMs(true,true,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(false,true,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,false,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,true,false,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,true,true,true));
+    }
+
     @Test public void missingVideoTriggersFailover() {
         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(false, true));
     }

@@ -20,6 +20,18 @@ public final class TrackHealthPolicy {
                 && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 20000L;
     }
 
+    public static long initialTrackCheckDelayMs(boolean usableAudioTrack, boolean usableVideoTrack) {
+        return usableAudioTrack && usableVideoTrack ? 12000L : 8000L;
+    }
+
+    /** If track selection recovered during the early metadata check, keep the
+     * original advancement grace. This extra check is allowed only once. */
+    public static long remainingAudioGraceMs(boolean earlyCheck, boolean usableAudioTrack,
+            boolean usableVideoTrack, boolean audioAdvancing) {
+        return earlyCheck && usableAudioTrack && usableVideoTrack && !audioAdvancing
+                ? 4000L : 0L;
+    }
+
     /** A television source without either usable audio or usable video is not healthy. */
     public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
         return missingAudio || missingVideo;
