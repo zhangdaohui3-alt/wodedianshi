@@ -3,7 +3,16 @@ package com.wodedianshi.tv;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-public class SourceProbeTimePolicyTest {
+public class SourceProbeTimePolicyTest { 
+    @Test public void fullViewingBodyStaysBoundedAndPacedBeyondOneRange() {
+        assertTrue(SourceProbeTimePolicy.fitsLiveFullDirectory(8388608L));
+        assertFalse(SourceProbeTimePolicy.fitsLiveFullDirectory(8388609L));
+        assertEquals(32000L,SourceProbeTimePolicy.liveFullDirectoryPacingMillis(1048576L,0L));
+        assertEquals(256000L,SourceProbeTimePolicy.liveFullDirectoryPacingMillis(Long.MAX_VALUE,0L));
+        assertEquals(0L,SourceProbeTimePolicy.liveFullDirectoryPacingMillis(1048576L,32000L));
+        assertTrue(SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS>256000L);
+    }
+
     @Test public void completedRangeCheckpointIsValidButTruncatedOrOversizeIsNot() {
         String tag="\"v1\"";
         org.junit.Assert.assertTrue(SourceProbeTimePolicy.validDirectoryCheckpoint(256,512,256,tag,"location"));
