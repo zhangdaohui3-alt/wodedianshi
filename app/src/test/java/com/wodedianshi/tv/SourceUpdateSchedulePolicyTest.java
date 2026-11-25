@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void retriedPredecessorReusesExistingUnfinishedSuccessor() {
+        java.util.UUID current=java.util.UUID.randomUUID(),next=java.util.UUID.randomUUID();
+        assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Collections.emptyList()));
+        assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Collections.singletonList(current)));
+        assertTrue(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Arrays.asList(current,next)));
+        assertTrue(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Collections.singletonList(next)));
+        assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Arrays.asList(current,null)));
+    }
+
     @Test public void normalInitialViewingDeferralUsesFixedDelay() {
         assertEquals(30L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(false));
         assertEquals(60L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(true));

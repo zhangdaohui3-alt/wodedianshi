@@ -1263,9 +1263,7 @@ public class SourceUpdateWorker extends Worker {
                 .setInitialDelay(10,java.util.concurrent.TimeUnit.SECONDS)
                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                     .putString("manual_refresh_id",manualId).build()).build();
-        androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-            "mytv_manual_source_update",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
-            .getResult().get();
+        enqueueSingleSuccessor("mytv_manual_source_update",continuation);
       }
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
@@ -1326,9 +1324,31 @@ public class SourceUpdateWorker extends Worker {
             .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                 .putBoolean("initial_discovery_chain",true).build())
             .build();
-    androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-        "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND,continuation)
-        .getResult().get();
+    enqueueSingleSuccessor("mytv_startup_source_refresh",continuation);
+  }
+  /** Called only by the source-work owner, after durable slice progress.
+   * A retry after an ambiguous enqueue must reuse an existing unfinished
+   * successor. Never revive a cancelled chain with APPEND_OR_REPLACE.
+   * A query/operation timeout is not success: retain the predecessor for retry. */
+  private void enqueueSingleSuccessor(String uniqueName,
+          androidx.work.OneTimeWorkRequest continuation) throws Exception {
+    if(isStopped()||Thread.currentThread().isInterrupted())
+      throw new InterruptedException("Source work cancelled");
+    androidx.work.WorkManager manager=androidx.work.WorkManager.getInstance(getApplicationContext());
+    List<androidx.work.WorkInfo> infos=manager.getWorkInfosForUniqueWork(uniqueName)
+        .get(10L,java.util.concurrent.TimeUnit.SECONDS);
+    boolean currentRunning=false;
+    ArrayList<java.util.UUID> unfinished=new ArrayList<>();
+    for(androidx.work.WorkInfo info:infos){
+      if(info.getId().equals(getId()))
+        currentRunning=info.getState()==androidx.work.WorkInfo.State.RUNNING;
+      if(!info.getState().isFinished())unfinished.add(info.getId());
+    }
+    if(!currentRunning||isStopped()||Thread.currentThread().isInterrupted())
+      throw new InterruptedException("Source work no longer running");
+    if(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(getId(),unfinished))return;
+    manager.enqueueUniqueWork(uniqueName,androidx.work.ExistingWorkPolicy.APPEND,continuation)
+        .getResult().get(10L,java.util.concurrent.TimeUnit.SECONDS);
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
           List<FeedBatch> batches,int feedCount){

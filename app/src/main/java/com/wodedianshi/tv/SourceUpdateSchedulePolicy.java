@@ -73,6 +73,16 @@ public final class SourceUpdateSchedulePolicy {
         return manual || initialDiscoveryChain;
     }
 
+    /** A retried predecessor may already have committed its successor in WorkManager.
+     * Existing unfinished work owns the next slice; do not append another leaf. */
+    public static boolean hasOtherUnfinishedWork(java.util.UUID currentId,
+            java.util.Collection<java.util.UUID> unfinishedIds) {
+        if (unfinishedIds==null) return false;
+        for (java.util.UUID id:unfinishedIds)
+            if (id!=null&&!id.equals(currentId)) return true;
+        return false;
+    }
+
     /** Normal viewing deferral is not a failed network attempt. */
     public static long initialViewingDelaySeconds(boolean stableButWaitingForIdle) {
         return stableButWaitingForIdle ? 60L : 30L;
