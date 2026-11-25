@@ -16,11 +16,11 @@ public final class SourceUpdateSchedulePolicy {
 
     // A completed Room snapshot is the default directory. Periodic discovery is
     // deliberately infrequent; WorkManager's timing is inexact by design.
-    public static final long ROUTINE_REFRESH_DAYS = 7L;
+    public static final long ROUTINE_REFRESH_DAYS = 30L;
     public static final long ROUTINE_ELIGIBILITY_CHECK_DAYS = 1L;
     private static final long ROUTINE_REFRESH_MS = ROUTINE_REFRESH_DAYS * 24L * 60L * 60L * 1000L;
 
-    /** A skipped busy check must not advance the weekly maintenance deadline. */
+    /** A skipped busy check must not advance the 30-day maintenance deadline. */
     public static boolean isRoutineMaintenanceDue(long fullRebuildAt, long lastRoutineAt, long now) {
         if (fullRebuildAt <= 0L || now <= 0L) return false;
         long last = Math.max(fullRebuildAt, lastRoutineAt);
