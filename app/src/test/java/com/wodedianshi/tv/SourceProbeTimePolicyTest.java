@@ -4,6 +4,19 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void completedRangeCheckpointIsValidButTruncatedOrOversizeIsNot() {
+        String tag="\"v1\"";
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.validDirectoryCheckpoint(256,512,256,tag,"location"));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.validDirectoryCheckpoint(512,512,512,tag,"location"));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.validDirectoryCheckpoint(512,512,520,tag,"location"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(512,512,511,tag,"location"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(513,512,513,tag,"location"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(0,512,512,tag,"location"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(512,512,512,"W/"+tag,"location"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(512,512,512,tag,""));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.validDirectoryCheckpoint(1,8388609,1,tag,"location"));
+    }
+
     @Test public void idleResumeAllowsLargerButStillBoundedRanges() {
         org.junit.Assert.assertArrayEquals(new long[]{2097152L,4194304L},
             SourceProbeTimePolicy.directoryRange("bytes 262144-2359295/4194304",262144L,4194304L,2097152L));
