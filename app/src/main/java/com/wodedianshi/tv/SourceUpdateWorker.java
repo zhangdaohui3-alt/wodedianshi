@@ -258,8 +258,15 @@ public class SourceUpdateWorker extends Worker {
           String preparedVersion="";
           noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
           try{
-            File cached=PlaylistFeedCache.obtain(getApplicationContext(),feeds[nextIndex],true,
+            File cached=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feeds[nextIndex],
                 roomInt(feedCursorKey(nextIndex),0)>0,pauseRequested);
+            if(cached==null){
+              SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                  .putString("source_initial_progress_phase","首批目录分段已保存，空闲时继续")
+                  .apply();
+              return continueAfterAcquisition();
+            }
             // readPage builds the complete random-access index if necessary.
             // Decode one record to check the sidecar without allocating all entries.
             PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
