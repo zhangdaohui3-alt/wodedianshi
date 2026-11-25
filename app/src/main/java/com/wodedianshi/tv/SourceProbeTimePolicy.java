@@ -42,6 +42,18 @@ public final class SourceProbeTimePolicy {
     }
 
     public static final long LIVE_RESUMABLE_MAX_BYTES=8L*1024L*1024L;
+    // A non-range response may be downloaded in one bounded, paced session.
+    // Never join bodies without a strong validator. Keep the 256 KiB range cap.
+    public static final long LIVE_FULL_DIRECTORY_BUDGET_MS=300000L;
+    public static boolean fitsLiveFullDirectory(long bytes) {
+        return bytes<=LIVE_RESUMABLE_MAX_BYTES;
+    }
+    public static long liveFullDirectoryPacingMillis(long copied,long elapsed) {
+        long bounded=Math.max(0L,Math.min(LIVE_RESUMABLE_MAX_BYTES,copied));
+        return Math.max(0L,(bounded*1000L+LIVE_DIRECTORY_BYTES_PER_SECOND-1L)
+                /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
+    }
+
     /** A fully downloaded range is also a valid durable checkpoint, pending local finalization. */
     public static boolean validDirectoryCheckpoint(long offset,long total,long fileLength,
             String etag,String location) {
