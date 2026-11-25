@@ -93,6 +93,18 @@ public class SourceProbeTimePolicyTest {
         assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(1000L,-1L));
     }
 
+    @Test public void socketTimeoutBeforeAddressDeadlineIsStillInconclusive() {
+        assertTrue(SourceProbeTimePolicy.initialProbeInconclusive(true,3000L,15000L));
+        assertTrue(SourceProbeTimePolicy.initialProbeInconclusive(false,15000L,15000L));
+        assertFalse(SourceProbeTimePolicy.initialProbeInconclusive(false,14999L,15000L));
+    }
+
+    @Test public void parallelWaveLeavesTimeForOrderedMerge() {
+        assertTrue(SourceProbeTimePolicy.hasWaveDrainMargin(90000L,88000L));
+        assertFalse(SourceProbeTimePolicy.hasWaveDrainMargin(90000L,88001L));
+        assertFalse(SourceProbeTimePolicy.hasWaveDrainMargin(90000L,90001L));
+    }
+
     @Test public void observedPauseRemainsLatchedAfterViewerLeaves() {
         java.util.concurrent.atomic.AtomicBoolean viewing = new java.util.concurrent.atomic.AtomicBoolean();
         java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(viewing::get);
