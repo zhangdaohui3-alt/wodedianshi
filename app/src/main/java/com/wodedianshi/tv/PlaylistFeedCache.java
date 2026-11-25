@@ -51,6 +51,13 @@ public final class PlaylistFeedCache {
         return obtainBounded(context,feedUrl,initialDiscovery,preserveExistingSnapshot,paused,false);
     }
 
+    /** Explicit refresh bypasses the age shortcut at a new directory, but
+     * retains conditional HTTP validators and the old body on download failure. */
+    static File obtainManual(Context context,String feedUrl,boolean revalidate,
+            java.util.function.BooleanSupplier paused) throws IOException {
+        return obtainBounded(context,feedUrl,false,!revalidate,paused,false,revalidate);
+    }
+
     public static File obtainSmallInitialDuringViewing(Context context,String feedUrl,
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
         return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
@@ -262,6 +269,12 @@ public final class PlaylistFeedCache {
     private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
             boolean lowRate) throws IOException {
+        return obtainBounded(context,feedUrl,initialDiscovery,preserveExistingSnapshot,paused,lowRate,false);
+    }
+
+    private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
+            boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
+            boolean lowRate,boolean forceRevalidate) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
         long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES:MAX_BYTES;
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
@@ -291,7 +304,7 @@ public final class PlaylistFeedCache {
         }
         long cachedAt = parseLong(old.getProperty("cachedAt"), 0L);
 
-        if (hasValidCache && (preserveExistingSnapshot
+        if (hasValidCache && !forceRevalidate && (preserveExistingSnapshot
                 || (System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
             metadata.setLastModified(System.currentTimeMillis());
@@ -312,6 +325,7 @@ public final class PlaylistFeedCache {
             connection.setUseCaches(false);
             connection.setRequestProperty("User-Agent", "MyTV/1.19 Android TV");
             connection.setRequestProperty("Accept", "*/*");
+            if(forceRevalidate)connection.setRequestProperty("Cache-Control","no-cache");
             String etag = old.getProperty("etag", "");
             String modified = old.getProperty("lastModified", "");
             // A validator is useful only when its matching cached body still exists.
