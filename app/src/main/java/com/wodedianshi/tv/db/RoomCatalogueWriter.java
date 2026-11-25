@@ -123,6 +123,14 @@ public final class RoomCatalogueWriter {
             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
             long[] committedAt, BooleanSupplier paused, AppStateEditor progress) {
+        return writeRecords(context,snapshot,favoriteKeys,expectedCatalogueVersion,
+                clearBuildRowsOnCommit,allowEmptyInitialization,committedAt,paused,progress,null);
+    }
+
+    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+            long[] committedAt, BooleanSupplier paused, AppStateEditor progress,String manualOwner) {
         checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         if (snapshot.isEmpty() && !allowEmptyInitialization) {
@@ -160,6 +168,9 @@ public final class RoomCatalogueWriter {
                             checkpoint == null ? null : checkpoint.completedAt)) {
                 throw new StaleCatalogueException();
             }
+            if(manualOwner!=null)RoomCatalogueBuildStore.requireManualOwner(db,manualOwner);
+            else if(clearBuildRowsOnCommit&&db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null)
+                throw new IllegalStateException("Initial publication cannot clear manual staging");
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
             HashSet<String> presentChannelIds = new HashSet<>();
@@ -343,6 +354,7 @@ public final class RoomCatalogueWriter {
             // is the only version that the committing Activity may adopt.
             if (committedAt != null) committedAt[0] = completedAt;
             if (progress != null) progress.applyInTransaction(db);
+            if(manualOwner!=null)RoomCatalogueBuildStore.clearManualInTransaction(db,manualOwner);
             if (clearBuildRowsOnCommit) {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
@@ -471,9 +483,25 @@ public final class RoomCatalogueWriter {
         return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,progress);
     }
 
+    /** Final manual publication has its own ownership check and cleanup, never
+     * writes initial-build completion markers. Caller must reconcile live edits
+     * and supply the precise version backing the reconciled snapshot. */
+    public static int publishManualSnapshot(Context context,JSONArray snapshot,long expectedCatalogueVersion,
+            String manualOwner,BooleanSupplier paused,AppStateEditor progress)throws Exception {
+        if(expectedCatalogueVersion<0||manualOwner==null||manualOwner.isEmpty()||progress==null)
+            throw new IllegalArgumentException("Missing manual publication identity/version/progress");
+        return writeSnapshot(context,snapshot,expectedCatalogueVersion,false,paused,progress,manualOwner);
+    }
+
     private static int writeSnapshot(Context context, JSONArray snapshot,
             long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
             BooleanSupplier paused, AppStateEditor progress) throws Exception {
+        return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,progress,null);
+    }
+
+    private static int writeSnapshot(Context context, JSONArray snapshot,
+            long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+            BooleanSupplier paused, AppStateEditor progress,String manualOwner) throws Exception {
         checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
@@ -523,7 +551,7 @@ public final class RoomCatalogueWriter {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
         return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit, false, null, paused, progress);
+                clearBuildRowsOnCommit, false, null, paused, progress,manualOwner);
     }
 
     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
