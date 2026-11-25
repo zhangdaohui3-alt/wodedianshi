@@ -41,6 +41,25 @@ public final class SourceProbeTimePolicy {
                 /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
     }
 
+    public static final long LIVE_RESUMABLE_MAX_BYTES=8L*1024L*1024L;
+    public static boolean strongDirectoryValidator(String etag) {
+        return etag!=null&&etag.length()>=2&&etag.startsWith("\"")&&etag.endsWith("\"")
+                &&etag.substring(1,etag.length()-1).indexOf('"')<0
+                &&etag.indexOf('\r')<0&&etag.indexOf('\n')<0;
+    }
+    /** Strict Content-Range check; reject unknown totals and changed offsets. */
+    public static long[] liveDirectoryRange(String header,long offset,long priorTotal) {
+        if(header==null||offset<0L||!header.matches("bytes [0-9]+-[0-9]+/[0-9]+"))return null;
+        try{
+            String[] values=header.substring(6).split("[-/]");
+            long start=Long.parseLong(values[0]),end=Long.parseLong(values[1]),total=Long.parseLong(values[2]);
+            if(start!=offset||end<start||total<=end||total>LIVE_RESUMABLE_MAX_BYTES
+                    ||end-start>=LIVE_DIRECTORY_MAX_BYTES
+                    ||(priorTotal>0L&&total!=priorTotal))return null;
+            return new long[]{end-start+1,total};
+        }catch(NumberFormatException invalid){return null;}
+    }
+
     // First build prioritizes breadth. Keep one difficult HLS address from
     // monopolizing an entire slice. A timed-out probe is inconclusive.
     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
