@@ -269,7 +269,7 @@ public final class RoomCatalogueWriter {
                 }
                 pendingChannels.add(new PreparedChannel(channel,sourceRows));
                 if (pendingChannels.size() == SOURCE_QUERY_BATCH_SIZE) {
-                    writePreparedBatch(dao,pendingChannels,previousChannelIds,paused);
+                    writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null);
                     pendingChannels.clear();
                 }
                 presentChannelIds.add(id);
@@ -280,7 +280,7 @@ public final class RoomCatalogueWriter {
             }
 
             if (!pendingChannels.isEmpty()) {
-                writePreparedBatch(dao,pendingChannels,previousChannelIds,paused);
+                writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null);
                 pendingChannels.clear();
             }
 
@@ -385,6 +385,11 @@ public final class RoomCatalogueWriter {
      * per-channel reconciliation inside the same outer Room transaction. */
     static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
             HashSet<String> previousChannelIds,BooleanSupplier paused) {
+        writePreparedBatch(dao,batch,previousChannelIds,paused,false);
+    }
+
+    static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
+            HashSet<String> previousChannelIds,BooleanSupplier paused,boolean preserveLiveSelection) {
         checkPause(paused);
         ArrayList<String> existingIds=new ArrayList<>(batch.size());
         for(PreparedChannel item:batch)
@@ -396,11 +401,25 @@ public final class RoomCatalogueWriter {
                 oldByChannel.computeIfAbsent(old.channelId,key->new HashMap<>()).put(old.url,old);
             }
         }
+        HashMap<String,ChannelDao.ActiveSelection> liveSelections=new HashMap<>();
+        HashSet<String> ambiguousSelections=new HashSet<>();
+        if(preserveLiveSelection&&!existingIds.isEmpty()){
+            for(ChannelDao.ActiveSelection selection:dao.getActiveSelectionsForChannels(existingIds)){
+                checkPause(paused);
+                if(liveSelections.put(selection.channelId,selection)!=null)
+                    ambiguousSelections.add(selection.channelId);
+            }
+        }
         for(PreparedChannel item:batch) {
             checkPause(paused);
             ChannelEntity channel=item.channel;
             String id=channel.id;
             if(previousChannelIds.contains(id)) {
+                if(preserveLiveSelection&&!ambiguousSelections.contains(id)){
+                    ChannelDao.ActiveSelection live=liveSelections.get(id);
+                    if(live!=null&&channel.legacyKey.equals(live.legacyKey))
+                        channel.activeSource=resolveLiveSelection(item.sources,live.url);
+                }
                 dao.updateChannelFields(channel.id,channel.legacyKey,channel.name,
                         channel.primaryUrl,channel.groupName,channel.categoryId,
                         channel.tvgId,channel.tvgName,channel.channelScopesJson,
@@ -423,6 +442,14 @@ public final class RoomCatalogueWriter {
                 if(!item.sources.isEmpty())dao.insertBackupSources(item.sources);
             }
         }
+    }
+
+    /** Preserve an exact current URL if retained, otherwise use ranked source 0.
+     * Never reuse a numeric index across reordered source arrays. */
+    static int resolveLiveSelection(List<BackupSourceEntity> sources,String liveUrl){
+        if(liveUrl!=null)for(BackupSourceEntity source:sources)
+            if(liveUrl.equals(source.url))return source.priority;
+        return 0;
     }
 
     private static void checkPause(BooleanSupplier paused) {
