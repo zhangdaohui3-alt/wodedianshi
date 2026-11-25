@@ -131,7 +131,7 @@ public final class PlaylistFeedCache {
                 ||total>SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES
                 ||partial.length()<offset||!SourceProbeTimePolicy.strongDirectoryValidator(oldTag)
                 ||oldLocation.isEmpty()){
-            checkpoint.delete();partial.delete();offset=0L;total=-1L;oldTag="";oldLocation="";
+            clearRangeCheckpoint(checkpoint,partial);offset=0L;total=-1L;oldTag="";oldLocation="";
         }else if(partial.length()!=offset){
             try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
         }
@@ -156,18 +156,18 @@ public final class PlaylistFeedCache {
                 long[] range=SourceProbeTimePolicy.directoryRange(connection.getHeaderField("Content-Range"),offset,total,chunkLimit);
                 if(range==null||!SourceProbeTimePolicy.strongDirectoryValidator(tag)
                         ||(offset>0L&&(!oldTag.equals(tag)||!oldLocation.equals(location)))){
-                    checkpoint.delete();partial.delete();
+                    clearRangeCheckpoint(checkpoint,partial);
                     throw new IOException("Directory range identity changed or unsupported");
                 }
                 expected=range[0];total=range[1];
             }else if(status==200){
                 // Range ignored or representation changed. Never append a 200.
-                checkpoint.delete();partial.delete();offset=0L;
+                clearRangeCheckpoint(checkpoint,partial);offset=0L;
                 expected=connection.getContentLength();total=expected;
                 if(expected>chunkLimit)
                     throw new IOException("Large directory does not support safe range transfer");
             }else{
-                if(status==416){checkpoint.delete();partial.delete();}
+                if(status==416){clearRangeCheckpoint(checkpoint,partial);}
                 throw new IOException("Directory range HTTP "+status);
             }
             long copied=0L;
@@ -224,6 +224,13 @@ public final class PlaylistFeedCache {
             // Uncommitted tail is truncated on next attempt, never trusted.
             if(!checkpoint.isFile())partial.delete();
         }
+    }
+
+    private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
+        // Remove the old authority before changing bytes. If removal fails,
+        // do not overwrite the body under a still-valid old checkpoint.
+        if(checkpoint.exists()&&!checkpoint.delete())throw new IOException("Cannot invalidate range checkpoint");
+        if(partial.exists()&&!partial.delete())throw new IOException("Cannot remove old range body");
     }
 
     private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
