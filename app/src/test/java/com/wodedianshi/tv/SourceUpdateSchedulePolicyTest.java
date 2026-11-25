@@ -13,6 +13,18 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Arrays.asList(current,null)));
     }
 
+    @Test public void manualCompletionRequiresBothDirectoryAndSavedPoolCoverage() {
+        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(25,26,100,100));
+        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,99,100));
+        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,100,100));
+        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,0,0));
+        assertEquals(12,SourceUpdateSchedulePolicy.manualSavedWindow(100,0,false));
+        assertEquals(48,SourceUpdateSchedulePolicy.manualSavedWindow(100,0,true));
+        assertEquals(5,SourceUpdateSchedulePolicy.manualSavedWindow(100,95,true));
+        assertEquals(0,SourceUpdateSchedulePolicy.manualSavedWindow(100,100,true));
+        assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("changed","old",90,100));
+    }
+
     @Test public void manualRefreshChecksSavedRoutesEvenWhileBrowsing() {
         assertTrue(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,true,true));
         assertTrue(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,true,false));
