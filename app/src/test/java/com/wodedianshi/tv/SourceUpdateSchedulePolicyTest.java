@@ -13,6 +13,15 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Arrays.asList(current,null)));
     }
 
+    @Test public void manualRefreshChecksSavedRoutesEvenWhileBrowsing() {
+        assertTrue(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,true,true));
+        assertTrue(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,false,true));
+        assertTrue(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(true,true,true));
+        assertFalse(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(true,true,false));
+    }
+
     @Test public void normalInitialViewingDeferralUsesFixedDelay() {
         assertEquals(30L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(false));
         assertEquals(60L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(true));
