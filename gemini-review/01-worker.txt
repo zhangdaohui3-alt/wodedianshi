@@ -1,0 +1,2036 @@
+My TV source review — PR #222 fixed commit 5556c7ab3bfba30278e265f229c587e6116a79a2
+Original UTF-8 source with line numbers added for review; each section starts at line 1.
+
+===== app/src/main/java/com/wodedianshi/tv/SourceUpdateWorker.java | blob 281ae5ee64e5b24af7c80cf69e9b98f67564a34a =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import android.content.Context;
+4 | import android.content.SharedPreferences;
+5 | import androidx.annotation.NonNull;
+6 | import androidx.work.Worker;
+7 | import androidx.work.WorkerParameters;
+8 | import java.io.*;
+9 | import java.net.*;
+10 | import java.text.SimpleDateFormat;
+11 | import java.util.*;
+12 | import org.json.*;
+13 | 
+14 | public class SourceUpdateWorker extends Worker {
+15 |   // WorkManager unique names do not exclude one another. Keep every source
+16 |   // task in this process under one nonblocking ownership gate.
+17 |   private static final java.util.concurrent.atomic.AtomicBoolean SOURCE_WORK_ACTIVE=
+18 |       new java.util.concurrent.atomic.AtomicBoolean();
+19 |   // Transient, same-process status only; durable progress stays in Room.
+20 |   private static volatile String initialLiveStage="";
+21 |   public static String currentInitialLiveStage(){return initialLiveStage;}
+22 |   private void noteInitialStage(String stage){
+23 |     if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
+24 |   }
+25 |   // Single source-work owner accesses this bounded process-local cache.
+26 |   // Do not reuse old persisted quality scores as evidence of a new preflight.
+27 |   private static final LinkedHashMap<String,RecentProbe> INITIAL_PROBES=
+28 |       new LinkedHashMap<>(64,0.75f,true);
+29 |   private static final int INITIAL_PROBE_CACHE_CAP=1024;
+30 |   private static final class RecentProbe {
+31 |     final ProbeResult result; final long at;
+32 |     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
+33 |   }
+34 |   private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
+35 |   // Reuse only committed staging owned by the sole source worker. A borrowed
+36 |   // mutable snapshot is removed from the cache BEFORE any mutation.
+37 |   private static JSONArray committedStaging;
+38 |   private static String committedStagingRevision="";
+39 |   private static long committedStagingAt;
+40 |   private boolean slowPlayback;
+41 |   private java.util.function.BooleanSupplier pauseRequested = () -> false;
+42 |   private static final int MAX_PROBES_PER_RUN = 24;
+43 |   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
+44 |   private static final int MAX_SOURCES_PER_CHANNEL = 8;
+45 |   // The full rebuild reads one feed page per worker run and spends its 24-probe
+46 |   // budget on that page. This prevents large China playlists from being starved
+47 |   // by small pages interleaved from every worldwide feed.
+48 |   // Per-worker memory safety bound only; it is not a lifetime catalogue cap.
+49 |   // Reaching it must leave the feed cursor untouched rather than skip entries.
+50 |   private static final int MAX_DISCOVERY_CANDIDATES_PER_RUN = 24000;
+51 |   private static final int MAX_DISCOVERY_PER_FEED = 4;
+52 |   private static final int MAX_INITIAL_DISCOVERY_PER_FEED = MAX_PROBES_PER_RUN;
+53 |   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
+54 |   @NonNull @Override public Result doWork(){
+55 |     if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true)){
+56 |       return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(
+57 |           getInputData().getBoolean("manual",false),
+58 |           getInputData().getBoolean("initial_discovery_chain",false))
+59 |           ?Result.retry():Result.success();
+60 |     }
+61 |     int originalPriority=android.os.Process.THREAD_PRIORITY_DEFAULT;
+62 |     boolean priorityChanged=false;
+63 |     try{
+64 |       try{
+65 |         originalPriority=android.os.Process.getThreadPriority(android.os.Process.myTid());
+66 |         if(originalPriority<android.os.Process.THREAD_PRIORITY_BACKGROUND){
+67 |           android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+68 |           priorityChanged=true;
+69 |         }
+70 |       }catch(RuntimeException ignored){}
+71 |       long now=android.os.SystemClock.elapsedRealtime();
+72 |       if(!getInputData().getBoolean("initial_discovery_chain",false)
+73 |           ||now<committedStagingAt||now-committedStagingAt>60000L)discardStagingReuse();
+74 |       noteInitialStage("准备本轮目录整理");
+75 |       return runOwnedWork();
+76 |     }finally{
+77 |       if(isStopped()||Thread.currentThread().isInterrupted())discardStagingReuse();
+78 |       initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);
+79 |       if(priorityChanged)try{android.os.Process.setThreadPriority(originalPriority);}
+80 |       catch(RuntimeException ignored){}
+81 |     }
+82 |   }
+83 |   private Result runOwnedWork(){
+84 |     final long sliceStartedAt=android.os.SystemClock.elapsedRealtime();
+85 |     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
+86 |     final boolean manual=getInputData().getBoolean("manual",false);
+87 |     final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
+88 |     final boolean manualRefresh=manual&&!initialDiscoveryChain;
+89 |     final String manualId=getInputData().getString("manual_refresh_id")==null
+90 |         ?getId().toString():getInputData().getString("manual_refresh_id");
+91 |     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
+92 |     // No full catalogue yet: the one-time chain owns discovery; a periodic
+93 |     // worker must neither compete with it nor publish a partial replacement.
+94 |     if(!initialDiscoveryChain){
+95 |       long completedAt=0L;
+96 |       try{completedAt=Long.parseLong(roomString("source_full_rebuild_completed_at","0"));}
+97 |       catch(NumberFormatException ignored){}
+98 |       if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true,completedAt))
+99 |         return manual?Result.retry():Result.success();
+100 |       long lastRoutineAt=0L;
+101 |       try{lastRoutineAt=Long.parseLong(roomString("source_last_routine_maintenance_at","0"));}
+102 |       catch(NumberFormatException ignored){}
+103 |       if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
+104 |         return Result.success();
+105 |     }
+106 |     final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
+107 |     final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
+108 |     final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
+109 |     slowPlayback=initialDiscoveryChain&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime());
+110 |     final boolean foregroundAtStart=isActivityActive(prefs);
+111 |     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
+112 |     // Defer that work while the TV app is active so it cannot compete with playback,
+113 |     // channel rendering, or remote-control input. Explicit manual updates remain available.
+114 |     // First-run discovery must proceed while browsing, even with seed channels.
+115 |     // Actual playback still pauses discovery; routine automatic updates defer.
+116 |     boolean hasPublishedChannels=true;
+117 |     if(initialDiscoveryChain){
+118 |       hasPublishedChannels=com.wodedianshi.tv.db.RoomDatabaseProvider
+119 |           .get(getApplicationContext()).channelDao().countChannels()>0;
+120 |     }
+121 |     final boolean publishedAtStart=hasPublishedChannels;
+122 |     final boolean deferForeground=SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+123 |         true,manual,initialDiscoveryChain,publishedAtStart);
+124 |     pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
+125 |         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
+126 |         ||(slowPlayback&&SourceUpdateActivityPolicy.stableRevocationGeneration()!=stableGeneration)
+127 |         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
+128 |         ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart));
+129 |     if(pauseRequested.getAsBoolean()){
+130 |       saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
+131 |           ?"节目或频道界面正在使用，首次/手动更新已推迟"
+132 |           :"正在观看或浏览频道，维护仍待执行；下次空闲检查再继续",0);
+133 |       return deferredViewingResult(manual,initialDiscoveryChain);
+134 |     }
+135 |     int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,chinaPreflightsValid=0,feedsFailed=0,checked=0;
+136 |     StringBuilder errors=new StringBuilder();
+137 |     // Centralized, testable feed order: China local-first, then global.
+138 |     // A feed-list fingerprint change intentionally restarts first-build cursors.
+139 |     String[] feeds=SourceDiscoveryFeedCatalog.feeds();
+140 |     try{
+141 |       if(manualRefresh){
+142 |         if(manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
+143 |         String config=discoveryFeedsFingerprint(feeds);
+144 |         if(!manualId.equals(roomString("source_manual_active_id",""))
+145 |             ||!config.equals(roomString("source_manual_feed_config",""))){
+146 |           com.wodedianshi.tv.db.AppStateEditor reset=
+147 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+148 |               .putString("source_manual_active_id",manualId)
+149 |               .putString("source_manual_feed_config",config)
+150 |               .putInt("source_manual_next_feed",0)
+151 |               .putInt("source_manual_failed_feeds",0)
+152 |               .putInt("source_manual_feed_attempts",0)
+153 |               .remove("source_manual_feed_batch_fingerprint")
+154 |               .remove("source_manual_feed_batch_scanned");
+155 |           for(int i=0;i<feeds.length;i++)
+156 |             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
+157 |           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+158 |           reset.apply();
+159 |         }
+160 |       }
+161 |       // First discovery works solely on isolated staging. Do not deserialize
+162 |       // the published catalogue every slice; read it afresh at publication.
+163 |       // Routine maintenance still needs its original optimistic snapshot.
+164 |       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
+165 |           initialDiscoveryChain?null:
+166 |               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+167 |       if(initialDiscoveryChain
+168 |           ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
+169 |           :roomSnapshot==null) {
+170 |         saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
+171 |         return Result.retry();
+172 |       }
+173 |       JSONArray saved;
+174 |       if(initialDiscoveryChain){
+175 |         String buildActive=com.wodedianshi.tv.db.AppStateStore.get(
+176 |             getApplicationContext(),"source_full_rebuild_active","false");
+177 |         long completedRebuildAt=0L;
+178 |         try{
+179 |           completedRebuildAt=Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
+180 |               getApplicationContext(),"source_full_rebuild_completed_at","0"));
+181 |         }catch(NumberFormatException ignored){}
+182 |         // The Room publish transaction records completion and clears the active
+183 |         // flag atomically. If the process died after commit but before WorkManager
+184 |         // recorded success, its retry must not start a second full rebuild.
+185 |         if(!"true".equals(buildActive)&&completedRebuildAt>0L){
+186 |           saveStatus(prefs,"全量频道目录已完成发布，无需重复重建",0);
+187 |           return Result.success();
+188 |         }
+189 |         String configuredFeedFingerprint=discoveryFeedsFingerprint(feeds);
+190 |         String savedFeedFingerprint=roomString("source_full_rebuild_feed_fingerprint","");
+191 |         boolean rebuildProgressMustReset=!"true".equals(buildActive)
+192 |             ||!configuredFeedFingerprint.equals(savedFeedFingerprint);
+193 |         if(rebuildProgressMustReset){
+194 |           if(slowPlayback&&!FullDiscoveryProgressPolicy.canResetInitialStaging(true,
+195 |               com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
+196 |                   .channelDao().countCatalogueBuildRows()))
+197 |             return deferInitialDirectory("已有暂存目录，等待空闲重建，保留观看");
+198 |           // Empty staging initialization is only a small state transaction.
+199 |           // It must not block first discovery forever on a playing seed channel.
+200 |           INITIAL_PROBES.clear();
+201 |           LIVE_DIRECTORY_RETRY_AFTER.clear();
+202 |           discardStagingReuse();
+203 |           // Start from an empty isolated Room staging set. The live catalogue is
+204 |           // intentionally not read as input and remains untouched until publish.
+205 |           // Feed progress is tied to the exact ordered URL list: an app update that
+206 |           // adds, removes, or reorders feeds must not inherit stale per-index cursors.
+207 |           com.wodedianshi.tv.db.AppStateEditor resetBuildState=
+208 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
+209 |           for(int feed=0;feed<feeds.length;feed++){
+210 |             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+211 |                 .remove(feedCursorKey(feed)+"_version")
+212 |                 .remove(initialFeedProgressKey(feed))
+213 |                 .remove(initialAcquiredVersionKey(feed))
+214 |                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
+215 |                 .remove(initialFeedUnavailableKey(feed))
+216 |                 .remove(initialFeedFailureCountKey(feed))
+217 |                 .remove(initialFeedFailureReasonKey(feed))
+218 |                 .remove(initialFeedDisplayLabelKey(feed));
+219 |           }
+220 |           resetBuildState.remove("source_feed_batch_fingerprint")
+221 |               .remove("source_feed_batch_scanned")
+222 |               .remove("source_initial_feed_batch_fingerprint")
+223 |               .remove("source_initial_feed_batch_scanned")
+224 |               .remove("source_scan_after_key").remove("source_scan_cursor")
+225 |               .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
+226 |               .remove("source_initial_has_validated_source")
+227 |               .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
+228 |               .remove("source_initial_discovery_fingerprint")
+229 |               .remove("source_initial_discovery_scanned")
+230 |               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
+231 |               .putInt("source_initial_index_attempted",0)
+232 |               .putBoolean("source_initial_index_bypassed",slowPlayback)
+233 |               .putInt("source_initial_index_ready",0)
+234 |               .putLong("source_initial_index_entries",0L)
+235 |               .putInt("source_initial_progress_percent",0)
+236 |               .putInt("source_initial_progress_basis_points",0)
+237 |               .putInt("source_initial_progress_done_feeds",0)
+238 |               .putInt("source_initial_progress_total_feeds",feeds.length)
+239 |               .putInt("source_initial_progress_china_done_feeds",0)
+240 |               .putInt("source_initial_progress_china_total_feeds",
+241 |                   SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
+242 |               .putInt("source_initial_progress_staged_channels",0)
+243 |               .putInt("source_initial_progress_timeout_urls",0)
+244 |               .putInt("source_initial_progress_checked_urls",0)
+245 |               .putInt("source_initial_progress_validated_urls",0)
+246 |               .putInt("source_initial_progress_china_validated_urls",0)
+247 |               .putInt("source_initial_progress_unavailable_feeds",0)
+248 |               .putInt("source_initial_progress_feed_index",0)
+249 |               .putInt("source_initial_progress_feed_cursor",0)
+250 |               .putInt("source_initial_progress_feed_entries",0)
+251 |               .putString("source_initial_progress_phase","正在准备首次完整抓源")
+252 |               .putInt("source_initial_next_feed_index",0)
+253 |               .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
+254 |               .putBoolean("source_full_rebuild_active",true);
+255 |           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
+256 |               getApplicationContext(),resetBuildState,pauseRequested);
+257 |         }
+258 |         // Acquisition phase: build disk indexes independently of media probes.
+259 |         // Keep the existing cache/index as the candidate store; Room records
+260 |         // only the acquisition cursor and counts, not duplicate unverified URLs.
+261 |         int nextIndex=Math.max(0,roomInt("source_initial_index_attempted",0));
+262 |         int mainlandCount=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+263 |         int mainlandLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(mainlandCount);
+264 |         long indexedEntriesSoFar=0L;
+265 |         try{indexedEntriesSoFar=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
+266 |         catch(NumberFormatException ignored){}
+267 |         boolean bootstrapBypassed=roomBoolean("source_initial_index_bypassed",false);
+268 |         if(!bootstrapBypassed&&FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(slowPlayback,nextIndex,mainlandCount,
+269 |             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
+270 |           int count=-1;
+271 |           String preparedVersion="";
+272 |           noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
+273 |           try{
+274 |             File cached=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feeds[nextIndex],
+275 |                 roomInt(feedCursorKey(nextIndex),0)>0,pauseRequested);
+276 |             if(cached==null){
+277 |               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+278 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+279 |                   .putString("source_initial_progress_phase","首批目录分段已保存，空闲时继续")
+280 |                   .apply();
+281 |               return continueAfterAcquisition();
+282 |             }
+283 |             // readPage builds the complete random-access index if necessary.
+284 |             // Decode one record to check the sidecar without allocating all entries.
+285 |             PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
+286 |             count=PlaylistFeedIndex.indexedEntryCount(cached);
+287 |             if(count>=0)preparedVersion=PlaylistFeedCache.contentVersion(cached);
+288 |           }catch(Exception failure){
+289 |             if(failure instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean())
+290 |               return deferredViewingResult(manual,initialDiscoveryChain);
+291 |             android.util.Log.w("MyTVSourceDiscovery","initial_index_deferred feed="+nextIndex);
+292 |           }
+293 |           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+294 |           int ready=Math.max(0,roomInt("source_initial_index_ready",0))+(count>=0?1:0);
+295 |           long entries=indexedEntriesSoFar;
+296 |           com.wodedianshi.tv.db.AppStateEditor acquisition=
+297 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+298 |               .putInt("source_initial_index_attempted",nextIndex+1)
+299 |               .putInt("source_initial_index_ready",ready)
+300 |               .putLong("source_initial_index_entries",Math.min(Long.MAX_VALUE-Math.max(0,count),entries)+Math.max(0,count))
+301 |               .putString("source_initial_progress_phase",count>0||nextIndex+1>=mainlandLimit
+302 |                   ?"首批目录准备已结束，开始线路初筛"
+303 |                   :"首批目录准备："+(nextIndex+1)+"/"+mainlandLimit);
+304 |           // Start with the nonempty indexed feed, rather than immediately
+305 |           // retrying an earlier failed download. Other feeds remain unfinished.
+306 |           if(count>0)acquisition.putInt("source_initial_next_feed_index",nextIndex);
+307 |           if(!preparedVersion.isEmpty())acquisition.putString(initialAcquiredVersionKey(nextIndex),preparedVersion);
+308 |           acquisition.apply();
+309 |           // Persist acquisition before queueing the next slice. An unavailable
+310 |           // directory is retried by the ordinary bounded probe phase.
+311 |           enqueueInitialContinuation();
+312 |           return Result.success();
+313 |         }
+314 |         if(slowPlayback&&!bootstrapBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
+315 |             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
+316 |           // Mark only the optional bootstrap as bypassed, not any feed done.
+317 |           // The regular bounded feed path still reads and checks every feed.
+318 |           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+319 |           new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+320 |               .putBoolean("source_initial_index_bypassed",true)
+321 |               .putString("source_initial_progress_phase","稳定直播：开始低速准备中国目录")
+322 |               .apply();
+323 |         }
+324 |         // Last viewing slice may already have committed every feed. Avoid
+325 |         // reloading/ranking staging on each retry while only publication waits.
+326 |         if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
+327 |           return deferInitialDirectory("线路初筛已完成，等待空闲发布完整快照");
+328 |         saved=takeCommittedStaging();
+329 |         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+330 |             "source_initial_progress_phase","正在继续首次完整抓源");
+331 |       }else{
+332 |         saved=roomSnapshotToArray(roomSnapshot);
+333 |       }
+334 |       final int previousStagedSize=saved.length();
+335 |       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
+336 |       HashSet<Integer> touchedStagedRows=new HashSet<>();
+337 |       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
+338 |       JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
+339 |       // A single failed probe merely reduces its score. It cannot delete an
+340 |       // existing saved backup; three independent failures are needed.
+341 |       JSONObject probeFailureStreaks=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(
+342 |           getApplicationContext(),"source_probe_failure_streaks_v1","{}"));
+343 |       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
+344 |       for(int i=0;i<saved.length();i++){
+345 |         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+346 |         JSONObject c=saved.getJSONObject(i);
+347 |         if(initialDiscoveryChain)stagedPositions.put(c,i);
+348 |         byIdentity.put(identity(c.optString("name"),c.optString("group"),
+349 |             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
+350 |       }
+351 |       ArrayList<Entry> candidates=new ArrayList<>();
+352 |       // Include the user's already-saved backup URLs in the rotating health-check
+353 |       // pool. Previously only URLs rediscovered in public playlists were probed,
+354 |       // so a saved backup could silently die without ever losing its old score.
+355 |       ArrayList<Entry> savedPool=new ArrayList<>();
+356 |       HashSet<String> savedPoolUrls=new HashSet<>();
+357 |       // A foreground full rebuild probes the staged discovery candidates; it does not
+358 |       // import old catalogue sources. Routine background maintenance also checks saved URLs.
+359 |       // Avoid allocating up to 20,000 additional saved-source Entry objects while the
+360 |       // TV UI is open; the full rotating health-check pool is retained for background runs.
+361 |       if(!foregroundAtStart&&!initialDiscoveryChain){
+362 |         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
+363 |           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+364 |           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+365 |           String channelName=channel.optString("name",""),channelGroup=channel.optString("group","");
+366 |           LinkedHashSet<String> channelUrls=new LinkedHashSet<>();
+367 |           JSONArray sources=channel.optJSONArray("sources");
+368 |           if(sources!=null)for(int j=0;j<sources.length();j++){
+369 |             String u=sources.optString(j,"");
+370 |             if(u.startsWith("http://")||u.startsWith("https://"))channelUrls.add(u);
+371 |           }
+372 |           String primary=channel.optString("url","");
+373 |           if(primary.startsWith("http://")||primary.startsWith("https://"))channelUrls.add(primary);
+374 |           for(String u:channelUrls){
+375 |             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+376 |             if(savedPool.size()>=20000)break;
+377 |             // A shared URL only needs one network probe, even if several channel
+378 |             // entries reference it. Keep the first channel identity for diagnostics.
+379 |             if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(
+380 |                 channelName,u,channelGroup,true,"",channel.optString("tvgId",""),channel.optString("tvgName","")));
+381 |           }
+382 |         }
+383 |       }
+384 |       com.wodedianshi.tv.db.AppStateEditor update=
+385 |           new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
+386 |       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
+387 |       int initialFeedStartIndex=InitialFeedRotationPolicy.normalizeStart(
+388 |           roomInt("source_initial_next_feed_index",0),feeds.length);
+389 |       int initialNextFeedIndex=initialFeedStartIndex;
+390 |       boolean[] inspectedFeeds=new boolean[feeds.length];
+391 |       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
+392 |       if(initialDiscoveryChain){
+393 |         for(int i=0;i<feeds.length;i++)
+394 |           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
+395 |       }
+396 |       int routineStart=InitialFeedRotationPolicy.normalizeStart(
+397 |           roomInt(manualRefresh?"source_manual_next_feed":"source_routine_next_feed_index",0),feeds.length);
+398 |       int routineEnd=manualRefresh?Math.min(feeds.length,routineStart+1):
+399 |           SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
+400 |       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
+401 |       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
+402 |         int feedIndex=initialDiscoveryChain
+403 |             ?SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,
+404 |                 inspectedFeeds,attemptedFeedsThisRun,
+405 |                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+406 |                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)
+407 |             :routineStart+feedOffset;
+408 |         if(feedIndex<0)break;
+409 |         // Full rebuild: inspect China mainland feeds first (CCTV, provincial,
+410 |         // county/local); then HK/Macau/Taiwan; only then international feeds.
+411 |         // Rotate fairly within a stage and resume each feed's saved page cursor.
+412 |         // Keep the 24-probe budget and yield to playback in every stage.
+413 |         String feed=feeds[feedIndex];
+414 |         String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):
+415 |             manualRefresh?manualFeedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
+416 |         int feedCursor=roomInt(cursorKey,0);
+417 |         String feedVersion="";
+418 |         int[] parsedCount={0};
+419 |         int indexedEntries=-1; // Count from the validated cached playlist index.
+420 |         boolean feedReadSucceeded=false;
+421 |         boolean feedTerminalUnavailable=false;
+422 |         if(isStopped())return Result.retry();
+423 |         if(pauseRequested.getAsBoolean()){
+424 |           saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
+425 |           return deferredViewingResult(manual,initialDiscoveryChain);
+426 |         }
+427 |         ArrayList<Entry> feedCandidates=new ArrayList<>();
+428 |         boolean feedCandidatesAdded=false;
+429 |         try{
+430 |           // WorkManager may resume the same large feed over many runs. Reuse a
+431 |           // complete local snapshot so each continuation does not redownload
+432 |           // the entire playlist prefix. The cache revalidates after 24 hours so a multi-run rebuild keeps a stable feed snapshot.
+433 |           // A playback session can begin after the batch-level check above.
+434 |           // Do not start a potentially large network download in that case.
+435 |           if(isStopped())return Result.retry();
+436 |           if(pauseRequested.getAsBoolean()){
+437 |             saveStatus(prefs,"节目播放或频道操作优先，已推迟频道源下载",0);
+438 |             return deferredViewingResult(manual,initialDiscoveryChain);
+439 |           }
+440 |           if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
+441 |           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
+442 |           File cachedFeed=initialDiscoveryChain?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
+443 |               PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
+444 |           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
+445 |               roomString(initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
+446 |             // The acquisition-only slice is independent of the probe cursor.
+447 |             // Never reuse a marker if eviction or a changed body invalidated it.
+448 |             noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
+449 |             cachedFeed=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feed,feedCursor>0,pauseRequested);
+450 |             if(cachedFeed==null){
+451 |               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+452 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+453 |                   .putInt("source_initial_next_feed_index",feedIndex)
+454 |                   .putString("source_initial_progress_phase","空闲时继续已保存目录分段")
+455 |                   .apply();
+456 |               return continueAfterAcquisition();
+457 |             }
+458 |             PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
+459 |             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+460 |             commitInitialAcquisition(feedIndex,cachedFeed);
+461 |             return continueAfterAcquisition();
+462 |           }
+463 |           if(cachedFeed==null&&slowPlayback){
+464 |             // Acquisition is its own bounded slice: no stream probe in the same
+465 |             // worker. Never advance the verified cursor after a download alone.
+466 |             noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
+467 |             try{
+468 |               cachedFeed=PlaylistFeedCache.obtainInitialViewingChunk(
+469 |                   getApplicationContext(),feed,feedCursor>0,pauseRequested);
+470 |               if(cachedFeed==null){
+471 |                 // An exact validated byte range was committed; neither the
+472 |                 // directory nor the line-probe cursor is complete yet.
+473 |                 SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+474 |                 new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+475 |                     .putInt("source_initial_next_feed_index",feedIndex)
+476 |                     .putString("source_initial_progress_phase","已保存大型目录分段，稳定播放时继续下载")
+477 |                     .apply();
+478 |                 return continueAfterAcquisition();
+479 |               }
+480 |               if(!SourceProbeTimePolicy.fitsLiveFullDirectory(cachedFeed.length()))
+481 |                 throw new IOException("Directory exceeds stable-viewing index limit");
+482 |               noteInitialStage("低优先级整理目录 "+(feedIndex+1)+"/"+feeds.length);
+483 |               PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
+484 |               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+485 |               LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);
+486 |               commitInitialAcquisition(feedIndex,cachedFeed);
+487 |               return continueAfterAcquisition();
+488 |             }catch(Exception failure){
+489 |               if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
+490 |                 return deferredViewingResult(manual,initialDiscoveryChain);
+491 |               LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
+492 |               // One network acquisition per viewing slice, including failures.
+493 |               // Next slice starts at another feed; the deferred page stays intact.
+494 |               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+495 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+496 |                   .putInt("source_initial_next_feed_index",InitialFeedRotationPolicy.nextAfterAttempt(feedIndex,feeds.length,false,false))
+497 |                   .putString("source_initial_progress_phase","较大或较慢目录待空闲补查，继续其他目录")
+498 |                   .apply();
+499 |               enqueueInitialContinuation();
+500 |               return Result.success();
+501 |             }
+502 |           }
+503 |           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
+504 |           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
+505 |               roomString(cursorKey+"_version",""),feedVersion);
+506 |           int feedPageSize=initialDiscoveryChain
+507 |               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?MAX_PROBES_PER_RUN/2:MAX_DISCOVERY_PER_FEED;
+508 |           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
+509 |           PlaylistParser.EntryConsumer consume=source->{
+510 |             String scope=RegionCategoryPolicy.catalogueScope(
+511 |                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
+512 |             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
+513 |                 source.tvgId,source.tvgName));
+514 |           };
+515 |           parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
+516 |               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
+517 |           if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
+518 |             // Preserve every address and the exact raw index cursor. Within the
+519 |             // current 24-row page, probe mainland candidates first. Java's List
+520 |             // sort is stable, so partial-batch fingerprint/resume stays deterministic.
+521 |             feedCandidates.sort((aEntry,bEntry)->Integer.compare(
+522 |                 ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
+523 |                     aEntry.scope,aEntry.name,aEntry.group,aEntry.tvgName,aEntry.tvgId),
+524 |                 ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
+525 |                     bEntry.scope,bEntry.name,bEntry.group,bEntry.tvgName,bEntry.tvgId)));
+526 |           }
+527 |           indexedEntries=PlaylistFeedIndex.indexedEntryCount(cachedFeed);
+528 |           // Parsing a cached large playlist can overlap a newly started player.
+529 |           // Do not enqueue its candidates for probing or advance any cursor.
+530 |           if(isStopped())return Result.retry();
+531 |           if(pauseRequested.getAsBoolean()){
+532 |             saveStatus(prefs,"频道操作开始，本轮目录整理已暂停且未发布部分结果",0);
+533 |             return deferredViewingResult(manual,initialDiscoveryChain);
+534 |           }
+535 |           // Keep per-feed discovery counts for diagnosing missing regional stations.
+536 |           // Log metadata only; never expose individual stream URLs or credentials.
+537 |           int localMetadataCandidates=0;
+538 |           int provinceResolvedCandidates=0;
+539 |           for(Entry candidate:feedCandidates){
+540 |             // Count the same metadata used by catalogueScope, including EPG
+541 |             // aliases. Otherwise diagnostics can report zero local stations
+542 |             // even when tvg-name/tvg-id identifies their province.
+543 |             String metadata=(candidate.name==null?"":candidate.name)+" "
+544 |                 +(candidate.group==null?"":candidate.group)+" "
+545 |                 +(candidate.tvgName==null?"":candidate.tvgName)+" "
+546 |                 +(candidate.tvgId==null?"":candidate.tvgId);
+547 |             String normalized=metadata.toLowerCase(Locale.ROOT);
+548 |             boolean provinceResolved=!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty();
+549 |             if(provinceResolved)provinceResolvedCandidates++;
+550 |             if(provinceResolved||normalized.contains("地方")||normalized.contains("local")){
+551 |               localMetadataCandidates++;
+552 |             }
+553 |           }
+554 |           android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
+555 |               +" cursor="+feedCursor+" parsed="+parsedCount[0]
+556 |               +" candidates="+feedCandidates.size()
+557 |               +" mainland_priority_page="
+558 |                   +((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
+559 |               +" local_metadata="+localMetadataCandidates
+560 |               +" province_resolved="+provinceResolvedCandidates
+561 |               +" feed_scope="+scopeForFeed(feed));
+562 |           if(!feedCandidates.isEmpty())feedsWithEntries++;
+563 |           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
+564 |           if(feedCandidates.size()>remaining){
+565 |             // Never advance a feed cursor after silently truncating its parsed page.
+566 |             // The next worker run starts with a fresh per-run budget and retries it.
+567 |             feedCandidates.clear();
+568 |             throw new IOException("本轮候选容量已满，保留目录游标并在下轮继续");
+569 |           }
+570 |           candidates.addAll(feedCandidates);
+571 |           feedCandidatesAdded=true;
+572 |           feedReadSucceeded=true;
+573 |           feedsOk++;
+574 |         }catch(Exception e){
+575 |           // A viewing pause is not a source failure or an exhausted feed.
+576 |           if(e instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean()){
+577 |             saveStatus(prefs,"频道播放优先，目录读取已暂停，保留原游标",0);
+578 |             return deferredViewingResult(manual,initialDiscoveryChain);
+579 |           }
+580 |           if(slowPlayback){
+581 |             LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
+582 |             continue;
+583 |           }
+584 |           // Keep complete entries parsed before a transient stream read failure;
+585 |           // an incomplete feed is still reported as failed and will be retried later.
+586 |           // Failed pages never contribute partial candidates or advance a cursor.
+587 |           // A partial initial feed is retried from its unchanged cursor. Do not
+588 |           // mix its partial page with another feed's batch, or a later fingerprint
+589 |           // change could discard unprobed entries from the partial page.
+590 |           String failure=String.valueOf(e.getMessage());
+591 |           // A dead/blocked provider is an inspected, UNAVAILABLE outcome rather
+592 |           // than a successful feed. Bound transient failures to three separate
+593 |           // worker attempts; preserve its failure record for later idle/manual retry.
+594 |           if(initialDiscoveryChain){
+595 |             int attempts=InitialFeedFailurePolicy.nextAttempts(
+596 |                 roomInt(initialFeedFailureCountKey(feedIndex),0));
+597 |             update.putInt(initialFeedFailureCountKey(feedIndex),attempts)
+598 |                 .putString(initialFeedFailureReasonKey(feedIndex),
+599 |                     InitialFeedFailurePolicy.userVisibleReason(failure))
+600 |                 .putString(initialFeedDisplayLabelKey(feedIndex),safeFeedLabel(feed));
+601 |             feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(
+602 |                 failure,attempts);
+603 |             if(feedTerminalUnavailable)android.util.Log.w("MyTVSourceDiscovery",
+604 |                 "first_build_feed_marked_unavailable index="+feedIndex+" attempts="+attempts);
+605 |           }
+606 |           if(manualRefresh){
+607 |             int attempts=InitialFeedFailurePolicy.nextAttempts(
+608 |                 roomInt("source_manual_feed_attempts",0));
+609 |             update.putInt("source_manual_feed_attempts",attempts);
+610 |             feedTerminalUnavailable=InitialFeedFailurePolicy.isTerminalUnavailable(failure,attempts);
+611 |           }
+612 |           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
+613 |         }finally{
+614 |           feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
+615 |               indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
+616 |               feedTerminalUnavailable,feedVersion));
+617 |           if(initialDiscoveryChain)attemptedFeedsThisRun[feedIndex]=true;
+618 |         }
+619 |         if(initialDiscoveryChain){
+620 |           if(feedReadSucceeded){
+621 |             // A completed page yields to the next unfinished directory. The
+622 |             // per-feed cursor persists even if the directory has many pages.
+623 |             initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
+624 |                 feedIndex,feeds.length,true,
+625 |                 parsedCount[0]>=MAX_INITIAL_DISCOVERY_PER_FEED);
+626 |             break;
+627 |           }
+628 |           // A bounded failure remains on record as unavailable, not as successful
+629 |           // download. Other feeds can still make a usable complete snapshot.
+630 |           initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
+631 |               feedIndex,feeds.length,feedTerminalUnavailable,false);
+632 |           // One failed directory per idle slice, then commit its actual outcome.
+633 |           break;
+634 |         }
+635 |       }
+636 |       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
+637 |       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
+638 |       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
+639 |       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
+640 |       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
+641 |       int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
+642 |       // During a full rebuild every probe slot belongs to newly discovered feed
+643 |       // candidates. Staged rows already retain their measured scores; repeatedly
+644 |       // health-checking them here would starve unseen entries and slow completion.
+645 |       int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+646 |       int pageFeed=-1;
+647 |       if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
+648 |         if(batch.success&&!batch.unavailable){pageFeed=batch.index;break;}
+649 |       String batchPrefix=initialDiscoveryChain?DiscoveryBatchPolicy.initialBatchPrefix(pageFeed):
+650 |           manualRefresh?"source_manual_feed_batch_":"source_routine_feed_batch_";
+651 |       StringBuilder batchIdentity=new StringBuilder();
+652 |       appendFingerprintPart(batchIdentity,discoveryFingerprint(candidates));
+653 |       for(FeedBatch batch:feedBatches){
+654 |         // Only pages that actually contributed candidates determine probe
+655 |         // resume. A preceding unavailable feed must not invalidate the same page.
+656 |         if(!batch.success||batch.unavailable||batch.parsed<=0)continue;
+657 |         appendFingerprintPart(batchIdentity,Integer.toString(batch.index));
+658 |         appendFingerprintPart(batchIdentity,batch.version);
+659 |         appendFingerprintPart(batchIdentity,Integer.toString(batch.cursor));
+660 |       }
+661 |       String discoveryFingerprint=CatalogueFingerprint.sha256(batchIdentity.toString());
+662 |       String previousDiscoveryFingerprint=roomString(batchPrefix+"fingerprint","");
+663 |       int previousScanned=roomInt(batchPrefix+"scanned",0);
+664 |       // An upgrade may have one committed legacy page. Migrate only if the
+665 |       // full page fingerprint matches (including feed, version and cursor).
+666 |       if(initialDiscoveryChain&&pageFeed>=0&&previousDiscoveryFingerprint.isEmpty()
+667 |           &&discoveryFingerprint.equals(roomString("source_initial_feed_batch_fingerprint",""))){
+668 |         previousDiscoveryFingerprint=discoveryFingerprint;
+669 |         previousScanned=roomInt("source_initial_feed_batch_scanned",0);
+670 |         update.remove("source_initial_feed_batch_fingerprint").remove("source_initial_feed_batch_scanned");
+671 |       }
+672 |       int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
+673 |           discoveryFingerprint,previousDiscoveryFingerprint,previousScanned,candidates.size());
+674 |       // Resume by exact position inside an unchanged batch. URL-based cursors are
+675 |       // unsafe because distinct channel identities can share one endpoint; choosing
+676 |       // the last duplicate URL can skip entries that were not yet scanned.
+677 |       int discoveryScanStart=DiscoveryBatchPolicy.startIndex(
+678 |           initialDiscoveryScanned,candidates.size());
+679 |       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
+680 |           initialDiscoveryScanned,candidates.size()),MAX_PROBES_PER_RUN-savedWindow);
+681 |       if(slowPlayback)discoveryWindow=Math.min(1,discoveryWindow);
+682 |       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
+683 |       int savedIndex=0,discoveryIndex=0;
+684 |       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
+685 |         if(discoveryIndex<discoveryWindow){
+686 |           Entry e=candidates.get((discoveryScanStart+discoveryIndex)%candidates.size());
+687 |           probeCandidates.add(e);discoveryIndex++;
+688 |         }
+689 |         if(savedIndex<savedWindow){
+690 |           Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
+691 |           probeCandidates.add(e);savedIndex++;
+692 |         }
+693 |       }
+694 |       // Use independent rotating cursors and a fixed per-run budget for discovery
+695 |       // and saved-source health checks. A moving 5,000-item window combined with one
+696 |       // cursor could skip most saved URLs forever as the window changed between runs.
+697 |       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
+698 |       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
+699 |       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
+700 |       HashSet<String> visitedUrls=new HashSet<>();
+701 |       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
+702 |       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
+703 |       for(int offset=0;offset<probeCandidates.size();offset++){
+704 |         if(pauseRequested.getAsBoolean()){
+705 |           saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
+706 |           return deferredViewingResult(manual,initialDiscoveryChain);
+707 |         }
+708 |         if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
+709 |         Entry e=probeCandidates.get(offset);
+710 |         if(e.savedSource)savedScanned++;else discoveryScanned++;
+711 |         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
+712 |         String endpoint=SourceSelectionPolicy.endpointKey(e.url);
+713 |         ProbeResult measured=measuredByEndpoint.get(endpoint);
+714 |         if(measured==null){
+715 |           if(!visitedUrls.add(endpoint))continue;
+716 |           String cacheKey=initialDiscoveryChain?StableKey.url(e.url):"";
+717 |           RecentProbe cached=initialDiscoveryChain?INITIAL_PROBES.get(cacheKey):null;
+718 |           long clock=android.os.SystemClock.elapsedRealtime();
+719 |           boolean reuse=cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(
+720 |               cached.result.valid,cached.at,clock);
+721 |           long addressDeadline=probeDeadline;
+722 |           if(initialDiscoveryChain&&!reuse){
+723 |             addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(probeDeadline,clock);
+724 |             if(addressDeadline==0L){
+725 |               // Do not start a new probe with a shortened budget at the tail.
+726 |               discoveryScanned--;
+727 |               break;
+728 |             }
+729 |           }
+730 |           if(reuse){
+731 |             measured=cached.result;
+732 |             reusedPreflights++;
+733 |           }else{
+734 |             checked++;
+735 |             noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
+736 |             measured=probe(e.url,addressDeadline);
+737 |           }
+738 |           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
+739 |             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
+740 |             return deferredViewingResult(manual,initialDiscoveryChain);
+741 |           }
+742 |           if(probeDeadlineReached(probeDeadline)){
+743 |             // A source interrupted by the global deadline is inconclusive, not a failed source.
+744 |             if(e.savedSource)savedScanned--;else discoveryScanned--;
+745 |             break;
+746 |           }
+747 |           if(initialDiscoveryChain&&!reuse
+748 |               &&android.os.SystemClock.elapsedRealtime()>=addressDeadline){
+749 |             // The address received its bounded first-pass opportunity. Do not
+750 |             // promote, penalize or cache an inconclusive result. The later
+751 |             // manual/routine scan can retry with the normal probe budget.
+752 |             initialTimeouts++;
+753 |             visitedUrls.remove(endpoint);
+754 |             continue;
+755 |           }
+756 |           if(initialDiscoveryChain&&!reuse){
+757 |             INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,android.os.SystemClock.elapsedRealtime()));
+758 |             while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
+759 |               INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
+760 |           }
+761 |           measuredByEndpoint.put(endpoint,measured);
+762 |           // A previously good source that now fails its probe must lose its old high score.
+763 |           // Keep the URL as a fallback, but rank it below sources that still pass validation.
+764 |           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
+765 |           measuredScores.remove(legacyScoreKey(e.url));
+766 |         }
+767 |         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
+768 |           String streakKey=scoreKey(e.url);
+769 |           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
+770 |               probeFailureStreaks.optInt(streakKey,0),measured.valid);
+771 |           if(streak==0)probeFailureStreaks.remove(streakKey);
+772 |           else probeFailureStreaks.put(streakKey,streak);
+773 |         }
+774 |         if(measured.valid&&(!e.savedSource||initialDiscoveryChain)){
+775 |           discoveryProbesValid++;
+776 |           if(initialDiscoveryChain&&ChinaDiscoveryCandidatePolicy.isClearlyMainland(
+777 |               e.scope,e.name,e.group,e.tvgName,e.tvgId))chinaPreflightsValid++;
+778 |         }
+779 |         // Whether this is the first full build or routine discovery, a
+780 |         // newly discovered URL must pass the media preflight before it may
+781 |         // become a published channel or a new backup. Failed saved sources
+782 |         // remain protected by the independent Room retention policy above.
+783 |         if(!SourceDiscoveryAcceptancePolicy.mayPromoteNewCandidate(measured.valid))
+784 |           continue;
+785 |         String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
+786 |         if(target!=null){
+787 |           String canonical=ChannelNamePolicy.canonicalBroadcasterName(
+788 |               e.name,e.tvgName,e.tvgId,e.group);
+789 |           if(!canonical.isEmpty())target.put("name",canonical);
+790 |           if(target.optString("tvgId","").isEmpty()&&!e.tvgId.isEmpty())target.put("tvgId",e.tvgId);
+791 |           if(target.optString("tvgName","").isEmpty()&&!e.tvgName.isEmpty())target.put("tvgName",e.tvgName);
+792 |         }
+793 |         // Merge every candidate for an existing channel through one retention policy.
+794 |         // This protects the stable primary and last selected source before any
+795 |         // capacity replacement occurs, rather than trying to restore them afterwards.
+796 |         if(target==null){
+797 |           target=new JSONObject();JSONArray sources=new JSONArray();sources.put(e.url);
+798 |           target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
+799 |           target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
+800 |           addBackupSourceScope(target,e.url,e.scope);
+801 |           if(initialDiscoveryChain)stagedPositions.put(target,saved.length());
+802 |           saved.put(target);byIdentity.put(key,target);added++;
+803 |         }else{
+804 |           JSONArray currentSources=target.optJSONArray("sources");
+805 |           ArrayList<String> currentUrls=new ArrayList<>();
+806 |           if(currentSources!=null){
+807 |             for(int i=0;i<currentSources.length();i++)currentUrls.add(currentSources.optString(i,""));
+808 |           }else{
+809 |             String primary=target.optString("url","");
+810 |             if(!primary.isEmpty())currentUrls.add(primary);
+811 |           }
+812 |           int activeIndex=Math.max(0,target.optInt("activeSource",0));
+813 |           String activeUrl=activeIndex<currentUrls.size()
+814 |               ?currentUrls.get(activeIndex):target.optString("url","");
+815 |           String primaryUrl=target.optString("url","");
+816 |           java.util.Comparator<String> bestFirst=(a,b)->
+817 |               Double.compare(combinedScore(b,measuredScores,observedQoe),
+818 |                   combinedScore(a,measuredScores,observedQoe));
+819 |           ArrayList<String> retainedUrls;
+820 |           if(initialDiscoveryChain){
+821 |             retainedUrls=new ArrayList<>(SourceChannelMergePolicy.attachSharedEndpoint(
+822 |                 currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,primaryUrl,activeUrl));
+823 |           }else{
+824 |             HashSet<String> eligibleRetirement=new HashSet<>();
+825 |             for(String oldUrl:currentUrls){
+826 |               if(probeFailureStreaks.optInt(scoreKey(oldUrl),0)
+827 |                   >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
+828 |                 eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
+829 |             }
+830 |             retainedUrls=new ArrayList<>(SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
+831 |                 currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,
+832 |                 primaryUrl,activeUrl,eligibleRetirement));
+833 |           }
+834 |           boolean changed=currentUrls.size()!=retainedUrls.size();
+835 |           if(!changed){
+836 |             for(int i=0;i<currentUrls.size();i++){
+837 |               if(!currentUrls.get(i).equals(retainedUrls.get(i))){changed=true;break;}
+838 |             }
+839 |           }
+840 |           if(changed){
+841 |             JSONArray updatedSources=new JSONArray();
+842 |             for(String retainedUrl:retainedUrls)updatedSources.put(retainedUrl);
+843 |             target.put("sources",updatedSources);
+844 |             added++;
+845 |           }
+846 |           String retainedEndpointUrl="";
+847 |           for(String retainedUrl:retainedUrls){
+848 |             if(endpoint.equals(SourceSelectionPolicy.endpointKey(retainedUrl))){
+849 |               retainedEndpointUrl=retainedUrl;break;
+850 |             }
+851 |           }
+852 |           if(!retainedEndpointUrl.isEmpty()){
+853 |             addBackupSourceScope(target,retainedEndpointUrl,e.scope);
+854 |           }
+855 |         }
+856 |         if(initialDiscoveryChain)touchedStagedRows.add(stagedPositions.get(target));
+857 |       }
+858 |       // Even if every discovery directory is temporarily unavailable, continue
+859 |       // rotating through already-saved source URLs. Existing channels still need
+860 |       // health checks while public catalogue services are down; retry discovery
+861 |       // separately after persisting these local probe results.
+862 |       boolean discoveryUnavailable=feedsOk==0;
+863 |       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
+864 |       if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned);
+865 |       // Keep each channel's best distinct sources together, ranked by measured
+866 |       // reachability/speed/resolution. Generic names remain host-separated; recognized
+867 |       // CCTV and satellite channels merge across source hosts.
+868 |       // Initial staging is append-only and touched rows alone need sorting.
+869 |       // A final idle pass re-ranks the complete snapshot before publication.
+870 |       boolean finalRanking=initialDiscoveryChain&&initialDiscoveryScanned+discoveryScanned>=candidates.size()
+871 |           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
+872 |       Iterable<Integer> rankingRows=initialDiscoveryChain&&!finalRanking?touchedStagedRows:
+873 |           ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<saved.length();}public Integer next(){return index++;}};
+874 |       for(int i:rankingRows){
+875 |         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+876 |         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+877 |         JSONArray sourceArray=channel.optJSONArray("sources");
+878 |         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
+879 |         // Preserve the user's last selected source across background re-ranking.
+880 |         // Ranking may change the preferred primary URL, but must not silently
+881 |         // replace the source that the user explicitly selected for this channel.
+882 |         int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
+883 |         String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
+884 |         ArrayList<String> ordered=new ArrayList<>();
+885 |         HashSet<String> orderedEndpoints=new HashSet<>();
+886 |         for(int j=0;j<sourceArray.length();j++){
+887 |           String u=sourceArray.optString(j,"");
+888 |           if((u.startsWith("http://")||u.startsWith("https://"))
+889 |               &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
+890 |         }
+891 |         String stablePrimaryUrl=channel.optString("url","");
+892 |         // Preserve both the stable channel identity and the user's last selected
+893 |         // source even when the ranked list is trimmed to the eight-source cap.
+894 |         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
+895 |         ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
+896 |             ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
+897 |         ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
+898 |         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
+899 |         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
+900 |         if(ranked.length()>0){
+901 |           // Keep url as the stable channel identity. The ranked source list and
+902 |           // activeSource carry playback preference independently.
+903 |           channel.put("sources",ranked);channel.put("activeSource",restoredActiveIndex);
+904 |           retainBackupSourceScopes(channel,ranked);
+905 |         }
+906 |       }
+907 |       // Persist measured quality independently from URL labels so the player can rank
+908 |       // candidates by reachability, estimated speed and manifest resolution. This is
+909 |       // a preflight score, not a guarantee of audio/video playback.
+910 |       trimProbeScores(measuredScores,savedPool,probeCandidates);
+911 |       trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
+912 |       // The database snapshot is checked again at commit time by Room's transaction;
+913 |       // no SharedPreferences catalogue comparison participates in this update.
+914 |       // Playback can begin after the last probe-loop check but before persistence.
+915 |       // Re-check immediately before the catalogue commit so a just-started session
+916 |       // is not overlapped by the worker's final state write.
+917 |       if(pauseRequested.getAsBoolean()){
+918 |         saveStatus(prefs,"观看或频道操作已开始，放弃本轮发布，旧完整目录仍然可用",0);
+919 |         return deferredViewingResult(manual,initialDiscoveryChain);
+920 |       }
+921 |       if(isStopped())return Result.retry();
+922 |       int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
+923 |       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
+924 |       if(initialDiscoveryChain&&!feedBatches.isEmpty()){
+925 |         // If a 90-second deadline paused probing inside the current feed page,
+926 |         // resume this exact feed and its fingerprint before rotating onward.
+927 |         // Otherwise its prefix would be rescanned and the tail could starve.
+928 |         int attemptedFeed=feedBatches.get(feedBatches.size()-1).index;
+929 |         initialNextFeedIndex=slowPlayback&&pageFeed>=0?(pageFeed+1)%feeds.length:
+930 |             InitialFeedRotationPolicy.nextAfterProbeBatch(
+931 |                 attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
+932 |       }
+933 |       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
+934 |           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+935 |       boolean initialHasValidatedSource=initialDiscoveryChain
+936 |           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
+937 |       boolean awaitingIdleFinalization=FullDiscoveryProgressPolicy.awaitingIdleFinalization(initialFeedsExhausted,slowPlayback);
+938 |       boolean initialDiscoveryComplete=FullDiscoveryProgressPolicy.canPublishInitialSnapshot(
+939 |           initialFeedsExhausted,initialHasValidatedSource,slowPlayback);
+940 |       // Save the last probed page in staging even while viewing. Only merging
+941 |       // the live snapshot (or resetting an unsuccessful build) requires idle.
+942 |       if(initialDiscoveryComplete)roomSnapshot=readPublishedForInitialCommit();
+943 |       // Prepare the full publication and all progress before opening a write transaction.
+944 |       JSONArray publication=initialDiscoveryComplete
+945 |           ?preservePreviouslyPublishedChannels(saved,roomSnapshot):saved;
+946 |       int publishedChannelCount=publication.length();
+947 |       if(initialDiscoveryComplete&&saved.length()==0)
+948 |         throw new IllegalStateException("Full rebuild has no validated channels");
+949 |       if(pauseRequested.getAsBoolean())
+950 |         return deferredViewingResult(manual,initialDiscoveryChain);
+951 |       update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
+952 |           .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+953 |           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
+954 |           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
+955 |           .putString("source_probe_scores_v1",measuredScores.toString())
+956 |           .putString("source_probe_failure_streaks_v1",probeFailureStreaks.toString())
+957 |           // The exact catalogue snapshot is represented by a compact fingerprint.
+958 |           .putString("source_update_time",now())
+959 |           .putString("source_update_result",(initialDiscoveryChain
+960 |               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
+961 |               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+962 |       if(initialDiscoveryChain){
+963 |         update.putInt("source_initial_next_feed_index",initialNextFeedIndex);
+964 |       }
+965 |       // Advance a feed only after every candidate in the current multi-feed batch
+966 |       // has had its probe turn. This prevents losing the tail when the probe deadline
+967 |       // interrupts a run, and ensures later playlist pages are eventually discovered.
+968 |       if(feedBatchComplete){
+969 |         for(FeedBatch batch:feedBatches){
+970 |           if(!batch.success)continue;
+971 |           if(!initialDiscoveryChain && batch.parsed>0
+972 |               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
+973 |             // A previously unavailable directory has now been fetched and its
+974 |             // candidates have completed this run's probe window. Clear its old
+975 |             // warning; other old source warnings remain intact.
+976 |             update.remove(initialFeedUnavailableKey(batch.index))
+977 |                 .remove(initialFeedFailureCountKey(batch.index))
+978 |                 .remove(initialFeedFailureReasonKey(batch.index))
+979 |                 .remove(initialFeedDisplayLabelKey(batch.index));
+980 |           }
+981 |           if(initialDiscoveryChain&&batch.unavailable){
+982 |             update.putBoolean(initialFeedUnavailableKey(batch.index),true);
+983 |           }else if(initialDiscoveryChain){
+984 |             update.remove(initialFeedUnavailableKey(batch.index))
+985 |                 .remove(initialFeedFailureCountKey(batch.index))
+986 |                 .remove(initialFeedFailureReasonKey(batch.index))
+987 |                 .remove(initialFeedDisplayLabelKey(batch.index));
+988 |           }
+989 |           String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):
+990 |               manualRefresh?manualFeedCursorKey(batch.index):routineFeedCursorKey(batch.index);
+991 |           if(initialDiscoveryChain&&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
+992 |             update.putBoolean(initialFeedDoneKey(batch.index),true)
+993 |                 .remove(cursorKey).remove(cursorKey+"_version");
+994 |           }else if(batch.parsed>0){
+995 |             if(!initialDiscoveryChain&&batch.indexedEntries>=0&&batch.cursor+batch.parsed>=batch.indexedEntries)
+996 |               update.remove(cursorKey).remove(cursorKey+"_version");
+997 |             else update.putInt(cursorKey,batch.cursor+batch.parsed)
+998 |                 .putString(cursorKey+"_version",batch.version);
+999 |           }else if(initialDiscoveryChain){
+1000 |             update.putBoolean(initialFeedDoneKey(batch.index),true)
+1001 |                 .remove(cursorKey).remove(cursorKey+"_version");
+1002 |           }else{
+1003 |             update.remove(cursorKey).remove(cursorKey+"_version");
+1004 |           }
+1005 |         }
+1006 |         update.remove(batchPrefix+"fingerprint").remove(batchPrefix+"scanned");
+1007 |       }else if(candidates.size()>0){
+1008 |         update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
+1009 |             .putInt(batchPrefix+"scanned",nextBatchScanned);
+1010 |       }
+1011 |       if(!initialDiscoveryChain&&feedBatchComplete){
+1012 |         int stillUnavailable=0;
+1013 |         for(int i=0;i<feeds.length;i++){
+1014 |           boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
+1015 |           if(wasUnavailable){
+1016 |             for(FeedBatch batch:feedBatches){
+1017 |               if(batch.index==i&&batch.success&&batch.parsed>0){wasUnavailable=false;break;}
+1018 |             }
+1019 |           }
+1020 |           if(wasUnavailable)stillUnavailable++;
+1021 |         }
+1022 |         update.putInt("source_initial_progress_unavailable_feeds",stillUnavailable);
+1023 |       }
+1024 |       int previewLevel=0, previousPreviewLevel=0;
+1025 |       if(initialDiscoveryChain){
+1026 |         // Only count a source feed as done after its entire page was probed and
+1027 |         // end-of-feed was observed. A successful HTTP response alone is not done.
+1028 |         boolean[] finished=new boolean[feeds.length];
+1029 |         int completedFeeds=0;
+1030 |         for(int i=0;i<feeds.length;i++)finished[i]=roomBoolean(initialFeedDoneKey(i),false);
+1031 |         if(feedBatchComplete){
+1032 |           for(FeedBatch batch:feedBatches){
+1033 |             if(batch.success&&batch.index>=0&&batch.index<feeds.length
+1034 |                 &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED))
+1035 |               finished[batch.index]=true;
+1036 |           }
+1037 |         }
+1038 |         for(boolean done:finished)if(done)completedFeeds++;
+1039 |         boolean[] unavailableFlags=new boolean[feeds.length];
+1040 |         for(int i=0;i<feeds.length;i++)
+1041 |           unavailableFlags[i]=roomBoolean(initialFeedUnavailableKey(i),false);
+1042 |         if(feedBatchComplete){
+1043 |           for(FeedBatch batch:feedBatches)
+1044 |             if(batch.index>=0&&batch.index<feeds.length&&batch.unavailable
+1045 |                 &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+1046 |               unavailableFlags[batch.index]=true;
+1047 |         }
+1048 |         int unavailableCount=0;
+1049 |         for(boolean missing:unavailableFlags)if(missing)unavailableCount++;
+1050 |         int activeFeed=initialNextFeedIndex;
+1051 |         int activeCursor=0,activeEntries=-1;
+1052 |         for(FeedBatch batch:feedBatches){
+1053 |           if(batch.success&&!finished[batch.index]&&batch.indexedEntries>0){
+1054 |             activeFeed=batch.index;
+1055 |             activeCursor=batch.cursor+(feedBatchComplete?batch.parsed:nextBatchScanned);
+1056 |             activeEntries=batch.indexedEntries;
+1057 |           }
+1058 |         }
+1059 |         int[] partial=new int[feeds.length];
+1060 |         for(int i=0;i<feeds.length;i++)
+1061 |           partial[i]=roomInt(initialFeedProgressKey(i),0);
+1062 |         for(FeedBatch batch:feedBatches){
+1063 |           if(batch.index<0||batch.index>=feeds.length||!batch.success)continue;
+1064 |           int basis=finished[batch.index]?10000:
+1065 |               FullDiscoveryProgressPolicy.feedProgress(
+1066 |                   batch.cursor+(feedBatchComplete?batch.parsed:nextBatchScanned),
+1067 |                   batch.indexedEntries);
+1068 |           partial[batch.index]=basis;
+1069 |           update.putInt(initialFeedProgressKey(batch.index),basis);
+1070 |         }
+1071 |         int progressBasisPoints=FullDiscoveryProgressPolicy.overallBasisPoints(
+1072 |             finished,partial,initialDiscoveryComplete);
+1073 |         int progressPercent=progressBasisPoints/100;
+1074 |         int chinaFeedDone=SourceDiscoveryPriorityPolicy.completedInStage(
+1075 |             finished,0,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+1076 |         int activeStage=SourceDiscoveryPriorityPolicy.activeStage(finished,
+1077 |             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+1078 |             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT);
+1079 |         String stageDescription=SourceDiscoveryPriorityPolicy.stageLabel(activeStage);
+1080 |         // A changed feed version can legitimately reduce the measured work.
+1081 |         // Do not preserve an inflated high-water mark after a cursor reset.
+1082 |         int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
+1083 |         int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
+1084 |         int chinaValidatedSoFar=Math.max(0,
+1085 |             roomInt("source_initial_progress_china_validated_urls",0));
+1086 |         previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
+1087 |         previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,saved.length(),
+1088 |             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
+1089 |         int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
+1090 |         update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
+1091 |             .putInt("source_initial_progress_percent",progressPercent)
+1092 |             .putInt("source_initial_progress_basis_points",progressBasisPoints)
+1093 |             .putInt("source_initial_progress_done_feeds",completedFeeds)
+1094 |             .putInt("source_initial_progress_total_feeds",feeds.length)
+1095 |             .putInt("source_initial_progress_china_done_feeds",chinaFeedDone)
+1096 |             .putInt("source_initial_progress_china_total_feeds",
+1097 |                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
+1098 |             .putInt("source_initial_progress_staged_channels",publishedChannelCount)
+1099 |             .putInt("source_initial_progress_checked_urls",
+1100 |                 (int)Math.min(Integer.MAX_VALUE,(long)checkedSoFar+Math.max(0,checked)))
+1101 |             .putInt("source_initial_progress_validated_urls",
+1102 |                 (int)Math.min(Integer.MAX_VALUE,
+1103 |                     (long)validatedSoFar+Math.max(0,discoveryProbesValid)))
+1104 |             .putInt("source_initial_progress_china_validated_urls",
+1105 |                 (int)Math.min(Integer.MAX_VALUE,
+1106 |                     (long)chinaValidatedSoFar+Math.max(0,chinaPreflightsValid)))
+1107 |             .putInt("source_initial_progress_unavailable_feeds",unavailableCount)
+1108 |             .putInt("source_initial_progress_feed_index",Math.max(0,activeFeed))
+1109 |             .putInt("source_initial_progress_feed_cursor",Math.max(0,activeCursor))
+1110 |             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
+1111 |             .putString("source_initial_progress_phase",initialDiscoveryComplete
+1112 |                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
+1113 |                 :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":stageDescription+"；暂不可用 "+unavailableCount+" 个"))
+1114 |             .putString("source_update_result",initialDiscoveryComplete
+1115 |                 ?("首次全量目录检查已完成并发布；成功处理 "
+1116 |                     +(completedFeeds-unavailableCount)+"/"+feeds.length
+1117 |                     +" 个来源，另 "+unavailableCount+" 个已记录为暂不可用；通过媒体预检 "
+1118 |                     +(validatedSoFar+Math.max(0,discoveryProbesValid))
+1119 |                     +" 次（含近期重复地址复用，非实机播放验证）；预算超时未确认 "+timeoutTotal+" 次，待后续补查。")
+1120 |                 :("首次完整抓源进度 "+FullDiscoveryProgressPolicy.formatIncompleteProgress(progressBasisPoints)+"；已处理 "
+1121 |                     +completedFeeds+"/"+feeds.length+" 个来源，暂不可用 "
+1122 |                     +unavailableCount+" 个；预算超时未确认 "+timeoutTotal+" 次；已发布频道保留，未完成线路继续检测。"));
+1123 |       }
+1124 |       if(initialDiscoveryChain&&initialHasValidatedSource){
+1125 |         update.putBoolean("source_initial_has_validated_source",true);
+1126 |       }
+1127 |       if(initialDiscoveryChain&&initialDiscoveryComplete){
+1128 |         FullDiscoveryProgressPolicy.Coverage fresh=new FullDiscoveryProgressPolicy.Coverage();
+1129 |         for(int i=0;i<saved.length();i++){
+1130 |           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1131 |           JSONObject row=saved.getJSONObject(i);
+1132 |           fresh.add(row.optString("name"),row.optString("group"),
+1133 |               row.optString("tvgName"),row.optString("tvgId"));
+1134 |         }
+1135 |         update.putString(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,
+1136 |             fresh.summary("本次预检入库目录（合并旧频道之前，非实播验证）"));
+1137 |         if(fresh.cctvCount()==0||fresh.satelliteCount()==0||fresh.localCount()==0){
+1138 |           update.putString("source_initial_progress_phase",
+1139 |               "目录已发布，核心中国频道覆盖不足，待空闲或手动补查");
+1140 |         }
+1141 |         update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
+1142 |             .remove("source_initial_has_validated_source")
+1143 |             .remove("source_full_rebuild_active");
+1144 |         if(saved.length()>0){
+1145 |           long completedAt=System.currentTimeMillis();
+1146 |           update.putLong("source_update_last_success_at",completedAt)
+1147 |               .putLong("source_full_rebuild_completed_at",completedAt);
+1148 |         }
+1149 |       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
+1150 |         update.putLong("source_update_last_success_at",System.currentTimeMillis());
+1151 |       }
+1152 |       // A completed, committed probe pass advances the 30-day deadline;
+1153 |       // skipped or failed work leaves the due date unchanged.
+1154 |       boolean manualComplete=false;
+1155 |       if(manualRefresh){
+1156 |         FeedBatch page=feedBatches.isEmpty()?null:feedBatches.get(0);
+1157 |         boolean advance=page!=null&&feedBatchComplete&&page.success
+1158 |             &&(page.unavailable||SourceUpdateSchedulePolicy.manualFeedFinished(
+1159 |                 page.cursor,page.parsed,page.indexedEntries,MAX_PROBES_PER_RUN/2));
+1160 |         int next=advance?routineStart+1:routineStart;
+1161 |         int failed=Math.max(0,roomInt("source_manual_failed_feeds",0));
+1162 |         if(advance&&page.unavailable)failed++;
+1163 |         if(advance||page!=null&&page.success&&!page.unavailable)
+1164 |           update.putInt("source_manual_feed_attempts",0);
+1165 |         manualComplete=next>=feeds.length;
+1166 |         update.putInt("source_manual_next_feed",next)
+1167 |             .putInt("source_manual_failed_feeds",failed)
+1168 |             .putString("source_update_result","手动完整目录轮检：已处理 "+next+"/"+feeds.length
+1169 |                 +" 个来源，暂不可用 "+failed+" 个。"
+1170 |                 +(manualComplete?"本轮目录处理结束；":"已保存断点，空闲时继续；")
+1171 |                 +"旧频道保留，媒体预检不等于实播。");
+1172 |         if(manualComplete)update.putString("source_manual_completed_id",manualId)
+1173 |             .remove("source_manual_active_id");
+1174 |       }else if(!initialDiscoveryChain){
+1175 |         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
+1176 |         update.putInt("source_routine_next_feed_index",nextRoutine);
+1177 |         if(!manual&&feedBatchComplete&&nextRoutine==0&&publishedChannelCount>0&&checked>0)
+1178 |           update.putLong("source_last_routine_maintenance_at",System.currentTimeMillis());
+1179 |         update.putString("source_update_result","日常分批轮检：目录 "+(routineStart+1)+"–"+routineEnd
+1180 |             +"/"+feeds.length+"；读取成功 "+feedsOk+"，失败 "+feedsFailed
+1181 |             +"；媒体预检 "+checked+" 次；"+(feedBatchComplete?"本批已处理":"保留本批游标，下次继续")
+1182 |             +"。旧目录保留，实际播放待验证。");
+1183 |       }
+1184 |       update.remove("source_update_pending_base_fingerprint")
+1185 |           .remove("source_update_pending_base")
+1186 |           .remove("source_update_pending_channels");
+1187 |       if(initialFeedsExhausted&&!initialHasValidatedSource&&!awaitingIdleFinalization){
+1188 |         // Every feed and every current candidate has had its probe turn. Do not
+1189 |         // retry an exhausted, unpublishable build forever merely because the TV
+1190 |         // Activity happens to remain open; discard staging and retain the live DB.
+1191 |         // A failed full scan must not preserve per-feed "done" flags or cursors.
+1192 |         // Otherwise the next rebuild may start with every feed already exhausted,
+1193 |         // see no candidates, and never retry discovery after network recovery.
+1194 |         com.wodedianshi.tv.db.AppStateEditor failedBuildReset=update;
+1195 |         for(int feed=0;feed<feeds.length;feed++){
+1196 |           // Reset the publish/scan cursors for the next attempt, but leave the
+1197 |           // last failure diagnostics visible in Settings until that next attempt
+1198 |           // starts and explicitly initializes a fresh build.
+1199 |           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
+1200 |               .remove(feedCursorKey(feed)+"_version")
+1201 |               .remove(initialFeedProgressKey(feed))
+1202 |               .remove(initialAcquiredVersionKey(feed))
+1203 |               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned");
+1204 |         }
+1205 |         failedBuildReset.remove("source_full_rebuild_active")
+1206 |             .remove("source_full_rebuild_feed_fingerprint")
+1207 |             .remove("source_initial_has_validated_source")
+1208 |             .remove("source_initial_discovery_fingerprint")
+1209 |             .remove("source_initial_discovery_scanned")
+1210 |             .remove("source_feed_batch_fingerprint")
+1211 |             .remove("source_feed_batch_scanned")
+1212 |             .remove("source_initial_feed_batch_fingerprint")
+1213 |             .remove("source_initial_feed_batch_scanned")
+1214 |             .putInt("source_initial_next_feed_index",0)
+1215 |             .putInt("source_initial_progress_percent",0)
+1216 |               .putInt("source_initial_progress_basis_points",0)
+1217 |             .putInt("source_initial_progress_done_feeds",0)
+1218 |             .putInt("source_initial_progress_china_done_feeds",0)
+1219 |             .putInt("source_initial_progress_staged_channels",0)
+1220 |             .putInt("source_initial_progress_checked_urls",0)
+1221 |             .putInt("source_initial_progress_validated_urls",0)
+1222 |             .putInt("source_initial_progress_china_validated_urls",0)
+1223 |             .putString("source_initial_progress_phase","本轮没有通过预检的有效频道，未发布快照；暂不可用目录和失败原因已保留，恢复网络后可手动重试");
+1224 |         discardStagingReuse();
+1225 |         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
+1226 |             getApplicationContext(),failedBuildReset,pauseRequested);
+1227 |         saveStatus(prefs,saved.length()==0
+1228 |             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
+1229 |             :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
+1230 |         return Result.failure();
+1231 |       }
+1232 |       // Commit one unit: either unpublished staging + progress or published
+1233 |       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+1234 |       final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
+1235 |       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
+1236 |       if(initialDiscoveryChain&&!initialDiscoveryComplete){
+1237 |         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
+1238 |             getApplicationContext(),saved,pauseRequested,update);
+1239 |         else {
+1240 |           String revision=java.util.UUID.randomUUID().toString();
+1241 |           update.putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,revision);
+1242 |           com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
+1243 |               getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
+1244 |           // Remember only after the transaction has returned successfully.
+1245 |           if(FullDiscoveryProgressPolicy.canRetainStaging(saved.length(),slowPlayback)){
+1246 |             committedStaging=saved;committedStagingRevision=revision;
+1247 |             committedStagingAt=android.os.SystemClock.elapsedRealtime();
+1248 |           }
+1249 |         }
+1250 |         if(!slowPlayback&&previewLevel>previousPreviewLevel){
+1251 |           // First commit staging and cursors. A failed preview never loses that work.
+1252 |           noteInitialStage("正在发布阶段性已预检频道");
+1253 |           roomSnapshot=readPublishedForInitialCommit();
+1254 |           JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
+1255 |           com.wodedianshi.tv.db.AppStateEditor previewState=
+1256 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+1257 |                   .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel);
+1258 |           int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+1259 |               getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
+1260 |           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
+1261 |         }
+1262 |       }else{
+1263 |         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+1264 |             getApplicationContext(),publication,roomSnapshot.catalogueVersion,
+1265 |             initialDiscoveryComplete,pauseRequested,update);
+1266 |         if(written!=publishedChannelCount)
+1267 |           throw new IllegalStateException("Committed directory count mismatch");
+1268 |       }
+1269 |       if(initialDiscoveryChain){
+1270 |         final long commitFinishedAt=android.os.SystemClock.elapsedRealtime();
+1271 |         android.util.Log.i("MyTVSourceDiscovery","slice_committed prepare_ms="+(probeStartedAt-sliceStartedAt)
+1272 |             +" probe_merge_ms="+(probesFinishedAt-probeStartedAt)
+1273 |             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
+1274 |             +" commit_ms="+(commitFinishedAt-commitStartedAt)
+1275 |             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
+1276 |             +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback);
+1277 |       }
+1278 |       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
+1279 |       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
+1280 |         // Empty pages and recorded failures are durable progress too; rotate
+1281 |         // rather than repeatedly back off the same WorkRequest.
+1282 |         enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?20L:0L);
+1283 |         return Result.success();
+1284 |       }
+1285 |       if(manualRefresh&&!manualComplete){
+1286 |         // Each bounded slice commits before a successor is enqueued. A retry
+1287 |         // after process death reads the committed cursor, not an old input offset.
+1288 |         androidx.work.OneTimeWorkRequest continuation=
+1289 |             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+1290 |                 .setConstraints(new androidx.work.Constraints.Builder()
+1291 |                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+1292 |                 .setInitialDelay(10,java.util.concurrent.TimeUnit.SECONDS)
+1293 |                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+1294 |                     .putString("manual_refresh_id",manualId).build()).build();
+1295 |         enqueueSingleSuccessor("mytv_manual_source_update",continuation);
+1296 |       }
+1297 |       // Routine failures rotate to other directories and wait for the next idle
+1298 |       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
+1299 |       if(!initialDiscoveryChain)return Result.success();
+1300 |       if(initialDiscoveryComplete){INITIAL_PROBES.clear();discardStagingReuse();}
+1301 |       return (discoveryUnavailable&&!initialDiscoveryComplete
+1302 |               &&!(initialDiscoveryChain&&candidates.size()>0))
+1303 |           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
+1304 |           ?Result.retry():Result.success();
+1305 |     }catch(SourceProbeTimePolicy.PublicationPausedException paused){
+1306 |       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
+1307 |       return deferredViewingResult(manual,initialDiscoveryChain);
+1308 |     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+1309 |   }
+1310 |   private static void discardStagingReuse(){
+1311 |     committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
+1312 |   }
+1313 |   private JSONArray takeCommittedStaging() throws JSONException {
+1314 |     JSONArray candidate=committedStaging;
+1315 |     String revision=committedStagingRevision;
+1316 |     long savedAt=committedStagingAt;
+1317 |     discardStagingReuse();
+1318 |     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1319 |     if(candidate!=null&&FullDiscoveryProgressPolicy.canRetainStaging(candidate.length(),slowPlayback)
+1320 |         &&FullDiscoveryProgressPolicy.canReuseStaging(candidate.length(),revision,
+1321 |         roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,""),
+1322 |         savedAt,android.os.SystemClock.elapsedRealtime())){
+1323 |       return candidate;
+1324 |     }
+1325 |     return com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
+1326 |   }
+1327 |   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(){
+1328 |     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1329 |     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
+1330 |         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+1331 |     if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
+1332 |     return snapshot;
+1333 |   }
+1334 |   // A scheduler failure after a successful acquisition is not a feed failure.
+1335 |   private Result continueAfterAcquisition(){
+1336 |     try{enqueueInitialContinuation();return Result.success();}
+1337 |     catch(Exception failure){
+1338 |       android.util.Log.w("MyTVSourceDiscovery","Prepared directory saved; continuation needs retry",failure);
+1339 |       return Result.retry();
+1340 |     }
+1341 |   }
+1342 |   private void enqueueInitialContinuation() throws Exception {
+1343 |     enqueueInitialContinuation(slowPlayback?20L:0L);
+1344 |   }
+1345 |   private void enqueueInitialContinuation(long delaySeconds) throws Exception {
+1346 |     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException("Initial source work cancelled");
+1347 |     androidx.work.OneTimeWorkRequest continuation=
+1348 |         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+1349 |             .setInitialDelay(delaySeconds,java.util.concurrent.TimeUnit.SECONDS)
+1350 |             .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
+1351 |             .setConstraints(new androidx.work.Constraints.Builder()
+1352 |                 .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+1353 |             .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+1354 |                 .putBoolean("initial_discovery_chain",true).build())
+1355 |             .build();
+1356 |     enqueueSingleSuccessor("mytv_startup_source_refresh",continuation);
+1357 |   }
+1358 |   /** Called only by the source-work owner, after durable slice progress.
+1359 |    * A retry after an ambiguous enqueue must reuse an existing unfinished
+1360 |    * successor. Never revive a cancelled chain with APPEND_OR_REPLACE.
+1361 |    * A query/operation timeout is not success: retain the predecessor for retry. */
+1362 |   private void enqueueSingleSuccessor(String uniqueName,
+1363 |           androidx.work.OneTimeWorkRequest continuation) throws Exception {
+1364 |     if(isStopped()||Thread.currentThread().isInterrupted())
+1365 |       throw new InterruptedException("Source work cancelled");
+1366 |     androidx.work.WorkManager manager=androidx.work.WorkManager.getInstance(getApplicationContext());
+1367 |     List<androidx.work.WorkInfo> infos=manager.getWorkInfosForUniqueWork(uniqueName)
+1368 |         .get(10L,java.util.concurrent.TimeUnit.SECONDS);
+1369 |     boolean currentRunning=false;
+1370 |     ArrayList<java.util.UUID> unfinished=new ArrayList<>();
+1371 |     for(androidx.work.WorkInfo info:infos){
+1372 |       if(info.getId().equals(getId()))
+1373 |         currentRunning=info.getState()==androidx.work.WorkInfo.State.RUNNING;
+1374 |       if(!info.getState().isFinished())unfinished.add(info.getId());
+1375 |     }
+1376 |     if(!currentRunning||isStopped()||Thread.currentThread().isInterrupted())
+1377 |       throw new InterruptedException("Source work no longer running");
+1378 |     if(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(getId(),unfinished))return;
+1379 |     manager.enqueueUniqueWork(uniqueName,androidx.work.ExistingWorkPolicy.APPEND,continuation)
+1380 |         .getResult().get(10L,java.util.concurrent.TimeUnit.SECONDS);
+1381 |   }
+1382 |   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
+1383 |           List<FeedBatch> batches,int feedCount){
+1384 |     for(int i=0;i<feedCount;i++){
+1385 |       boolean done=roomBoolean(initialFeedDoneKey(i),false);
+1386 |       if(!done){
+1387 |         for(FeedBatch batch:batches){
+1388 |           if(batch.index==i&&batch.success
+1389 |               &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
+1390 |             done=true;break;
+1391 |           }
+1392 |         }
+1393 |       }
+1394 |       if(!done)return false;
+1395 |     }
+1396 |     return true;
+1397 |   }
+1398 |   private String discoveryFeedsFingerprint(String[] feeds){
+1399 |     StringBuilder value=new StringBuilder();
+1400 |     // A prior pending full build may contain dead routes from the old
+1401 |     // "stage even if probe failed" behavior. Restart only that isolated build
+1402 |     // after the acceptance policy changes; never discard published Room rows.
+1403 |     appendFingerprintPart(value,SourceDiscoveryAcceptancePolicy.BUILD_POLICY_VERSION);
+1404 |     if(feeds!=null)for(String feed:feeds)appendFingerprintPart(value,feed);
+1405 |     return CatalogueFingerprint.sha256(value.toString());
+1406 |   }
+1407 |   private String discoveryFingerprint(List<Entry> entries){
+1408 |     StringBuilder value=new StringBuilder(entries.size()*96);
+1409 |     for(Entry entry:entries){
+1410 |       appendFingerprintPart(value,SourceSelectionPolicy.endpointKey(entry.url));
+1411 |       appendFingerprintPart(value,entry.name);
+1412 |       appendFingerprintPart(value,entry.group);
+1413 |       appendFingerprintPart(value,entry.tvgId);
+1414 |       appendFingerprintPart(value,entry.tvgName);
+1415 |       appendFingerprintPart(value,entry.scope);
+1416 |     }
+1417 |     return CatalogueFingerprint.sha256(value.toString())+":"+entries.size();
+1418 |   }
+1419 |   private void appendFingerprintPart(StringBuilder target,String raw){
+1420 |     String value=raw==null?"":raw;
+1421 |     target.append(value.length()).append(':').append(value);
+1422 |   }
+1423 |   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
+1424 |       throws JSONException {
+1425 |     JSONArray result=new JSONArray();
+1426 |     for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+1427 |       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1428 |       JSONObject channel=new JSONObject();
+1429 |       channel.put("name",row.name);channel.put("url",row.url);channel.put("group",row.group);
+1430 |       channel.put("tvgId",row.tvgId);channel.put("tvgName",row.tvgName);
+1431 |       channel.put("activeSource",row.activeSource);
+1432 |       JSONArray sources=new JSONArray();
+1433 |       for(String source:row.sources)sources.put(source);
+1434 |       channel.put("sources",sources);
+1435 |       JSONArray channelScopes=new JSONArray();
+1436 |       for(String scope:row.sourceScopes)channelScopes.put(scope);
+1437 |       channel.put("sourceScopes",channelScopes);
+1438 |       JSONArray ownership=new JSONArray();
+1439 |       for(java.util.Map.Entry<String,java.util.HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+1440 |         JSONObject item=new JSONObject();item.put("url",entry.getKey());
+1441 |         JSONArray scopes=new JSONArray();
+1442 |         for(String scope:entry.getValue())scopes.put(scope);
+1443 |         item.put("scopes",scopes);ownership.put(item);
+1444 |       }
+1445 |       channel.put("backupSourceScopes",ownership);
+1446 |       result.put(channel);
+1447 |     }
+1448 |     return result;
+1449 |   }
+1450 | 
+1451 |   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
+1452 |       boolean initialDiscoveryChain, boolean hasPublishedChannels){
+1453 |     return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime()):SourceUpdateActivityPolicy.isPlaybackActive())
+1454 |         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+1455 |             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
+1456 |   }
+1457 | 
+1458 |   private Result deferInitialDirectory(String reason){
+1459 |     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_initial_progress_phase",reason);
+1460 |     return continueAfterViewingDelay(true);
+1461 |   }
+1462 |   private Result continueAfterViewingDelay(boolean waitingForIdle){
+1463 |     // Never append work after cancellation. If the enqueue itself fails, retain
+1464 |     // the current durable WorkManager request via its normal retry mechanism.
+1465 |     if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
+1466 |     try{
+1467 |       enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialViewingDelaySeconds(waitingForIdle));
+1468 |       return Result.success();
+1469 |     }catch(Exception failure){
+1470 |       android.util.Log.w("MyTVSourceDiscovery","Unable to schedule deferred initial slice",failure);
+1471 |       return Result.retry();
+1472 |     }
+1473 |   }
+1474 |   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
+1475 |     if(initialDiscoveryChain){
+1476 |       // The existing counters and cursors stay unchanged while viewing.
+1477 |       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+1478 |           "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+1479 |       return continueAfterViewingDelay(false);
+1480 |     }
+1481 |     // Do not repeatedly wake the periodic job every few minutes while a user
+1482 |     // watches television; the next daily check retains the overdue monthly intent.
+1483 |     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
+1484 |         ?Result.retry():Result.success();
+1485 |   }
+1486 | 
+1487 |   private boolean isActivityActive(SharedPreferences prefs){
+1488 |     return SourceUpdateActivityPolicy.isActivityActive();
+1489 |   }
+1490 |   private static class Entry{
+1491 |     String name,url,group,scope,tvgId,tvgName;boolean savedSource;
+1492 |     // Unscoped saved URLs have unknown provenance; only discovered feeds carry an explicit scope.
+1493 |     Entry(String n,String u,String g){this(n,u,g,false,"","","");}
+1494 |     Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"","","");}
+1495 |     Entry(String n,String u,String g,boolean saved,String sourceScope){
+1496 |       this(n,u,g,saved,sourceScope,"","");
+1497 |     }
+1498 |     Entry(String n,String u,String g,boolean saved,String sourceScope,String id,String guideName){
+1499 |       name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
+1500 |       tvgId=id==null?"":id;tvgName=guideName==null?"":guideName;
+1501 |     }
+1502 |   }
+1503 |   private static class FeedBatch{
+1504 |     final int index,cursor,parsed,indexedEntries;
+1505 |     final boolean success,unavailable;
+1506 |     final String version;
+1507 |     FeedBatch(int i,int c,int p,int total,boolean ok,boolean unavailable,String version){
+1508 |       index=i;cursor=c;parsed=p;indexedEntries=total;
+1509 |       success=ok;this.unavailable=unavailable;this.version=version;
+1510 |     }
+1511 |   }
+1512 |   /**
+1513 |    * Retain existing published channels, backup URLs, selected source and country/
+1514 |    * city membership at the first full-rebuild publication boundary. Staging
+1515 |    * remains discovery-only until this point, so interrupted builds cannot change
+1516 |    * live Room rows. The writer checks its original Room catalogue version.
+1517 |    */
+1518 |   private JSONArray preservePreviouslyPublishedChannels(JSONArray discovered,
+1519 |       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot prior)throws JSONException {
+1520 |     if(prior==null||prior.channels==null||prior.channels.isEmpty())return discovered;
+1521 |     JSONArray original=roomSnapshotToArray(prior);
+1522 |     LinkedHashMap<String,ArrayDeque<JSONObject>> originalsByIdentity=new LinkedHashMap<>();
+1523 |     ArrayList<JSONObject> originalInOrder=new ArrayList<>();
+1524 |     for(int i=0;i<original.length();i++){
+1525 |       JSONObject old=original.getJSONObject(i);
+1526 |       String key=identity(old.optString("name"),old.optString("group"),
+1527 |           old.optString("url"),old.optString("tvgId"),old.optString("tvgName"));
+1528 |       originalsByIdentity.computeIfAbsent(key,k->new ArrayDeque<>()).add(old);
+1529 |       originalInOrder.add(old);
+1530 |     }
+1531 |     Set<JSONObject> matched=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
+1532 |     JSONArray publish=new JSONArray();
+1533 |     for(int i=0;i<discovered.length();i++){
+1534 |       JSONObject fresh=discovered.getJSONObject(i);
+1535 |       String key=identity(fresh.optString("name"),fresh.optString("group"),
+1536 |           fresh.optString("url"),fresh.optString("tvgId"),fresh.optString("tvgName"));
+1537 |       ArrayDeque<JSONObject> matches=originalsByIdentity.get(key);
+1538 |       if(matches==null||matches.isEmpty()){
+1539 |         publish.put(fresh);
+1540 |         continue;
+1541 |       }
+1542 |       JSONObject old=matches.removeFirst();
+1543 |       matched.add(old);
+1544 |       publish.put(mergeNewRoutesIntoSavedChannel(old,fresh));
+1545 |     }
+1546 |     // Keep even a station missing entirely from every new public directory.
+1547 |     // Its old sources may still work despite a failed discovery feed.
+1548 |     for(JSONObject old:originalInOrder)if(!matched.contains(old))publish.put(old);
+1549 |     android.util.Log.i("MyTVSourceDiscovery",
+1550 |         "first_full_publish_discovered="+discovered.length()+
+1551 |         " preserved_old="+original.length()+" final="+publish.length());
+1552 |     return publish;
+1553 |   }
+1554 | 
+1555 |   private ArrayList<String> channelSourceUrls(JSONObject row){
+1556 |     ArrayList<String> urls=new ArrayList<>();
+1557 |     JSONArray sources=row.optJSONArray("sources");
+1558 |     if(sources!=null)for(int i=0;i<sources.length();i++){
+1559 |       String url=sources.optString(i,"");
+1560 |       if(!url.isEmpty())urls.add(url);
+1561 |     }
+1562 |     if(urls.isEmpty()&&!row.optString("url","").isEmpty())
+1563 |       urls.add(row.optString("url",""));
+1564 |     return urls;
+1565 |   }
+1566 | 
+1567 |   private JSONObject mergeNewRoutesIntoSavedChannel(JSONObject old,JSONObject fresh)
+1568 |       throws JSONException {
+1569 |     ArrayList<String> oldUrls=channelSourceUrls(old);
+1570 |     ArrayList<String> newUrls=channelSourceUrls(fresh);
+1571 |     FullRebuildRouteRetentionPolicy.Result retained=FullRebuildRouteRetentionPolicy.merge(
+1572 |         oldUrls,old.optInt("activeSource",0),old.optString("url",""),
+1573 |         newUrls,MAX_SOURCES_PER_CHANNEL);
+1574 |     JSONArray kept=new JSONArray();
+1575 |     HashMap<String,String> keptByEndpoint=new HashMap<>();
+1576 |     for(String url:retained.urls){
+1577 |       kept.put(url);
+1578 |       keptByEndpoint.put(SourceSelectionPolicy.endpointKey(url),url);
+1579 |     }
+1580 |     // Some legacy rows have channel-level geo tags but no per-source provenance.
+1581 |     // Attach them to their old URLs before recalculating the ownership union.
+1582 |     JSONArray oldOwnership=old.optJSONArray("backupSourceScopes");
+1583 |     if(oldOwnership==null||oldOwnership.length()==0){
+1584 |       JSONArray oldScopes=old.optJSONArray("sourceScopes");
+1585 |       if(oldScopes!=null)for(String url:oldUrls){
+1586 |         String keptUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(url));
+1587 |         if(keptUrl==null)continue;
+1588 |         for(int j=0;j<oldScopes.length();j++)
+1589 |           addBackupSourceScope(old,keptUrl,oldScopes.optString(j,""));
+1590 |       }
+1591 |     }
+1592 |     JSONArray freshOwnership=fresh.optJSONArray("backupSourceScopes");
+1593 |     if(freshOwnership!=null&&freshOwnership.length()>0){
+1594 |       for(int i=0;i<freshOwnership.length();i++){
+1595 |         JSONObject ownership=freshOwnership.optJSONObject(i);
+1596 |         if(ownership==null)continue;
+1597 |         String retainedUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(
+1598 |             ownership.optString("url","")));
+1599 |         if(retainedUrl==null)continue;
+1600 |         JSONArray scopes=ownership.optJSONArray("scopes");
+1601 |         if(scopes!=null)for(int j=0;j<scopes.length();j++)
+1602 |           addBackupSourceScope(old,retainedUrl,scopes.optString(j,""));
+1603 |       }
+1604 |     }else{
+1605 |       // Older sources may carry only channel-level tags.
+1606 |       JSONArray scopes=fresh.optJSONArray("sourceScopes");
+1607 |       if(scopes!=null)for(String newUrl:newUrls){
+1608 |         String retainedUrl=keptByEndpoint.get(SourceSelectionPolicy.endpointKey(newUrl));
+1609 |         if(retainedUrl==null)continue;
+1610 |         for(int j=0;j<scopes.length();j++)
+1611 |           addBackupSourceScope(old,retainedUrl,scopes.optString(j,""));
+1612 |       }
+1613 |     }
+1614 |     // Keep the exact saved name, TVG, group and stable primary identity.
+1615 |     // Enriching them here could change the Room channel ID and lose favorites.
+1616 |     old.put("sources",kept);
+1617 |     old.put("activeSource",retained.activeIndex);
+1618 |     retainBackupSourceScopes(old,kept);
+1619 |     return old;
+1620 |   }
+1621 | 
+1622 |   private String scopeForFeed(String feed){
+1623 |     return SourceFeedScopePolicy.scopeForFeed(feed);
+1624 |   }
+1625 |   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
+1626 |   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
+1627 |   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
+1628 |   private String initialAcquiredVersionKey(int index){return "source_initial_acquired_version_"+index;}
+1629 |   private void commitInitialAcquisition(int index,File cached) throws IOException {
+1630 |     String version=PlaylistFeedCache.contentVersion(cached);
+1631 |     if(PlaylistFeedIndex.indexedEntryCount(cached)<0)throw new IOException("Prepared directory index unavailable");
+1632 |     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1633 |     new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+1634 |         .putString(initialAcquiredVersionKey(index),version)
+1635 |         .putInt("source_initial_next_feed_index",index)
+1636 |         .putString("source_initial_progress_phase","目录已准备，下一批继续线路初筛")
+1637 |         .apply();
+1638 |   }
+1639 |   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+1640 |   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
+1641 |   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
+1642 |   private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
+1643 |   private String initialFeedFailureReasonKey(int index){return "source_initial_feed_failure_reason_"+index;}
+1644 |   private String initialFeedDisplayLabelKey(int index){return "source_initial_feed_label_"+index;}
+1645 | 
+1646 |   private static String safeFeedLabel(String url){
+1647 |     try{
+1648 |       java.net.URL parsed=new java.net.URL(url);
+1649 |       String path=parsed.getPath(),name=path.substring(path.lastIndexOf('/')+1);
+1650 |       return parsed.getHost()+"/"+(name.isEmpty()?"目录":name);
+1651 |     }catch(Exception ignored){return "公开来源目录";}
+1652 |   }
+1653 |   private String canonicalDisplayName(Entry entry){
+1654 |     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
+1655 |         entry.name,entry.tvgName,entry.tvgId,entry.group);
+1656 |     if(!broadcaster.isEmpty())return broadcaster;
+1657 |     String canonical=canonicalName(entry.name);
+1658 |     return canonical.startsWith("CCTV-")||canonical.endsWith("卫视")?canonical:entry.name;
+1659 |   }
+1660 |   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
+1661 |     if(channel==null||url==null||url.isEmpty())return;
+1662 |     // Use the same strict scope allowlist as the Room reader. Otherwise a
+1663 |     // background refresh can silently erase country/state/city ownership.
+1664 |     if(!ChannelCatalogueScopePolicy.isRetainableScope(scope))return;
+1665 |     JSONArray channelScopes=channel.optJSONArray("sourceScopes");
+1666 |     if(channelScopes==null){channelScopes=new JSONArray();channel.put("sourceScopes",channelScopes);}
+1667 |     boolean channelHasScope=false;
+1668 |     for(int i=0;i<channelScopes.length();i++)if(scope.equals(channelScopes.optString(i))){channelHasScope=true;break;}
+1669 |     if(!channelHasScope)channelScopes.put(scope);
+1670 |     JSONArray ownership=channel.optJSONArray("backupSourceScopes");
+1671 |     if(ownership==null){ownership=new JSONArray();channel.put("backupSourceScopes",ownership);}
+1672 |     for(int i=0;i<ownership.length();i++){
+1673 |       JSONObject item=ownership.optJSONObject(i);
+1674 |       if(item==null||!url.equals(item.optString("url","")))continue;
+1675 |       JSONArray scopes=item.optJSONArray("scopes");
+1676 |       if(scopes==null){scopes=new JSONArray();item.put("scopes",scopes);}
+1677 |       for(int j=0;j<scopes.length();j++)if(scope.equals(scopes.optString(j)))return;
+1678 |       scopes.put(scope);return;
+1679 |     }
+1680 |     JSONObject item=new JSONObject();JSONArray scopes=new JSONArray();
+1681 |     scopes.put(scope);item.put("url",url);item.put("scopes",scopes);ownership.put(item);
+1682 |   }
+1683 |   private void retainBackupSourceScopes(JSONObject channel,JSONArray retainedSources)throws JSONException{
+1684 |     JSONArray previous=channel.optJSONArray("backupSourceScopes");
+1685 |     if(previous==null)return;
+1686 |     HashSet<String> retainedUrls=new HashSet<>();
+1687 |     for(int i=0;i<retainedSources.length();i++)retainedUrls.add(retainedSources.optString(i,""));
+1688 |     JSONArray filtered=new JSONArray();
+1689 |     HashMap<String,Set<String>> ownershipByUrl=new HashMap<>();
+1690 |     for(int i=0;i<previous.length();i++){
+1691 |       JSONObject item=previous.optJSONObject(i);
+1692 |       if(item==null)continue;
+1693 |       String url=item.optString("url","");
+1694 |       if(!retainedUrls.contains(url))continue;
+1695 |       filtered.put(item);
+1696 |       JSONArray scopes=item.optJSONArray("scopes");
+1697 |       HashSet<String> owned=new HashSet<>();
+1698 |       if(scopes!=null)for(int j=0;j<scopes.length();j++)owned.add(scopes.optString(j,""));
+1699 |       ownershipByUrl.put(url,owned);
+1700 |     }
+1701 |     channel.put("backupSourceScopes",filtered);
+1702 |     // Channel-level tags are a derived union of the URLs that survived the
+1703 |     // eight-source retention cap. Do not leave stale China/global membership.
+1704 |     java.util.TreeSet<String> sortedScopes=new java.util.TreeSet<>(
+1705 |         ChannelCatalogueScopePolicy.retainedScopes(ownershipByUrl,retainedUrls));
+1706 |     JSONArray channelScopes=new JSONArray();
+1707 |     for(String scope:sortedScopes)channelScopes.put(scope);
+1708 |     channel.put("sourceScopes",channelScopes);
+1709 |   }
+1710 |   private int sourceQualityScore(String address){
+1711 |     return SourceQualityScorer.labelScore(address);
+1712 |   }
+1713 |   private static class ProbeResult {
+1714 |     boolean valid;
+1715 |     int score;
+1716 |     int width,height;
+1717 |     long latencyMs;
+1718 |     long bitrate;
+1719 |   }
+1720 |   // Keep the persisted preflight-score index bounded. Discovery feeds can rotate
+1721 |   // thousands of URLs over time; an unbounded JSON object would slow every update
+1722 |   // and gradually consume device storage. The current scan rewrites recent entries.
+1723 |   private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
+1724 |   private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates){
+1725 |     if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
+1726 |     // JSONObject key iteration order is not an LRU contract. Preserve scores for
+1727 |     // currently saved channel URLs first, then this run's recent candidates, before
+1728 |     // filling remaining capacity with older entries.
+1729 |     LinkedHashSet<String> keep=new LinkedHashSet<>();
+1730 |     if(savedPool!=null)for(Entry entry:savedPool){
+1731 |       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+1732 |       if(keep.size()>=MAX_PERSISTED_PROBE_SCORES)break;
+1733 |       String key=scoreKey(entry.url);if(scores.has(key))keep.add(key);
+1734 |     }
+1735 |     if(recentCandidates!=null)for(int i=recentCandidates.size()-1;i>=0&&keep.size()<MAX_PERSISTED_PROBE_SCORES;i--){
+1736 |       String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
+1737 |     }
+1738 |     Iterator<String> keys=scores.keys();
+1739 |     while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES)keep.add(keys.next());
+1740 |     JSONObject retained=new JSONObject();
+1741 |     for(String key:keep)try{retained.put(key,scores.get(key));}catch(JSONException ignored){}
+1742 |     Iterator<String> remove=scores.keys();ArrayList<String> oldKeys=new ArrayList<>();
+1743 |     while(remove.hasNext())oldKeys.add(remove.next());
+1744 |     for(String key:oldKeys)scores.remove(key);
+1745 |     Iterator<String> retainedKeys=retained.keys();
+1746 |     while(retainedKeys.hasNext()){
+1747 |       String key=retainedKeys.next();
+1748 |       try{scores.put(key,retained.get(key));}catch(JSONException ignored){}
+1749 |     }
+1750 |   }
+1751 |   private String scoreKey(String url){return StableKey.url(url);}
+1752 |   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
+1753 |   private double combinedScore(String url,JSONObject probes,JSONObject qoe){
+1754 |     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
+1755 |     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
+1756 |     // URL resolution labels contribute at most 12 points; media preflight and
+1757 |     // observed playback QoE remain dominant, so a fake "1080p" label cannot
+1758 |     // outrank a materially healthier stream by itself.
+1759 |     double score=probeScore+sourceQualityScore(url)*0.01;
+1760 |     // Keep a currently failed preflight below unprobed/valid sources even if its old QoE was excellent.
+1761 |     if(SourceQualityScorer.isFailedProbeScore(probeScore))return score;
+1762 |     JSONObject m=qoe.optJSONObject(key);
+1763 |     if(m==null)m=qoe.optJSONObject(legacyKey);
+1764 |     if(m!=null&&m.optInt("attempts",0)>=2){
+1765 |       int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
+1766 |       int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
+1767 |       // Use exactly the same attempt-normalized QoE policy as live playback ranking.
+1768 |       double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
+1769 |           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
+1770 |           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
+1771 |           codecWarnings);
+1772 |       long now=System.currentTimeMillis();
+1773 |       score+=qoeAdjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
+1774 |       score+=SourceQoeScoringPolicy.recentSuccessBonus(
+1775 |           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
+1776 |     }
+1777 |     return score;
+1778 |   }
+1779 |   // Sniff the response body as well as the URL: some IPTV gateways expose
+1780 |   // HLS manifests through extensionless or tokenized endpoint URLs.
+1781 |   private ProbeResult probe(String address,long deadline){
+1782 |     ProbeResult result=new ProbeResult();
+1783 |     long started=android.os.SystemClock.elapsedRealtime();
+1784 |     try{
+1785 |       if(probeDeadlineReached(deadline))return result;
+1786 |       SampleResponse initialResponse=fetchSampleResponse(address,32768,deadline);
+1787 |       byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
+1788 |       if(initialBytes==null||initialBytes.length<7)return result;
+1789 |       String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
+1790 |       String lower=address.toLowerCase(Locale.ROOT);
+1791 |       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
+1792 |       boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
+1793 |       if(playlistUrl||hlsPlaylist){
+1794 |         if(!hlsPlaylist)return result;
+1795 |         SampleResponse manifestResponse=initialResponse;
+1796 |         String manifest=initialText;
+1797 |         String manifestUrl=manifestResponse.finalUrl;
+1798 |         ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
+1799 |         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
+1800 |         String mediaUrl=manifestUrl;
+1801 |         long bestBandwidth=0L;
+1802 |         int bestWidth=0,bestHeight=0;
+1803 |         boolean selectedAes128=false;
+1804 |         HlsMediaPlaylistPolicy.Resources selectedResources=null;
+1805 |         byte[] selectedAesKey=null;
+1806 |         ArrayList<String> segments=null;
+1807 |         byte[] sample=null;
+1808 |         long segmentStart=0L;
+1809 |         for(HlsVariantPolicy.Variant candidate:variants){
+1810 |           if(probeDeadlineReached(deadline))return result;
+1811 |           String candidateManifestUrl=candidate.url;
+1812 |           String candidateManifest=manifest;
+1813 |           if(!candidate.url.equals(manifestUrl)){
+1814 |             SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,deadline);
+1815 |             byte[] variant=variantResponse==null?null:variantResponse.bytes;
+1816 |             if(variant==null||variant.length==0)continue;
+1817 |             candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
+1818 |             if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
+1819 |             candidateManifestUrl=variantResponse.finalUrl;
+1820 |           }
+1821 |           HlsMediaPlaylistPolicy.Resources resources=
+1822 |               HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
+1823 |           ArrayList<String> candidateSegments=resources.mediaUrls;
+1824 |           if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedInitializationMap||resources.unsupportedEncryption)continue;
+1825 |           // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
+1826 |           byte[] aesKey=null;
+1827 |           if(resources.aes128Encrypted){
+1828 |             aesKey=fetchSample(resources.encryptionKeyUrl,32,deadline);
+1829 |             if(aesKey==null||aesKey.length!=16)continue;
+1830 |           }
+1831 |           // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
+1832 |           // AES-128 maps require their explicit IV and must validate after decryption.
+1833 |           if(resources.initializationUrl!=null){
+1834 |             SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,deadline);
+1835 |             byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
+1836 |             if(initialization==null)continue;
+1837 |             if(resources.aes128Encrypted){
+1838 |               byte[] mapIv=HlsAes128Preflight.parseExplicitIv(resources.encryptionIv);
+1839 |               if(mapIv==null||!HlsAes128Preflight.validatesInitializationSegment(
+1840 |                   initialization,aesKey,mapIv,HlsProbeValidationPolicy.isCompleteSample(initializationResponse.truncated)))continue;
+1841 |             }else if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
+1842 |           }
+1843 |           String candidateSegmentUrl=candidateSegments.get(0);
+1844 |           long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
+1845 |           SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,deadline);
+1846 |           byte[] candidateSample=candidateSampleResponse==null?null:candidateSampleResponse.bytes;
+1847 |           if(candidateSample==null)continue;
+1848 |           if(resources.aes128Encrypted){
+1849 |             byte[] segmentIv=resources.encryptionIv!=null
+1850 |                 ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
+1851 |                 :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber);
+1852 |             if(!HlsAes128Preflight.validatesMediaSegment(
+1853 |                 candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
+1854 |           }else if(!looksLikeHlsSegment(candidateSample))continue;
+1855 |           mediaUrl=candidateManifestUrl;
+1856 |           bestBandwidth=candidate.bandwidth;
+1857 |           bestWidth=candidate.width;
+1858 |           bestHeight=candidate.height;
+1859 |           segments=candidateSegments;
+1860 |           selectedAes128=resources.aes128Encrypted;
+1861 |           selectedResources=resources;
+1862 |           selectedAesKey=aesKey;
+1863 |           sample=candidateSample;
+1864 |           segmentStart=candidateSegmentStart;
+1865 |           break;
+1866 |         }
+1867 |         if(segments==null||sample==null)return result;
+1868 |         long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
+1869 |         boolean secondSegmentOk=true;
+1870 |         if(segments.size()>1){
+1871 |           String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
+1872 |           SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,deadline);
+1873 |           byte[] second=secondResponse==null?null:secondResponse.bytes;
+1874 |           if(selectedAes128&&second!=null){
+1875 |             byte[] secondIv=selectedResources.encryptionIv!=null
+1876 |                 ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
+1877 |                 :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
+1878 |             secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
+1879 |                 second,selectedAesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
+1880 |           }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
+1881 |         }
+1882 |         // A playlist exposing a second segment must prove that it is retrievable
+1883 |         // and structurally valid too. A valid first segment alone can be a stale
+1884 |         // edge/cache fragment and must not promote a dead live endpoint.
+1885 |         if(segments.size()>1&&!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))
+1886 |           return result;
+1887 |         result.valid=true;result.width=bestWidth;result.height=bestHeight;
+1888 |         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
+1889 |         int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
+1890 |         int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
+1891 |         int speed=(int)Math.min(300L,(sample.length*1000L/segmentMs)/2048L);
+1892 |         int latencyPenalty=(int)Math.min(250L,result.latencyMs/20L);
+1893 |         result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
+1894 |         return result;
+1895 |       }
+1896 |       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
+1897 |       URL url=new URL(address);
+1898 |       String ext=url.getPath().toLowerCase(Locale.ROOT);
+1899 |       if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes,ext))return result;
+1900 |       result.valid=true;
+1901 |       result.score=350+(int)Math.min(300L,(initialBytes.length*1000L/result.latencyMs)/2048L);
+1902 |       return result;
+1903 |     }catch(Exception e){return result;}
+1904 |   }
+1905 |   // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
+1906 |   // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
+1907 |   private boolean looksLikeHlsSegment(byte[] b){
+1908 |     return MediaPayloadValidator.looksLikeHlsSegment(b);
+1909 |   }
+1910 |   private boolean hasIsoBmffBox(byte[] b){
+1911 |     return MediaPayloadValidator.hasIsoBmffBox(b);
+1912 |   }
+1913 |   private boolean looksLikeMediaPayload(byte[] b){
+1914 |     return MediaPayloadValidator.looksLikeMediaPayload(b);
+1915 |   }
+1916 |   private static class SampleResponse{
+1917 |     final byte[] bytes;
+1918 |     final String finalUrl;
+1919 |     // True only when the bounded read observed at least one byte beyond its cap.
+1920 |     // Reaching the cap alone does not prove that the HTTP resource ended there.
+1921 |     final boolean truncated;
+1922 |     SampleResponse(byte[] data,String url,boolean wasTruncated){bytes=data;finalUrl=url;truncated=wasTruncated;}
+1923 |   }
+1924 |   private boolean probeDeadlineReached(long deadline){
+1925 |     return pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()
+1926 |         ||android.os.SystemClock.elapsedRealtime()>=deadline;
+1927 |   }
+1928 |   private byte[] fetchSample(String address,int maxBytes,long deadline)throws Exception{
+1929 |     SampleResponse response=fetchSampleResponse(address,maxBytes,deadline);
+1930 |     return response==null?null:response.bytes;
+1931 |   }
+1932 |   private SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline)throws Exception{
+1933 |     HttpURLConnection c=null;
+1934 |     try{
+1935 |       if(probeDeadlineReached(deadline))return null;
+1936 |       c=(HttpURLConnection)new URL(address).openConnection();
+1937 |       // URLConnection options must be configured before the first operation that connects it.
+1938 |       // Reserve half the remaining budget for connection setup and the rest for response reads.
+1939 |       long now=android.os.SystemClock.elapsedRealtime();
+1940 |       long remaining=deadline-now;
+1941 |       if(remaining<2L)return null;
+1942 |       int connectTimeout=(int)Math.min(2500L,Math.max(1L,remaining/2L));
+1943 |       int readTimeout=SourceProbeTimePolicy.boundedTimeoutMillis(
+1944 |           deadline,now+connectTimeout,3000);
+1945 |       if(readTimeout<=0)return null;
+1946 |       c.setConnectTimeout(connectTimeout);
+1947 |       c.setReadTimeout(readTimeout);
+1948 |       c.setInstanceFollowRedirects(true);
+1949 |       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
+1950 |       // Read one sentinel byte beyond the retained sample to distinguish an
+1951 |       // exact-length resource from a longer segment truncated at the sample cap.
+1952 |       c.setRequestProperty("Range","bytes=0-"+maxBytes);
+1953 |       int code=c.getResponseCode();if(probeDeadlineReached(deadline)||code<200||code>=400)return null;
+1954 |       boolean rangeIncomplete=code==HttpURLConnection.HTTP_PARTIAL
+1955 |           &&HlsProbeValidationPolicy.isIncompleteContentRange(c.getHeaderField("Content-Range"),maxBytes);
+1956 |       String type=c.getContentType();
+1957 |       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
+1958 |       String finalUrl=c.getURL().toString();
+1959 |       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+1960 |         byte[] buffer=new byte[4096];int n,total=0;
+1961 |         while(total<=maxBytes){
+1962 |           if(probeDeadlineReached(deadline))return null;
+1963 |           n=in.read(buffer);
+1964 |           if(n==-1)break;
+1965 |           int take=Math.min(n,maxBytes+1-total);out.write(buffer,0,take);total+=take;
+1966 |           if(total>maxBytes)break;
+1967 |         }
+1968 |         if(probeDeadlineReached(deadline))return null;
+1969 |         byte[] received=out.toByteArray();
+1970 |         boolean truncated=rangeIncomplete
+1971 |             ||HlsProbeValidationPolicy.isTruncatedSample(received.length,maxBytes);
+1972 |         byte[] bounded=truncated?Arrays.copyOf(received,maxBytes):received;
+1973 |         return new SampleResponse(bounded,finalUrl,truncated);
+1974 |       }
+1975 |     }finally{if(c!=null)c.disconnect();}
+1976 |   }
+1977 |   private String read(InputStream in,int max)throws Exception{
+1978 |     ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
+1979 |     while((n=in.read(b))!=-1){total+=n;if(total>max)throw new IOException("频道目录过大");out.write(b,0,n);}return out.toString("UTF-8");
+1980 |   }
+1981 |   private String canonicalName(String name){
+1982 |     String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
+1983 |     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)-?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(v);
+1984 |     if(m.find())return "CCTV-"+m.group(1);
+1985 |     String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
+1986 |     for(int i=1;i<cn.length;i++)if(v.matches(".*中央(?:电视台)?"+cn[i]+"套.*"))return "CCTV-"+i;
+1987 |     if(v.contains("中央电视台综合频道"))return "CCTV-1";
+1988 |     if(v.contains("中央电视台财经频道"))return "CCTV-2";
+1989 |     if(v.contains("中央电视台综艺频道"))return "CCTV-3";
+1990 |     if(v.contains("中央电视台中文国际频道"))return "CCTV-4";
+1991 |     if(v.contains("中央电视台体育频道"))return "CCTV-5";
+1992 |     if(v.contains("中央电视台电影频道"))return "CCTV-6";
+1993 |     v=v.replace("超高清","").replace("高清","").replace("超清","").replace("1080P","").replace("720P","").replace("HD","").replace("FHD","").replace("直播","");
+1994 |     if(v.endsWith("湖南台"))return "湖南卫视";
+1995 |     if(v.endsWith("浙江台"))return "浙江卫视";
+1996 |     if(v.endsWith("江苏台"))return "江苏卫视";
+1997 |     if(v.endsWith("东方台"))return "东方卫视";
+1998 |     if(v.endsWith("北京台"))return "北京卫视";
+1999 |     if(v.endsWith("广东台"))return "广东卫视";
+2000 |     return v;
+2001 |   }
+2002 |   private String identity(String name,String group,String url,String tvgId,String tvgName){
+2003 |     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
+2004 |     String v=broadcaster.isEmpty()?canonicalName(name):broadcaster;
+2005 |     String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
+2006 |     String fallback=base;
+2007 |     try{
+2008 |       java.net.URI u=java.net.URI.create(url==null?"":url);
+2009 |       String host=u.getHost();
+2010 |       if(host!=null&&!host.isEmpty())fallback=base+"|host:"+host.toLowerCase(Locale.ROOT);
+2011 |     }catch(Exception ignored){fallback=base+"|url:"+(url==null?"":url.trim());}
+2012 |     String localIdentity=ChannelIdentityPolicy.localStationIdentity(name,tvgName);
+2013 |     return ChannelIdentityPolicy.identity(v,tvgId,fallback,localIdentity);
+2014 |   }
+2015 |   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
+2016 |   private String roomString(String key,String fallback){
+2017 |     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
+2018 |   }
+2019 |   private int roomInt(String key,int fallback){
+2020 |     try{return Integer.parseInt(roomString(key,Integer.toString(fallback)));}
+2021 |     catch(Exception ignored){return fallback;}
+2022 |   }
+2023 |   private boolean roomBoolean(String key,boolean fallback){
+2024 |     String value=roomString(key,Boolean.toString(fallback));
+2025 |     return Boolean.parseBoolean(value);
+2026 |   }
+2027 |   private void saveStatus(SharedPreferences p,String result,int added){
+2028 |     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_time",now());
+2029 |     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_result",result);
+2030 |   }
+2031 | }
+2032 | 
