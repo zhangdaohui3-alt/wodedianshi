@@ -13,9 +13,10 @@ jobs:
       - name: Export reviewed source as text
         run: |
           cp review/PR196-Gemini-01-Initial-Discovery.md PR196-Gemini-01-Initial-Discovery.txt
-          wc -lc PR196-Gemini-01-Initial-Discovery.txt
+          cp review/PR196-Gemini-02-Large-Directories.txt PR196-Gemini-02-Large-Directories.txt
+          wc -lc PR196-Gemini-01-Initial-Discovery.txt PR196-Gemini-02-Large-Directories.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Gemini-PR196-Group1
-          path: PR196-Gemini-01-Initial-Discovery.txt
+          name: Gemini-PR196-Group2
+          path: PR196-Gemini-02-Large-Directories.txt
           retention-days: 7
