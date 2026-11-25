@@ -65,6 +65,12 @@ public final class SourceUpdateSchedulePolicy {
                 : parsed < pageSize;
     }
 
+    /** A user-requested manual refresh checks saved routes while browsing too.
+     * Playback admission is enforced separately, before pool construction. */
+    static boolean shouldBuildSavedProbePool(boolean initial,boolean manual,boolean foreground) {
+        return !initial&&(manual||!foreground);
+    }
+
     /** Only a completed first rebuild enables low-priority routine maintenance. */
     public static boolean shouldScheduleRoutineMaintenance(boolean automaticEnabled,
             long fullRebuildCompletedAtMillis) {
