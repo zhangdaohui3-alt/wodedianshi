@@ -21,6 +21,16 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
     }
 
+    @Test public void vlcDiscoveryRequiresTwoHealthyChecksAndQuietViewer() {
+        assertTrue(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(false,true,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,false,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,true,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,false,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,1,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,2,3000L,22000L));
+    }
+
     @Test public void stableDiscoveryUsesContinuousReadyTimeNotRetryRefreshTime() {
         long readyAt=1000L, refreshedAt=121000L, now=122000L;
         assertTrue(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-100L,now-100L,now));
