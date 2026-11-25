@@ -51,21 +51,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean libVlcReleaseInProgress=false;
   private int pendingVlcTeardowns=0;
   private static final java.util.concurrent.atomic.AtomicInteger PROCESS_VLC_TEARDOWNS=new java.util.concurrent.atomic.AtomicInteger();
-  private static volatile boolean media3ReleaseUnconfirmed;
+  // Process-wide terminal quarantine, distinct from in-flight teardown count.
+  private static volatile boolean decoderReleaseUnconfirmed;
   private static final DecoderOwnership DECODER_OWNERSHIP=new DecoderOwnership();
   private final Object decoderOwnerToken=new Object();
 
   private boolean acquireDecoderOwnership(){
-    return !media3ReleaseUnconfirmed&&PROCESS_VLC_TEARDOWNS.get()==0
+    return !decoderReleaseUnconfirmed&&PROCESS_VLC_TEARDOWNS.get()==0
         &&DECODER_OWNERSHIP.acquire(decoderOwnerToken);
   }
   private void releaseDecoderOwnershipIfIdle(){
     if(player==null&&vodPlayer==null&&libVlcEngine==null&&vodFallbackBackend==null
-        &&pendingVlcTeardowns==0&&!media3ReleaseUnconfirmed)
+        &&pendingVlcTeardowns==0&&!decoderReleaseUnconfirmed)
       DECODER_OWNERSHIP.release(decoderOwnerToken);
   }
   private void quarantineMedia3Release(String detail){
-    media3ReleaseUnconfirmed=true;
+    decoderReleaseUnconfirmed=true;
     DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
     saveLiveDiagnostic("MEDIA3_RELEASE_UNCONFIRMED",detail);
   }
@@ -2585,7 +2586,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
     saveLiveDiagnostic("VOD_ENGINE_FALLBACK","Media3 -> LibVLC; resumeMs="+Math.max(0L,resumePosition));
     releaseVodPlayerSafely(media3View);
-    if(media3ReleaseUnconfirmed||PROCESS_VLC_TEARDOWNS.get()>0){
+    if(decoderReleaseUnconfirmed||PROCESS_VLC_TEARDOWNS.get()>0){
       if(onFailure!=null)onFailure.run();
       toast("旧播放器资源尚未确认释放，暂不能启动备用播放器");return;
     }
@@ -3338,7 +3339,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ||!activityStarted||isFinishing()||isDestroyed())return;
     revokePendingVodStart();
     final long request=vodStartRequestGeneration;
-    if(media3ReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
+    if(decoderReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
     if(player!=null||libVlcEngine!=null){toast("直播播放器正在释放，请稍后再选择影片");return;}
     if(vodPlayerDialog!=null){
       // Dialog dismissal posts its listener; do not build a new player before
@@ -3370,7 +3371,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Both live engines were already revoked above. Do not issue redundant
     // native pause commands from the UI during the ownership handoff.
     releaseVodFallback();
-    if(libVlcReleaseInProgress||media3ReleaseUnconfirmed||PROCESS_VLC_TEARDOWNS.get()>0)return;
+    if(libVlcReleaseInProgress||decoderReleaseUnconfirmed||PROCESS_VLC_TEARDOWNS.get()>0)return;
     vodSessionGeneration++;vodFallbackAttempted=false;
     activeVodItem=item;saveVodHistory(item,startPosition,0);
     Dialog d=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);vodPlayerDialog=d;
@@ -5842,7 +5843,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
           &&currentVodPanel==null&&!isAnyPlaybackLockActive()
-          &&!libVlcReleaseInProgress&&!media3ReleaseUnconfirmed){
+          &&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
         SourceUpdateActivityPolicy.reportStableLive(now);
       }else SourceUpdateActivityPolicy.revokeStableLive();
       if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
@@ -6101,7 +6102,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void startCurrentSource(){
     pauseStableDiscovery();
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
-    if(media3ReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
+    if(decoderReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
     if(vodPlayer!=null||vodFallbackBackend!=null)return;
     if(!DECODER_OWNERSHIP.availableTo(decoderOwnerToken)
         ||(!libVlcReleaseInProgress&&PROCESS_VLC_TEARDOWNS.get()>0)){
@@ -6456,7 +6457,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String url=currentSourceUrl();
     cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
     releaseLivePlayerSafely();
-    if(media3ReleaseUnconfirmed||libVlcReleaseInProgress||PROCESS_VLC_TEARDOWNS.get()>0){
+    if(decoderReleaseUnconfirmed||libVlcReleaseInProgress||PROCESS_VLC_TEARDOWNS.get()>0){
       if(info!=null)info.setText("旧播放器资源未确认释放，已停止自动回退");
       return true;
     }
@@ -6717,12 +6718,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseLibVlcEngine(){
     releaseLibVlcEngine(null);
   }
-  private void finishLibVlcRelease(){
+  private void finishLibVlcRelease(boolean released){
     if(pendingVlcTeardowns>0)--pendingVlcTeardowns;
+    // A terminal failure is not an in-flight operation. Discard pending starts,
+    // never execute them, and leave process-wide decoder quarantine closed.
+    if(decoderReleaseUnconfirmed){
+      ++liveTuneRequestSerial;
+      liveVlcReleaseContinuation=null;
+      revokePendingVodStart();
+      libVlcReleaseCallbacks.clear();
+      if(!released&&activityStarted&&!isFinishing()&&!isDestroyed()){
+        String message="播放器资源未确认释放，请强制停止应用后重开";
+        if(info!=null)info.setText(message);
+        toast(message);
+      }
+    }
     if(pendingVlcTeardowns!=0)return;
     libVlcReleaseInProgress=false;
     releaseDecoderOwnershipIfIdle();
     if(libVlcReleaseNotice!=null){uiHandler.removeCallbacks(libVlcReleaseNotice);libVlcReleaseNotice=null;}
+    if(decoderReleaseUnconfirmed)return;
     if(player==null&&libVlcEngine==null&&currentVodPanel==null)setSourceUpdatePlaybackActive(false);
     if(libVlcReleaseCallbacks.isEmpty())return;
     ArrayList<Runnable> callbacks=new ArrayList<>(libVlcReleaseCallbacks);
@@ -6738,7 +6753,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcStableChecks=0;libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
-    if(afterRelease!=null){
+    if(afterRelease!=null&&!decoderReleaseUnconfirmed){
       if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
       else if(old==null){afterRelease.run();return;}
       else libVlcReleaseCallbacks.add(afterRelease);
@@ -6746,7 +6761,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(old==null){releaseDecoderOwnershipIfIdle();return;}
     queueVlcTeardown(old::release);
   }
-  /** Shared release barrier for live and VOD VLC. A failed teardown never opens it. */
+  /** In-flight accounting is separate from terminal decoder quarantine. */
   private void queueVlcTeardown(java.util.function.BooleanSupplier release){
     ++pendingVlcTeardowns;
     PROCESS_VLC_TEARDOWNS.incrementAndGet();
@@ -6769,21 +6784,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         saveLiveDiagnostic("VLC_ASYNC_RELEASE_ERROR",failure.getClass().getSimpleName());
       }
       if(!released){
-        // Fail closed: Media3 must not acquire the shared output when native VLC
-        // teardown failed or could not be confirmed. Keep the barrier and queued
-        // callbacks intact; restarting the Activity is safer than dual decoders.
+        // Publish terminal quarantine before removing the in-flight count.
+        // Native state is unknown: no new decoder even after Activity recreation.
+        decoderReleaseUnconfirmed=true;
         DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
         saveLiveDiagnostic("VLC_RELEASE_BARRIER_RETAINED","native teardown not confirmed");
-        return;
       }
+      final boolean confirmed=released;
       PROCESS_VLC_TEARDOWNS.decrementAndGet();
-      uiHandler.post(this::finishLibVlcRelease);
+      uiHandler.post(()->finishLibVlcRelease(confirmed));
     };
     try{libVlcWorker.execute(teardown);}
     catch(RuntimeException rejected){
       saveLiveDiagnostic("VLC_RELEASE_QUEUE_ERROR",rejected.getClass().getSimpleName());
       // Never bypass the serial native queue: an earlier JNI operation may
-      // still be running. Keep the process barrier closed on rejection.
+      // still be running. Mark the rejected operation terminal, not pending.
+      decoderReleaseUnconfirmed=true;
+      DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
+      PROCESS_VLC_TEARDOWNS.decrementAndGet();
+      finishLibVlcRelease(false);
     }
   }
   private String currentSourceUrl(){
@@ -7631,7 +7650,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!focused)pauseStableDiscovery();
   }
   private void setSourceUpdatePlaybackActive(boolean active){
-    SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||media3ReleaseUnconfirmed);
+    SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
   }
   protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
