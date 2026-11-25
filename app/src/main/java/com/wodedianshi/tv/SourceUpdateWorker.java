@@ -18,6 +18,9 @@ public class SourceUpdateWorker extends Worker {
       new java.util.concurrent.atomic.AtomicBoolean();
   // Transient, same-process status only; durable progress stays in Room.
   private static volatile String initialLiveStage="";
+  // A cancelled HTTP call may not honor interruption immediately. No later
+  // source owner starts while the previous scoped probe executor is draining.
+  private static volatile java.util.concurrent.ExecutorService retiringProbeExecutor;
   public static String currentInitialLiveStage(){return initialLiveStage;}
   private void noteInitialStage(String stage){
     if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
@@ -61,6 +64,11 @@ public class SourceUpdateWorker extends Worker {
     int originalPriority=android.os.Process.THREAD_PRIORITY_DEFAULT;
     boolean priorityChanged=false;
     try{
+      java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
+      if(retiring!=null){
+        if(!retiring.isTerminated())return Result.retry();
+        retiringProbeExecutor=null;
+      }
       try{
         originalPriority=android.os.Process.getThreadPriority(android.os.Process.myTid());
         if(originalPriority<android.os.Process.THREAD_PRIORITY_BACKGROUND){
@@ -137,6 +145,7 @@ public class SourceUpdateWorker extends Worker {
     // Centralized, testable feed order: China local-first, then global.
     // A feed-list fingerprint change intentionally restarts first-build cursors.
     String[] feeds=SourceDiscoveryFeedCatalog.feeds();
+    final IdleProbeWave idleWave=new IdleProbeWave();
     try{
       if(manualRefresh){
         if(manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
@@ -719,7 +728,9 @@ public class SourceUpdateWorker extends Worker {
           boolean reuse=cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(
               cached.result.valid,cached.at,clock);
           long addressDeadline=probeDeadline;
-          if(initialDiscoveryChain&&!reuse){
+          long measuredAt=clock;
+          boolean prefetched=idleWave.has(endpoint);
+          if(initialDiscoveryChain&&!reuse&&!prefetched){
             addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(probeDeadline,clock);
             if(addressDeadline==0L){
               // Do not start a new probe with a shortened budget at the tail.
@@ -733,7 +744,14 @@ public class SourceUpdateWorker extends Worker {
           }else{
             checked++;
             noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
-            measured=probe(e.url,addressDeadline);
+            if(initialDiscoveryChain&&!slowPlayback&&(prefetched||idleWave.start(
+                probeCandidates,offset,measuredByEndpoint,visitedUrls,addressDeadline))){
+              TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
+              measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
+            }else{
+              measured=probe(e.url,addressDeadline);
+              measuredAt=android.os.SystemClock.elapsedRealtime();
+            }
           }
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
@@ -745,7 +763,7 @@ public class SourceUpdateWorker extends Worker {
             break;
           }
           if(initialDiscoveryChain&&!reuse
-              &&android.os.SystemClock.elapsedRealtime()>=addressDeadline){
+              &&measuredAt>=addressDeadline){
             // The address received its bounded first-pass opportunity. Do not
             // promote, penalize or cache an inconclusive result. The later
             // manual/routine scan can retry with the normal probe budget.
@@ -754,7 +772,7 @@ public class SourceUpdateWorker extends Worker {
             continue;
           }
           if(initialDiscoveryChain&&!reuse){
-            INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,android.os.SystemClock.elapsedRealtime()));
+            INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,measuredAt));
             while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
               INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
           }
@@ -860,8 +878,11 @@ public class SourceUpdateWorker extends Worker {
       // health checks while public catalogue services are down; retry discovery
       // separately after persisting these local probe results.
       boolean discoveryUnavailable=feedsOk==0;
+      // Never leave speculative network work alive while committing a prefix.
+      // A missing result at the stage deadline leaves that slice for retry.
+      idleWave.finishBeforeCommit();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1306,6 +1327,7 @@ public class SourceUpdateWorker extends Worker {
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+    finally{idleWave.close();}
   }
   private static void discardStagingReuse(){
     committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
@@ -1709,6 +1731,87 @@ public class SourceUpdateWorker extends Worker {
   }
   private int sourceQualityScore(String address){
     return SourceQualityScorer.labelScore(address);
+  }
+  // Only the source owner reads/writes this map and all persisted/cache state.
+  // Network tasks return a result, never merge a channel or advance a cursor.
+  private static final class TimedProbe {
+    final ProbeResult result; final long deadline,finishedAt;
+    TimedProbe(ProbeResult r,long deadline,long finishedAt){
+      this.result=r;this.deadline=deadline;this.finishedAt=finishedAt;
+    }
+  }
+  private final class IdleProbeWave {
+    private java.util.concurrent.ExecutorService executor;
+    private final Map<String,java.util.concurrent.Future<TimedProbe>> pending=new HashMap<>();
+    int launched;
+    boolean has(String endpoint){return pending.containsKey(endpoint);}
+    private String host(String url){
+      try{return new URL(url).getHost().toLowerCase(Locale.ROOT);}
+      catch(Exception invalid){return "";}
+    }
+    boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
+        Set<String> visited,long deadline){
+      if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
+      if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
+      ArrayList<Entry> wave=new ArrayList<>();
+      HashSet<String> endpoints=new HashSet<>();
+      HashMap<String,Integer> hosts=new HashMap<>();
+      long now=android.os.SystemClock.elapsedRealtime();
+      for(int i=offset;i<entries.size()&&wave.size()<4;i++){
+        Entry entry=entries.get(i);
+        if(entry.savedSource||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
+        String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=host(entry.url);
+        if(host.isEmpty()||endpoints.contains(endpoint)||hosts.getOrDefault(host,0)>=2)break;
+        if(i!=offset){
+          RecentProbe cached=INITIAL_PROBES.get(StableKey.url(entry.url));
+          if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
+              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
+        }
+        endpoints.add(endpoint);hosts.put(host,hosts.getOrDefault(host,0)+1);wave.add(entry);
+      }
+      if(wave.size()<2)return false;
+      if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(4,r->{
+        return new Thread(()->{
+          try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
+          catch(RuntimeException ignored){}
+          r.run();
+        },"mytv-idle-probe");
+      });
+      for(Entry entry:wave){
+        if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
+        final String url=entry.url;
+        final String endpoint=SourceSelectionPolicy.endpointKey(url);
+        pending.put(endpoint,executor.submit(()->{
+          ProbeResult result=probe(url,deadline);
+          return new TimedProbe(result,deadline,android.os.SystemClock.elapsedRealtime());
+        }));
+        launched++;
+      }
+      return true;
+    }
+    TimedProbe take(String endpoint,long batchDeadline)throws Exception{
+      java.util.concurrent.Future<TimedProbe> future=pending.get(endpoint);
+      if(future==null)throw new IllegalStateException("Missing ordered probe result");
+      for(;;){
+        if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
+        long remaining=batchDeadline-android.os.SystemClock.elapsedRealtime();
+        if(remaining<=0)throw new java.util.concurrent.TimeoutException("Probe wave exceeded slice budget");
+        try{
+          TimedProbe outcome=future.get(Math.min(100L,remaining),java.util.concurrent.TimeUnit.MILLISECONDS);
+          pending.remove(endpoint);return outcome;
+        }catch(java.util.concurrent.TimeoutException waiting){/* poll viewing gate */}
+        catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new SourceProbeTimePolicy.PublicationPausedException();}
+      }
+    }
+    void finishBeforeCommit()throws java.util.concurrent.TimeoutException{
+      if(!pending.isEmpty())throw new java.util.concurrent.TimeoutException("Unconsumed probe wave at slice deadline");
+    }
+    void close(){
+      if(executor==null)return;
+      retiringProbeExecutor=executor;
+      if(pending.isEmpty())executor.shutdown();else executor.shutdownNow();
+      pending.clear();
+    }
   }
   private static class ProbeResult {
     boolean valid;
