@@ -36,6 +36,16 @@ public final class SourceRankingRetentionPolicy {
         return new ArrayList<>(retained);
     }
 
+    /** A list merge can shift or deduplicate the selected URL; never reuse its old index. */
+    static int restoreSelectedIndex(List<String> urls,String selected){
+        if(urls==null||selected==null||selected.isEmpty())return 0;
+        int exact=urls.indexOf(selected);
+        if(exact>=0)return exact;
+        String endpoint=SourceSelectionPolicy.endpointKey(selected);
+        for(int i=0;i<urls.size();i++)if(endpoint.equals(SourceSelectionPolicy.endpointKey(urls.get(i))))return i;
+        return 0;
+    }
+
     private static void addIfValid(LinkedHashSet<String> values, String url, int limit) {
         if (url == null || values.size() >= limit) return;
         String value = url.trim();
