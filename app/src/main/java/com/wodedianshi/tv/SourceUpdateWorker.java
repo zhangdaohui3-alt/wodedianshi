@@ -948,6 +948,7 @@ public class SourceUpdateWorker extends Worker {
             JSONArray updatedSources=new JSONArray();
             for(String retainedUrl:retainedUrls)updatedSources.put(retainedUrl);
             target.put("sources",updatedSources);
+            target.put("activeSource",SourceRankingRetentionPolicy.restoreSelectedIndex(retainedUrls,activeUrl));
             added++;
           }
           String retainedEndpointUrl="";
@@ -980,44 +981,12 @@ public class SourceUpdateWorker extends Worker {
       // A final idle pass re-ranks the complete snapshot before publication.
       boolean finalRanking=initialDiscoveryChain&&initialDiscoveryScanned+discoveryScanned>=candidates.size()
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
-      Iterable<Integer> rankingRows=initialDiscoveryChain&&!finalRanking?touchedStagedRows:
-          ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<saved.length();}public Integer next(){return index++;}};
-      for(int i:rankingRows){
-        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
-        String beforeRanking=manualRefresh?channel.toString():null;
-        JSONArray sourceArray=channel.optJSONArray("sources");
-        if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
-        // Preserve the user's last selected source across background re-ranking.
-        // Ranking may change the preferred primary URL, but must not silently
-        // replace the source that the user explicitly selected for this channel.
-        int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
-        String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
-        ArrayList<String> ordered=new ArrayList<>();
-        HashSet<String> orderedEndpoints=new HashSet<>();
-        for(int j=0;j<sourceArray.length();j++){
-          String u=sourceArray.optString(j,"");
-          if((u.startsWith("http://")||u.startsWith("https://"))
-              &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
-        }
-        String stablePrimaryUrl=channel.optString("url","");
-        // Preserve both the stable channel identity and the user's last selected
-        // source even when the ranked list is trimmed to the eight-source cap.
-        java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
-        ordered.sort(bestFirst);
-        ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
-            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
-        ordered.sort(bestFirst);
-        JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
-        for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
-        if(ranked.length()>0){
-          // Keep url as the stable channel identity. The ranked source list and
-          // activeSource carry playback preference independently.
-          channel.put("sources",ranked);channel.put("activeSource",restoredActiveIndex);
-          retainBackupSourceScopes(channel,ranked);
-        }
-        if(manualRefresh&&!beforeRanking.equals(channel.toString()))touchedStagedRows.add(i);
-      }
+      // The manual directory is private until its ready marker is committed.
+      // During collection rank only changed rows; health-only probes need no
+      // full directory sort. A final pass uses the latest saved scoring state.
+      Iterable<Integer> rankingRows=(manualRefresh||initialDiscoveryChain&&!finalRanking)?touchedStagedRows:
+          allRowIndices(saved);
+      rankCatalogueRows(saved,rankingRows,measuredScores,observedQoe);
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
@@ -1450,6 +1419,11 @@ public class SourceUpdateWorker extends Worker {
   }
   private Result publishReadyManual(String manualId,JSONArray rows)throws Exception{
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    // Ranking is reproducible from the durable ready snapshot; a retry does
+    // not repeat network work. Do this before rebase so user-edited rows win.
+    rankCatalogueRows(rows,allRowIndices(rows),
+        new JSONObject(roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}")),
+        new JSONObject(roomString("source_qoe_v1","{}")));
     String reconciledStructure=null;
     long reconciledVersion=-1L;
     if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId)){
@@ -1485,6 +1459,46 @@ public class SourceUpdateWorker extends Worker {
             getApplicationContext(),rows,reconciledVersion,manualId,reconciledStructure,pauseRequested,finish);
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     return Result.success();
+  }
+  private Iterable<Integer> allRowIndices(JSONArray rows){
+    return ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<rows.length();}public Integer next(){return index++;}};
+  }
+  private void rankCatalogueRows(JSONArray saved,Iterable<Integer> rankingRows,JSONObject measuredScores,
+      JSONObject observedQoe)throws JSONException {
+      for(int i:rankingRows){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        JSONArray sourceArray=channel.optJSONArray("sources");
+        if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
+        // Preserve the user's last selected source across background re-ranking.
+        // Ranking may change the preferred primary URL, but must not silently
+        // replace the source that the user explicitly selected for this channel.
+        int previousActiveIndex=Math.max(0,channel.optInt("activeSource",0));
+        String previousActiveUrl=previousActiveIndex<sourceArray.length()?sourceArray.optString(previousActiveIndex,""):channel.optString("url","");
+        ArrayList<String> ordered=new ArrayList<>();
+        HashSet<String> orderedEndpoints=new HashSet<>();
+        for(int j=0;j<sourceArray.length();j++){
+          String u=sourceArray.optString(j,"");
+          if((u.startsWith("http://")||u.startsWith("https://"))
+              &&orderedEndpoints.add(SourceSelectionPolicy.endpointKey(u)))ordered.add(u);
+        }
+        String stablePrimaryUrl=channel.optString("url","");
+        // Preserve both the stable channel identity and the user's last selected
+        // source even when the ranked list is trimmed to the eight-source cap.
+        java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
+        ordered.sort(bestFirst);
+        ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
+            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
+        ordered.sort(bestFirst);
+        JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
+        for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
+        if(ranked.length()>0){
+          // Keep url as the stable channel identity. The ranked source list and
+          // activeSource carry playback preference independently.
+          channel.put("sources",ranked);channel.put("activeSource",restoredActiveIndex);
+          retainBackupSourceScopes(channel,ranked);
+        }
+      }
   }
   private String manualRowIdentity(JSONObject row){
     return com.wodedianshi.tv.db.LegacyChannelIdPolicy.stableIdentityKey(row.optString("name"),row.optString("url"),
