@@ -185,6 +185,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
   private int displayedInitialPreviewLevel;
+  private String initialDiscoveryTerminalStatus="";
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
   private final ArrayList<Channel> channels = new ArrayList<>();
@@ -1496,13 +1497,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
-            if(startupDataReady&&previewLevel!=displayedInitialPreviewLevel){
+            if(completed<=0L&&startupDataReady&&previewLevel!=displayedInitialPreviewLevel){
               displayedInitialPreviewLevel=previewLevel;
               if(previewLevel>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
             }
-            if(completed>0L){
+            if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
+              boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
               roomFullRebuildCompletedAt=completed;
-              reloadChannelsAfterBackgroundUpdateIfNeeded();
+              if(newlyPublished){
+                reloadChannelsAfterBackgroundUpdateIfNeeded();
+                scheduleAutomaticSourceUpdates();
+              }
               initialDiscoveryProgressBar.setProgress(100);
               initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
               initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
@@ -1525,12 +1530,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             boolean indexing=!indexBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
             initialDiscoveryProgressTitle.setText(indexing
-                ?"首批中国目录准备 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
+                ?"首批中国目录尝试 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
                 :"首次完整抓源 · "+Math.max(0,Math.min(99,percent))+"%");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             initialDiscoveryProgressDetail.setText(
-                (indexing?"首批目录准备 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
+                (indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                     :"正在准备来源列表"))
@@ -1538,7 +1543,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
-                +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage));
+                +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage)
+                +(initialDiscoveryTerminalStatus.isEmpty()?"":"\n"+initialDiscoveryTerminalStatus));
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
@@ -1567,27 +1573,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
         .observe(this,workInfos->{
           if(workInfos==null)return;
-          requestInitialDiscoveryProgress();
-          boolean allSucceeded=!workInfos.isEmpty();
+          boolean unfinished=false,failed=false,cancelled=false;
           for(androidx.work.WorkInfo workInfo:workInfos){
-            if(workInfo.getState()!=androidx.work.WorkInfo.State.SUCCEEDED){
-              allSucceeded=false;
-              break;
-            }
+            androidx.work.WorkInfo.State state=workInfo.getState();
+            if(!state.isFinished())unfinished=true;
+            if(state==androidx.work.WorkInfo.State.FAILED)failed=true;
+            if(state==androidx.work.WorkInfo.State.CANCELLED)cancelled=true;
           }
-          // A first batch may succeed while it has appended more work to the
-          // unique chain. Reload only after the entire discovery chain completes.
-          if(allSucceeded){
-            worker.execute(()->{
-              long completed=parseRoomLong("source_full_rebuild_completed_at",0L);
-              runOnUiThread(()->{
-                roomFullRebuildCompletedAt=completed;
-                if(completed>0L)scheduleAutomaticSourceUpdates();
-                requestInitialDiscoveryProgress();
-                reloadChannelsAfterBackgroundUpdateIfNeeded();
-              });
-            });
-          }
+          initialDiscoveryTerminalStatus=unfinished||roomFullRebuildCompletedAt>0L?""
+              :failed?"抓源任务已停止，尚未完整发布，可在设置中手动继续"
+              :cancelled?"抓源任务已取消，已保存进度可在设置中继续":"";
+          // Room's durable completion marker, read by the existing ticker,
+          // is the sole authority for completion and routine scheduling.
+          // Do not reload or overwrite state simply because a WorkInfo list
+          // happens to be all SUCCEEDED.
+          requestInitialDiscoveryProgress();
         });
   }
   private void toggleAutomaticSourceUpdates(){
