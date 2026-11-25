@@ -56,6 +56,15 @@ public final class SourceUpdateSchedulePolicy {
         return feedRead&&(discoveryScanned>0||pageComplete)?0L:10L;
     }
 
+    /** New-feed scanning and the bounded saved-route pass have separate checkpoints. */
+    static int manualSavedWindow(int poolSize,int covered,boolean savedOnly) {
+        return Math.min(savedOnly?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:12,
+                Math.max(0,poolSize-Math.max(0,covered)));
+    }
+    static boolean manualRoundComplete(int nextFeed,int feedCount,int covered,int poolSize) {
+        return feedCount>=0&&nextFeed>=feedCount&&poolSize>=0&&covered>=poolSize;
+    }
+
     /** Manual refresh advances only at EOF, never just because a page was processed. */
     public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
             int pageSize) {
