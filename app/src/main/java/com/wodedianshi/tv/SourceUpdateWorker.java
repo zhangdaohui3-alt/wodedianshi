@@ -751,8 +751,9 @@ public class SourceUpdateWorker extends Worker {
           }else{
             checked++;
             noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
-            if(initialDiscoveryChain&&!slowPlayback&&(prefetched||idleWave.start(
-                probeCandidates,offset,measuredByEndpoint,visitedUrls,addressDeadline,probeDeadline))){
+            if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
+                &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
+                    visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain))){
               TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
@@ -1304,7 +1305,8 @@ public class SourceUpdateWorker extends Worker {
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh);
+            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh
+            +" parallel_launched="+idleWave.launched);
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
@@ -1764,7 +1766,7 @@ public class SourceUpdateWorker extends Worker {
       catch(Exception invalid){return "";}
     }
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
-        Set<String> visited,long deadline,long batchDeadline){
+        Set<String> visited,long deadline,long batchDeadline,boolean initial){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       ArrayList<Entry> wave=new ArrayList<>();
@@ -1772,17 +1774,17 @@ public class SourceUpdateWorker extends Worker {
       long now=android.os.SystemClock.elapsedRealtime();
       for(int i=offset;i<entries.size()&&wave.size()<IdleProbeWavePolicy.MAX_CONCURRENT;i++){
         Entry entry=entries.get(i);
-        if(entry.savedSource||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
+        if((initial&&entry.savedSource)||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
         String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=host(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(i!=offset){
-          RecentProbe cached=INITIAL_PROBES.get(StableKey.url(entry.url));
+          RecentProbe cached=initial?INITIAL_PROBES.get(StableKey.url(entry.url)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
-      if(wave.size()<2||!SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,deadline))return false;
+      if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline))return false;
       if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(IdleProbeWavePolicy.MAX_CONCURRENT,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
