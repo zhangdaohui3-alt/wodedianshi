@@ -22,6 +22,15 @@ public final class TrackHealthPolicy {
                 && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 5000L;
     }
 
+    /** Permission for bounded discovery only, not proof of rendered pixels or audible sound. */
+    public static boolean canGrantVlcDiscovery(boolean videoOutput, boolean audioSelected,
+            boolean buffering, boolean reportsPlaying, int consecutiveChecks,
+            long lastInteractionAt, long now) {
+        return videoOutput && audioSelected && !buffering && reportsPlaying
+                && consecutiveChecks >= 2 && now >= lastInteractionAt
+                && now - lastInteractionAt >= 20000L;
+    }
+
     public static boolean canRefreshRecoveryBudget(boolean confirmedOutput,
             long readyAt, long lastAdvanceAt, long lastVideoAt, long now) {
         return confirmedOutput && readyAt > 0L && now - readyAt >= 120000L
