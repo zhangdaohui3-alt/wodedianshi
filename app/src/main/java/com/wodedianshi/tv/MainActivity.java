@@ -91,6 +91,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     }catch(RuntimeException failure){quarantineMedia3Release("release listener registration failed");}
   }
+  // stop() releases loaded playback resources; release() disposes the player.
+  // Clearing the playlist on every successful stop sends an unnecessary
+  // timeline mutation to the playback thread. Keep it as a recovery step
+  // if stop throws, and always attempt the final release on the owner looper.
+  private long stopMedia3BeforeRelease(ExoPlayer old,String mode){
+    try{
+      noteUiDecoderStage(mode+" Media3 stop begin");
+      old.stop();
+      return 0L;
+    }catch(RuntimeException|LinkageError error){
+      saveLiveDiagnostic(mode+"_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    long started=android.os.SystemClock.elapsedRealtime();
+    try{
+      noteUiDecoderStage(mode+" Media3 emergency clear begin");
+      old.clearMediaItems();
+    }catch(RuntimeException|LinkageError error){
+      saveLiveDiagnostic(mode+"_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
+    }
+    return android.os.SystemClock.elapsedRealtime()-started;
+  }
   private void releaseMedia3Confirmed(ExoPlayer old){
     long start=android.os.SystemClock.elapsedRealtime();
     try{
@@ -2548,8 +2569,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void vodResume(){if(isAnyPlaybackLockActive())return;if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
   private boolean vodSeekTo(long position){long duration=vodDurationMs();if(duration<=0L)return false;long target=VodTimelinePolicy.clampPosition(position,duration);if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.seekToMs(target);if(vodPlayer!=null){vodPlayer.seekTo(target);return true;}return false;}
   // Release VOD Media3 in independent stages. A vendor player may throw from
-  // pause()/stop(); one failed teardown call must never skip clearMediaItems()
-  // and release(), otherwise audio or decoder resources can survive dialog exit.
+  // pause()/stop(); a failed stop gets an emergency playlist clear, and final
+  // release must still be attempted.
   private void releaseVodPlayerSafely(PlayerView view){
     ExoPlayer old=vodPlayer;
     vodPlayer=null;
@@ -2564,12 +2585,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{old.setPlayWhenReady(false);}catch(RuntimeException error){
       saveLiveDiagnostic("VOD_DISABLE_PLAY_ERROR",error.getClass().getSimpleName());
     }
-    try{noteUiDecoderStage("VOD Media3 stop begin");old.stop();}catch(RuntimeException error){
-      saveLiveDiagnostic("VOD_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
-    try{noteUiDecoderStage("VOD Media3 clear begin");old.clearMediaItems();}catch(RuntimeException error){
-      saveLiveDiagnostic("VOD_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
+    stopMedia3BeforeRelease(old,"VOD");
     releaseMedia3Confirmed(old);
   }
   private void releaseVodFallback(){
@@ -5926,18 +5942,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       saveLiveDiagnostic("LIVE_VIEW_DETACH_ERROR",error.getClass().getSimpleName());
     }}
     long detachMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
-    // Preserve stop/clear/release independently. A failed stop must not leave
-    // stale audio or skip releasing the Media3 codec/renderers.
+    // Share the stop/recovery path with VOD. Normal stop does not need a
+    // separate playlist clear before the final decoder release.
     checkpoint=android.os.SystemClock.elapsedRealtime();
-    try{noteUiDecoderStage("live Media3 stop begin");old.stop();}catch(RuntimeException error){
-      saveLiveDiagnostic("LIVE_STOP_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
-    long stopMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
-    checkpoint=android.os.SystemClock.elapsedRealtime();
-    try{noteUiDecoderStage("live Media3 clear begin");old.clearMediaItems();}catch(RuntimeException error){
-      saveLiveDiagnostic("LIVE_CLEAR_RELEASE_ERROR",error.getClass().getSimpleName());
-    }
-    long clearMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
+    long clearMs=stopMedia3BeforeRelease(old,"LIVE");
+    long stopMs=Math.max(0L,android.os.SystemClock.elapsedRealtime()-checkpoint-clearMs);
     checkpoint=android.os.SystemClock.elapsedRealtime();
     releaseMedia3Confirmed(old);
     long releaseMs=android.os.SystemClock.elapsedRealtime()-checkpoint;
