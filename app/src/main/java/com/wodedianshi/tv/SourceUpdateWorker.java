@@ -779,11 +779,11 @@ public class SourceUpdateWorker extends Worker {
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
           }
-          if(initialDiscoveryChain&&!reuse
-              &&SourceProbeTimePolicy.initialProbeInconclusive(measured.socketTimedOut,measuredAt,addressDeadline)){
-            // The address received its bounded first-pass opportunity. Do not
-            // promote, penalize or cache an inconclusive result. The later
-            // manual/routine scan can retry with the normal probe budget.
+          if(!reuse&&(measured.socketTimedOut||(initialDiscoveryChain
+              &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
+            // A socket timeout is inconclusive in every mode: do not promote,
+            // penalize, cache or increment the retirement streak of a saved route.
+            // The candidate had its probe opportunity; later maintenance may retry.
             initialTimeouts++;
             visitedUrls.remove(endpoint);
             continue;
@@ -1313,7 +1313,8 @@ public class SourceUpdateWorker extends Worker {
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
             +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh
-            +" parallel_launched="+idleWave.launched);
+            +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
+            +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned);
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
@@ -1432,6 +1433,7 @@ public class SourceUpdateWorker extends Worker {
           androidx.work.OneTimeWorkRequest continuation) throws Exception {
     if(isStopped()||Thread.currentThread().isInterrupted())
       throw new InterruptedException("Source work cancelled");
+    final long schedulingStartedAt=android.os.SystemClock.elapsedRealtime();
     androidx.work.WorkManager manager=androidx.work.WorkManager.getInstance(getApplicationContext());
     List<androidx.work.WorkInfo> infos=manager.getWorkInfosForUniqueWork(uniqueName)
         .get(10L,java.util.concurrent.TimeUnit.SECONDS);
@@ -1444,9 +1446,15 @@ public class SourceUpdateWorker extends Worker {
     }
     if(!currentRunning||isStopped()||Thread.currentThread().isInterrupted())
       throw new InterruptedException("Source work no longer running");
-    if(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(getId(),unfinished))return;
+    if(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(getId(),unfinished)){
+      android.util.Log.i("MyTVSourceDiscovery","continuation_reused chain="+uniqueName
+          +" scheduling_ms="+(android.os.SystemClock.elapsedRealtime()-schedulingStartedAt));
+      return;
+    }
     manager.enqueueUniqueWork(uniqueName,androidx.work.ExistingWorkPolicy.APPEND,continuation)
         .getResult().get(10L,java.util.concurrent.TimeUnit.SECONDS);
+    android.util.Log.i("MyTVSourceDiscovery","continuation_enqueued chain="+uniqueName
+        +" scheduling_ms="+(android.os.SystemClock.elapsedRealtime()-schedulingStartedAt));
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
           List<FeedBatch> batches,int feedCount){
