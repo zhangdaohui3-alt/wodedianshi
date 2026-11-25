@@ -1,0 +1,1135 @@
+# 《我的电视》2.74.5（PR #196）第五组 A：Media3 与 LibVLC 双播放器、所有权和恢复策略
+
+固定审查提交 adcb720f2caf04ec7cca94bba632589c14a8ed2e，CI #2753 实际 checkout，候选 head 527191ee4532bc76b51e499189eeaac5df1daf8d。当贝 D6 Android 9 和安卓手机；尚未实机验收。PR197–200 为后续累计修复，已通过 CI，但非本组原始证据。请联合第五组 B（MainActivity 和抓源调用链）、C（测试和依赖）分析。
+
+## 攻坚目标
+1. Media3 和 LibVLC 的选择、退回、重试、会话所有权、线程归属、Surface/音频输出释放和进程级解码器隔离是否正确？是否可能造成黑屏、有画面无声音、直播与点播同时出声、旧回调抢占新会话、换源死循环或释放失败？
+2. 解码器释放是否真正完成才启动另一个引擎？检查所有权释放、异步 teardown、超时隔离与 lifecycle、播放锁、应用退出、快速切台的竞态。不要用固定延迟猜测释放完成，不要把 Media3 播放器调用随意移到错误线程。
+3. 如何让稳定观看时低速首次抓源，切台/缓冲/失焦/遥控操作时立即让路？核实 Media3 和 VLC 两种引擎是否都可签发可靠的稳定播放租约，且实际有音视频输出。不要把 HTTP 媒体预检当作实际播放证明。
+4. 针对 D6 Android 9 的低性能设备，精简恢复逻辑、避免重复播放器/线程池/依赖，保留真正有用的安全检查；分析黑屏、无声、卡顿和切源顺序。遥控焦点专项留给第六组。
+5. 区分源码确认、潜在风险和实机验证；P0/P1/P2、原始行号、修改前后、竞态窗口、副作用及回归测试。不要猜测未提供实现，不以 CI 通过代替实机验证。URL 字面量如存在已脱敏，保留原始行号；无账号或密钥。
+
+## 文件清单
+- app/src/main/java/com/wodedianshi/tv/DecoderOwnership.java L1–22 | blob 30394e6d7e35697d2012b30583ec32353e74731e
+- app/src/main/java/com/wodedianshi/tv/DecoderPolicy.java L1–19 | blob f3af429b440dc82047b53784fe4a568f9e1e7cf1
+- app/src/main/java/com/wodedianshi/tv/LibVlcPlaybackEngine.java L1–454 | blob 1e888565b63bf63d15aed6a1a994f806ac275bb7
+- app/src/main/java/com/wodedianshi/tv/LibVlcVodBackend.java L1–144 | blob b4fd56992d8c6beabb78cc6d44e9ce20327f5855
+- app/src/main/java/com/wodedianshi/tv/VodPlaybackBackend.java L1–26 | blob a749c646d29f5d962f2535193b62eac827b6262b
+- app/src/main/java/com/wodedianshi/tv/PlaybackPlayerFactory.java L1–74 | blob 898eabf1a1f58282d98f3ed3da099b3934d7add5
+- app/src/main/java/com/wodedianshi/tv/PlaybackErrorPolicy.java L1–47 | blob 1b57ab4c5b3ed7be50c937ed9e40db1066fe4440
+- app/src/main/java/com/wodedianshi/tv/PlaybackRecoveryPolicy.java L1–24 | blob 9ec3ffdb1e8e8a0585225ef6007c580ed8428eb5
+- app/src/main/java/com/wodedianshi/tv/TrackHealthPolicy.java L1–28 | blob ba015604de7cd3d5819986eb5a4c2f0a8bc3b3b7
+- app/src/main/java/com/wodedianshi/tv/BufferingFailoverPolicy.java L1–18 | blob 21cb095087c531df25adc284689074391266fe06
+- app/src/main/java/com/wodedianshi/tv/VodTimelinePolicy.java L1–46 | blob 9dc9795698e4f0e7124eb0f0a87ff99547b9a0ed
+- app/src/main/java/com/wodedianshi/tv/SourceUpdateActivityPolicy.java L1–41 | blob 12fb0246bcb8b81d683a4a4696f64ea198e24e94
+- app/src/main/java/com/wodedianshi/tv/SourceProbeTimePolicy.java L1–90 | blob 13fda299dd4195baf4fd8739f938a7fcb27db775
+
+## app/src/main/java/com/wodedianshi/tv/DecoderOwnership.java — 原始行 1–22
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** One process-wide owner; tokens do not retain an Activity. */
+    4 | final class DecoderOwnership {
+    5 |     private Object owner;
+    6 |     private boolean quarantined;
+    7 |     synchronized boolean acquire(Object token) {
+    8 |         if (token == null || quarantined || (owner != null && owner != token)) return false;
+    9 |         owner = token;
+   10 |         return true;
+   11 |     }
+   12 |     synchronized boolean availableTo(Object token) {
+   13 |         return !quarantined && (owner == null || owner == token);
+   14 |     }
+   15 |     synchronized void release(Object token) {
+   16 |         if (!quarantined && owner == token) owner = null;
+   17 |     }
+   18 |     synchronized void quarantine(Object token) {
+   19 |         if (owner == token) quarantined = true;
+   20 |     }
+   21 | }
+   22 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/DecoderPolicy.java — 原始行 1–19
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /**
+    4 |  * Decoder fallback is a renderer-level recovery mechanism, not a second player.
+    5 |  * Media3 still prefers the platform's normal decoder selection; fallback lets
+    6 |  * it try another available decoder if initialization of the selected one fails.
+    7 |  */
+    8 | final class DecoderPolicy {
+    9 |     static final int MODE_SYSTEM_DEFAULT = 0;
+   10 |     static final int MODE_COMPATIBILITY_FALLBACK = 1;
+   11 |     static final int DEFAULT_MODE = MODE_COMPATIBILITY_FALLBACK;
+   12 | 
+   13 |     private DecoderPolicy() {}
+   14 | 
+   15 |     static boolean isDecoderFallbackEnabled(int mode) {
+   16 |         return mode == MODE_COMPATIBILITY_FALLBACK;
+   17 |     }
+   18 | }
+   19 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/LibVlcPlaybackEngine.java — 原始行 1–454
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import android.content.Context;
+    4 | import android.net.Uri;
+    5 | import android.view.View;
+    6 | import android.os.Handler;
+    7 | import android.os.Looper;
+    8 | 
+    9 | import java.util.concurrent.CountDownLatch;
+   10 | import java.util.concurrent.TimeUnit;
+   11 | import java.util.concurrent.atomic.AtomicReference;
+   12 | import java.util.concurrent.atomic.AtomicInteger;
+   13 | 
+   14 | import org.videolan.libvlc.LibVLC;
+   15 | import org.videolan.libvlc.Media;
+   16 | import org.videolan.libvlc.MediaPlayer;
+   17 | import org.videolan.libvlc.util.VLCVideoLayout;
+   18 | 
+   19 | import java.util.ArrayList;
+   20 | 
+   21 | /**
+   22 |  * Independent LibVLC engine adapter.
+   23 |  *
+   24 |  * This owns its native LibVLC instance, MediaPlayer and video surface. It does
+   25 |  * not wrap Media3 and must be released before another engine takes ownership
+   26 |  * of the shared playback stage.
+   27 |  */
+   28 | public final class LibVlcPlaybackEngine {
+   29 |     public interface Listener {
+   30 |         void onPlaying();
+   31 |         void onVideoOutput(int count);
+   32 |         void onBuffering(float percent);
+   33 |         void onFailure(String reason);
+   34 |         default void onAudioTrackState(int trackCount, int selectedTrackId) { }
+   35 |         void onStopped();
+   36 |         default void onEndReached() { }
+   37 |     }
+   38 | 
+   39 |     private final Context appContext;
+   40 |     private final VLCVideoLayout videoLayout;
+   41 |     private volatile LibVLC libVlc;
+   42 |     private volatile MediaPlayer mediaPlayer;
+   43 |     // Native VLC events arrive off the UI thread; lifecycle writes must be visible to callbacks.
+   44 |     private volatile Listener listener;
+   45 |     private volatile boolean released = true;
+   46 |     private final NativeReleaseConfirmation releaseConfirmation = new NativeReleaseConfirmation();
+   47 |     private volatile boolean viewOperationUnconfirmed;
+   48 | 
+   49 |     public LibVlcPlaybackEngine(Context context, VLCVideoLayout layout) {
+   50 |         appContext = context.getApplicationContext();
+   51 |         videoLayout = layout;
+   52 |     }
+   53 | 
+   54 |     private void runViewOperationOnMain(Runnable operation) {
+   55 |         if (Looper.myLooper() == Looper.getMainLooper()) {
+   56 |             operation.run();
+   57 |             return;
+   58 |         }
+   59 |         CountDownLatch completed = new CountDownLatch(1);
+   60 |         AtomicReference<Throwable> failure = new AtomicReference<>();
+   61 |         // 0=pending, 1=running, 2=finished, 3=cancelled before start.
+   62 |         // If JNI has entered the UI operation, a Java timeout cannot stop it.
+   63 |         final AtomicInteger phase = new AtomicInteger();
+   64 |         final Handler handler = new Handler(Looper.getMainLooper());
+   65 |         final Runnable dispatched = () -> {
+   66 |             try {
+   67 |                 if (!phase.compareAndSet(0, 1)) return;
+   68 |                 try { operation.run(); }
+   69 |                 catch (RuntimeException | LinkageError error) { failure.set(error); }
+   70 |                 finally { phase.set(2); }
+   71 |             } finally {
+   72 |                 completed.countDown();
+   73 |             }
+   74 |         };
+   75 |         final long started = android.os.SystemClock.elapsedRealtime();
+   76 |         if (!handler.post(dispatched)) {
+   77 |             throw new IllegalStateException("Could not schedule VLC video surface on UI thread");
+   78 |         }
+   79 |         try {
+   80 |             if (!completed.await(8, TimeUnit.SECONDS)) {
+   81 |                 if (!phase.compareAndSet(0, 3) && phase.get() != 2)
+   82 |                     viewOperationUnconfirmed = true;
+   83 |                 handler.removeCallbacks(dispatched);
+   84 |                 throw new IllegalStateException("Timed out waiting for VLC video surface on UI thread");
+   85 |             }
+   86 |         } catch (InterruptedException interrupted) {
+   87 |             if (!phase.compareAndSet(0, 3) && phase.get() != 2)
+   88 |                 viewOperationUnconfirmed = true;
+   89 |             handler.removeCallbacks(dispatched);
+   90 |             Thread.currentThread().interrupt();
+   91 |             throw new IllegalStateException("Interrupted while attaching VLC video surface", interrupted);
+   92 |         }
+   93 |         long waited = android.os.SystemClock.elapsedRealtime() - started;
+   94 |         if (waited >= 150L) {
+   95 |             android.util.Log.w("MyTVVLC", "VLC_VIEW_DISPATCH_SLOW waitMs=" + waited);
+   96 |         }
+   97 |         Throwable error = failure.get();
+   98 |         if (error instanceof RuntimeException) throw (RuntimeException) error;
+   99 |         if (error instanceof LinkageError) throw (LinkageError) error;
+  100 |     }
+  101 | 
+  102 |     public boolean isInitialized() {
+  103 |         return !released && libVlc != null && mediaPlayer != null;
+  104 |     }
+  105 | 
+  106 |     public void setListener(Listener value) {
+  107 |         listener = value;
+  108 |     }
+  109 | 
+  110 |     public void initialize() {
+  111 |         recordNativeStage("VLC_INIT_BEGIN");
+  112 |         // Each adapter owns one native lifetime. A retired or uncertain
+  113 |         // adapter must never allocate another decoder.
+  114 |         if (!releaseConfirmation.mayInitialize()) {
+  115 |             throw new IllegalStateException("LibVLC engine has been retired");
+  116 |         }
+  117 |         if (isInitialized()) return;
+  118 |         if (mediaPlayer != null || libVlc != null) {
+  119 |             throw new IllegalStateException("LibVLC initialization already in progress");
+  120 |         }
+  121 |         released = true;
+  122 |         try {
+  123 |             // release() hides the layout while tearing down any previous native session.
+  124 |             // Make it visible before attaching VLC's native video surfaces.
+  125 |             recordNativeStage("VLC_LAYOUT_VISIBLE_BEGIN");
+  126 |             runViewOperationOnMain(() -> videoLayout.setVisibility(View.VISIBLE));
+  127 |             ArrayList<String> options = new ArrayList<>();
+  128 |             options.add("--no-video-title-show");
+  129 |             options.add("--network-caching=1500");
+  130 |             options.add("--live-caching=1500");
+  131 |             options.add("--avcodec-hw=any");
+  132 |             recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_BEGIN");
+  133 |             libVlc = new LibVLC(appContext, options);
+  134 |             recordNativeStage("VLC_LIBVLC_CONSTRUCTOR_RETURNED");
+  135 |             recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN");
+  136 |             mediaPlayer = new MediaPlayer(libVlc);
+  137 |             recordNativeStage("VLC_MEDIAPLAYER_CONSTRUCTOR_RETURNED");
+  138 |             mediaPlayer.setEventListener(event -> {
+  139 |                 // Snapshot the volatile callback once. Reading the field again in
+  140 |                 // each branch could race release() clearing it and cause a native
+  141 |                 // event thread to throw NullPointerException during teardown.
+  142 |                 Listener callback = listener;
+  143 |                 if (released || callback == null) return;
+  144 |                 switch (event.type) {
+  145 |                     case MediaPlayer.Event.Playing:
+  146 |                         callback.onPlaying();
+  147 |                         break;
+  148 |                     case MediaPlayer.Event.Vout:
+  149 |                         callback.onVideoOutput(event.getVoutCount());
+  150 |                         break;
+  151 |                     case MediaPlayer.Event.Buffering:
+  152 |                         callback.onBuffering(event.getBuffering());
+  153 |                         break;
+  154 |                     case MediaPlayer.Event.EncounteredError:
+  155 |                         callback.onFailure("LibVLC 遇到播放或解码错误");
+  156 |                         break;
+  157 |                     case MediaPlayer.Event.Stopped:
+  158 |                         callback.onStopped();
+  159 |                         break;
+  160 |                     case MediaPlayer.Event.EndReached:
+  161 |                         callback.onEndReached();
+  162 |                         break;
+  163 |                     default:
+  164 |                         break;
+  165 |                 }
+  166 |             });
+  167 |             recordNativeStage("VLC_ATTACH_VIEWS_BEGIN");
+  168 |             runViewOperationOnMain(() -> mediaPlayer.attachViews(videoLayout, null, false, false));
+  169 |             recordNativeStage("VLC_ATTACH_VIEWS_RETURNED");
+  170 |             released = false;
+  171 |             recordNativeStage("VLC_INIT_COMPLETED");
+  172 |         } catch (RuntimeException | LinkageError error) {
+  173 |             recordNativeStage("VLC_INIT_FAILED_" + error.getClass().getSimpleName());
+  174 |             // Constructors and attachViews can fail independently. Tear down whichever
+  175 |             // native objects were successfully created before reporting the failure.
+  176 |             if (!release()) recordNativeStage("VLC_INIT_CLEANUP_UNCONFIRMED");
+  177 |             throw error;
+  178 |         }
+  179 |     }
+  180 | 
+  181 |     public void play(String url) {
+  182 |         if (url == null || !(url.startsWith("http://") || url.startsWith("https://")
+  183 |                 || url.startsWith("rtsp://"))) {
+  184 |             if (listener != null) listener.onFailure("不支持的播放地址");
+  185 |             return;
+  186 |         }
+  187 |         if (!isInitialized()) initialize();
+  188 |         recordNativeStage("VLC_MEDIA_CONSTRUCTOR_BEGIN");
+  189 |         Media media = new Media(libVlc, Uri.parse(url));
+  190 |         recordNativeStage("VLC_MEDIA_CONSTRUCTOR_RETURNED");
+  191 |         try {
+  192 |             recordNativeStage("VLC_MEDIA_CONFIGURE_BEGIN");
+  193 |             media.setHWDecoderEnabled(true, false);
+  194 |             media.addOption(":network-caching=1500");
+  195 |             media.addOption(":live-caching=1500");
+  196 |             recordNativeStage("VLC_SET_MEDIA_BEGIN");
+  197 |             mediaPlayer.setMedia(media);
+  198 |             recordNativeStage("VLC_SET_MEDIA_RETURNED");
+  199 |         } catch (RuntimeException | LinkageError error) {
+  200 |             recordNativeStage("VLC_MEDIA_SETUP_FAILED_" + error.getClass().getSimpleName());
+  201 |             throw error;
+  202 |         } finally {
+  203 |             // Media is a native-backed object. Always release our local reference,
+  204 |             // even when configuration or setMedia fails before play() is reached.
+  205 |             recordNativeStage("VLC_MEDIA_RELEASE_BEGIN");
+  206 |             try {
+  207 |                 media.release();
+  208 |                 recordNativeStage("VLC_MEDIA_RELEASE_RETURNED");
+  209 |             } catch (RuntimeException | LinkageError error) {
+  210 |                 recordNativeStage("VLC_MEDIA_RELEASE_FAILED_" + error.getClass().getSimpleName());
+  211 |                 throw error;
+  212 |             }
+  213 |         }
+  214 |         recordNativeStage("VLC_NATIVE_PLAY_BEGIN");
+  215 |         try {
+  216 |             mediaPlayer.play();
+  217 |             recordNativeStage("VLC_NATIVE_PLAY_RETURNED");
+  218 |         } catch (RuntimeException | LinkageError error) {
+  219 |             recordNativeStage("VLC_NATIVE_PLAY_FAILED_" + error.getClass().getSimpleName());
+  220 |             throw error;
+  221 |         }
+  222 |     }
+  223 | 
+  224 |     public void pause() {
+  225 |         if (isInitialized()) mediaPlayer.pause();
+  226 |     }
+  227 | 
+  228 |     public void resume() {
+  229 |         if (isInitialized()) mediaPlayer.play();
+  230 |     }
+  231 | 
+  232 |     /**
+  233 |      * Inspect and, when necessary, select the first available audio track.
+  234 |      * Call from the serialized LibVLC worker, never from the Android UI thread.
+  235 |      */
+  236 |     public void inspectAudioTrack() {
+  237 |         MediaPlayer current = mediaPlayer;
+  238 |         Listener callback = listener;
+  239 |         if (released || current == null || callback == null) return;
+  240 |         int trackCount = -1;
+  241 |         int selectedTrackId = -1;
+  242 |         try {
+  243 |             trackCount = current.getAudioTracksCount();
+  244 |             selectedTrackId = current.getAudioTrack();
+  245 |             if (trackCount > 0 && selectedTrackId < 0) {
+  246 |                 MediaPlayer.TrackDescription[] tracks = current.getAudioTracks();
+  247 |                 if (tracks != null) {
+  248 |                     for (MediaPlayer.TrackDescription track : tracks) {
+  249 |                         if (track != null && track.id != -1) {
+  250 |                             current.setAudioTrack(track.id);
+  251 |                             break;
+  252 |                         }
+  253 |                     }
+  254 |                 }
+  255 |                 selectedTrackId = current.getAudioTrack();
+  256 |             }
+  257 |         } catch (RuntimeException | LinkageError ignored) {
+  258 |             // Report unknown as unavailable; the caller will fail over safely.
+  259 |         }
+  260 |         callback = listener;
+  261 |         if (!released && callback != null) callback.onAudioTrackState(trackCount, selectedTrackId);
+  262 |     }
+  263 | 
+  264 |     public boolean isPlaying() {
+  265 |         return isInitialized() && mediaPlayer.isPlaying();
+  266 |     }
+  267 | 
+  268 |     /**
+  269 |      * Current playback position in milliseconds. Returns zero when the engine
+  270 |      * is not ready or the native player has no valid timeline.
+  271 |      */
+  272 |     public long getTimeMs() {
+  273 |         if (!isInitialized()) return 0L;
+  274 |         try {
+  275 |             long value = mediaPlayer.getTime();
+  276 |             return Math.max(0L, value);
+  277 |         } catch (Exception ignored) {
+  278 |             return 0L;
+  279 |         }
+  280 |     }
+  281 | 
+  282 |     /**
+  283 |      * Media duration in milliseconds. Live streams and unprepared media may
+  284 |      * report zero or a negative value; callers must not treat that as seekable.
+  285 |      */
+  286 |     public long getLengthMs() {
+  287 |         if (!isInitialized()) return 0L;
+  288 |         try {
+  289 |             long value = mediaPlayer.getLength();
+  290 |             return Math.max(0L, value);
+  291 |         } catch (Exception ignored) {
+  292 |             return 0L;
+  293 |         }
+  294 |     }
+  295 | 
+  296 |     /** Seek only when the native engine exposes a positive duration. */
+  297 |     public boolean seekToMs(long positionMs) {
+  298 |         if (!isInitialized()) return false;
+  299 |         long duration = getLengthMs();
+  300 |         if (duration <= 0L) return false;
+  301 |         long target = Math.max(0L, Math.min(duration, positionMs));
+  302 |         try {
+  303 |             mediaPlayer.setTime(target);
+  304 |             return true;
+  305 |         } catch (Exception ignored) {
+  306 |             return false;
+  307 |         }
+  308 |     }
+  309 | 
+  310 |     /** 0=best fit, 1=fit screen/crop, 2=fill. */
+  311 |     public void setVideoScaleMode(int mode) {
+  312 |         if (!isInitialized()) return;
+  313 |         try {
+  314 |             MediaPlayer.ScaleType type = mode == 1
+  315 |                     ? MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+  316 |                     : mode == 2
+  317 |                     ? MediaPlayer.ScaleType.SURFACE_FILL
+  318 |                     : MediaPlayer.ScaleType.SURFACE_BEST_FIT;
+  319 |             mediaPlayer.setVideoScale(type);
+  320 |         } catch (Exception ignored) { }
+  321 |     }
+  322 | 
+  323 |     public void stop() {
+  324 |         if (isInitialized()) mediaPlayer.stop();
+  325 |     }
+  326 | 
+  327 |     /** Detach native video surfaces before hiding/removing the VLC view. */
+  328 |     public void detachViews() {
+  329 |         if (isInitialized() && mediaPlayer.getVLCVout().areViewsAttached()) {
+  330 |             mediaPlayer.detachViews();
+  331 |         }
+  332 |         runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
+  333 |     }
+  334 | 
+  335 |     /** Reattach only after the VLC layout is attached to the visible window. */
+  336 |     public void attachViews() {
+  337 |         if (!isInitialized()) return;
+  338 |         runViewOperationOnMain(() -> {
+  339 |             videoLayout.setVisibility(View.VISIBLE);
+  340 |             if (!mediaPlayer.getVLCVout().areViewsAttached()) {
+  341 |                 mediaPlayer.attachViews(videoLayout, null, false, false);
+  342 |             }
+  343 |         });
+  344 |     }
+  345 | 
+  346 |     public boolean release() {
+  347 |         // Only the first caller owns teardown. In-flight and failed releases
+  348 |         // are never reported as success by a second, empty release.
+  349 |         if (!releaseConfirmation.beginRelease()) return releaseConfirmation.isConfirmed();
+  350 |         // Mark the engine dead and detach the app callback before touching JNI.
+  351 |         boolean nativeReleaseSucceeded = true;
+  352 |         // A callback already in flight may finish, but MainActivity also checks
+  353 |         // the engine instance and playback generation before acting on it.
+  354 |         released = true;
+  355 |         listener = null;
+  356 |         recordNativeStage("VLC_RELEASE_BEGIN");
+  357 |         if (viewOperationUnconfirmed) {
+  358 |             // A UI/JNI operation may still own the native player. Do not
+  359 |             // touch it concurrently. Keep the process release barrier closed.
+  360 |             releaseConfirmation.finishRelease(false);
+  361 |             recordNativeStage("VLC_VIEW_OPERATION_UNCONFIRMED");
+  362 |             return false;
+  363 |         }
+  364 | 
+  365 |         MediaPlayer player = mediaPlayer;
+  366 |         mediaPlayer = null;
+  367 |         if (player != null) {
+  368 |             // Never let a failed stop prevent detach/release. Vendor VLC builds can
+  369 |             // throw from one teardown call while still requiring the remaining cleanup.
+  370 |             try {
+  371 |                 recordNativeStage("VLC_STOP_BEGIN");
+  372 |                 player.stop();
+  373 |             } catch (RuntimeException | LinkageError error) {
+  374 |                 recordNativeStage("VLC_STOP_FAILED_" + error.getClass().getSimpleName());
+  375 |             }
+  376 |             try {
+  377 |                 recordNativeStage("VLC_DETACH_CHECK_BEGIN");
+  378 |                 runViewOperationOnMain(() -> {
+  379 |                     if (player.getVLCVout().areViewsAttached()) {
+  380 |                         recordNativeStage("VLC_DETACH_VIEWS_BEGIN");
+  381 |                         player.detachViews();
+  382 |                     }
+  383 |                 });
+  384 |             } catch (RuntimeException | LinkageError error) {
+  385 |                 nativeReleaseSucceeded = false;
+  386 |                 recordNativeStage("VLC_DETACH_FAILED_" + error.getClass().getSimpleName());
+  387 |             }
+  388 |             if (viewOperationUnconfirmed) {
+  389 |                 releaseConfirmation.finishRelease(false);
+  390 |                 recordNativeStage("VLC_DETACH_OPERATION_UNCONFIRMED");
+  391 |                 return false;
+  392 |             }
+  393 |             try {
+  394 |                 player.setEventListener(null);
+  395 |             } catch (RuntimeException | LinkageError error) {
+  396 |                 recordNativeStage("VLC_CLEAR_LISTENER_FAILED_" + error.getClass().getSimpleName());
+  397 |             }
+  398 |             try {
+  399 |                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_BEGIN");
+  400 |                 player.release();
+  401 |             } catch (RuntimeException | LinkageError error) {
+  402 |                 nativeReleaseSucceeded = false;
+  403 |                 recordNativeStage("VLC_MEDIAPLAYER_RELEASE_FAILED_" + error.getClass().getSimpleName());
+  404 |             }
+  405 |         }
+  406 | 
+  407 |         LibVLC instance = libVlc;
+  408 |         libVlc = null;
+  409 |         if (instance != null) {
+  410 |             try {
+  411 |                 recordNativeStage("VLC_LIBVLC_RELEASE_BEGIN");
+  412 |                 instance.release();
+  413 |             } catch (RuntimeException | LinkageError error) {
+  414 |                 nativeReleaseSucceeded = false;
+  415 |                 recordNativeStage("VLC_LIBVLC_RELEASE_FAILED_" + error.getClass().getSimpleName());
+  416 |             }
+  417 |         }
+  418 |         try {
+  419 |             if (videoLayout != null) runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
+  420 |         } catch (RuntimeException ignored) { }
+  421 |         releaseConfirmation.finishRelease(nativeReleaseSucceeded);
+  422 |         recordNativeStage(nativeReleaseSucceeded ? "VLC_RELEASE_COMPLETED" : "VLC_RELEASE_INCOMPLETE");
+  423 |         return releaseConfirmation.isConfirmed();
+  424 |     }
+  425 | 
+  426 |     // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves
+  427 |     // the last attempted VLC operation available after the app is relaunched.
+  428 |     private void recordNativeStage(String stage) {
+  429 |         try {
+  430 |             android.content.SharedPreferences.Editor editor =
+  431 |                     appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
+  432 |                     .putString("last_native_engine_stage_v1",
+  433 |                             System.currentTimeMillis() + " | " + stage)
+  434 |                     .putLong("last_native_engine_stage_time_v1", System.currentTimeMillis());
+  435 |             // Persist immediately before crash-prone JNI boundaries. Completion
+  436 |             // markers can be applied asynchronously to avoid repeated fsyncs on
+  437 |             // the UI thread during normal playback and teardown.
+  438 |             boolean crashCriticalBoundary = "VLC_LIBVLC_CONSTRUCTOR_BEGIN".equals(stage)
+  439 |                     || "VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN".equals(stage)
+  440 |                     || "VLC_ATTACH_VIEWS_BEGIN".equals(stage)
+  441 |                     || "VLC_NATIVE_PLAY_BEGIN".equals(stage)
+  442 |                     || "VLC_MEDIAPLAYER_RELEASE_BEGIN".equals(stage)
+  443 |                     || "VLC_LIBVLC_RELEASE_BEGIN".equals(stage);
+  444 |             // Only fsync at native boundaries most likely to terminate the process.
+  445 |             // UI/layout/stop/diagnostic markers use apply() to avoid repeated main-thread disk stalls.
+  446 |             // Native-stage breadcrumbs are diagnostic only. commit() forced a
+  447 |             // synchronous disk flush on the playback/UI thread immediately before
+  448 |             // JNI calls; on slow TV storage that can trigger input-dispatch ANRs.
+  449 |             // apply() publishes the latest value in memory now and persists it off-thread.
+  450 |             editor.apply();
+  451 |         } catch (Throwable ignored) { }
+  452 |     }
+  453 | }
+  454 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/LibVlcVodBackend.java — 原始行 1–144
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import android.content.Context;
+    4 | import android.os.Handler;
+    5 | import android.os.Looper;
+    6 | 
+    7 | import org.videolan.libvlc.util.VLCVideoLayout;
+    8 | 
+    9 | /**
+   10 |  * Dedicated LibVLC backend for one VOD dialog. It owns its own LibVLC engine
+   11 |  * and VLCVideoLayout and must never share the live-TV LibVLC instance.
+   12 |  */
+   13 | public final class LibVlcVodBackend implements VodPlaybackBackend {
+   14 |     private final LibVlcPlaybackEngine engine;
+   15 |     // VLC callbacks can race dialog dismissal; publish listener changes across threads.
+   16 |     private volatile Listener listener;
+   17 |     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+   18 |     private volatile boolean released = true;
+   19 |     private volatile boolean revoked;
+   20 |     private volatile boolean playing;
+   21 |     private volatile long positionMs, durationMs;
+   22 |     private final java.util.concurrent.ExecutorService worker;
+   23 |     private final Runnable poll = this::pollTimeline;
+   24 | 
+   25 |     public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout,
+   26 |                             java.util.concurrent.ExecutorService worker) {
+   27 |         engine = new LibVlcPlaybackEngine(context, videoLayout);
+   28 |         this.worker = worker;
+   29 |     }
+   30 | 
+   31 |     @Override public void setListener(Listener value) {
+   32 |         listener = value;
+   33 |         engine.setListener(new LibVlcPlaybackEngine.Listener() {
+   34 |             @Override public void onPlaying() {
+   35 |                 Listener current = listener;
+   36 |                 if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onReady(); });
+   37 |             }
+   38 |             @Override public void onVideoOutput(int count) {
+   39 |                 Listener current = listener;
+   40 |                 if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onVideoOutput(count > 0); });
+   41 |             }
+   42 |             @Override public void onBuffering(float percent) { }
+   43 |             @Override public void onFailure(String reason) {
+   44 |                 Listener current = listener;
+   45 |                 if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onFailure(reason); });
+   46 |             }
+   47 |             @Override public void onStopped() { }
+   48 |             @Override public void onEndReached() {
+   49 |                 Listener current = listener;
+   50 |                 if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onEnded(); });
+   51 |             }
+   52 |         });
+   53 |     }
+   54 | 
+   55 |     // All JNI calls use the same serial worker as live VLC. The main thread
+   56 |     // only consumes the latest timeline snapshot and enqueues user commands.
+   57 |     private void submit(Runnable action) {
+   58 |         if (revoked) return;
+   59 |         worker.execute(() -> {
+   60 |             if (revoked) return;
+   61 |             try { action.run(); }
+   62 |             catch (RuntimeException | LinkageError error) {
+   63 |                 Listener current = listener;
+   64 |                 if (current != null) mainHandler.post(() -> {
+   65 |                     if (!revoked && listener == current)
+   66 |                         current.onFailure(error.getClass().getSimpleName());
+   67 |                 });
+   68 |             }
+   69 |         });
+   70 |     }
+   71 | 
+   72 |     @Override public void play(String url) {
+   73 |         submit(() -> {
+   74 |             if (released) {
+   75 |                 engine.initialize();
+   76 |                 if (revoked) return;
+   77 |                 released = false;
+   78 |             }
+   79 |             if (revoked) return;
+   80 |             engine.play(url);
+   81 |             mainHandler.post(poll);
+   82 |         });
+   83 |     }
+   84 | 
+   85 |     private void pollTimeline() {
+   86 |         if (revoked || released) return;
+   87 |         try {
+   88 |             submit(() -> {
+   89 |                 playing = engine.isPlaying();
+   90 |                 positionMs = engine.getTimeMs();
+   91 |                 durationMs = engine.getLengthMs();
+   92 |                 // Schedule only after the previous poll completes; a slow
+   93 |                 // decoder cannot accumulate periodic JNI work in the queue.
+   94 |                 if (!revoked) mainHandler.postDelayed(poll, 500L);
+   95 |             });
+   96 |         } catch (RuntimeException ignored) { }
+   97 |     }
+   98 | 
+   99 |     @Override public void pause() {
+  100 |         submit(() -> { if (!released) engine.pause(); });
+  101 |     }
+  102 | 
+  103 |     @Override public void resume() {
+  104 |         submit(() -> { if (!released) engine.resume(); });
+  105 |     }
+  106 | 
+  107 |     @Override public boolean isPlaying() {
+  108 |         return !revoked && !released && playing;
+  109 |     }
+  110 | 
+  111 |     @Override public long getPositionMs() { return positionMs; }
+  112 |     @Override public long getDurationMs() { return durationMs; }
+  113 | 
+  114 |     @Override public boolean seekToMs(long target) {
+  115 |         if (revoked || released || durationMs <= 0L) return false;
+  116 |         submit(() -> { if (!released) engine.seekToMs(target); });
+  117 |         return true; // request accepted, not a synchronous native seek result
+  118 |     }
+  119 | 
+  120 |     public void setVideoScaleMode(int mode) {
+  121 |         submit(() -> { if (!released) engine.setVideoScaleMode(mode); });
+  122 |     }
+  123 | 
+  124 |     /** Main-thread revocation precedes posting teardown to the shared worker. */
+  125 |     void revoke() {
+  126 |         revoked = true;
+  127 |         released = true;
+  128 |         listener = null;
+  129 |         mainHandler.removeCallbacksAndMessages(null);
+  130 |         engine.setListener(null);
+  131 |     }
+  132 | 
+  133 |     /** Called only by the shared lifecycle worker, never by the UI. */
+  134 |     boolean releaseAndConfirm() {
+  135 |         revoke();
+  136 |         return engine.release();
+  137 |     }
+  138 | 
+  139 |     @Override public void release() {
+  140 |         revoke();
+  141 |         worker.execute(this::releaseAndConfirm);
+  142 |     }
+  143 | }
+  144 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/VodPlaybackBackend.java — 原始行 1–26
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /**
+    4 |  * Small transport contract shared by independent VOD playback engines.
+    5 |  * All timeline values are milliseconds; zero duration means not seekable.
+    6 |  */
+    7 | public interface VodPlaybackBackend {
+    8 |     interface Listener {
+    9 |         void onReady();
+   10 |         void onVideoOutput(boolean available);
+   11 |         void onFailure(String reason);
+   12 |         void onEnded();
+   13 |     }
+   14 | 
+   15 |     void setListener(Listener listener);
+   16 |     void play(String url);
+   17 |     void pause();
+   18 |     void resume();
+   19 |     boolean isPlaying();
+   20 |     long getPositionMs();
+   21 |     long getDurationMs();
+   22 |     boolean seekToMs(long positionMs);
+   23 |     default void setVideoScaleMode(int mode) { }
+   24 |     void release();
+   25 | }
+   26 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/PlaybackPlayerFactory.java — 原始行 1–74
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import android.content.Context;
+    4 | 
+    5 | import androidx.media3.common.MediaItem;
+    6 | import androidx.media3.common.util.UnstableApi;
+    7 | import androidx.media3.datasource.DefaultHttpDataSource;
+    8 | import androidx.media3.exoplayer.DefaultLoadControl;
+    9 | import androidx.media3.exoplayer.DefaultRenderersFactory;
+   10 | import androidx.media3.exoplayer.ExoPlayer;
+   11 | import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+   12 | 
+   13 | /**
+   14 |  * Centralizes player construction while keeping live and VOD network/buffer
+   15 |  * policies intentionally separate. Playback listeners and lifecycle remain
+   16 |  * owned by MainActivity.
+   17 |  */
+   18 | @UnstableApi
+   19 | public final class PlaybackPlayerFactory {
+   20 |     private PlaybackPlayerFactory() {}
+   21 | 
+   22 |     /**
+   23 |      * Builds the same correctly typed MediaItem for both live and VOD.
+   24 |      * Unknown/progressive containers deliberately retain Media3 extractor
+   25 |      * sniffing; only unambiguous streaming formats receive an explicit MIME.
+   26 |      * RTSP is routed by URI scheme when the Media3 RTSP module is present.
+   27 |      * SmoothStreaming manifests are routed by their explicit MIME hint.
+   28 |      */
+   29 |     public static MediaItem buildMediaItem(String uri, String mediaId) {
+   30 |         MediaItem.Builder builder = new MediaItem.Builder().setUri(uri);
+   31 |         String mimeType = MediaFormatPolicy.inferMimeType(uri);
+   32 |         if (mimeType != null) builder.setMimeType(mimeType);
+   33 |         if (mediaId != null && !mediaId.trim().isEmpty()) builder.setMediaId(mediaId);
+   34 |         return builder.build();
+   35 |     }
+   36 | 
+   37 |     private static DefaultRenderersFactory renderers(Context context, boolean decoderFallback) {
+   38 |         return new DefaultRenderersFactory(context)
+   39 |                 .setEnableDecoderFallback(decoderFallback);
+   40 |     }
+   41 | 
+   42 |     public static ExoPlayer createLivePlayer(Context context, boolean decoderFallback) {
+   43 |         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+   44 |                 .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36 MyTV/1.3")
+   45 |                 .setAllowCrossProtocolRedirects(true)
+   46 |                 .setConnectTimeoutMs(15000)
+   47 |                 .setReadTimeoutMs(20000);
+   48 | 
+   49 |         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+   50 |                 .setBufferDurationsMs(12000, 30000, 1500, 3000)
+   51 |                 .setPrioritizeTimeOverSizeThresholds(false)
+   52 |                 .build();
+   53 | 
+   54 |         return new ExoPlayer.Builder(context, renderers(context, decoderFallback))
+   55 |                 .setLoadControl(loadControl)
+   56 |                 .setMediaSourceFactory(new DefaultMediaSourceFactory(context)
+   57 |                         .setDataSourceFactory(httpFactory))
+   58 |                 .build();
+   59 |     }
+   60 | 
+   61 |     public static ExoPlayer createVodPlayer(Context context, boolean decoderFallback) {
+   62 |         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+   63 |                 .setUserAgent("Mozilla/5.0 MyTV/1.17")
+   64 |                 .setAllowCrossProtocolRedirects(true)
+   65 |                 .setConnectTimeoutMs(15000)
+   66 |                 .setReadTimeoutMs(30000);
+   67 | 
+   68 |         return new ExoPlayer.Builder(context, renderers(context, decoderFallback))
+   69 |                 .setMediaSourceFactory(new DefaultMediaSourceFactory(context)
+   70 |                         .setDataSourceFactory(httpFactory))
+   71 |                 .build();
+   72 |     }
+   73 | }
+   74 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/PlaybackErrorPolicy.java — 原始行 1–47
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import java.util.Locale;
+    4 | 
+    5 | /** Decides whether a Media3 error merits retrying the same URL with LibVLC. */
+    6 | public final class PlaybackErrorPolicy {
+    7 |     private PlaybackErrorPolicy() {}
+    8 | 
+    9 |     /**
+   10 |      * Connection establishment failures and timeouts are endpoint/network
+   11 |      * failures, not decoder compatibility signals. Skip a same-URL engine retry
+   12 |      * so automatic backup selection is not delayed by a second connection timeout.
+   13 |      * HTTP status, manifest/container parsing and decoder errors still retain the
+   14 |      * LibVLC fallback because a different network stack or demuxer may recover.
+   15 |      */
+   16 |     public static boolean shouldSkipSameUrlVlcRetry(String errorCodeName) {
+   17 |         if (errorCodeName == null) return false;
+   18 |         String name = errorCodeName.trim().toUpperCase(Locale.ROOT);
+   19 |         return "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED".equals(name)
+   20 |                 || "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT".equals(name);
+   21 |     }
+   22 | 
+   23 |     /**
+   24 |      * Cool down endpoints according to the failure evidence. Transient network
+   25 |      * and server failures should be retried relatively soon; deterministic
+   26 |      * missing resources and local decode/parse incompatibilities should not
+   27 |      * dominate the next channel scan.
+   28 |      */
+   29 |     public static long cooldownMs(String errorCodeName, int httpStatus) {
+   30 |         if (httpStatus == 404 || httpStatus == 410) return 10L * 60L * 1000L;
+   31 |         if (httpStatus == 429) return 60L * 1000L;
+   32 |         if (httpStatus >= 500 && httpStatus <= 599) return 30L * 1000L;
+   33 |         if (errorCodeName == null) return 120L * 1000L;
+   34 |         String name = errorCodeName.trim().toUpperCase(Locale.ROOT);
+   35 |         if ("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED".equals(name)
+   36 |                 || "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT".equals(name)) {
+   37 |             return 30L * 1000L;
+   38 |         }
+   39 |         if ("ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED".equals(name)
+   40 |                 || "ERROR_CODE_DECODING_FAILED".equals(name)
+   41 |                 || "ERROR_CODE_DECODER_INIT_FAILED".equals(name)) {
+   42 |             return 10L * 60L * 1000L;
+   43 |         }
+   44 |         return 120L * 1000L;
+   45 |     }
+   46 | }
+   47 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/PlaybackRecoveryPolicy.java — 原始行 1–24
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** Pure timing decisions used by the live playback watchdog. */
+    4 | public final class PlaybackRecoveryPolicy {
+    5 |     private PlaybackRecoveryPolicy() {}
+    6 | 
+    7 |     public static boolean isTimelineStalled(long nowMs, long lastAdvanceAtMs, long timeoutMs) {
+    8 |         return timeoutMs > 0L && lastAdvanceAtMs > 0L
+    9 |                 && nowMs >= lastAdvanceAtMs
+   10 |                 && nowMs - lastAdvanceAtMs >= timeoutMs;
+   11 |     }
+   12 | 
+   13 |     public static boolean isVideoOutputStalled(boolean videoTrackSelected,
+   14 |                                                 boolean firstFrameRendered,
+   15 |                                                 long videoTrackSelectedAtMs,
+   16 |                                                 long lastVideoFrameActivityAtMs,
+   17 |                                                 long nowMs,
+   18 |                                                 long timeoutMs) {
+   19 |         if (!videoTrackSelected || timeoutMs <= 0L || nowMs < 0L) return false;
+   20 |         long reference = firstFrameRendered ? lastVideoFrameActivityAtMs : videoTrackSelectedAtMs;
+   21 |         return reference > 0L && nowMs >= reference && nowMs - reference >= timeoutMs;
+   22 |     }
+   23 | }
+   24 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/TrackHealthPolicy.java — 原始行 1–28
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** Rejects live sources that cannot provide both expected audio and video tracks. */
+    4 | public final class TrackHealthPolicy {
+    5 |     private TrackHealthPolicy() {}
+    6 | 
+    7 |     /** TV success requires both output paths, not merely a decoded first frame.
+    8 |      * Audio advancement is an engine signal, not proof of audible speaker output. */
+    9 |     public static boolean hasConfirmedTvOutput(boolean audioPresent, boolean audioSupported,
+   10 |             boolean audioSelected, boolean audioAdvancing, boolean videoPresent,
+   11 |             boolean videoSupported, boolean videoSelected, boolean firstFrameRendered) {
+   12 |         return audioPresent && audioSupported && audioSelected && audioAdvancing
+   13 |                 && videoPresent && videoSupported && videoSelected && firstFrameRendered;
+   14 |     }
+   15 | 
+   16 |     public static boolean canRefreshRecoveryBudget(boolean confirmedOutput,
+   17 |             long readyAt, long lastAdvanceAt, long lastVideoAt, long now) {
+   18 |         return confirmedOutput && readyAt > 0L && now - readyAt >= 120000L
+   19 |                 && lastAdvanceAt > 0L && now >= lastAdvanceAt && now - lastAdvanceAt < 15000L
+   20 |                 && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 20000L;
+   21 |     }
+   22 | 
+   23 |     /** A television source without either usable audio or usable video is not healthy. */
+   24 |     public static boolean shouldFailoverForTrackHealth(boolean missingAudio, boolean missingVideo) {
+   25 |         return missingAudio || missingVideo;
+   26 |     }
+   27 | }
+   28 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/BufferingFailoverPolicy.java — 原始行 1–18
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** Chooses a bounded buffering timeout for first startup, rebuffering and backup attempts. */
+    4 | public final class BufferingFailoverPolicy {
+    5 |     private static final int FIRST_STARTUP_MAX_SECONDS = 15;
+    6 |     private static final int BACKUP_MAX_SECONDS = 6;
+    7 | 
+    8 |     private BufferingFailoverPolicy() {}
+    9 | 
+   10 |     public static int timeoutSeconds(boolean sourceWasReady, int automaticSwitchCount,
+   11 |                                       int configuredSeconds) {
+   12 |         if (configuredSeconds <= 0) return 0;
+   13 |         if (sourceWasReady) return configuredSeconds;
+   14 |         if (automaticSwitchCount > 0) return Math.min(configuredSeconds, BACKUP_MAX_SECONDS);
+   15 |         return Math.min(configuredSeconds, FIRST_STARTUP_MAX_SECONDS);
+   16 |     }
+   17 | }
+   18 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/VodTimelinePolicy.java — 原始行 1–46
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /**
+    4 |  * Overflow-safe conversion between millisecond playback timelines and the
+    5 |  * 0..1000 progress scale used by the Android TV seek bar.
+    6 |  */
+    7 | public final class VodTimelinePolicy {
+    8 |     private static final int PROGRESS_MAX = 1000;
+    9 | 
+   10 |     private VodTimelinePolicy() {}
+   11 | 
+   12 |     public static long clampPosition(long positionMs, long durationMs) {
+   13 |         if (durationMs <= 0L) return 0L;
+   14 |         return Math.max(0L, Math.min(durationMs, positionMs));
+   15 |     }
+   16 | 
+   17 |     public static long addAndClamp(long positionMs, long deltaMs, long durationMs) {
+   18 |         if (durationMs <= 0L) return 0L;
+   19 |         long base = clampPosition(positionMs, durationMs);
+   20 |         long target;
+   21 |         if (deltaMs > 0L && base > Long.MAX_VALUE - deltaMs) {
+   22 |             target = Long.MAX_VALUE;
+   23 |         } else if (deltaMs < 0L && base < Long.MIN_VALUE - deltaMs) {
+   24 |             target = Long.MIN_VALUE;
+   25 |         } else {
+   26 |             target = base + deltaMs;
+   27 |         }
+   28 |         return clampPosition(target, durationMs);
+   29 |     }
+   30 | 
+   31 |     public static int toProgress(long positionMs, long durationMs) {
+   32 |         if (durationMs <= 0L) return 0;
+   33 |         long position = clampPosition(positionMs, durationMs);
+   34 |         return (int) Math.max(0L, Math.min(PROGRESS_MAX,
+   35 |                 Math.round(((double) position / (double) durationMs) * PROGRESS_MAX)));
+   36 |     }
+   37 | 
+   38 |     public static long fromProgress(int progress, long durationMs) {
+   39 |         if (durationMs <= 0L) return 0L;
+   40 |         int bounded = Math.max(0, Math.min(PROGRESS_MAX, progress));
+   41 |         // Decompose duration to avoid durationMs * progress overflow.
+   42 |         return (durationMs / PROGRESS_MAX) * bounded
+   43 |                 + ((durationMs % PROGRESS_MAX) * bounded) / PROGRESS_MAX;
+   44 |     }
+   45 | }
+   46 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/SourceUpdateActivityPolicy.java — 原始行 1–41
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** In-process viewing gate. The manifest and default WorkManager use the same app process.
+    4 |  * No persisted busy flag can survive process death, reboot, or a clock adjustment. */
+    5 | public final class SourceUpdateActivityPolicy {
+    6 |     private static volatile boolean activityActive;
+    7 |     private static volatile boolean playbackActive;
+    8 |     private static volatile long stableUntil;
+    9 |     private static final java.util.concurrent.atomic.AtomicLong stableRevocations=new java.util.concurrent.atomic.AtomicLong();
+   10 |     private SourceUpdateActivityPolicy() {}
+   11 |     private static final java.util.concurrent.atomic.AtomicLong activityStarts = new java.util.concurrent.atomic.AtomicLong();
+   12 |     private static final java.util.concurrent.atomic.AtomicLong playbackStarts = new java.util.concurrent.atomic.AtomicLong();
+   13 |     public static synchronized void setActivityActive(boolean active) {
+   14 |         if(!active)revokeStableLive();
+   15 |         if (active && !activityActive) activityStarts.incrementAndGet();
+   16 |         activityActive = active;
+   17 |     }
+   18 |     public static synchronized void setPlaybackActive(boolean active) {
+   19 |         revokeStableLive();
+   20 |         if (active && !playbackActive) playbackStarts.incrementAndGet();
+   21 |         playbackActive = active;
+   22 |     }
+   23 |     /** A fresh, short-lived confirmation from the existing live watchdog only. */
+   24 |     public static synchronized void reportStableLive(long now) {
+   25 |         if (activityActive && playbackActive && now > 0L && now < Long.MAX_VALUE-15000L)
+   26 |             stableUntil=now+15000L;
+   27 |     }
+   28 |     public static synchronized void revokeStableLive() {
+   29 |         if(stableUntil!=0L){stableUntil=0L;stableRevocations.incrementAndGet();}
+   30 |     }
+   31 |     public static boolean permitsInitialPlaybackWork(long now) {
+   32 |         long until=stableUntil;
+   33 |         return activityActive&&playbackActive&&now>0L&&until>now&&until-now<=15000L;
+   34 |     }
+   35 |     public static long stableRevocationGeneration(){return stableRevocations.get();}
+   36 |     public static long activityStartGeneration() { return activityStarts.get(); }
+   37 |     public static long playbackStartGeneration() { return playbackStarts.get(); }
+   38 |     public static boolean isActivityActive() { return activityActive; }
+   39 |     public static boolean isPlaybackActive() { return playbackActive; }
+   40 | }
+   41 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/SourceProbeTimePolicy.java — 原始行 1–90
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /** Computes request timeouts without allowing a network read to ignore the probe-stage budget. */
+    4 | public final class SourceProbeTimePolicy {
+    5 |     private SourceProbeTimePolicy() {}
+    6 |     public static final class PausedException extends java.io.IOException {
+    7 |         public PausedException() { super("Source discovery paused for viewing"); }
+    8 |     }
+    9 |     /** Unchecked so Room's transaction callback rolls back on a viewing pause. */
+   10 |     public static final class PublicationPausedException extends RuntimeException {
+   11 |         public PublicationPausedException() { super("Catalogue publication paused for viewing"); }
+   12 |     }
+   13 |     /** Once this execution observes cancellation it cannot resume or score it as failure. */
+   14 |     public static java.util.function.BooleanSupplier latchPause(java.util.function.BooleanSupplier requested) {
+   15 |         java.util.concurrent.atomic.AtomicBoolean paused = new java.util.concurrent.atomic.AtomicBoolean();
+   16 |         return () -> {
+   17 |             if (Thread.currentThread().isInterrupted() || requested.getAsBoolean()) paused.set(true);
+   18 |             return paused.get();
+   19 |         };
+   20 |     }
+   21 | 
+   22 |     public static void checkPublicationPaused(java.util.function.BooleanSupplier paused) {
+   23 |         if (Thread.currentThread().isInterrupted() || (paused != null && paused.getAsBoolean()))
+   24 |             throw new PublicationPausedException();
+   25 |     }
+   26 |     public static void checkPaused(java.util.function.BooleanSupplier paused) throws PausedException {
+   27 |         if (Thread.currentThread().isInterrupted() || (paused != null && paused.getAsBoolean()))
+   28 |             throw new PausedException();
+   29 |     }
+   30 | 
+   31 |     public static final long LIVE_DIRECTORY_MAX_BYTES=256L*1024L;
+   32 |     public static final long LIVE_DIRECTORY_BYTES_PER_SECOND=32L*1024L;
+   33 |     public static final long LIVE_DIRECTORY_BUDGET_MS=15000L;
+   34 |     /** Negative content lengths are unknown; enforce the same cap as bytes arrive. */
+   35 |     public static boolean fitsLiveDirectory(long bytes) {
+   36 |         return bytes<=LIVE_DIRECTORY_MAX_BYTES;
+   37 |     }
+   38 |     public static long liveDirectoryPacingMillis(long copied,long elapsed) {
+   39 |         long bounded=Math.max(0L,Math.min(LIVE_DIRECTORY_MAX_BYTES,copied));
+   40 |         return Math.max(0L,(bounded*1000L+LIVE_DIRECTORY_BYTES_PER_SECOND-1L)
+   41 |                 /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
+   42 |     }
+   43 | 
+   44 |     public static final long LIVE_RESUMABLE_MAX_BYTES=8L*1024L*1024L;
+   45 |     public static boolean strongDirectoryValidator(String etag) {
+   46 |         return etag!=null&&etag.length()>=2&&etag.startsWith("\"")&&etag.endsWith("\"")
+   47 |                 &&etag.substring(1,etag.length()-1).indexOf('"')<0
+   48 |                 &&etag.indexOf('\r')<0&&etag.indexOf('\n')<0;
+   49 |     }
+   50 |     /** Strict Content-Range check; reject unknown totals and changed offsets. */
+   51 |     public static long[] liveDirectoryRange(String header,long offset,long priorTotal) {
+   52 |         return directoryRange(header,offset,priorTotal,LIVE_DIRECTORY_MAX_BYTES);
+   53 |     }
+   54 | 
+   55 |     public static long[] directoryRange(String header,long offset,long priorTotal,long chunkLimit) {
+   56 |         if(chunkLimit<=0L||chunkLimit>LIVE_RESUMABLE_MAX_BYTES)return null;
+   57 |         if(header==null||offset<0L||!header.matches("bytes [0-9]+-[0-9]+/[0-9]+"))return null;
+   58 |         try{
+   59 |             String[] values=header.substring(6).split("[-/]");
+   60 |             long start=Long.parseLong(values[0]),end=Long.parseLong(values[1]),total=Long.parseLong(values[2]);
+   61 |             if(start!=offset||end<start||total<=end||total>LIVE_RESUMABLE_MAX_BYTES
+   62 |                     ||end-start>=chunkLimit
+   63 |                     ||(priorTotal>0L&&total!=priorTotal))return null;
+   64 |             return new long[]{end-start+1,total};
+   65 |         }catch(NumberFormatException invalid){return null;}
+   66 |     }
+   67 | 
+   68 |     // First build prioritizes breadth. Keep one difficult HLS address from
+   69 |     // monopolizing an entire slice. A timed-out probe is inconclusive.
+   70 |     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
+   71 |     public static long initialAddressDeadline(long batchDeadline, long now) {
+   72 |         if (now < 0L || batchDeadline < now
+   73 |                 || batchDeadline - now < INITIAL_ADDRESS_BUDGET_MS) return 0L;
+   74 |         return now + INITIAL_ADDRESS_BUDGET_MS;
+   75 |     }
+   76 | 
+   77 |     /**
+   78 |      * Returns zero when the deadline has expired; otherwise caps the request timeout
+   79 |      * at both the per-request maximum and the remaining elapsed-realtime budget.
+   80 |      */
+   81 |     public static int boundedTimeoutMillis(long deadlineElapsedRealtime,
+   82 |                                            long nowElapsedRealtime,
+   83 |                                            int maximumTimeoutMillis) {
+   84 |         if (maximumTimeoutMillis <= 0) return 0;
+   85 |         long remaining = deadlineElapsedRealtime - nowElapsedRealtime;
+   86 |         if (remaining <= 0L) return 0;
+   87 |         return (int) Math.min(remaining, (long) maximumTimeoutMillis);
+   88 |     }
+   89 | }
+   90 | 
+```
