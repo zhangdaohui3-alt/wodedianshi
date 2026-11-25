@@ -49,12 +49,17 @@ public final class SourceProbeTimePolicy {
     }
     /** Strict Content-Range check; reject unknown totals and changed offsets. */
     public static long[] liveDirectoryRange(String header,long offset,long priorTotal) {
+        return directoryRange(header,offset,priorTotal,LIVE_DIRECTORY_MAX_BYTES);
+    }
+
+    public static long[] directoryRange(String header,long offset,long priorTotal,long chunkLimit) {
+        if(chunkLimit<=0L||chunkLimit>LIVE_RESUMABLE_MAX_BYTES)return null;
         if(header==null||offset<0L||!header.matches("bytes [0-9]+-[0-9]+/[0-9]+"))return null;
         try{
             String[] values=header.substring(6).split("[-/]");
             long start=Long.parseLong(values[0]),end=Long.parseLong(values[1]),total=Long.parseLong(values[2]);
             if(start!=offset||end<start||total<=end||total>LIVE_RESUMABLE_MAX_BYTES
-                    ||end-start>=LIVE_DIRECTORY_MAX_BYTES
+                    ||end-start>=chunkLimit
                     ||(priorTotal>0L&&total!=priorTotal))return null;
             return new long[]{end-start+1,total};
         }catch(NumberFormatException invalid){return null;}

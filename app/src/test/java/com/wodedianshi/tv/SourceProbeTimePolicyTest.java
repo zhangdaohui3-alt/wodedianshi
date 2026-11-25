@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void idleResumeAllowsLargerButStillBoundedRanges() {
+        org.junit.Assert.assertArrayEquals(new long[]{2097152L,4194304L},
+            SourceProbeTimePolicy.directoryRange("bytes 262144-2359295/4194304",262144L,4194304L,2097152L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 262144-2359296/4194304",262144L,4194304L,2097152L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 262144-2359295/4194305",262144L,4194304L,2097152L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 0-1/2",0L,-1L,0L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 0-1/2",0L,-1L,8388609L));
+    }
+
     @Test public void rangeResumeRejectsWeakValidatorAndInexactContentRanges() {
         assertTrue(SourceProbeTimePolicy.strongDirectoryValidator("\"a\""));
         assertFalse(SourceProbeTimePolicy.strongDirectoryValidator("W/\"a\""));
