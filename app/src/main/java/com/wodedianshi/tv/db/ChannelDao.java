@@ -125,6 +125,10 @@ public interface ChannelDao {
     @Query("SELECT * FROM backup_sources WHERE channelId = :channelId ORDER BY priority, url")
     List<BackupSourceEntity> getBackupSourcesForChannel(String channelId);
 
+    // Only the snapshot writer calls this, with at most 64 channel IDs.
+    @Query("SELECT * FROM backup_sources WHERE channelId IN (:channelIds)")
+    List<BackupSourceEntity> getBackupSourcesForChannels(List<String> channelIds);
+
     // Bounded reads for TV lists: avoid materializing every channel and every
     // backup-source relation merely to render the first screen of a category.
     @Transaction
