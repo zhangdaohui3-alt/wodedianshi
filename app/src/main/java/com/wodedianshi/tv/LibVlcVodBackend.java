@@ -21,6 +21,21 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     private volatile long positionMs, durationMs;
     private final java.util.concurrent.ExecutorService worker;
     private final Runnable poll = this::pollTimeline;
+    // Main-handler-owned; at most two inspections per backend lifetime.
+    private int audioTrackChecks;
+
+    private void scheduleAudioTrackInspection() {
+        if (revoked || released || audioTrackChecks >= 2) return;
+        ++audioTrackChecks;
+        mainHandler.postDelayed(() -> {
+            if (revoked || released) return;
+            try { submit(engine::inspectAudioTrack); }
+            catch (RuntimeException error) {
+                Listener current = listener;
+                if (!revoked && current != null) current.onAudioTrackState(-1, -1);
+            }
+        }, 3000L);
+    }
 
     public LibVlcVodBackend(Context context, VLCVideoLayout videoLayout,
                             java.util.concurrent.ExecutorService worker) {
@@ -33,11 +48,24 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         engine.setListener(new LibVlcPlaybackEngine.Listener() {
             @Override public void onPlaying() {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onReady(); });
+                if (!revoked && !released && current != null) mainHandler.post(() -> {
+                    if (!revoked && !released && listener == current) {
+                        current.onReady();
+                        if (audioTrackChecks == 0) scheduleAudioTrackInspection();
+                    }
+                });
             }
             @Override public void onVideoOutput(int count) {
                 Listener current = listener;
                 if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onVideoOutput(count > 0); });
+            }
+            @Override public void onAudioTrackState(int count, int selected) {
+                Listener current = listener;
+                if (!revoked && !released && current != null) mainHandler.post(() -> {
+                    if (revoked || released || listener != current) return;
+                    current.onAudioTrackState(count, selected);
+                    if (count <= 0 || selected < 0) scheduleAudioTrackInspection();
+                });
             }
             @Override public void onBuffering(float percent) { }
             @Override public void onFailure(String reason) {

@@ -8,6 +8,7 @@ public interface VodPlaybackBackend {
     interface Listener {
         void onReady();
         void onVideoOutput(boolean available);
+        default void onAudioTrackState(int trackCount, int selectedTrackId) { }
         void onFailure(String reason);
         void onEnded();
     }
