@@ -1,0 +1,556 @@
+# 第五组 C：播放器、所有权与抓源让路相关测试
+
+固定审查提交：adcb720f2caf04ec7cca94bba632589c14a8ed2e。结合 A/B 的实际源码分析测试覆盖与缺口；纯策略测试不证明 Android 9 实机硬件解码、音视频输出、Surface 生命周期或网络并发安全。
+
+## 文件清单
+- app/src/test/java/com/wodedianshi/tv/DecoderOwnershipTest.java L1–41 | blob 43bda5e3449d8f72f6f0af53563032b38971ddaf
+- app/src/test/java/com/wodedianshi/tv/DecoderPolicyTest.java L1–20 | blob 03c2c48b1a84a2922efa7f9af307f1bd2d4be5cb
+- app/src/test/java/com/wodedianshi/tv/PlaybackErrorPolicyTest.java L1–54 | blob 5137ea69b18357c97fa8cbae68a31c737253fc99
+- app/src/test/java/com/wodedianshi/tv/PlaybackRecoveryPolicyTest.java L1–60 | blob bc64858405417686c6a86f9cbb03a9fd4b8b9c00
+- app/src/test/java/com/wodedianshi/tv/TrackHealthPolicyTest.java L1–47 | blob dfe67209bf22cacd2cce38adeac3bb85966fe773
+- app/src/test/java/com/wodedianshi/tv/BufferingFailoverPolicyTest.java L1–32 | blob 14e015b1ed8cbbc10b1321d7b8751d5bab18c89a
+- app/src/test/java/com/wodedianshi/tv/VodTimelinePolicyTest.java L1–37 | blob 6a818227764f236bcf45a404d425f19271d353f9
+- app/src/test/java/com/wodedianshi/tv/SourceUpdateActivityPolicyTest.java L1–25 | blob 47b53f4002e85a6a8767947ea1547894959a0ba1
+- app/src/test/java/com/wodedianshi/tv/SourceProbeTimePolicyTest.java L1–157 | blob 7cc0f5902f95fcc9348999f2f5a3b2d7299e85e1
+
+## app/src/test/java/com/wodedianshi/tv/DecoderOwnershipTest.java — 原始行 1–41
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class DecoderOwnershipTest {
+    7 |     @Test public void secondScreenCannotAcquireUntilFirstReleases() {
+    8 |         DecoderOwnership ownership = new DecoderOwnership();
+    9 |         Object first = new Object(), next = new Object();
+   10 |         assertTrue(ownership.acquire(first));
+   11 |         assertTrue(ownership.acquire(first));
+   12 |         assertFalse(ownership.availableTo(next));
+   13 |         assertFalse(ownership.acquire(next));
+   14 |         ownership.release(next);
+   15 |         assertFalse(ownership.acquire(next));
+   16 |         ownership.release(first);
+   17 |         assertTrue(ownership.acquire(next));
+   18 |         ownership.release(first);
+   19 |         assertFalse(ownership.acquire(first));
+   20 |     }
+   21 |     @Test public void uncertainReleaseRemainsQuarantined() {
+   22 |         DecoderOwnership ownership = new DecoderOwnership();
+   23 |         Object first = new Object(), next = new Object();
+   24 |         assertTrue(ownership.acquire(first));
+   25 |         ownership.quarantine(first);
+   26 |         ownership.release(first);
+   27 |         assertFalse(ownership.acquire(next));
+   28 |         assertFalse(ownership.acquire(first));
+   29 |         assertFalse(ownership.availableTo(next));
+   30 |     }
+   31 |     @Test public void staleOwnerCannotQuarantineNewOwner() {
+   32 |         DecoderOwnership ownership = new DecoderOwnership();
+   33 |         Object first = new Object(), next = new Object();
+   34 |         assertTrue(ownership.acquire(first));
+   35 |         ownership.release(first);
+   36 |         assertTrue(ownership.acquire(next));
+   37 |         ownership.quarantine(first);
+   38 |         assertTrue(ownership.availableTo(next));
+   39 |     }
+   40 | }
+   41 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/DecoderPolicyTest.java — 原始行 1–20
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import static org.junit.Assert.assertFalse;
+    4 | import static org.junit.Assert.assertTrue;
+    5 | import org.junit.Test;
+    6 | 
+    7 | public class DecoderPolicyTest {
+    8 |     @Test public void compatibilityFallbackIsEnabledByDefault() {
+    9 |         assertTrue(DecoderPolicy.isDecoderFallbackEnabled(DecoderPolicy.DEFAULT_MODE));
+   10 |     }
+   11 | 
+   12 |     @Test public void systemDefaultModeDoesNotEnableRendererFallback() {
+   13 |         assertFalse(DecoderPolicy.isDecoderFallbackEnabled(DecoderPolicy.MODE_SYSTEM_DEFAULT));
+   14 |     }
+   15 | 
+   16 |     @Test public void compatibilityModeEnablesRendererFallback() {
+   17 |         assertTrue(DecoderPolicy.isDecoderFallbackEnabled(DecoderPolicy.MODE_COMPATIBILITY_FALLBACK));
+   18 |     }
+   19 | }
+   20 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/PlaybackErrorPolicyTest.java — 原始行 1–54
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class PlaybackErrorPolicyTest {
+    7 |     @Test public void skipsSameUrlRetryForConnectionFailuresAndTimeouts() {
+    8 |         assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(
+    9 |                 "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED"));
+   10 |         assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(
+   11 |                 "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT"));
+   12 |     }
+   13 | 
+   14 |     @Test public void retainsLibVlcFallbackForHttpAndDecoderCompatibilityErrors() {
+   15 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_IO_BAD_HTTP_STATUS"));
+   16 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_DECODING_FAILED"));
+   17 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED"));
+   18 |     }
+   19 | 
+   20 |     @Test public void usesShortCooldownForTransientNetworkAndServerErrors() {
+   21 |         assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
+   22 |                 "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT", 0));
+   23 |         assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
+   24 |                 "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", 0));
+   25 |         assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
+   26 |                 "ERROR_CODE_IO_BAD_HTTP_STATUS", 503));
+   27 |     }
+   28 | 
+   29 |     @Test public void usesLongCooldownForDeterministicMissingOrIncompatibleSources() {
+   30 |         assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
+   31 |                 "ERROR_CODE_IO_BAD_HTTP_STATUS", 404));
+   32 |         assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
+   33 |                 "ERROR_CODE_IO_BAD_HTTP_STATUS", 410));
+   34 |         assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
+   35 |                 "ERROR_CODE_DECODING_FAILED", 0));
+   36 |         assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
+   37 |                 "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED", 0));
+   38 |     }
+   39 | 
+   40 |     @Test public void appliesRateLimitAndConservativeFallbackCooldowns() {
+   41 |         assertEquals(60000L, PlaybackErrorPolicy.cooldownMs(
+   42 |                 "ERROR_CODE_IO_BAD_HTTP_STATUS", 429));
+   43 |         assertEquals(120000L, PlaybackErrorPolicy.cooldownMs(
+   44 |                 "ERROR_CODE_IO_BAD_HTTP_STATUS", 403));
+   45 |         assertEquals(120000L, PlaybackErrorPolicy.cooldownMs(null, 0));
+   46 |     }
+   47 | 
+   48 |     @Test public void unknownAndMissingErrorsRemainConservative() {
+   49 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(null));
+   50 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(""));
+   51 |         assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("UNKNOWN_ERROR"));
+   52 |     }
+   53 | }
+   54 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/PlaybackRecoveryPolicyTest.java — 原始行 1–60
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class PlaybackRecoveryPolicyTest {
+    7 |     @Test public void timelineRequiresFullTimeout() {
+    8 |         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(44999L, 0L, 45000L));
+    9 |         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(54999L, 10000L, 45000L));
+   10 |         assertTrue(PlaybackRecoveryPolicy.isTimelineStalled(55000L, 10000L, 45000L));
+   11 |     }
+   12 | 
+   13 |     @Test public void timelineRejectsInvalidOrBackwardsClockValues() {
+   14 |         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(1000L, 0L, 100L));
+   15 |         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(999L, 1000L, 100L));
+   16 |         assertFalse(PlaybackRecoveryPolicy.isTimelineStalled(2000L, 1000L, 0L));
+   17 |     }
+   18 | 
+   19 |     @Test public void selectedVideoTrackWithoutFirstFrameHasStartupDeadline() {
+   20 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 29999L, 20000L));
+   21 |         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 30000L, 20000L));
+   22 |     }
+   23 | 
+   24 |     @Test public void metadataBeforeRenderedFirstFrameDoesNotResetStartupDeadline() {
+   25 |         // Decoder metadata may arrive while the output surface is still black.
+   26 |         // Only AnalyticsListener.onRenderedFirstFrame ends the startup deadline.
+   27 |         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false,
+   28 |                 10000L, 29000L, 30000L, 20000L));
+   29 |     }
+   30 | 
+   31 |     @Test public void renderedFirstFrameSwitchesToFrameStallDeadline() {
+   32 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true,
+   33 |                 10000L, 25000L, 44999L, 20000L));
+   34 |         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true,
+   35 |                 10000L, 25000L, 45000L, 20000L));
+   36 |     }
+   37 | 
+   38 |     @Test public void firstFrameDeadlineStartsWhenVideoTrackBecomesSelected() {
+   39 |         // The stream may be READY for a while before track selection completes.
+   40 |         // That earlier wait must not consume the decoder's first-frame budget.
+   41 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 49000L, 20000L));
+   42 |         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 50000L, 20000L));
+   43 |     }
+   44 | 
+   45 |     @Test public void renderedFirstFrameThenUsesVideoPipelineActivityTime() {
+   46 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 44999L, 20000L));
+   47 |         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 45000L, 20000L));
+   48 |     }
+   49 | 
+   50 |     @Test public void audioOnlyOrUnselectedVideoDoesNotTriggerVideoStall() {
+   51 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(false, false, 10000L, 0L, 90000L, 20000L));
+   52 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 0L, 0L, 90000L, 20000L));
+   53 |     }
+   54 | 
+   55 |     @Test public void invalidTimesDoNotTriggerVideoStall() {
+   56 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 9999L, 20000L));
+   57 |         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 0L, 90000L, 20000L));
+   58 |     }
+   59 | }
+   60 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/TrackHealthPolicyTest.java — 原始行 1–47
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class TrackHealthPolicyTest {
+    7 |     @Test public void automaticChannelRecoveryStaysInScopeAndStopsAfterThreeSwitches() {
+    8 |         java.util.List<Integer> scope=java.util.Arrays.asList(3,10,28,47,99);
+    9 |         assertEquals(10,ChannelFailoverPolicy.nextScopedChannel(scope,0,0));
+   10 |         assertEquals(47,ChannelFailoverPolicy.nextScopedChannel(scope,2,2));
+   11 |         assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,3,3));
+   12 |         assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,null,0));
+   13 |         assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(null,0,0));
+   14 |         assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(java.util.Arrays.asList(3,10),1,1));
+   15 |     }
+   16 | 
+   17 |     @Test public void firstFrameWithoutAudioIsNotConfirmedTvOutput() {
+   18 |         assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,false,true,true,true,true));
+   19 |         assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,false));
+   20 |         assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,false,false,false,false));
+   21 |         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
+   22 |     }
+   23 | 
+   24 |     @Test public void retryBudgetRequiresConfirmedRecentOutput() {
+   25 |         assertTrue(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,120000L,121000L));
+   26 |         assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(false,1000L,120000L,120000L,121000L));
+   27 |         assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,100000L,120000L,121000L));
+   28 |         assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,100000L,121000L));
+   29 |     }
+   30 | 
+   31 |     @Test public void missingVideoTriggersFailover() {
+   32 |         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(false, true));
+   33 |     }
+   34 | 
+   35 |     @Test public void missingAudioAndVideoTriggersFailover() {
+   36 |         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, true));
+   37 |     }
+   38 | 
+   39 |     @Test public void missingAudioAloneTriggersFailoverEvenWhenVideoIsPresent() {
+   40 |         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, false));
+   41 |     }
+   42 | 
+   43 |     @Test public void healthyTracksDoNotFailover() {
+   44 |         assertFalse(TrackHealthPolicy.shouldFailoverForTrackHealth(false, false));
+   45 |     }
+   46 | }
+   47 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/BufferingFailoverPolicyTest.java — 原始行 1–32
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class BufferingFailoverPolicyTest {
+    7 |     @Test public void firstStartupIsBoundedByFifteenSeconds() {
+    8 |         assertEquals(15, BufferingFailoverPolicy.timeoutSeconds(false, 0, 20));
+    9 |         assertEquals(12, BufferingFailoverPolicy.timeoutSeconds(false, 0, 12));
+   10 |     }
+   11 | 
+   12 |     @Test public void failedSourceBackupGetsAtMostSixSeconds() {
+   13 |         assertEquals(6, BufferingFailoverPolicy.timeoutSeconds(false, 1, 20));
+   14 |         assertEquals(5, BufferingFailoverPolicy.timeoutSeconds(false, 2, 5));
+   15 |     }
+   16 | 
+   17 |     @Test public void lowUserSelectedTimeoutIsPreserved() {
+   18 |         assertEquals(3, BufferingFailoverPolicy.timeoutSeconds(false, 0, 3));
+   19 |         assertEquals(3, BufferingFailoverPolicy.timeoutSeconds(false, 1, 3));
+   20 |     }
+   21 | 
+   22 |     @Test public void midstreamRebufferUsesUserSetting() {
+   23 |         assertEquals(20, BufferingFailoverPolicy.timeoutSeconds(true, 0, 20));
+   24 |         assertEquals(8, BufferingFailoverPolicy.timeoutSeconds(true, 2, 8));
+   25 |     }
+   26 | 
+   27 |     @Test public void zeroDisablesAutomaticSwitching() {
+   28 |         assertEquals(0, BufferingFailoverPolicy.timeoutSeconds(false, 0, 0));
+   29 |         assertEquals(0, BufferingFailoverPolicy.timeoutSeconds(false, 3, 0));
+   30 |     }
+   31 | }
+   32 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/VodTimelinePolicyTest.java — 原始行 1–37
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class VodTimelinePolicyTest {
+    7 |     @Test public void progressRoundTripsTypicalTimeline() {
+    8 |         long duration = 7_200_000L;
+    9 |         assertEquals(0, VodTimelinePolicy.toProgress(0, duration));
+   10 |         assertEquals(500, VodTimelinePolicy.toProgress(3_600_000L, duration));
+   11 |         assertEquals(duration, VodTimelinePolicy.fromProgress(1000, duration));
+   12 |     }
+   13 | 
+   14 |     @Test public void clampsOutOfRangePositionsAndProgress() {
+   15 |         assertEquals(0L, VodTimelinePolicy.clampPosition(-10, 100));
+   16 |         assertEquals(100L, VodTimelinePolicy.clampPosition(150, 100));
+   17 |         assertEquals(0, VodTimelinePolicy.toProgress(50, 0));
+   18 |         assertEquals(0L, VodTimelinePolicy.fromProgress(50, 0));
+   19 |         assertEquals(0L, VodTimelinePolicy.fromProgress(-20, 100));
+   20 |         assertEquals(100L, VodTimelinePolicy.fromProgress(2000, 100));
+   21 |     }
+   22 | 
+   23 |     @Test public void seekDeltaCannotOverflowOrEscapeDuration() {
+   24 |         assertEquals(100L, VodTimelinePolicy.addAndClamp(90, Long.MAX_VALUE, 100));
+   25 |         assertEquals(0L, VodTimelinePolicy.addAndClamp(10, Long.MIN_VALUE, 100));
+   26 |         assertEquals(70L, VodTimelinePolicy.addAndClamp(50, 20, 100));
+   27 |         assertEquals(0L, VodTimelinePolicy.addAndClamp(50, 20, 0));
+   28 |     }
+   29 | 
+   30 |     @Test public void handlesVeryLargeDurations() {
+   31 |         long duration = Long.MAX_VALUE;
+   32 |         assertEquals(1000, VodTimelinePolicy.toProgress(duration, duration));
+   33 |         assertEquals(0, VodTimelinePolicy.toProgress(0, duration));
+   34 |         assertTrue(VodTimelinePolicy.fromProgress(999, duration) <= duration);
+   35 |     }
+   36 | }
+   37 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/SourceUpdateActivityPolicyTest.java — 原始行 1–25
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class SourceUpdateActivityPolicyTest {
+    7 |     @Test public void viewingFlagsAreIndependentAndCanBeCleared() {
+    8 |         try {
+    9 |             SourceUpdateActivityPolicy.setActivityActive(true);
+   10 |             SourceUpdateActivityPolicy.setPlaybackActive(false);
+   11 |             assertTrue(SourceUpdateActivityPolicy.isActivityActive());
+   12 |             assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
+   13 |             SourceUpdateActivityPolicy.setPlaybackActive(true);
+   14 |             SourceUpdateActivityPolicy.setActivityActive(false);
+   15 |             assertFalse(SourceUpdateActivityPolicy.isActivityActive());
+   16 |             assertTrue(SourceUpdateActivityPolicy.isPlaybackActive());
+   17 |         } finally {
+   18 |             SourceUpdateActivityPolicy.setPlaybackActive(false);
+   19 |             SourceUpdateActivityPolicy.setActivityActive(false);
+   20 |         }
+   21 |         assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
+   22 |         assertFalse(SourceUpdateActivityPolicy.isActivityActive());
+   23 |     }
+   24 | }
+   25 | 
+```
+
+
+## app/src/test/java/com/wodedianshi/tv/SourceProbeTimePolicyTest.java — 原始行 1–157
+
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | import org.junit.Test;
+    4 | import static org.junit.Assert.*;
+    5 | 
+    6 | public class SourceProbeTimePolicyTest {
+    7 |     @Test public void idleResumeAllowsLargerButStillBoundedRanges() {
+    8 |         org.junit.Assert.assertArrayEquals(new long[]{2097152L,4194304L},
+    9 |             SourceProbeTimePolicy.directoryRange("bytes 262144-2359295/4194304",262144L,4194304L,2097152L));
+   10 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 262144-2359296/4194304",262144L,4194304L,2097152L));
+   11 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 262144-2359295/4194305",262144L,4194304L,2097152L));
+   12 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 0-1/2",0L,-1L,0L));
+   13 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange("bytes 0-1/2",0L,-1L,8388609L));
+   14 |     }
+   15 | 
+   16 |     @Test public void rangeResumeRejectsWeakValidatorAndInexactContentRanges() {
+   17 |         assertTrue(SourceProbeTimePolicy.strongDirectoryValidator("\"a\""));
+   18 |         assertFalse(SourceProbeTimePolicy.strongDirectoryValidator("W/\"a\""));
+   19 |         assertFalse(SourceProbeTimePolicy.strongDirectoryValidator(null));
+   20 |         assertFalse(SourceProbeTimePolicy.strongDirectoryValidator("\"a\nb\""));
+   21 |         org.junit.Assert.assertArrayEquals(new long[]{262144L,524288L},
+   22 |             SourceProbeTimePolicy.liveDirectoryRange("bytes 262144-524287/524288",262144L,524288L));
+   23 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-262143/524288",262144L,524288L));
+   24 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 262144-524287/524289",262144L,524288L));
+   25 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-262144/524288",0L,-1L));
+   26 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-1/*",0L,-1L));
+   27 |         org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-1/8388609",0L,-1L));
+   28 |     }
+   29 | 
+   30 |     @Test public void viewingDirectoryUsesBoundedSizeAndPacing() {
+   31 |         assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(-1L));
+   32 |         assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(262144L));
+   33 |         assertFalse(SourceProbeTimePolicy.fitsLiveDirectory(262145L));
+   34 |         assertEquals(125L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,0L));
+   35 |         assertEquals(75L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,50L));
+   36 |         assertEquals(0L,SourceProbeTimePolicy.liveDirectoryPacingMillis(4096L,200L));
+   37 |         assertEquals(8000L,SourceProbeTimePolicy.liveDirectoryPacingMillis(Long.MAX_VALUE,0L));
+   38 |     }
+   39 | 
+   40 |     @Test public void stableViewingLeaseExpiresAndRevokesOnNewPlaybackOrStop() {
+   41 |         SourceUpdateActivityPolicy.setActivityActive(true);
+   42 |         SourceUpdateActivityPolicy.setPlaybackActive(true);
+   43 |         try {
+   44 |             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+   45 |             SourceUpdateActivityPolicy.reportStableLive(1000L);
+   46 |             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+   47 |             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
+   48 |             SourceUpdateActivityPolicy.reportStableLive(15000L);
+   49 |             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
+   50 |             long generation=SourceUpdateActivityPolicy.stableRevocationGeneration();
+   51 |             SourceUpdateActivityPolicy.revokeStableLive();
+   52 |             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16001L));
+   53 |             assertEquals(generation+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
+   54 |             SourceUpdateActivityPolicy.reportStableLive(17000L);
+   55 |             SourceUpdateActivityPolicy.setPlaybackActive(true);
+   56 |             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(17001L));
+   57 |             SourceUpdateActivityPolicy.reportStableLive(18000L);
+   58 |             SourceUpdateActivityPolicy.setActivityActive(false);
+   59 |             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(18001L));
+   60 |         } finally {
+   61 |             SourceUpdateActivityPolicy.setPlaybackActive(false);
+   62 |             SourceUpdateActivityPolicy.setActivityActive(false);
+   63 |         }
+   64 |     }
+   65 | 
+   66 |     @Test public void initialAddressRequiresFullBudgetBeforeStarting() {
+   67 |         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(91000L,1000L));
+   68 |         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(16000L,1000L));
+   69 |         assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(15999L,1000L));
+   70 |         assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(1000L,1001L));
+   71 |         assertEquals(0L, SourceProbeTimePolicy.initialAddressDeadline(1000L,-1L));
+   72 |     }
+   73 | 
+   74 |     @Test public void observedPauseRemainsLatchedAfterViewerLeaves() {
+   75 |         java.util.concurrent.atomic.AtomicBoolean viewing = new java.util.concurrent.atomic.AtomicBoolean();
+   76 |         java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(viewing::get);
+   77 |         assertFalse(pause.getAsBoolean());
+   78 |         viewing.set(true);
+   79 |         assertTrue(pause.getAsBoolean());
+   80 |         viewing.set(false);
+   81 |         assertTrue(pause.getAsBoolean());
+   82 |         assertFalse(SourceProbeTimePolicy.latchPause(viewing::get).getAsBoolean());
+   83 |     }
+   84 | 
+   85 |     @Test public void shortPlaybackStartIsVisibleEvenBetweenProbeChecks() {
+   86 |         SourceUpdateActivityPolicy.setPlaybackActive(false);
+   87 |         long start = SourceUpdateActivityPolicy.playbackStartGeneration();
+   88 |         java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(
+   89 |             () -> SourceUpdateActivityPolicy.playbackStartGeneration() != start);
+   90 |         try {
+   91 |             SourceUpdateActivityPolicy.setPlaybackActive(true);
+   92 |             SourceUpdateActivityPolicy.setPlaybackActive(false);
+   93 |             assertTrue(pause.getAsBoolean());
+   94 |         } finally { SourceUpdateActivityPolicy.setPlaybackActive(false); }
+   95 |     }
+   96 | 
+   97 |     @Test public void repeatedActiveSignalsDoNotGenerateNewStarts() {
+   98 |         SourceUpdateActivityPolicy.setActivityActive(false);
+   99 |         long start = SourceUpdateActivityPolicy.activityStartGeneration();
+  100 |         try {
+  101 |             SourceUpdateActivityPolicy.setActivityActive(true);
+  102 |             SourceUpdateActivityPolicy.setActivityActive(true);
+  103 |             assertEquals(start + 1, SourceUpdateActivityPolicy.activityStartGeneration());
+  104 |         } finally { SourceUpdateActivityPolicy.setActivityActive(false); }
+  105 |     }
+  106 | 
+  107 |     @Test public void cooperativePauseIsDistinctFromNetworkFailure() throws Exception {
+  108 |         SourceProbeTimePolicy.checkPaused(() -> false);
+  109 |         try {
+  110 |             SourceProbeTimePolicy.checkPaused(() -> true);
+  111 |             fail("Expected a cooperative pause");
+  112 |         } catch (SourceProbeTimePolicy.PausedException expected) {
+  113 |             assertTrue(expected instanceof java.io.IOException);
+  114 |         }
+  115 |     }
+  116 | 
+  117 |     @Test public void playlistParserStopsWithoutCompletingThePage() throws Exception {
+  118 |         java.util.concurrent.atomic.AtomicInteger count = new java.util.concurrent.atomic.AtomicInteger();
+  119 |         String playlist = "#EXTM3U\n#EXTINF:-1,First\n[URL_REDACTED]";
+  120 |         try {
+  121 |             PlaylistParser.parseEach(new java.io.StringReader(playlist), 0, 10,
+  122 |                 item -> count.incrementAndGet(), () -> count.get() > 0);
+  123 |             fail("Expected a cooperative pause");
+  124 |         } catch (SourceProbeTimePolicy.PausedException expected) {
+  125 |             assertEquals(1, count.get());
+  126 |         }
+  127 |     }
+  128 | 
+  129 |     @Test public void publicationPauseThrowsUncheckedToTriggerRollback() {
+  130 |         SourceProbeTimePolicy.checkPublicationPaused(() -> false);
+  131 |         try {
+  132 |             SourceProbeTimePolicy.checkPublicationPaused(() -> true);
+  133 |             fail("Expected publication rollback signal");
+  134 |         } catch (SourceProbeTimePolicy.PublicationPausedException expected) {
+  135 |             assertTrue(expected instanceof RuntimeException);
+  136 |         }
+  137 |     }
+  138 | 
+  139 |     @Test public void usesPerRequestMaximumWhenDeadlineIsFarAway() {
+  140 |         assertEquals(2500, SourceProbeTimePolicy.boundedTimeoutMillis(20_000L, 1_000L, 2500));
+  141 |     }
+  142 | 
+  143 |     @Test public void clipsTimeoutToRemainingDeadline() {
+  144 |         assertEquals(400, SourceProbeTimePolicy.boundedTimeoutMillis(1_400L, 1_000L, 2500));
+  145 |     }
+  146 | 
+  147 |     @Test public void returnsZeroWhenDeadlineHasExpired() {
+  148 |         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(1_000L, 1_000L, 3000));
+  149 |         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(900L, 1_000L, 3000));
+  150 |     }
+  151 | 
+  152 |     @Test public void rejectsNonPositiveRequestMaximum() {
+  153 |         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(5_000L, 1_000L, 0));
+  154 |         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(5_000L, 1_000L, -10));
+  155 |     }
+  156 | }
+  157 | 
+```
+
+
+## 版本与播放器依赖声明（app/build.gradle 原始行号）
+7 |     compileSdk 36
+11 |         minSdk 23
+12 |         targetSdk 28
+13 |         versionCode 161
+14 |         versionName '2.74.5'
+59 |     implementation "androidx.media3:media3-exoplayer:1.11.1"
+60 |     implementation "androidx.media3:media3-exoplayer-hls:1.11.1"
+61 |     implementation "androidx.media3:media3-exoplayer-dash:1.11.1"
+62 |     implementation "androidx.media3:media3-exoplayer-smoothstreaming:1.11.1"
+63 |     implementation "androidx.media3:media3-exoplayer-rtsp:1.11.1"
+64 |     implementation "androidx.media3:media3-ui:1.11.1"
+66 |     implementation "org.videolan.android:libvlc-all:3.7.7"
+67 |     implementation "androidx.work:work-runtime:2.10.1"
