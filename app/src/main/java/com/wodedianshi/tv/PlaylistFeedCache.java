@@ -58,6 +58,16 @@ public final class PlaylistFeedCache {
         return obtainBounded(context,feedUrl,false,!revalidate,paused,false,revalidate);
     }
 
+    /** Reuse a successful manual acquisition only while the body identity matches. */
+    static File findPreparedManual(Context context,String feedUrl,String preparedVersion) throws IOException {
+        if(preparedVersion==null||preparedVersion.isEmpty())return null;
+        File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+        File cached=new File(directory,sha256("routine|"+feedUrl)+".m3u");
+        Properties metadata=readProperties(new File(cached.getPath()+".properties"));
+        if(!matchesBody(metadata,cached))return null;
+        return DiscoveryBatchPolicy.isPreparedInitialFeed(preparedVersion,contentVersion(cached))?cached:null;
+    }
+
     public static File obtainSmallInitialDuringViewing(Context context,String feedUrl,
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
         return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
