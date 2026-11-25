@@ -169,6 +169,7 @@ public final class RoomCatalogueWriter {
                 throw new StaleCatalogueException();
             }
             if(manualOwner!=null){
+                RoomCatalogueBuildStore.requireManualQueueReady(db,manualOwner);
                 if(reconciledStructure==null)RoomCatalogueBuildStore.requireUnchangedManualStructure(db,manualOwner);
                 else RoomCatalogueBuildStore.requireReconciledManualStructure(db,manualOwner,reconciledStructure);
             }
