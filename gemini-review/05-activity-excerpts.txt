@@ -1,0 +1,403 @@
+My TV source review — PR #222 fixed commit 5556c7ab3bfba30278e265f229c587e6116a79a2
+SELECTED excerpts, not full file. Original lines preserved; gaps intentional.
+app/src/main/java/com/wodedianshi/tv/MainActivity.java | blob 096a2a944e21fd45443bf5663af3d39e7f8b761f
+
+===== lines 1433-1488 =====
+1433 |             }
+1434 |           }
+1435 |           return true;
+1436 |         }
+1437 |         return super.dispatchTouchEvent(event);
+1438 |       }
+1439 |     };liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+1440 |     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
+1441 |     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
+1442 |     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
+1443 |     refresh();
+1444 |     root.post(()->{if(!fullScreenPlayback&&root.findFocus()==null&&catItems.getChildCount()>0)catItems.getChildAt(0).requestFocus();});
+1445 |     if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+1446 |     // Restore the last channel only after the first frame is on screen. Player creation
+1447 |     // can be expensive on older Android TV boxes and should not block app entry.
+1448 |     // Last-channel restoration is scheduled after asynchronous catalogue recovery in onCreate.
+1449 |     updateNetworkSpeedMonitor();
+1450 |   }
+1451 |   // Do not forward every remote-control key to PlayerView.
+1452 |   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
+1453 |   private void scheduleAutomaticSourceUpdates(){
+1454 |     WorkManager wm=WorkManager.getInstance(this);
+1455 |     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+1456 |     boolean enabled=prefs.getBoolean("auto_source_update",true);
+1457 |     if(!enabled){
+1458 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+1459 |       wm.cancelUniqueWork("mytv_startup_source_refresh");
+1460 |       return;
+1461 |     }
+1462 |     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+1463 |     // The one-time full rebuild publishes an entire catalogue before routine
+1464 |     // maintenance is eligible. Existing channels remain usable during this build.
+1465 |     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
+1466 |         enabled,roomFullRebuildCompletedAt)){
+1467 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+1468 |       // The first discovery is part of first-run setup, not a routine background
+1469 |       // refresh. Let it run while the catalogue screen is open; playback-active
+1470 |       // protection inside the Worker still pauses it if the user starts watching.
+1471 |       OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+1472 |           .setConstraints(constraints)
+1473 |           .setInputData(new Data.Builder().putBoolean("manual",true).putBoolean("initial_discovery_chain",true).build())
+1474 |           .build();
+1475 |       wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
+1476 |       return; // Never run a routine refresh concurrently with the first full build.
+1477 |     }
+1478 |     if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(
+1479 |         enabled,roomFullRebuildCompletedAt))return;
+1480 |     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,
+1481 |         SourceUpdateSchedulePolicy.ROUTINE_ELIGIBILITY_CHECK_DAYS,TimeUnit.DAYS)
+1482 |         .setConstraints(constraints).build();
+1483 |     // The daily job only checks whether a 30-day maintenance pass is due.
+1484 |     // The worker exits before discovery while busy or not due.
+1485 |     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
+1486 |   }
+1487 |   private void startInitialDiscoveryProgressTicker(){
+1488 |     stopInitialDiscoveryProgressTicker();
+
+===== lines 1493-1548 =====
+1493 |     }
+1494 |     initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
+1495 |     initialDiscoveryProgressTicker=new Runnable(){
+1496 |       @Override public void run(){
+1497 |         if(!activityStarted||isFinishing()||isDestroyed()||initialDiscoveryProgressPanel==null)return;
+1498 |         requestInitialDiscoveryProgress();
+1499 |         if(roomFullRebuildCompletedAt<=0L)
+1500 |           uiHandler.postDelayed(this,4000L);
+1501 |       }
+1502 |     };
+1503 |     uiHandler.post(initialDiscoveryProgressTicker);
+1504 |   }
+1505 | 
+1506 |   private void stopInitialDiscoveryProgressTicker(){
+1507 |     if(initialDiscoveryProgressTicker!=null){
+1508 |       uiHandler.removeCallbacks(initialDiscoveryProgressTicker);
+1509 |       initialDiscoveryProgressTicker=null;
+1510 |     }
+1511 |   }
+1512 | 
+1513 |   private void requestInitialDiscoveryProgress(){
+1514 |     if(initialDiscoveryProgressPanel==null||!activityStarted
+1515 |         ||!initialDiscoveryProgressReadPending.compareAndSet(false,true))return;
+1516 |     try{
+1517 |       worker.execute(()->{
+1518 |         try{
+1519 |           final android.content.Context context=getApplicationContext();
+1520 |           final String prefix="source_initial_progress_";
+1521 |           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
+1522 |           keys.add("source_full_rebuild_completed_at");
+1523 |           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
+1524 |           keys.add(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY);
+1525 |           keys.add("source_initial_index_attempted");
+1526 |           keys.add("source_initial_index_bypassed");
+1527 |           keys.add("source_initial_index_ready");
+1528 |           keys.add("source_initial_index_entries");
+1529 |           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
+1530 |               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
+1531 |               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
+1532 |               "percent","basis_points","phase"})keys.add(prefix+suffix);
+1533 |           final Map<String,String> snapshot=readRoomStateValues(context,keys);
+1534 |           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+1535 |           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
+1536 |           final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
+1537 |           final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
+1538 |           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
+1539 |           final long indexEntries=readStateLong(snapshot,"source_initial_index_entries",0L);
+1540 |           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
+1541 |           final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
+1542 |           final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
+1543 |           final int chinaTotal=(int)readStateLong(snapshot,prefix+"china_total_feeds",0L);
+1544 |           final int chinaValidated=(int)readStateLong(snapshot,prefix+"china_validated_urls",0L);
+1545 |           final int staged=(int)readStateLong(snapshot,prefix+"staged_channels",0L);
+1546 |           final int checked=(int)readStateLong(snapshot,prefix+"checked_urls",0L);
+1547 |           final int validated=(int)readStateLong(snapshot,prefix+"validated_urls",0L);
+1548 |           final int timeouts=(int)readStateLong(snapshot,prefix+"timeout_urls",0L);
+
+===== lines 1669-1724 =====
+1669 |             if(!workInfo.getState().isFinished()){unfinished=true;break;}
+1670 |           }
+1671 |           if(unfinished){sawUnfinished[0]=true;return;}
+1672 |           if(!sawUnfinished[0])return;
+1673 |           sawUnfinished[0]=false;
+1674 |           if(activityStarted&&!isFinishing()&&!isDestroyed())
+1675 |             reloadChannelsAfterBackgroundUpdateIfNeeded();
+1676 |         });
+1677 |   }
+1678 |   private void toggleAutomaticSourceUpdates(){
+1679 |     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+1680 |     boolean enabled=!p.getBoolean("auto_source_update",true);
+1681 |     p.edit().putBoolean("auto_source_update",enabled).apply();
+1682 |     if(enabled)scheduleAutomaticSourceUpdates();else{
+1683 |       WorkManager wm=WorkManager.getInstance(this);
+1684 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+1685 |       wm.cancelUniqueWork("mytv_startup_source_refresh");
+1686 |     }
+1687 |     toast(enabled?"后台自动更新已开启（完整建库后约每 30 天、空闲时维护）":"后台自动更新已关闭；仍可在设置中手动更新");
+1688 |   }
+1689 |   private void startManualSourceUpdate(){
+1690 |     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+1691 |     boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
+1692 |     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+1693 |         .setConstraints(constraints)
+1694 |         .setInputData(new Data.Builder().putBoolean("manual",true)
+1695 |             .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
+1696 |         .build();
+1697 |     WorkManager manager=WorkManager.getInstance(this);
+1698 |     if(needsInitialFullRebuild){
+1699 |       // The startup and manual entry points must share one unique chain: two
+1700 |       // simultaneous first-run rebuilds would race on the same Room staging rows
+1701 |       // and feed cursors. KEEP reuses an already-running startup rebuild.
+1702 |       manager.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,request);
+1703 |       toast("已提交首次全量频道整理；可以在频道列表查看真实完成百分比");
+1704 |       startInitialDiscoveryProgressTicker();
+1705 |       return;
+1706 |     }
+1707 |     manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.KEEP,request);
+1708 |     toast("已请求完整频道轮检；已有任务将继续，播放优先，可在更新状态查看进度");
+1709 |     // The lifecycle observer waits for the unique chain to become terminal,
+1710 |     // then reloads only committed Room state, subject to playback protection.
+1711 |   }
+1712 |   private void showSourceUpdateStatus(){
+1713 |     final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+1714 |     try{
+1715 |       worker.execute(()->{
+1716 |         final String prefix="source_initial_progress_";
+1717 |         ArrayList<String> keys=new ArrayList<>(Arrays.asList("source_update_time","source_update_result",
+1718 |             FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY));
+1719 |         for(String suffix:new String[]{"unavailable_feeds","validated_urls","staged_channels",
+1720 |             "china_done_feeds","china_total_feeds","china_validated_urls","total_feeds"})
+1721 |           keys.add(prefix+suffix);
+1722 |         int configuredCount=SourceDiscoveryFeedCatalog.feeds().length;
+1723 |         for(int i=0;i<configuredCount;i++){
+1724 |           keys.add("source_initial_feed_unavailable_"+i);
+
+===== lines 6077-6133 =====
+6077 |       // Start monitoring as soon as a supported video track is selected.
+6078 |       if(PlaybackRecoveryPolicy.isVideoOutputStalled(videoTrackSelected,sourceFirstFrameRecorded,
+6079 |           videoTrackSelectedAt,lastVideoPipelineActivityAt,now,sourceFirstFrameRecorded?20000L:15000L)){
+6080 |         recoverFromSilentFreeze(sourceFirstFrameRecorded
+6081 |             ?"检测到视频帧连续 20 秒没有输出"
+6082 |             :"播放器已连接，但 15 秒内没有渲染出首帧画面");
+6083 |         return;
+6084 |       }
+6085 |       // After two minutes of uninterrupted playback, replenish the failover budget.
+6086 |       // A source that was healthy for a long time should not consume the startup retry budget forever.
+6087 |       boolean confirmedOutput=TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,
+6088 |           audioTrackSupported,audioTrackSelected,audioPositionAdvancing,videoTrackPresent,
+6089 |           videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded);
+6090 |       if(TrackHealthPolicy.canGrantStableDiscovery(confirmedOutput,sourceReadyAt,
+6091 |           lastStableDiscoveryInteraction,watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)
+6092 |           &&player.isPlaying()&&activityStarted&&hasWindowFocus()
+6093 |           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
+6094 |           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
+6095 |           &&currentVodPanel==null&&!isAnyPlaybackLockActive()
+6096 |           &&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
+6097 |         SourceUpdateActivityPolicy.reportStableLive(now);
+6098 |       }else SourceUpdateActivityPolicy.revokeStableLive();
+6099 |       if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
+6100 |           &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L
+6101 |           &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<20000L){
+6102 |         sourceStableRecorded=true;
+6103 |         String goodUrl=currentSourceUrl();
+6104 |         recordSourceMetric(goodUrl,"stable",0L);
+6105 |         if(selected>=0&&selected<channels.size())
+6106 |           SourceMemoryStore.saveLastGood(MainActivity.this,
+6107 |               SourceMemoryStore.channelIdentityKey(identity(channels.get(selected))),goodUrl);
+6108 |       }
+6109 |       if(TrackHealthPolicy.canRefreshRecoveryBudget(confirmedOutput,
+6110 |           Math.max(sourceReadyAt,lastRecoveryBudgetRefreshAt),
+6111 |           watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)){
+6112 |         automaticSwitchCount=0;
+6113 |         failedEndpointsThisPass.clear();
+6114 |         automaticChannelSwitchCount=0;
+6115 |         sameSourceRecoveryCount=0;
+6116 |         lastRecoveryBudgetRefreshAt=now;
+6117 |       }
+6118 |       schedulePlaybackWatchdog();
+6119 |     };
+6120 |     uiHandler.postDelayed(playbackWatchdog,sourceFirstFrameRecorded?10000L:5000L);
+6121 |   }
+6122 |   private void recoverFromSilentFreeze(String reason){
+6123 |     if(sameSourceRecoveryCount<1){
+6124 |       sameSourceRecoveryCount++;
+6125 |       info.setText(reason+"，正在重新连接当前频道…");
+6126 |       startCurrentSource();
+6127 |     }else{
+6128 |       sameSourceRecoveryCount=0;
+6129 |       if(!tryStartLibVlcFallback(reason+"，Media3 重连无效"))
+6130 |         advanceToNextSourceAutomatically(reason+"，当前源重连无效");
+6131 |     }
+6132 |   }
+6133 |   // A given live stream may report error, buffering timeout and ENDED almost together.
+
+===== lines 6954-7013 =====
+6954 |         libVlcStableChecks=0;
+6955 |         saveLiveDiagnostic("ENGINE_STALLED",!libVlcVideoOutputReady?"LibVLC video output is missing":"LibVLC no longer reports playing");
+6956 |         releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+6957 |         // advanceToNextSourceAutomatically owns the single failure-score update.
+6958 |         advanceToNextSourceAutomatically("VLC 播放中断");
+6959 |         return;
+6960 |       }
+6961 |       // Vout plus isPlaying only proves that VLC still owns a video output and
+6962 |       // reports a live session. It does NOT prove that a decoded frame reached the
+6963 |       // TV surface. Never promote a VLC source to last-known-good or QoE "stable"
+6964 |       // from these signals alone; otherwise a black-screen source can outrank a
+6965 |       // source whose first frame was actually rendered by Media3.
+6966 |       libVlcStableChecks=Math.min(2,libVlcStableChecks+1);
+6967 |       long now=android.os.SystemClock.elapsedRealtime();
+6968 |       if(TrackHealthPolicy.canGrantVlcDiscovery(libVlcVideoOutputReady,libVlcAudioTrackReady,
+6969 |           libVlcRebuffering,reportsPlaying,libVlcStableChecks,lastStableDiscoveryInteraction,now)
+6970 |           &&activityStarted&&hasWindowFocus()&&currentVodPanel==null
+6971 |           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
+6972 |           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
+6973 |           &&!isAnyPlaybackLockActive()&&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
+6974 |         boolean alreadyPermitted=SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now);
+6975 |         SourceUpdateActivityPolicy.reportStableLive(now);
+6976 |         if(!alreadyPermitted&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now))
+6977 |           saveLiveDiagnostic("VLC_DISCOVERY_PERMITTED","bounded low-priority discovery; actual output unverified");
+6978 |       }else SourceUpdateActivityPolicy.revokeStableLive();
+6979 |       if(!libVlcStableRecorded&&libVlcStableChecks>=2){
+6980 |         libVlcStableRecorded=true;
+6981 |         saveLiveDiagnostic("VLC_ENGINE_HEALTHY_UNVERIFIED",
+6982 |             "LibVLC maintained Vout and playing state across two watchdog checks; "
+6983 |             +"actual rendered-frame visibility is unverified, so this source was not "
+6984 |             +"promoted to last-known-good and no stable-play success was recorded");
+6985 |       }
+6986 |       scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+6987 |   }
+6988 |   private void scheduleLibVlcBufferingTimeout(String expectedMediaId,int expectedChannel,LibVlcPlaybackEngine expectedEngine){
+6989 |     if(libVlcBufferingTimeout!=null||!libVlcVideoOutputReady)return;
+6990 |     final int seconds=getSharedPreferences("mytv",0).getInt("buffer_switch_seconds",12);
+6991 |     if(seconds<=0)return;
+6992 |     libVlcBufferingTimeout=()->{
+6993 |       libVlcBufferingTimeout=null;
+6994 |       if(libVlcEngine!=expectedEngine||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||!usingLibVlc)return;
+6995 |       if(!libVlcVideoOutputReady)return; // Initial connection remains governed by the startup deadline.
+6996 |       if(!libVlcRebuffering)return;
+6997 |       saveLiveDiagnostic("VLC_REBUFFER_TIMEOUT","buffering continued for "+seconds+"s after video output");
+6998 |       releaseLibVlcEngine();if(video!=null)video.setVisibility(View.VISIBLE);
+6999 |       advanceToNextSourceAutomatically("VLC 连续缓冲超过 "+seconds+" 秒");
+7000 |     };
+7001 |     uiHandler.postDelayed(libVlcBufferingTimeout,seconds*1000L);
+7002 |   }
+7003 |   private void cancelLibVlcBufferingTimeout(){if(libVlcBufferingTimeout!=null){uiHandler.removeCallbacks(libVlcBufferingTimeout);libVlcBufferingTimeout=null;}}
+7004 |   private void cancelLibVlcStartTimeout(){if(libVlcStartTimeout!=null){uiHandler.removeCallbacks(libVlcStartTimeout);libVlcStartTimeout=null;}}
+7005 |   private void cancelLibVlcWatchdog(){if(libVlcWatchdog!=null){uiHandler.removeCallbacks(libVlcWatchdog);libVlcWatchdog=null;}}
+7006 |   private void releaseLibVlcEngine(){
+7007 |     releaseLibVlcEngine(null);
+7008 |   }
+7009 |   private void finishLibVlcRelease(boolean released){
+7010 |     if(pendingVlcTeardowns>0)--pendingVlcTeardowns;
+7011 |     // A terminal failure is not an in-flight operation. Discard pending starts,
+7012 |     // never execute them, and leave process-wide decoder quarantine closed.
+7013 |     if(decoderReleaseUnconfirmed){
+
+===== lines 7635-7703 =====
+7635 |     startupAutoResumeTask=()->{
+7636 |       startupAutoResumeTask=null;
+7637 |       if(!startupAutoResumePending||!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive())return;
+7638 |       startupAutoResumePending=false;
+7639 |       int index=startupResumeIndex;
+7640 |       Channel expected=startupResumeChannel;
+7641 |       startupResumeChannel=null;startupResumeIndex=-1;
+7642 |       Channel current=index>=0&&index<channels.size()?channels.get(index):null;
+7643 |       if(!RemoteChannelOrderPolicy.canResume(selected>=0,currentVodPanel!=null,expected,current))return;
+7644 |       try{play(index);}
+7645 |       catch(Throwable resumeFailure){
+7646 |         android.util.Log.e("MyTVStartup","last-channel auto resume failed",resumeFailure);
+7647 |         saveLiveDiagnostic("STARTUP_AUTO_RESUME_ERROR",resumeFailure.getClass().getSimpleName()+": "+resumeFailure.getMessage());
+7648 |         if(info!=null)info.setText("自动恢复上次频道失败，主界面仍可使用，请手动选择频道。");
+7649 |       }
+7650 |     };
+7651 |     uiHandler.postDelayed(startupAutoResumeTask,350L);
+7652 |   }
+7653 | 
+7654 |   private void setSourceUpdateActivityActive(boolean active){
+7655 |     SourceUpdateActivityPolicy.setActivityActive(active);
+7656 |   }
+7657 | 
+7658 |   // A Worker may safely refresh the persisted catalogue only while this Activity is
+7659 |   // stopped. On returning, reload its newer cache before any later persist() can
+7660 |   // serialize an old in-memory list over the updated backup sources.
+7661 |   private volatile long backgroundCatalogueReloadGeneration=0L;
+7662 |   // Main-looper flag only. Room retains the new durable snapshot if viewing
+7663 |   // prevents replacing the current Activity's positional catalogue.
+7664 |   private boolean catalogueReloadDeferredForPlayback;
+7665 |   private boolean hasPlaybackCatalogueOwner(){
+7666 |     return player!=null||libVlcEngine!=null||vodPlayer!=null||vodFallbackBackend!=null
+7667 |         ||currentVodPanel!=null||libVlcReleaseInProgress
+7668 |         ||PROCESS_VLC_TEARDOWNS.get()>0||SourceUpdateActivityPolicy.isPlaybackActive();
+7669 |   }
+7670 |   private void reloadDeferredCatalogueIfIdle(){
+7671 |     if(catalogueReloadDeferredForPlayback&&activityStarted&&!isFinishing()&&!isDestroyed()
+7672 |         &&!hasPlaybackCatalogueOwner())reloadChannelsAfterBackgroundUpdateIfNeeded();
+7673 |   }
+7674 |   // Incremented for every persistence request; a reload may publish only if no
+7675 |   // catalogue edit/save was requested while its background parse was running.
+7676 |   private volatile long catalogueMutationGeneration=0L;
+7677 |   private void reloadRoomSourceMetrics(){
+7678 |     String probe=com.wodedianshi.tv.db.AppStateStore.get(
+7679 |         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
+7680 |     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
+7681 |     roomSourceProbeJson=probe;
+7682 |     publishProbeScores(probe);
+7683 |   }
+7684 | 
+7685 | 
+7686 |   // Do not spend a full Room catalogue normalization/deduplication on the UI thread.
+7687 |   private static final class PreparedRoomCatalogue {
+7688 |     final ArrayList<Channel> entries=new ArrayList<>();
+7689 |     final HashMap<String,Channel> byUrl=new HashMap<>();
+7690 |     final HashMap<String,Channel> byIdentity=new HashMap<>();
+7691 |     final HashMap<String,Integer> positionByIdentity=new HashMap<>();
+7692 |     final HashMap<String,Integer> positionByNameGroup=new HashMap<>();
+7693 |     final HashSet<String> favorites=new HashSet<>();
+7694 |   }
+7695 |   private String roomChannelNameGroupKey(String name,String group){
+7696 |     return (name==null?"":name)+"\u001f"+(group==null?"":group);
+7697 |   }
+7698 |   private PreparedRoomCatalogue prepareRoomCatalogue(ArrayList<Channel> restored,
+7699 |       Set<String> savedFavorites){
+7700 |     PreparedRoomCatalogue prepared=new PreparedRoomCatalogue();
+7701 |     if(savedFavorites!=null)prepared.favorites.addAll(savedFavorites);
+7702 |     HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,restored.size()*2));
+7703 |     HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>();
+
+===== lines 7943-7974 =====
+7943 |           // SourceUpdateWorker can commit while a large directory is being
+7944 |           // read, without changing the Activity's mutation generation. This
+7945 |           // is an expected optimistic read conflict, not a broken catalogue.
+7946 |           android.util.Log.i("MyTVStartup",
+7947 |               "Room paged read superseded by concurrent catalogue write");
+7948 |           requestRoomReloadAfterReadConflict(generation,retriesRemaining);
+7949 |         }catch(Throwable reloadFailure){
+7950 |           android.util.Log.e("MyTVStartup","Room catalogue reload failed",reloadFailure);
+7951 |           saveLiveDiagnostic("BACKGROUND_CATALOGUE_RELOAD_ERROR",
+7952 |               reloadFailure.getClass().getSimpleName()+": "+String.valueOf(reloadFailure.getMessage()));
+7953 |         }
+7954 |       });
+7955 |     }catch(RuntimeException rejected){
+7956 |       android.util.Log.e("MyTVStartup","Room catalogue reload was rejected",rejected);
+7957 |     }
+7958 |   }
+7959 | 
+7960 |   private long lastStableDiscoveryInteraction;
+7961 |   private void pauseStableDiscovery(){
+7962 |     lastStableDiscoveryInteraction=android.os.SystemClock.elapsedRealtime();
+7963 |     SourceUpdateActivityPolicy.revokeStableLive();
+7964 |   }
+7965 |   @Override public void onWindowFocusChanged(boolean focused){
+7966 |     super.onWindowFocusChanged(focused);
+7967 |     if(!focused)pauseStableDiscovery();
+7968 |   }
+7969 |   private void setSourceUpdatePlaybackActive(boolean active){
+7970 |     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
+7971 |   }
+7972 |   protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+7973 |   protected void onDestroy(){++vodPosterSessionGeneration;revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+7974 | }
