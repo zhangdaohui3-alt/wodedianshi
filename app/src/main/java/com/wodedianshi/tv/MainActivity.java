@@ -1464,6 +1464,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           keys.add("source_full_rebuild_completed_at");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
           keys.add("source_initial_index_attempted");
+          keys.add("source_initial_index_bypassed");
           keys.add("source_initial_index_ready");
           keys.add("source_initial_index_entries");
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
@@ -1474,6 +1475,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
           final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
+          final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
           final long indexEntries=readStateLong(snapshot,"source_initial_index_entries",0L);
           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
@@ -1520,7 +1522,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
             initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(99,percent)));
             int bootstrapLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
-            boolean indexing=FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
+            boolean indexing=!indexBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
             initialDiscoveryProgressTitle.setText(indexing
                 ?"首批中国目录准备 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
