@@ -430,8 +430,7 @@ public class SourceUpdateWorker extends Worker {
             PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
-            enqueueInitialContinuation();
-            return Result.success();
+            return continueAfterAcquisition();
           }
           if(cachedFeed==null&&slowPlayback){
             // Acquisition is its own bounded slice: no stream probe in the same
@@ -444,8 +443,7 @@ public class SourceUpdateWorker extends Worker {
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);
               commitInitialAcquisition(feedIndex,cachedFeed);
-              enqueueInitialContinuation();
-              return Result.success();
+              return continueAfterAcquisition();
             }catch(Exception failure){
               if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
                 return deferredViewingResult(manual,initialDiscoveryChain);
@@ -1278,6 +1276,14 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
     if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
     return snapshot;
+  }
+  // A scheduler failure after a successful acquisition is not a feed failure.
+  private Result continueAfterAcquisition(){
+    try{enqueueInitialContinuation();return Result.success();}
+    catch(Exception failure){
+      android.util.Log.w("MyTVSourceDiscovery","Prepared directory saved; continuation needs retry",failure);
+      return Result.retry();
+    }
   }
   private void enqueueInitialContinuation() throws Exception {
     enqueueInitialContinuation(slowPlayback?20L:0L);
