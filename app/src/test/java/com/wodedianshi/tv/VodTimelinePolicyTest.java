@@ -27,6 +27,17 @@ public class VodTimelinePolicyTest {
         assertEquals(0L, VodTimelinePolicy.addAndClamp(50, 20, 0));
     }
 
+    @Test public void preservesHistoryDuringEndedAndPendingResumeStates() {
+        assertFalse(VodTimelinePolicy.shouldSaveHistory(true,true,0L,100000L,100000L));
+        assertFalse(VodTimelinePolicy.shouldSaveHistory(false,false,0L,0L,0L));
+        assertFalse(VodTimelinePolicy.shouldSaveHistory(false,true,60000L,0L,100000L));
+        assertFalse(VodTimelinePolicy.shouldSaveHistory(false,true,60000L,30000L,100000L));
+        assertFalse(VodTimelinePolicy.shouldSaveHistory(false,true,60000L,60000L,0L));
+        assertTrue(VodTimelinePolicy.shouldSaveHistory(false,true,60000L,60000L,100000L));
+        assertTrue(VodTimelinePolicy.shouldSaveHistory(false,true,60000L,50000L,50000L));
+        assertTrue(VodTimelinePolicy.shouldSaveHistory(false,true,0L,0L,100000L));
+    }
+
     @Test public void handlesVeryLargeDurations() {
         long duration = Long.MAX_VALUE;
         assertEquals(1000, VodTimelinePolicy.toProgress(duration, duration));
