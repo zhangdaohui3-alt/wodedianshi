@@ -71,6 +71,8 @@ public final class RoomCatalogueBuildStore {
     static void clearManualInTransaction(AppDatabase db,String owner){
         requireManualOwner(db,owner);
         db.manualProbeQueueDao().clearOwner(owner);
+        db.manualProbeQualityDao().clearOwner(owner);
+        db.appStateDao().remove(ManualProbeQualityStore.READY_KEY);
         db.channelDao().clearCatalogueBuildRows();
         db.appStateDao().remove(MANUAL_OWNER_KEY);
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
@@ -279,15 +281,26 @@ public final class RoomCatalogueBuildStore {
             java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String owner,
             List<String> processed,boolean directoryExhausted,int nextFeed,int feedCount,int failedFeeds)throws JSONException {
         if(owner==null||owner.isEmpty()||processed==null)throw new IllegalArgumentException("Missing manual queue owner/progress");
+        return updateManualTouchedWithQuality(context,snapshot,previousSize,touched,paused,progress,owner,
+                processed,directoryExhausted,nextFeed,feedCount,failedFeeds,null);
+    }
+
+    public static boolean updateManualTouchedWithQuality(Context context,JSONArray snapshot,int previousSize,
+            java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String owner,
+            List<String> processed,boolean directoryExhausted,int nextFeed,int feedCount,int failedFeeds,
+            List<ManualProbeQualityEntity> quality)throws JSONException {
+        if(owner==null||owner.isEmpty()||processed==null)throw new IllegalArgumentException("Missing manual queue owner/progress");
         boolean[] ready={false};
         updateTouchedInternal(context,snapshot,previousSize,touched,paused,progress,owner,
-                processed,directoryExhausted,nextFeed,feedCount,new ManualCommit(ready,failedFeeds));
+                processed,directoryExhausted,nextFeed,feedCount,new ManualCommit(ready,failedFeeds,quality));
         return ready[0];
     }
 
     private static final class ManualCommit {
-        final boolean[] ready;final int failedFeeds;
-        ManualCommit(boolean[] ready,int failedFeeds){this.ready=ready;this.failedFeeds=failedFeeds;}
+        final boolean[] ready;final int failedFeeds;final List<ManualProbeQualityEntity> quality;
+        ManualCommit(boolean[] ready,int failedFeeds,List<ManualProbeQualityEntity> quality){
+            this.ready=ready;this.failedFeeds=failedFeeds;this.quality=quality;
+        }
     }
 
     private static int updateTouchedInternal(Context context,JSONArray snapshot,int previousSize,
@@ -326,6 +339,10 @@ public final class RoomCatalogueBuildStore {
                 // Add endpoints before certifying completion. Repeated insert
                 // preserves already processed state via INSERT IGNORE.
                 for(int index:touched)enqueueRow(db,manualOwner,snapshot.optJSONObject(index),index,paused);
+                if(manualCommit.quality!=null){
+                    requireMatchingOwner(manualOwner,db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY));
+                    ManualProbeQualityStore.writeInTransaction(db,manualOwner,manualCommit.quality,paused);
+                }
                 ManualProbeQueueDao queue=db.manualProbeQueueDao();
                 if(!processed.isEmpty()&&queue.markProcessed(manualOwner,processed)!=processed.size())
                     throw new IllegalStateException("Manual queue checkpoint mismatch");
