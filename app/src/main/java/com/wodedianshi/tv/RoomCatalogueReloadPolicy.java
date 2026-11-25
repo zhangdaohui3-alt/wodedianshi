@@ -10,6 +10,12 @@ package com.wodedianshi.tv;
 public final class RoomCatalogueReloadPolicy {
     private RoomCatalogueReloadPolicy() { }
 
+    /** Recovery may read a validated Room snapshot into an empty, inactive model.
+     * Never use untrusted rows as write input or replace an active session. */
+    public static boolean canReadForRecovery(boolean trusted,int visibleRows,boolean playbackActive) {
+        return trusted || (visibleRows==0 && !playbackActive);
+    }
+
     /** A trusted in-memory directory already represents this exact committed version. */
     public static boolean isUnchanged(long loadedVersion, Long committedVersion) {
         return loadedVersion >= 0L && committedVersion != null
