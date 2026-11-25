@@ -198,6 +198,7 @@ public class SourceUpdateWorker extends Worker {
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(feedCursorKey(feed)+"_version")
                 .remove(initialFeedProgressKey(feed))
+                .remove(initialAcquiredVersionKey(feed))
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
@@ -254,6 +255,7 @@ public class SourceUpdateWorker extends Worker {
         if(!bootstrapBypassed&&FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(slowPlayback,nextIndex,mainlandCount,
             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
           int count=-1;
+          String preparedVersion="";
           noteInitialStage("首批中国目录准备 "+(nextIndex+1)+"/"+mainlandLimit+"（不检测线路）");
           try{
             File cached=PlaylistFeedCache.obtain(getApplicationContext(),feeds[nextIndex],true,
@@ -262,6 +264,7 @@ public class SourceUpdateWorker extends Worker {
             // Decode one record to check the sidecar without allocating all entries.
             PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
             count=PlaylistFeedIndex.indexedEntryCount(cached);
+            if(count>=0)preparedVersion=PlaylistFeedCache.contentVersion(cached);
           }catch(Exception failure){
             if(failure instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean())
               return deferredViewingResult(manual,initialDiscoveryChain);
@@ -281,6 +284,7 @@ public class SourceUpdateWorker extends Worker {
           // Start with the nonempty indexed feed, rather than immediately
           // retrying an earlier failed download. Other feeds remain unfinished.
           if(count>0)acquisition.putInt("source_initial_next_feed_index",nextIndex);
+          if(!preparedVersion.isEmpty())acquisition.putString(initialAcquiredVersionKey(nextIndex),preparedVersion);
           acquisition.apply();
           // Persist acquisition before queueing the next slice. An unavailable
           // directory is retried by the ordinary bounded probe phase.
@@ -415,8 +419,19 @@ public class SourceUpdateWorker extends Worker {
           }
           if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
-          File cachedFeed=slowPlayback?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
-              PlaylistFeedCache.obtain(getApplicationContext(),feed,initialDiscoveryChain,feedCursor>0,pauseRequested);
+          File cachedFeed=initialDiscoveryChain?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
+              PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
+          if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
+              roomString(initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
+            // The acquisition-only slice is independent of the probe cursor.
+            // Never reuse a marker if eviction or a changed body invalidated it.
+            noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
+            cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,true,feedCursor>0,pauseRequested);
+            PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            commitInitialAcquisition(feedIndex,cachedFeed);
+            return continueAfterAcquisition();
+          }
           if(cachedFeed==null&&slowPlayback){
             // Acquisition is its own bounded slice: no stream probe in the same
             // worker. Never advance the verified cursor after a download alone.
@@ -427,10 +442,8 @@ public class SourceUpdateWorker extends Worker {
               PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);
-              com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-                  "source_initial_progress_phase","已低速准备目录，下一批继续线路初筛");
-              enqueueInitialContinuation();
-              return Result.success();
+              commitInitialAcquisition(feedIndex,cachedFeed);
+              return continueAfterAcquisition();
             }catch(Exception failure){
               if(pauseRequested.getAsBoolean()||failure instanceof SourceProbeTimePolicy.PausedException)
                 return deferredViewingResult(manual,initialDiscoveryChain);
@@ -575,7 +588,8 @@ public class SourceUpdateWorker extends Worker {
           // download. Other feeds can still make a usable complete snapshot.
           initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterAttempt(
               feedIndex,feeds.length,feedTerminalUnavailable,false);
-          continue;
+          // One failed directory per idle slice, then commit its actual outcome.
+          break;
         }
       }
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
@@ -1140,6 +1154,7 @@ public class SourceUpdateWorker extends Worker {
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
               .remove(feedCursorKey(feed)+"_version")
               .remove(initialFeedProgressKey(feed))
+              .remove(initialAcquiredVersionKey(feed))
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned");
         }
         failedBuildReset.remove("source_full_rebuild_active")
@@ -1205,8 +1220,11 @@ public class SourceUpdateWorker extends Worker {
           throw new IllegalStateException("Committed directory count mismatch");
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
-      if(initialDiscoveryChain&&!initialDiscoveryComplete&&!candidates.isEmpty()){
-        enqueueInitialContinuation();
+      if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
+        // Empty pages and recorded failures are durable progress too; rotate
+        // rather than repeatedly back off the same WorkRequest.
+        enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?20L:0L);
+        return Result.success();
       }
       if(manualRefresh&&!manualComplete){
         // Each bounded slice commits before a successor is enqueued. A retry
@@ -1258,6 +1276,14 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
     if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
     return snapshot;
+  }
+  // A scheduler failure after a successful acquisition is not a feed failure.
+  private Result continueAfterAcquisition(){
+    try{enqueueInitialContinuation();return Result.success();}
+    catch(Exception failure){
+      android.util.Log.w("MyTVSourceDiscovery","Prepared directory saved; continuation needs retry",failure);
+      return Result.retry();
+    }
   }
   private void enqueueInitialContinuation() throws Exception {
     enqueueInitialContinuation(slowPlayback?20L:0L);
@@ -1523,6 +1549,17 @@ public class SourceUpdateWorker extends Worker {
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
+  private String initialAcquiredVersionKey(int index){return "source_initial_acquired_version_"+index;}
+  private void commitInitialAcquisition(int index,File cached) throws IOException {
+    String version=PlaylistFeedCache.contentVersion(cached);
+    if(PlaylistFeedIndex.indexedEntryCount(cached)<0)throw new IOException("Prepared directory index unavailable");
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+        .putString(initialAcquiredVersionKey(index),version)
+        .putInt("source_initial_next_feed_index",index)
+        .putString("source_initial_progress_phase","目录已准备，下一批继续线路初筛")
+        .apply();
+  }
   private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}

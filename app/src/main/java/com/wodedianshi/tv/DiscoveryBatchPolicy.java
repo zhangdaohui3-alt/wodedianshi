@@ -13,6 +13,11 @@ public final class DiscoveryBatchPolicy {
         return "source_initial_page_"+feedIndex+"_";
     }
 
+    /** A prepared index belongs to one exact body, not simply its URL. */
+    public static boolean isPreparedInitialFeed(String preparedVersion,String currentVersion) {
+        return currentVersion!=null&&!currentVersion.isEmpty()&&currentVersion.equals(preparedVersion);
+    }
+
     /** Never apply an offset to a different or unidentified feed body. */
     public static int cursorForVersion(int cursor, String savedVersion, String currentVersion) {
         return cursor > 0 && currentVersion != null && !currentVersion.isEmpty()
