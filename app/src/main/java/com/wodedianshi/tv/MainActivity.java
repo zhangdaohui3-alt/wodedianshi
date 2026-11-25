@@ -299,6 +299,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long pendingRemoteZapGeneration=-1L;
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
+  private volatile long indexedPlaybackScoreVersion=-1L;
 
   private volatile long catalogueFilterGeneration=0L;
   private volatile int lastFilteredMatchCount=0;
@@ -768,6 +769,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       rebuildChannelIndexes();
       loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
       catalogueSnapshotTrusted=true;
+      // Restore the complete score cache from the same validated catalogue
+      // on the startup worker. A quality read failure must not block TV startup.
+      try{
+        org.json.JSONObject indexed=readIndexedPlaybackScores(channels,roomSnapshot.catalogueVersion,()->isFinishing()||isDestroyed());
+        if(indexed!=null){cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
+      }catch(Exception qualityFailure){android.util.Log.w("MyTVStartup","Indexed quality restore deferred; compatibility cache retained",qualityFailure);}
       int sourceCount=countChannelSources();
       logCatalogueMemory("room_restore_ready",roomSnapshot.channelCount,sourceCount,
           android.os.SystemClock.elapsedRealtime()-restoreStarted);
@@ -851,6 +858,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
     publishProbeScores(roomSourceProbeJson);
+    indexedPlaybackScoreVersion=-1L;
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
     roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
@@ -7675,12 +7683,29 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Incremented for every persistence request; a reload may publish only if no
   // catalogue edit/save was requested while its background parse was running.
   private volatile long catalogueMutationGeneration=0L;
+  private org.json.JSONObject readIndexedPlaybackScores(List<Channel> entries,long version,
+      java.util.function.BooleanSupplier cancelled)throws org.json.JSONException{
+    if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))return null;
+    LinkedHashSet<String> urls=new LinkedHashSet<>();
+    for(Channel channel:entries){
+      SourceProbeTimePolicy.checkPublicationPaused(cancelled);
+      urls.add(channel.url);urls.addAll(channel.backups);
+    }
+    long started=android.os.SystemClock.elapsedRealtime();
+    org.json.JSONObject scores=com.wodedianshi.tv.db.ManualProbeQualityStore.readPlaybackScores(
+        getApplicationContext(),urls,version,cancelled);
+    android.util.Log.i("MyTVStartup","indexed_quality_read_ms="+(android.os.SystemClock.elapsedRealtime()-started)
+        +" sources="+urls.size()+" scores="+(scores==null?0:scores.length()));
+    return scores;
+  }
   private void reloadRoomSourceMetrics(){
     String probe=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomSourceProbeJson=probe;
-    publishProbeScores(probe);
+    // Once indexed quality is available, do not overwrite its full cache
+    // with the legacy 8000-entry compatibility view on every onStart.
+    if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))publishProbeScores(probe);
   }
 
 
@@ -7804,6 +7829,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   .channelDao().getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
           if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
               checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
+            if(indexedPlaybackScoreVersion!=loadedRoomCatalogueVersion&&
+                com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext())){
+              ArrayList<Channel> retained;
+              synchronized(channels){retained=new ArrayList<>(channels);}
+              org.json.JSONObject indexed=readIndexedPlaybackScores(retained,loadedRoomCatalogueVersion,
+                  ()->generation!=backgroundCatalogueReloadGeneration||isFinishing()||isDestroyed());
+              if(indexed!=null&&generation==backgroundCatalogueReloadGeneration&&expectedMutationGeneration==catalogueMutationGeneration){
+                cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=loadedRoomCatalogueVersion;
+              }
+            }
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
           }
@@ -7835,6 +7870,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(generation!=backgroundCatalogueReloadGeneration)return;
           long preparationStarted=android.os.SystemClock.elapsedRealtime();
           final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites);
+          final org.json.JSONObject indexedScores=readIndexedPlaybackScores(prepared.entries,roomSnapshot.catalogueVersion,
+              ()->generation!=backgroundCatalogueReloadGeneration||isFinishing()||isDestroyed());
           android.util.Log.i("MyTVStartup","room_reload_prepare_ms="
               +(android.os.SystemClock.elapsedRealtime()-preparationStarted)
               +" entries="+prepared.entries.size()+" sources="+prepared.byUrl.size());
@@ -7912,6 +7949,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               // even if no caller explicitly requested a catalogue save.
               synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
               loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
+              if(indexedScores!=null){cachedProbeScoreJson=indexedScores;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
               if(!selectedIdentity.isEmpty()){
                 Integer found=prepared.positionByIdentity.get(selectedIdentity);
                 if(found==null)found=prepared.positionByNameGroup.get(
