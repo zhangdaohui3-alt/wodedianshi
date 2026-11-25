@@ -157,6 +157,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile boolean fullScreenPlayback = false;
   private boolean fullscreenRemoteDialogOpen = false;
   private PopupWindow fullscreenMenuPopup;
+  private long menuSelectedFocusGeneration=-1L;
   private TextView fullscreenMenuButton;
   private TextView fullscreenSourceButton;
   private TextView fullscreenFavoriteButton;
@@ -581,7 +582,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   // Mouse hover and D-pad focus are independent states. Hover never steals or clears focus.
   private boolean isCurrentPlayingRow(View view){
-    return view!=null&&view.getTag() instanceof Integer&&((Integer)view.getTag())==selected;
+    if(view==null||selected<0||selected>=channels.size())return false;
+    Object rowKey=view.getTag(R.id.tag_channel_key);
+    return rowKey instanceof String&&rowKey.equals(channels.get(selected).key());
   }
   // Remote focus and mouse hover must remain memory-only; never serialize diagnostics here.
   private void styleLiveChannelButton(Button b,int normalColor){
@@ -626,6 +629,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(button==null||index<0||index>=channels.size())return;
     Channel channel=channels.get(index);
     if(channel==null)return;
+    // An old row can outlive a catalogue index replacement.
+    // Do not relabel it while its click still owns the old key.
+    if(!channel.key().equals(button.getTag(R.id.tag_channel_key)))return;
     String channelName=channel.name==null?"":channel.name;
     boolean broadcast=isCctvChannel(channel)||isSatelliteChannel(channel);
     String title=broadcast?displayChannelName(channel):channelName;
@@ -1948,6 +1954,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(vodCatalogueDialog!=dialog)return;
       revokePendingVodStart();
       vodCatalogueDialog=null;
+      clearVodMouseHover();
+      setVodCategoryHover(null);
       cancelActiveVodCatalogue();
       // Activity stop also dismisses this dialog. In that path leave live
       // restoration to onStart(); starting a decoder while onStop() is tearing
@@ -2282,17 +2290,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         VodCardHolder h=(VodCardHolder)tag;
         h.title.setBackgroundColor(Color.TRANSPARENT);
         h.meta.setBackgroundColor(Color.TRANSPARENT);
+        h.meta.setTextColor(Color.rgb(154,190,220));
       }
       old.setBackground(makeButtonBg(Color.rgb(25,39,59),old.hasFocus()));
       old.setScaleX(1f);old.setScaleY(1f);old.setElevation(old.hasFocus()?dp(4):0);
     }
   }
   private void showVodMouseHover(View card){
-    if(card==null)return;
-    if(hoveredVodCard!=card){
-      clearVodMouseHover();
-      hoveredVodCard=card;
-    }
+    if(card==null||hoveredVodCard==card)return;
+    clearVodMouseHover();
+    hoveredVodCard=card;
     // The poster image covers the card background, so changing only the card
     // background looks gray/unchanged. Draw a foreground ring above the poster
     // and tint the text bands; this is a true whole-card mouse indicator.
@@ -2326,6 +2333,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private class VodGridAdapter extends BaseAdapter{
     private final ArrayList<VodItem> items;
     private final HashSet<String> favoriteIds=new HashSet<>();
+    private long navigationGeneration;
     VodGridAdapter(ArrayList<VodItem> data){items=data==null?new ArrayList<>():new ArrayList<>(data);for(VodItem saved:readVodFavorites())favoriteIds.add(saved.identifier);}
     public int getCount(){return items.size();}
     public Object getItem(int position){return items.get(position);}
@@ -2345,6 +2353,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         TextView meta=new TextView(MainActivity.this);meta.setText("开放授权 · 可尝试播放");meta.setTextColor(Color.rgb(154,190,220));meta.setTextSize(10);meta.setSingleLine(true);meta.setEllipsize(android.text.TextUtils.TruncateAt.END);meta.setGravity(Gravity.CENTER_VERTICAL);meta.setPadding(dp(4),0,dp(4),0);card.addView(meta,new LinearLayout.LayoutParams(-1,dp(24)));
         holder=new VodCardHolder(poster,title,meta);card.setTag(holder);
       }
+      // Recycled cells must not inherit old foreground rings and text bands.
+      if(hoveredVodCard==card)clearVodMouseHover();
+      card.setForeground(null);
+      holder.title.setBackgroundColor(Color.TRANSPARENT);
+      holder.meta.setBackgroundColor(Color.TRANSPARENT);
+      holder.title.setTextColor(Color.WHITE);
+      holder.meta.setTextColor(Color.rgb(154,190,220));
+      card.setBackground(makeButtonBg(Color.rgb(25,39,59),card.hasFocus()));
+      card.setElevation(card.hasFocus()?dp(4):0);
       card.setOnFocusChangeListener((v,focused)->{
         if(hoveredVodCard!=card){
           card.setBackground(makeButtonBg(focused?Color.rgb(34,83,128):Color.rgb(25,39,59),focused));
@@ -2396,6 +2413,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             keyCode==android.view.KeyEvent.KEYCODE_DPAD_LEFT?VodGridNavigationPolicy.LEFT:
             keyCode==android.view.KeyEvent.KEYCODE_DPAD_RIGHT?VodGridNavigationPolicy.RIGHT:-1;
         int target=VodGridNavigationPolicy.targetPosition(current,count,owner.getNumColumns(),direction);
+        final long navigation=++navigationGeneration;
         if(target==VodGridNavigationPolicy.RETURN_TO_CATEGORIES){
           View categoryTarget=vodCategoryFocusTarget;
           if(categoryTarget!=null&&categoryTarget.isShown()){categoryTarget.requestFocus();return true;}
@@ -2411,6 +2429,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         owner.setSelection(destination);
         owner.requestLayout();
         owner.post(()->{
+          if(navigation!=navigationGeneration||owner.getAdapter()!=this||!owner.isShown()||vodPlayerDialog!=null)return;
           int childIndex=destination-owner.getFirstVisiblePosition();
           if(childIndex>=0&&childIndex<owner.getChildCount()){
             View next=owner.getChildAt(childIndex);
@@ -2418,6 +2437,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           owner.smoothScrollToPosition(destination);
           owner.post(()->{
+            if(navigation!=navigationGeneration||owner.getAdapter()!=this||!owner.isShown()||vodPlayerDialog!=null)return;
             int retryIndex=destination-owner.getFirstVisiblePosition();
             if(retryIndex>=0&&retryIndex<owner.getChildCount()){
               View next=owner.getChildAt(retryIndex);
@@ -4165,6 +4185,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
           renderFilteredChannels(visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
               preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
+          if(menuSelectedFocusGeneration==generation){
+            menuSelectedFocusGeneration=-1L;
+            focusSelectedChannelInMenu();
+          }
           if(pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
             int steps=pendingRemoteZapSteps;
             clearPendingRemoteZap();
@@ -4330,10 +4354,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private View findChannelRow(int channelIndex){
-    if(channelIndex<0)return null;
+    if(channelIndex<0||channelIndex>=channels.size()||list==null)return null;
+    String key=channels.get(channelIndex).key();
     for(int i=0;i<list.getChildCount();i++){
       View child=list.getChildAt(i);
-      if(child.getTag() instanceof Integer&&((Integer)child.getTag())==channelIndex)return child;
+      if(key.equals(child.getTag(R.id.tag_channel_key)))return child;
     }
     return null;
   }
@@ -4696,14 +4721,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       categoryPane.setBackgroundColor(Color.rgb(16,24,40));
       channelPane.setBackgroundColor(Color.rgb(19,29,47));
       fullscreenMenuPopup=null;
+      menuSelectedFocusGeneration=-1L;
       if(fullscreenAspectMenuItem!=null&&fullscreenAspectMenuItem.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)fullscreenAspectMenuItem.getParent()).removeView(fullscreenAspectMenuItem);
       if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
       if(!isTouchDevice())restoreFullscreenInputFocus();
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
     fullscreenMenuButton.setVisibility(View.GONE);
-    // 弹出层挂载后，直接滚动到当前正在播放的频道，并把遥控器焦点放在该行。
-    focusSelectedChannelInMenu();
+    // When zapping crossed a page boundary, render the selected channel's
+    // page before focusing using the existing filter worker.
+    RemoteChannelOrder order=currentRemoteChannelOrder();
+    if(findChannelRow(selected)==null&&order!=null&&order.positions.containsKey(selected)){
+      preserveRequestedLivePageOnce=false;
+      refresh(true);
+      menuSelectedFocusGeneration=catalogueFilterGeneration;
+    }else focusSelectedChannelInMenu();
   }
   // VLC hides the Media3 PlayerView. The shared stage is an engine-neutral
   // focus anchor and must remain available during native teardown.
