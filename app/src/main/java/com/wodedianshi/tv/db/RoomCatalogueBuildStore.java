@@ -61,6 +61,7 @@ public final class RoomCatalogueBuildStore {
     }
     static void clearManualInTransaction(AppDatabase db,String owner){
         requireManualOwner(db,owner);
+        db.manualProbeQueueDao().clearOwner(owner);
         db.channelDao().clearCatalogueBuildRows();
         db.appStateDao().remove(MANUAL_OWNER_KEY);
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
