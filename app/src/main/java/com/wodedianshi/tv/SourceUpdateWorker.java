@@ -97,6 +97,8 @@ public class SourceUpdateWorker extends Worker {
     final String manualId=getInputData().getString("manual_refresh_id")==null
         ?getId().toString():getInputData().getString("manual_refresh_id");
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
+    // A retry after the final durable commit must terminate even during playback.
+    if(manualRefresh&&manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
     // No full catalogue yet: the one-time chain owns discovery; a periodic
     // worker must neither compete with it nor publish a partial replacement.
     if(!initialDiscoveryChain){
@@ -152,7 +154,6 @@ public class SourceUpdateWorker extends Worker {
     final IdleProbeWave idleWave=new IdleProbeWave();
     try{
       if(manualRefresh){
-        if(manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
         String config=discoveryFeedsFingerprint(feeds);
         if(!manualId.equals(roomString("source_manual_active_id",""))
             ||!config.equals(roomString("source_manual_feed_config",""))){
@@ -1346,6 +1347,7 @@ public class SourceUpdateWorker extends Worker {
                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
                 .setInitialDelay(SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(
                     feedsOk>0,discoveryScanned,feedBatchComplete),java.util.concurrent.TimeUnit.SECONDS)
+                .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                     .putString("manual_refresh_id",manualId).build()).build();
         enqueueSingleSuccessor("mytv_manual_source_update",continuation);
