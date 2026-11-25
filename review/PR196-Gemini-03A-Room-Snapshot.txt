@@ -1,0 +1,1853 @@
+# 《我的电视》2.74.5（PR #196）第三组 A：Room、暂存、快照事务
+
+固定审查提交：adcb720f2caf04ec7cca94bba632589c14a8ed2e（CI #2753 实际 checkout），候选 head 527191ee4532bc76b51e499189eeaac5df1daf8d。PR197/198 已通过构建，属于后续修复，不混入本组证据。当贝 D6 Android 9 及安卓手机。未实机验收。
+
+请与第三组 B（Worker 与 MainActivity 调用链、实体和测试）一同审查，不推测未提供文件。重点：Room 单一业务权威、初始化及迁移、事务和版本一致性、暂存与发布进度原子性、旧目录保留、收藏和当前源、断电/强杀、分页读取、第二次启动，尽早呈现中国频道且不影响播放或遥控。区分数据库提交、内存交换、界面刷新。不要增加数据库、线程池、依赖或虚假进度。输出源码确认/潜在风险/实机验证，P0/P1/P2、行号、修改前后、副作用及回归测试。URL 字面量如存在已脱敏，行号保留。
+
+## 文件清单
+- app/src/main/java/com/wodedianshi/tv/db/AppDatabase.java L1–19 | blob 7d86e4ac57978f880e2bc7c501b648f5bedf0f9d
+- app/src/main/java/com/wodedianshi/tv/db/RoomDatabaseProvider.java L1–65 | blob 4e5b4d984dc78b148886dfef77787b300d468996
+- app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueWriter.java L1–513 | blob 168ea0ce14ac005acdd5d6c8300f4075ff67d6d1
+- app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueReader.java L1–169 | blob 8913ea1271461140eb010cd32a11cc0e64f7cebb
+- app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueBuildStore.java L1–162 | blob 9553f8382b263c7489f041ea5997f902e7e94a11
+- app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueMutations.java L1–52 | blob f71b998c45f3bd7661bfdfb43f4e73da8e968580
+- app/src/main/java/com/wodedianshi/tv/db/ChannelDao.java L1–290 | blob f22032378eb1989b6ebcc991713a7b16b37ece8f
+- app/src/main/java/com/wodedianshi/tv/db/AppStateDao.java L1–28 | blob 4bcc02ed695b493144c0d225b1991191d4b9ee4d
+- app/src/main/java/com/wodedianshi/tv/db/AppStateEditor.java L1–63 | blob 1d1317663d808d259a4a9caece62b4faaeefb2d1
+- app/src/main/java/com/wodedianshi/tv/db/AppStateStore.java L1–29 | blob 86c11fe35fd5fe5b7cebb57a5e6a6aa7b354e8d4
+- app/src/main/java/com/wodedianshi/tv/db/CatalogueMigrationEntity.java L1–30 | blob f20cf9edda1a8f1e1cc54b55f0784bf415099a7d
+- app/src/main/java/com/wodedianshi/tv/db/CatalogueVersionPolicy.java L1–14 | blob bb9e5f4501054dd1f6cb2b51979d82be64a53cce
+- app/src/main/java/com/wodedianshi/tv/db/CatalogueReadCompletenessPolicy.java L1–18 | blob 5cebdd950da1e0c6b18839b1c0762907c3e30d1c
+- app/src/main/java/com/wodedianshi/tv/db/BackgroundSnapshotPolicy.java L1–18 | blob 40629392cd15489d421628a37d3575a82b36c89e
+- app/src/main/java/com/wodedianshi/tv/db/MasterCatalogueRepository.java L1–78 | blob 170e54d55b7bebd8af44146cce51b5eec12eab7b
+- app/src/main/java/com/wodedianshi/tv/db/ChinaCatalogueRepository.java L1–96 | blob 9a685dcce6cd209ed9f9ec8f4e53cc549ff266b4
+- app/src/main/java/com/wodedianshi/tv/db/InternationalCatalogueRepository.java L1–84 | blob 3647a335bce13e9d9fc3f7bf2328902abc2f328f
+
+## app/src/main/java/com/wodedianshi/tv/db/AppDatabase.java — 原始行 1–19
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import androidx.room.Database;
+    4 | import androidx.room.RoomDatabase;
+    5 | 
+    6 | @Database(entities = {
+    7 |     CategoryEntity.class,
+    8 |     ChannelEntity.class,
+    9 |     BackupSourceEntity.class,
+   10 |     FavoriteEntity.class,
+   11 |     CatalogueMigrationEntity.class,
+   12 |     AppStateEntity.class,
+   13 |     CatalogueBuildRowEntity.class
+   14 | }, version = 7, exportSchema = true)
+   15 | public abstract class AppDatabase extends RoomDatabase {
+   16 |     public abstract ChannelDao channelDao();
+   17 |     public abstract AppStateDao appStateDao();
+   18 | }
+   19 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/RoomDatabaseProvider.java — 原始行 1–65
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import androidx.room.Room;
+    5 | import androidx.room.migration.Migration;
+    6 | import androidx.sqlite.db.SupportSQLiteDatabase;
+    7 | 
+    8 | /**
+    9 |  * Provides the one authoritative catalogue database.
+   10 |  *
+   11 |  * The clean-start catalogue uses a new database filename intentionally: older
+   12 |  * app builds kept an incomplete shadow Room catalogue. We do not import or
+   13 |  * migrate that data; the current bundled catalogue seeds this fresh database.
+   14 |  */
+   15 | public final class RoomDatabaseProvider {
+   16 |     private static volatile AppDatabase instance;
+   17 | 
+   18 |     private static final Migration MIGRATION_6_7 = new Migration(6, 7) {
+   19 |         @Override
+   20 |         public void migrate(SupportSQLiteDatabase database) {
+   21 |             database.execSQL("CREATE TABLE IF NOT EXISTS catalogue_build_rows ("
+   22 |                     + "rowId TEXT NOT NULL, sortOrder INTEGER NOT NULL, "
+   23 |                     + "recordJson TEXT NOT NULL, PRIMARY KEY(rowId))");
+   24 |             database.execSQL("CREATE INDEX IF NOT EXISTS "
+   25 |                     + "index_catalogue_build_rows_sortOrder "
+   26 |                     + "ON catalogue_build_rows(sortOrder)");
+   27 |         }
+   28 |     };
+   29 | 
+   30 |     private RoomDatabaseProvider() {}
+   31 | 
+   32 |     public static AppDatabase get(Context context) {
+   33 |         AppDatabase local = instance;
+   34 |         if (local == null) {
+   35 |             synchronized (RoomDatabaseProvider.class) {
+   36 |                 local = instance;
+   37 |                 if (local == null) {
+   38 |                     local = Room.databaseBuilder(
+   39 |                             context.getApplicationContext(),
+   40 |                             AppDatabase.class,
+   41 |                             "mytv_catalogue_clean_v1.db"
+   42 |                     ).addMigrations(MIGRATION_6_7).build();
+   43 |                     instance = local;
+   44 |                 }
+   45 |             }
+   46 |         }
+   47 |         return local;
+   48 |     }
+   49 | 
+   50 |     /**
+   51 |      * Compatibility alias: regional catalogues are scope-filtered views of the
+   52 |      * one authoritative catalogue database. Never create a second SQLite store.
+   53 |      */
+   54 |     @Deprecated
+   55 |     public static AppDatabase getChina(Context context) {
+   56 |         return get(context);
+   57 |     }
+   58 | 
+   59 |     /** Compatibility alias for the single authoritative catalogue database. */
+   60 |     @Deprecated
+   61 |     public static AppDatabase getInternational(Context context) {
+   62 |         return get(context);
+   63 |     }
+   64 | }
+   65 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueWriter.java — 原始行 1–513
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import com.wodedianshi.tv.FullDiscoveryProgressPolicy;
+    5 | import com.wodedianshi.tv.SourceProbeTimePolicy;
+    6 | import java.util.function.BooleanSupplier;
+    7 | import org.json.JSONArray;
+    8 | import org.json.JSONObject;
+    9 | import java.util.ArrayList;
+   10 | import java.util.HashMap;
+   11 | import java.util.HashSet;
+   12 | import java.util.List;
+   13 | import java.util.Map;
+   14 | 
+   15 | /**
+   16 |  * Reconciles complete catalogue snapshots into Room in one transaction.
+   17 |  * Existing rows are updated in place so foreign-key children are not lost.
+   18 |  */
+   19 | public final class RoomCatalogueWriter {
+   20 |     private RoomCatalogueWriter() {}
+   21 | 
+   22 |     public static final class ChannelSnapshot {
+   23 |         public String name, url, group, tvgId, tvgName;
+   24 |         public int activeSource;
+   25 |         public final ArrayList<String> sources = new ArrayList<>();
+   26 |         public final HashSet<String> sourceScopes = new HashSet<>();
+   27 |         public final HashMap<String, HashSet<String>> backupSourceScopes = new HashMap<>();
+   28 |     }
+   29 | 
+   30 |     /** The precise checkpoint created by a successful optimistic Room commit.
+   31 |      * Do not re-read the version after commit: another worker may publish a
+   32 |      * newer version between the transaction and that read. */
+   33 |     public static final class CommitResult {
+   34 |         public final int channelCount;
+   35 |         public final long catalogueVersion;
+   36 |         CommitResult(int channelCount, long catalogueVersion) {
+   37 |             this.channelCount = channelCount;
+   38 |             this.catalogueVersion = catalogueVersion;
+   39 |         }
+   40 |     }
+   41 | 
+   42 |     public static final class StaleCatalogueException extends IllegalStateException {
+   43 |         public StaleCatalogueException() {
+   44 |             super("Room catalogue changed during source scan; stale snapshot rejected");
+   45 |         }
+   46 |     }
+   47 | 
+   48 |     /** MainActivity must pass the version of the in-memory Room snapshot.
+   49 |      * A stale in-memory catalogue is rejected atomically instead of overwriting
+   50 |      * newer SourceUpdateWorker country/local channels.
+   51 |      */
+   52 |     public static CommitResult writeRecordsAtVersion(Context context,
+   53 |             List<ChannelSnapshot> snapshot, java.util.Set<String> favoriteKeys,
+   54 |             long expectedCatalogueVersion) {
+   55 |         if (expectedCatalogueVersion < 0L) {
+   56 |             throw new IllegalArgumentException("Expected Room catalogue version is not initialized");
+   57 |         }
+   58 |         final long[] committedAt = {-1L};
+   59 |         int written = writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+   60 |                 false, false, committedAt);
+   61 |         if (committedAt[0] < 0L) throw new IllegalStateException("Room commit lacked catalogue checkpoint");
+   62 |         return new CommitResult(written, committedAt[0]);
+   63 |     }
+   64 | 
+   65 |     // Deliberately no public unversioned writeRecords overload. Every ordinary
+   66 |     // Activity catalogue save must use writeRecordsAtVersion() so an older
+   67 |     // in-memory list can never silently replace the SourceUpdateWorker snapshot.
+   68 |     // Only first-install initialization uses the unguarded private path.
+   69 | 
+   70 |     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+   71 |             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+   72 |             boolean clearBuildRowsOnCommit) {
+   73 |         return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+   74 |                 clearBuildRowsOnCommit, false);
+   75 |     }
+   76 | 
+   77 |     /**
+   78 |      * Establishes a valid zero-row Room checkpoint for a brand-new installation.
+   79 |      * This is not a published channel catalogue: it only allows the first full
+   80 |      * discovery worker to persist progress without inventing bundled channels.
+   81 |      */
+   82 |     public static void initializeEmptyCatalogue(Context context) {
+   83 |         if (context == null) throw new IllegalArgumentException("context is null");
+   84 |         writeRecords(context, java.util.Collections.emptyList(),
+   85 |                 java.util.Collections.emptySet(), -1L, false, true);
+   86 |     }
+   87 | 
+   88 |     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+   89 |             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+   90 |             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization) {
+   91 |         return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+   92 |                 clearBuildRowsOnCommit, allowEmptyInitialization, null);
+   93 |     }
+   94 | 
+   95 |     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+   96 |             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+   97 |             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+   98 |             long[] committedAt) {
+   99 |         return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
+  100 |                 clearBuildRowsOnCommit, allowEmptyInitialization, committedAt, null);
+  101 |     }
+  102 | 
+  103 |     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+  104 |             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+  105 |             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+  106 |             long[] committedAt, BooleanSupplier paused) {
+  107 |         return writeRecords(context,snapshot,favoriteKeys,expectedCatalogueVersion,
+  108 |                 clearBuildRowsOnCommit,allowEmptyInitialization,committedAt,paused,null);
+  109 |     }
+  110 | 
+  111 |     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
+  112 |             java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
+  113 |             boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
+  114 |             long[] committedAt, BooleanSupplier paused, AppStateEditor progress) {
+  115 |         checkPause(paused);
+  116 |         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
+  117 |         if (snapshot.isEmpty() && !allowEmptyInitialization) {
+  118 |             throw new IllegalArgumentException("refusing to commit an empty catalogue");
+  119 |         }
+  120 |         // Compute once off the UI and outside the SQLite transaction.
+  121 |         String coverageText = "";
+  122 |         if (clearBuildRowsOnCommit) {
+  123 |             FullDiscoveryProgressPolicy.Coverage coverage = new FullDiscoveryProgressPolicy.Coverage();
+  124 |             for (ChannelSnapshot item : snapshot) {
+  125 |                 checkPause(paused);
+  126 |                 if (item != null) coverage.add(item.name,item.group,item.tvgName,item.tvgId);
+  127 |             }
+  128 |             coverageText = coverage.summary();
+  129 |         }
+  130 |         final String publishedCoverage = coverageText;
+  131 |         AppDatabase db = RoomDatabaseProvider.get(context);
+  132 |         ChannelDao dao = db.channelDao();
+  133 |         // A missing checkpoint means a genuinely fresh database. It may receive
+  134 |         // either the explicit empty first-install checkpoint or a complete snapshot;
+  135 |         // no legacy JSON import or sidecar catalogue is involved.
+  136 |         final int[] written = {0};
+  137 |         db.runInTransaction(() -> {
+  138 |             checkPause(paused);
+  139 |             CatalogueMigrationEntity checkpoint =
+  140 |                     dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+  141 |             if (allowEmptyInitialization && (checkpoint != null || dao.countChannels() != 0
+  142 |                     || dao.countBackupSources() != 0 || dao.countFavorites() != 0
+  143 |                     || dao.countCategories() != 0)) {
+  144 |                 throw new IllegalStateException(
+  145 |                         "Empty Room initialization is allowed only for a genuinely fresh database");
+  146 |             }
+  147 |             if (expectedCatalogueVersion >= 0L
+  148 |                     && !CatalogueVersionPolicy.matches(expectedCatalogueVersion,
+  149 |                             checkpoint == null ? null : checkpoint.completedAt)) {
+  150 |                 throw new StaleCatalogueException();
+  151 |             }
+  152 |             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
+  153 |             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
+  154 |             HashSet<String> presentChannelIds = new HashSet<>();
+  155 |             HashSet<String> presentCategoryIds = new HashSet<>();
+  156 |             HashSet<String> desiredFavoriteIds = new HashSet<>();
+  157 |             HashMap<String, Long> preservedFavoriteTimes = new HashMap<>();
+  158 |             HashMap<String, Integer> occurrences = new HashMap<>();
+  159 |             HashMap<String, String> newIdsByStableIdentity = new HashMap<>();
+  160 |             HashSet<String> ambiguousStableIdentities = new HashSet<>();
+  161 |             // Capture favorites before stale channel rows are deleted. A full rebuild
+  162 |             // may change the primary URL, but verified TVG ids, national broadcaster
+  163 |             // names, or a local channel's same host/category preserve its identity.
+  164 |             List<ChannelWithSources> previousFavorites = dao.getFavoriteChannels();
+  165 |             HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
+  166 |             HashSet<String> ambiguousPreviousFavorites = new HashSet<>();
+  167 |             for (ChannelWithSources favorite : previousFavorites) {
+  168 |                 checkPause(paused);
+  169 |                 if (favorite == null || favorite.channel == null) continue;
+  170 |                 ChannelEntity old = favorite.channel;
+  171 |                 String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
+  172 |                 String stableKey = LegacyChannelIdPolicy.stableIdentityKey(
+  173 |                         old.name, oldUrl, old.tvgId, old.groupName, old.tvgName);
+  174 |                 Long addedAt = dao.getFavoriteAddedAt(old.id);
+  175 |                 long timestamp = addedAt == null ? System.currentTimeMillis() : addedAt;
+  176 |                 if (previousFavoriteTimes.containsKey(stableKey)) {
+  177 |                     previousFavoriteTimes.remove(stableKey);
+  178 |                     ambiguousPreviousFavorites.add(stableKey);
+  179 |                 } else if (!ambiguousPreviousFavorites.contains(stableKey)) {
+  180 |                     previousFavoriteTimes.put(stableKey, timestamp);
+  181 |                 }
+  182 |             }
+  183 |             HashMap<String, Integer> categoryOrders = new HashMap<>();
+  184 | 
+  185 |             for (int row = 0; row < snapshot.size(); row++) {
+  186 |                 checkPause(paused);
+  187 |                 ChannelSnapshot item = snapshot.get(row);
+  188 |                 if (item == null || item.name == null || item.name.trim().isEmpty()
+  189 |                         || item.url == null || item.url.trim().isEmpty()) continue;
+  190 |                 String name = item.name.trim(), primary = item.url.trim();
+  191 |                 String group = item.group == null ? "" : item.group;
+  192 |                 String categoryId = group.isEmpty() ? "__ungrouped__" : group;
+  193 |                 Integer categoryOrder = categoryOrders.get(categoryId);
+  194 |                 if (categoryOrder == null) {
+  195 |                     categoryOrder = categoryOrders.size();
+  196 |                     categoryOrders.put(categoryId, categoryOrder);
+  197 |                     CategoryEntity category = new CategoryEntity(categoryId,
+  198 |                             group.isEmpty() ? "未分类" : group, categoryOrder);
+  199 |                     if (previousCategoryIds.contains(categoryId)) {
+  200 |                         dao.updateCategoryFields(categoryId, category.name, categoryOrder);
+  201 |                     } else {
+  202 |                         dao.insertCategoryIfAbsent(category);
+  203 |                     }
+  204 |                     presentCategoryIds.add(categoryId);
+  205 |                 }
+  206 | 
+  207 |                 String legacyKey = name + "|" + primary;
+  208 |                 LegacySourceOrderPolicy.Result ordered = LegacySourceOrderPolicy.normalize(
+  209 |                         item.sources, primary, item.activeSource);
+  210 |                 if (ordered.urls.isEmpty()) continue;
+  211 | 
+  212 |                 String stableIdentity = LegacyChannelIdPolicy.stableIdentityKey(
+  213 |                         name, primary, item.tvgId, group, item.tvgName);
+  214 |                 int occurrence = occurrences.containsKey(stableIdentity)
+  215 |                         ? occurrences.get(stableIdentity) : 0;
+  216 |                 occurrences.put(stableIdentity, occurrence + 1);
+  217 |                 String id = LegacyChannelIdPolicy.idForStableIdentity(stableIdentity, occurrence);
+  218 |                 if (!ambiguousStableIdentities.contains(stableIdentity)) {
+  219 |                     if (newIdsByStableIdentity.containsKey(stableIdentity)) {
+  220 |                         newIdsByStableIdentity.remove(stableIdentity);
+  221 |                         ambiguousStableIdentities.add(stableIdentity);
+  222 |                     } else {
+  223 |                         newIdsByStableIdentity.put(stableIdentity, id);
+  224 |                     }
+  225 |                 }
+  226 |                 int active = Math.max(0, Math.min(ordered.activeIndex, ordered.urls.size() - 1));
+  227 |                 JSONArray channelScopes = new JSONArray();
+  228 |                 if (item.sourceScopes != null) {
+  229 |                     for (String scope : new java.util.TreeSet<>(item.sourceScopes)) channelScopes.put(scope);
+  230 |                 }
+  231 |                 ChannelEntity channel = new ChannelEntity(id, legacyKey, name,
+  232 |                         ordered.urls.get(0), group, categoryId,
+  233 |                         item.tvgId == null ? "" : item.tvgId,
+  234 |                         item.tvgName == null ? "" : item.tvgName,
+  235 |                         channelScopes.toString(), active, row);
+  236 | 
+  237 |                 ArrayList<BackupSourceEntity> sourceRows = new ArrayList<>();
+  238 |                 for (int i = 0; i < ordered.urls.size(); i++) {
+  239 |                     String url = ordered.urls.get(i);
+  240 |                     JSONArray scopes = new JSONArray();
+  241 |                     HashSet<String> owned = item.backupSourceScopes.get(url);
+  242 |                     if (owned != null) {
+  243 |                         for (String scope : new java.util.TreeSet<>(owned)) scopes.put(scope);
+  244 |                     }
+  245 |                     sourceRows.add(new BackupSourceEntity(id, url, i, scopes.toString()));
+  246 |                 }
+  247 |                 if (previousChannelIds.contains(id)) {
+  248 |                     dao.updateChannelFields(channel.id, channel.legacyKey, channel.name,
+  249 |                             channel.primaryUrl, channel.groupName, channel.categoryId,
+  250 |                             channel.tvgId, channel.tvgName, channel.channelScopesJson,
+  251 |                             channel.activeSource, channel.sortOrder);
+  252 |                     // Read only this channel's indexed source rows. No second
+  253 |                     // full catalogue in memory and no delete/reinsert of equal URLs.
+  254 |                     HashMap<String, BackupSourceEntity> oldSources = new HashMap<>();
+  255 |                     for (BackupSourceEntity old : dao.getBackupSourcesForChannel(id)) {
+  256 |                         oldSources.put(old.url, old);
+  257 |                     }
+  258 |                     ArrayList<BackupSourceEntity> changedSources = new ArrayList<>();
+  259 |                     for (BackupSourceEntity next : sourceRows) {
+  260 |                         BackupSourceEntity old = oldSources.remove(next.url);
+  261 |                         if (old == null || old.priority != next.priority
+  262 |                                 || !old.scopesJson.equals(next.scopesJson)) {
+  263 |                             changedSources.add(next);
+  264 |                         }
+  265 |                     }
+  266 |                     for (String staleUrl : oldSources.keySet()) {
+  267 |                         checkPause(paused);
+  268 |                         dao.deleteBackupSource(id, staleUrl);
+  269 |                     }
+  270 |                     if (!changedSources.isEmpty()) dao.insertBackupSources(changedSources);
+  271 |                 } else {
+  272 |                     dao.insertChannelIfAbsent(channel);
+  273 |                     if (!sourceRows.isEmpty()) dao.insertBackupSources(sourceRows);
+  274 |                 }
+  275 |                 presentChannelIds.add(id);
+  276 |                 if (favoriteKeys != null && favoriteKeys.contains(legacyKey)) {
+  277 |                     desiredFavoriteIds.add(id);
+  278 |                 }
+  279 |                 written[0]++;
+  280 |             }
+  281 | 
+  282 |             // A catalogue snapshot is an all-or-nothing unit. Skipping even one
+  283 |             // malformed row would otherwise commit a silently truncated directory.
+  284 |             if (written[0] != snapshot.size()) {
+  285 |                 throw new IllegalStateException("Room catalogue snapshot was incomplete: expected "
+  286 |                         + snapshot.size() + " valid rows, wrote " + written[0]);
+  287 |             }
+  288 | 
+  289 |             // A worker refresh preserves the latest favorites from inside this same
+  290 |             // transaction. This avoids racing a user favorite toggle between a
+  291 |             // pre-transaction read and the catalogue commit.
+  292 |             if (favoriteKeys == null) {
+  293 |                 // Retain unchanged IDs directly, then remap favorites whose primary
+  294 |                 // stream changed using a conservative stable TVG/broadcaster identity.
+  295 |                 desiredFavoriteIds.addAll(dao.getFavoriteChannelIds());
+  296 |                 desiredFavoriteIds.retainAll(presentChannelIds);
+  297 |                 for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
+  298 |                     checkPause(paused);
+  299 |                     if (ambiguousPreviousFavorites.contains(oldFavorite.getKey())) continue;
+  300 |                     String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
+  301 |                     if (newId == null || !presentChannelIds.contains(newId)) continue;
+  302 |                     desiredFavoriteIds.add(newId);
+  303 |                     preservedFavoriteTimes.put(newId, oldFavorite.getValue());
+  304 |                 }
+  305 |             }
+  306 | 
+  307 |             // Remove only rows absent from the complete snapshot. FK cascades then
+  308 |             // clean up the removed channel's own sources/favorite, never its peers.
+  309 |             previousChannelIds.removeAll(presentChannelIds);
+  310 |             for (String staleId : previousChannelIds) {
+  311 |                 checkPause(paused);
+  312 |                 dao.deleteChannelById(staleId);
+  313 |             }
+  314 | 
+  315 |             // Preserve existing favorite timestamps; only apply actual additions/removals.
+  316 |             HashSet<String> currentFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
+  317 |             for (String favoriteId : currentFavoriteIds) {
+  318 |                 checkPause(paused);
+  319 |                 if (!desiredFavoriteIds.contains(favoriteId)) dao.removeFavorite(favoriteId);
+  320 |             }
+  321 |             currentFavoriteIds.retainAll(desiredFavoriteIds);
+  322 |             for (String favoriteId : desiredFavoriteIds) {
+  323 |                 checkPause(paused);
+  324 |                 if (!currentFavoriteIds.contains(favoriteId)) {
+  325 |                     Long originalAddedAt = preservedFavoriteTimes.get(favoriteId);
+  326 |                     dao.addFavorite(new FavoriteEntity(favoriteId,
+  327 |                             originalAddedAt == null ? System.currentTimeMillis() : originalAddedAt));
+  328 |                 }
+  329 |             }
+  330 | 
+  331 |             previousCategoryIds.removeAll(presentCategoryIds);
+  332 |             for (String staleCategoryId : previousCategoryIds) {
+  333 |                 checkPause(paused);
+  334 |                 // Category rows are RESTRICT parents; deleting only after stale
+  335 |                 // channels are gone keeps the FK invariant intact.
+  336 |                 dao.deleteCategoryById(staleCategoryId);
+  337 |             }
+  338 | 
+  339 |             checkPause(paused);
+  340 |             long completedAt = Math.max(System.currentTimeMillis(),
+  341 |                     checkpoint == null ? 1L : checkpoint.completedAt + 1L);
+  342 |             dao.insertMigration(new CatalogueMigrationEntity(
+  343 |                     MasterCatalogueRepository.MIGRATION_KEY, dao.countChannels(), dao.countBackupSources(),
+  344 |                     dao.countFavorites(), dao.countCategories(), completedAt,
+  345 |                     checkpoint == null
+  346 |                             ? (allowEmptyInitialization ? "room_empty_initialization_v1" : "room_native_seed_v1")
+  347 |                             : checkpoint.catalogueFingerprint));
+  348 |             // This value is written in the same transaction as the rows and
+  349 |             // is the only version that the committing Activity may adopt.
+  350 |             if (committedAt != null) committedAt[0] = completedAt;
+  351 |             if (progress != null) progress.applyInTransaction(db);
+  352 |             if (clearBuildRowsOnCommit) {
+  353 |                 // Publish and discard the staging snapshot in the same transaction.
+  354 |                 // A crash cannot leave a stale build marked active after publication.
+  355 |                 dao.clearCatalogueBuildRows();
+  356 |                 db.appStateDao().remove(RoomCatalogueBuildStore.STAGING_REVISION_KEY);
+  357 |                 long publishedAt = System.currentTimeMillis();
+  358 |                 db.appStateDao().put(new AppStateEntity(
+  359 |                         "source_full_rebuild_completed_at",
+  360 |                         Long.toString(publishedAt), publishedAt));
+  361 |                 db.appStateDao().put(new AppStateEntity(
+  362 |                         "source_update_last_success_at",
+  363 |                         Long.toString(publishedAt), publishedAt));
+  364 |                 db.appStateDao().put(new AppStateEntity(
+  365 |                         FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY, publishedCoverage, publishedAt));
+  366 |                 db.appStateDao().put(new AppStateEntity(
+  367 |                         "source_initial_progress_percent", "100", publishedAt));
+  368 |                 db.appStateDao().put(new AppStateEntity(
+  369 |                         "source_initial_progress_staged_channels", Integer.toString(written[0]), publishedAt));
+  370 |                 db.appStateDao().remove("source_full_rebuild_active");
+  371 |             }
+  372 |             // Throwing from this callback rolls back rows, checkpoint and staging together.
+  373 |             checkPause(paused);
+  374 |         });
+  375 |         return written[0];
+  376 |     }
+  377 | 
+  378 |     private static void checkPause(BooleanSupplier paused) {
+  379 |         // UI-requested edits use the original non-cancellable path.
+  380 |         if (paused != null) SourceProbeTimePolicy.checkPublicationPaused(paused);
+  381 |     }
+  382 | 
+  383 |     private static String legacyPrimaryUrl(String legacyKey, String name, String fallback) {
+  384 |         String prefix = (name == null ? "" : name) + "|";
+  385 |         if (legacyKey != null && legacyKey.startsWith(prefix)) {
+  386 |             return legacyKey.substring(prefix.length());
+  387 |         }
+  388 |         return fallback == null ? "" : fallback;
+  389 |     }
+  390 | 
+  391 |     /** Source updater snapshots are complete Room-derived catalogues too. */
+  392 |     public static int writeSnapshot(Context context, JSONArray snapshot) throws Exception {
+  393 |         return writeSnapshot(context, snapshot, -1L);
+  394 |     }
+  395 | 
+  396 |     /** Commit only if no user/catalogue mutation has happened since the worker read Room. */
+  397 |     public static int writeSnapshot(Context context, JSONArray snapshot,
+  398 |             long expectedCatalogueVersion) throws Exception {
+  399 |         return writeSnapshot(context, snapshot, expectedCatalogueVersion, false, null);
+  400 |     }
+  401 | 
+  402 |     /** Atomically publish a complete rebuild and clear its staging rows. */
+  403 |     public static int writeSnapshotAndClearBuild(Context context, JSONArray snapshot,
+  404 |             long expectedCatalogueVersion) throws Exception {
+  405 |         return writeSnapshot(context, snapshot, expectedCatalogueVersion, true, null);
+  406 |     }
+  407 | 
+  408 |     /** Background-only cancellable publication. The caller must supply a version. */
+  409 |     public static int writeSnapshot(Context context, JSONArray snapshot,
+  410 |             long expectedCatalogueVersion, BooleanSupplier paused) throws Exception {
+  411 |         if (expectedCatalogueVersion < 0L) throw new IllegalArgumentException("Missing catalogue version");
+  412 |         return writeSnapshot(context, snapshot, expectedCatalogueVersion, false, paused);
+  413 |     }
+  414 | 
+  415 |     public static int writeSnapshotAndClearBuild(Context context, JSONArray snapshot,
+  416 |             long expectedCatalogueVersion, BooleanSupplier paused) throws Exception {
+  417 |         if (expectedCatalogueVersion < 0L) throw new IllegalArgumentException("Missing catalogue version");
+  418 |         return writeSnapshot(context, snapshot, expectedCatalogueVersion, true, paused);
+  419 |     }
+  420 | 
+  421 |     private static int writeSnapshot(Context context, JSONArray snapshot,
+  422 |             long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+  423 |             BooleanSupplier paused) throws Exception {
+  424 |         return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,null);
+  425 |     }
+  426 | 
+  427 |     /** Commit a worker's snapshot and its progress together. */
+  428 |     public static int writeSnapshotWithProgress(Context context, JSONArray snapshot,
+  429 |             long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+  430 |             BooleanSupplier paused, AppStateEditor progress) throws Exception {
+  431 |         if (expectedCatalogueVersion < 0L || progress == null)
+  432 |             throw new IllegalArgumentException("Missing catalogue version or progress");
+  433 |         return writeSnapshot(context,snapshot,expectedCatalogueVersion,clearBuildRowsOnCommit,paused,progress);
+  434 |     }
+  435 | 
+  436 |     private static int writeSnapshot(Context context, JSONArray snapshot,
+  437 |             long expectedCatalogueVersion, boolean clearBuildRowsOnCommit,
+  438 |             BooleanSupplier paused, AppStateEditor progress) throws Exception {
+  439 |         checkPause(paused);
+  440 |         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
+  441 |         HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
+  442 |         // Channel count is deliberately not compared with the previous catalogue:
+  443 |         // a fully collected and normalized refresh may correctly remove dead,
+  444 |         // duplicate or invalid channels. Completeness is validated structurally
+  445 |         // below and again inside the Room transaction, not inferred from row count.
+  446 |         AppDatabase database = RoomDatabaseProvider.get(context);
+  447 |         if (snapshot.length() == 0) {
+  448 |             throw new IllegalStateException("Refusing an empty background catalogue snapshot");
+  449 |         }
+  450 |         ArrayList<ChannelSnapshot> rows = new ArrayList<>(snapshot.length());
+  451 |         for (int row = 0; row < snapshot.length(); row++) {
+  452 |             checkPause(paused);
+  453 |             JSONObject item = snapshot.optJSONObject(row);
+  454 |             if (item == null) {
+  455 |                 throw new IllegalStateException("Background catalogue snapshot contains an invalid row at index " + row);
+  456 |             }
+  457 |             ChannelSnapshot channel = new ChannelSnapshot();
+  458 |             channel.name = item.optString("name", "").trim();
+  459 |             channel.url = item.optString("url", "").trim();
+  460 |             channel.group = item.optString("group", "");
+  461 |             channel.tvgId = item.optString("tvgId", "");
+  462 |             channel.tvgName = item.optString("tvgName", "");
+  463 |             channel.activeSource = item.optInt("activeSource", 0);
+  464 |             JSONArray rawSources = item.optJSONArray("sources");
+  465 |             if (rawSources != null) {
+  466 |                 for (int i = 0; i < rawSources.length(); i++) {
+  467 |                     String value = rawSources.optString(i, "").trim();
+  468 |                     if (!value.isEmpty()) channel.sources.add(value);
+  469 |                 }
+  470 |             }
+  471 |             JSONArray rawScopes = item.optJSONArray("sourceScopes");
+  472 |             if (rawScopes != null) {
+  473 |                 for (int i = 0; i < rawScopes.length(); i++) {
+  474 |                     String scope = rawScopes.optString(i, "");
+  475 |                     if (!scope.isEmpty()) channel.sourceScopes.add(scope);
+  476 |                 }
+  477 |             }
+  478 |             channel.backupSourceScopes.putAll(readOwnership(item.optJSONArray("backupSourceScopes")));
+  479 |             rows.add(channel);
+  480 |         }
+  481 |         // Validate the decoded row count as well as the JSON array count. Otherwise
+  482 |         // skipping a malformed JSON element here could turn a full snapshot into a
+  483 |         // shorter list that still passes the non-shrinking background policy.
+  484 |         if (rows.size() != snapshot.length()) {
+  485 |             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
+  486 |         }
+  487 |         return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
+  488 |                 clearBuildRowsOnCommit, false, null, paused, progress);
+  489 |     }
+  490 | 
+  491 |     private static Map<String, HashSet<String>> readOwnership(JSONArray ownership) {
+  492 |         HashMap<String, HashSet<String>> result = new HashMap<>();
+  493 |         if (ownership == null) return result;
+  494 |         for (int i = 0; i < ownership.length(); i++) {
+  495 |             JSONObject item = ownership.optJSONObject(i);
+  496 |             if (item == null) continue;
+  497 |             String url = item.optString("url", "");
+  498 |             if (url.isEmpty()) continue;
+  499 |             HashSet<String> scopes = result.get(url);
+  500 |             if (scopes == null) {
+  501 |                 scopes = new HashSet<>();
+  502 |                 result.put(url, scopes);
+  503 |             }
+  504 |             JSONArray values = item.optJSONArray("scopes");
+  505 |             if (values != null) for (int j = 0; j < values.length(); j++) {
+  506 |                 String scope = values.optString(j, "");
+  507 |                 if (!scope.isEmpty()) scopes.add(scope);
+  508 |             }
+  509 |         }
+  510 |         return result;
+  511 |     }
+  512 | }
+  513 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueReader.java — 原始行 1–169
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import com.wodedianshi.tv.ChannelCatalogueScopePolicy;
+    5 | import org.json.JSONArray;
+    6 | import java.util.ArrayList;
+    7 | import java.util.HashMap;
+    8 | import java.util.HashSet;
+    9 | import java.util.List;
+   10 | import java.util.Set;
+   11 | 
+   12 | /** Reads the single validated Room catalogue for application startup. */
+   13 | public final class RoomCatalogueReader {
+   14 |     private static final int PAGE_SIZE = 200;
+   15 | 
+   16 |     /** A concurrent Room write invalidated a paged read, not a broken database.
+   17 |      * The caller may retry after outstanding user mutations finish, but must
+   18 |      * never render the partial snapshot. */
+   19 |     public static final class StaleSnapshotException extends IllegalStateException {
+   20 |         public StaleSnapshotException() {
+   21 |             super("Room catalogue changed while its snapshot was being read");
+   22 |         }
+   23 |     }
+   24 | 
+   25 |     public static final class ChannelRecord {
+   26 |         public final String name;
+   27 |         public final String url;
+   28 |         public final String group;
+   29 |         public final String tvgId;
+   30 |         public final String tvgName;
+   31 |         public final ArrayList<String> sources;
+   32 |         public final HashSet<String> sourceScopes;
+   33 |         public final HashMap<String, HashSet<String>> backupSourceScopes;
+   34 |         public final int activeSource;
+   35 | 
+   36 |         ChannelRecord(ChannelEntity channel, List<BackupSourceEntity> sourceRows) {
+   37 |             name = channel.name == null ? "" : channel.name;
+   38 |             String legacyKey = channel.legacyKey == null ? "" : channel.legacyKey;
+   39 |             String prefix = name + "|";
+   40 |             url = legacyKey.startsWith(prefix) ? legacyKey.substring(prefix.length())
+   41 |                     : (channel.primaryUrl == null ? "" : channel.primaryUrl);
+   42 |             group = channel.groupName == null ? "" : channel.groupName;
+   43 |             tvgId = channel.tvgId == null ? "" : channel.tvgId;
+   44 |             tvgName = channel.tvgName == null ? "" : channel.tvgName;
+   45 |             sources = new ArrayList<>();
+   46 |             sourceScopes = parseScopes(channel.channelScopesJson);
+   47 |             backupSourceScopes = new HashMap<>();
+   48 |             if (sourceRows != null) {
+   49 |                 for (BackupSourceEntity row : sourceRows) {
+   50 |                     if (row == null || row.url == null || row.url.isEmpty()) continue;
+   51 |                     sources.add(row.url);
+   52 |                     HashSet<String> scopes = parseScopes(row.scopesJson);
+   53 |                     if (!scopes.isEmpty()) backupSourceScopes.put(row.url, scopes);
+   54 |                 }
+   55 |             }
+   56 |             if (sources.isEmpty() && channel.primaryUrl != null && !channel.primaryUrl.isEmpty()) {
+   57 |                 sources.add(channel.primaryUrl);
+   58 |             }
+   59 |             activeSource = Math.max(0, Math.min(channel.activeSource, Math.max(0, sources.size() - 1)));
+   60 |         }
+   61 | 
+   62 |         private static HashSet<String> parseScopes(String json) {
+   63 |             HashSet<String> result = new HashSet<>();
+   64 |             if (json == null || json.isEmpty()) return result;
+   65 |             try {
+   66 |                 JSONArray values = new JSONArray(json);
+   67 |                 for (int i = 0; i < values.length(); i++) {
+   68 |                     String scope = values.optString(i, "");
+   69 |                     // Preserve the exact country/state/city provenance that
+   70 |                     // RoomCatalogueWriter already persisted with each backup.
+   71 |                     // The earlier whitelist silently discarded all geo:* tags
+   72 |                     // on every Room restart/reload.
+   73 |                     if (ChannelCatalogueScopePolicy.isRetainableScope(scope)) {
+   74 |                         result.add(scope);
+   75 |                     }
+   76 |                 }
+   77 |             } catch (Exception ignored) {
+   78 |                 // A malformed optional scope must not make playable channels disappear.
+   79 |             }
+   80 |             return result;
+   81 |         }
+   82 |     }
+   83 | 
+   84 |     public interface PageConsumer {
+   85 |         void accept(List<ChannelRecord> page);
+   86 |     }
+   87 | 
+   88 |     public static final class Snapshot {
+   89 |         public final List<ChannelRecord> channels;
+   90 |         public final Set<String> favorites;
+   91 |         public final int channelCount;
+   92 |         public final long catalogueVersion;
+   93 |         Snapshot(List<ChannelRecord> channels, Set<String> favorites, int channelCount,
+   94 |                 long catalogueVersion) {
+   95 |             this.channels = channels;
+   96 |             this.favorites = favorites;
+   97 |             this.channelCount = channelCount;
+   98 |             this.catalogueVersion = catalogueVersion;
+   99 |         }
+  100 |     }
+  101 | 
+  102 |     private RoomCatalogueReader() {}
+  103 | 
+  104 |     /** Readiness only: no channel/source objects, no paged catalogue read.
+  105 |      * A publication must still read a complete current snapshot and check its version. */
+  106 |     public static boolean hasValidatedCatalogue(Context context) {
+  107 |         if(context==null)throw new IllegalArgumentException("context is null");
+  108 |         return RoomDatabaseProvider.get(context).channelDao()
+  109 |                 .getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY)!=null;
+  110 |     }
+  111 | 
+  112 |     /** Returns null when the one-time seed/checkpoint is absent or inconsistent. */
+  113 |     public static Snapshot read(Context context) {
+  114 |         return read(context, null);
+  115 |     }
+  116 | 
+  117 |     /**
+  118 |      * Paged startup variant. A consumer can convert each page directly into the
+  119 |      * Activity model, avoiding a second full in-memory copy of a large catalogue.
+  120 |      */
+  121 |     public static Snapshot read(Context context, PageConsumer consumer) {
+  122 |         return read(context, consumer, null);
+  123 |     }
+  124 | 
+  125 |     /** Worker reads can yield between bounded pages; never publish an incomplete result. */
+  126 |     public static Snapshot read(Context context, PageConsumer consumer, java.util.function.BooleanSupplier paused) {
+  127 |         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+  128 |         if (context == null) throw new IllegalArgumentException("context is null");
+  129 |         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
+  130 |         CatalogueMigrationEntity initialCheckpoint =
+  131 |                 dao.getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY);
+  132 |         if (initialCheckpoint == null) return null;
+  133 |         final long catalogueVersion = initialCheckpoint.completedAt;
+  134 |         ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
+  135 |         int total = initialCheckpoint.channelsCount;
+  136 |         int loaded = 0;
+  137 |         for (int offset = 0; offset < total; offset += PAGE_SIZE) {
+  138 |             if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+  139 |             List<ChannelWithSources> page = dao.getAllChannelsPage(PAGE_SIZE, offset);
+  140 |             if (page == null || page.isEmpty()) break;
+  141 |             ArrayList<ChannelRecord> records = new ArrayList<>(page.size());
+  142 |             for (ChannelWithSources item : page) {
+  143 |                 if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+  144 |                 if (item == null || item.channel == null) continue;
+  145 |                 records.add(new ChannelRecord(item.channel, item.getSourcesInPriorityOrder()));
+  146 |             }
+  147 |             loaded += records.size();
+  148 |             if (consumer == null) allRows.addAll(records);
+  149 |             else consumer.accept(records);
+  150 |         }
+  151 |         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+  152 |         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
+  153 |         CatalogueMigrationEntity finalCheckpoint =
+  154 |                 dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+  155 |         // Check the optimistic checkpoint BEFORE classifying a page-count
+  156 |         // mismatch. A full snapshot committed between pages can legitimately
+  157 |         // change the row count: that is a retryable conflict, not data damage.
+  158 |         if (finalCheckpoint == null || finalCheckpoint.completedAt != catalogueVersion) {
+  159 |             throw new StaleSnapshotException();
+  160 |         }
+  161 |         // A truncated read without any intervening write is a real structural
+  162 |         // failure. Do not retry it endlessly or publish a partial directory.
+  163 |         CatalogueReadCompletenessPolicy.requireComplete(total, loaded);
+  164 |         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+  165 |         return new Snapshot(consumer == null ? allRows : java.util.Collections.emptyList(),
+  166 |                 favorites, loaded, catalogueVersion);
+  167 |     }
+  168 | }
+  169 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueBuildStore.java — 原始行 1–162
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import com.wodedianshi.tv.SourceProbeTimePolicy;
+    5 | import java.util.function.BooleanSupplier;
+    6 | import org.json.JSONArray;
+    7 | import org.json.JSONException;
+    8 | import org.json.JSONObject;
+    9 | import java.util.ArrayList;
+   10 | import java.util.List;
+   11 | 
+   12 | /**
+   13 |  * Persists an isolated full-catalogue build in the same authoritative Room DB.
+   14 |  * Staging rows are never read by the playback UI and are published only after
+   15 |  * the discovery chain has completed and the final snapshot passes validation.
+   16 |  */
+   17 | public final class RoomCatalogueBuildStore {
+   18 |     private RoomCatalogueBuildStore() {}
+   19 |     public static final String STAGING_REVISION_KEY="source_initial_staging_revision";
+   20 | 
+   21 |     public static JSONArray read(Context context) throws JSONException {
+   22 |         return read(context, null);
+   23 |     }
+   24 | 
+   25 |     public static JSONArray read(Context context, BooleanSupplier paused) throws JSONException {
+   26 |         checkPause(paused);
+   27 |         List<CatalogueBuildRowEntity> rows = RoomDatabaseProvider.get(context)
+   28 |                 .channelDao().getCatalogueBuildRows();
+   29 |         JSONArray result = new JSONArray();
+   30 |         for (CatalogueBuildRowEntity row : rows) {
+   31 |             checkPause(paused);
+   32 |             JSONObject record = new JSONObject(row.recordJson);
+   33 |             if (record.optString("name", "").trim().isEmpty()
+   34 |                     || record.optString("url", "").trim().isEmpty()) {
+   35 |                 throw new JSONException("Invalid staged catalogue row " + row.rowId);
+   36 |             }
+   37 |             result.put(record);
+   38 |         }
+   39 |         checkPause(paused);
+   40 |         return result;
+   41 |     }
+   42 | 
+   43 |     public static int replace(Context context, JSONArray snapshot) throws JSONException {
+   44 |         return replace(context, snapshot, null);
+   45 |     }
+   46 | 
+   47 |     public static int replace(Context context, JSONArray snapshot, BooleanSupplier paused) throws JSONException {
+   48 |         return replace(context,snapshot,paused,null);
+   49 |     }
+   50 | 
+   51 |     public static int replace(Context context, JSONArray snapshot, BooleanSupplier paused,
+   52 |             AppStateEditor progress) throws JSONException {
+   53 |         checkPause(paused);
+   54 |         if (context == null || snapshot == null) {
+   55 |             throw new IllegalArgumentException("context/snapshot is null");
+   56 |         }
+   57 |         AppDatabase db = RoomDatabaseProvider.get(context);
+   58 |         ChannelDao dao = db.channelDao();
+   59 |         // A rebuild may span hundreds of WorkManager runs. Compare against the
+   60 |         // existing staging rows and write only changed JSON records instead of
+   61 |         // deleting/reinserting the entire growing catalogue after every batch.
+   62 |         java.util.HashMap<String, String> existingJson = new java.util.HashMap<>();
+   63 |         for (CatalogueBuildRowEntity row : dao.getCatalogueBuildRows()) {
+   64 |             checkPause(paused);
+   65 |             existingJson.put(row.rowId, row.recordJson);
+   66 |         }
+   67 |         ArrayList<CatalogueBuildRowEntity> changedRows = new ArrayList<>();
+   68 |         for (int i = 0; i < snapshot.length(); i++) {
+   69 |             checkPause(paused);
+   70 |             JSONObject record = snapshot.optJSONObject(i);
+   71 |             if (record == null || record.optString("name", "").trim().isEmpty()
+   72 |                     || record.optString("url", "").trim().isEmpty()) {
+   73 |                 throw new JSONException("Invalid full-rebuild row at index " + i);
+   74 |             }
+   75 |             String rowId = String.format(java.util.Locale.ROOT, "row-%08d", i);
+   76 |             String recordJson = record.toString();
+   77 |             if (!recordJson.equals(existingJson.get(rowId))) {
+   78 |                 changedRows.add(new CatalogueBuildRowEntity(rowId, i, recordJson));
+   79 |             }
+   80 |         }
+   81 |         checkPause(paused);
+   82 |         db.runInTransaction(() -> {
+   83 |             checkPause(paused);
+   84 |             for (int i = 0; i < changedRows.size(); i += 64) {
+   85 |                 checkPause(paused);
+   86 |                 dao.insertCatalogueBuildRows(changedRows.subList(i, Math.min(i + 64, changedRows.size())));
+   87 |             }
+   88 |             checkPause(paused);
+   89 |             dao.deleteCatalogueBuildRowsFrom(snapshot.length());
+   90 |             if (progress != null) progress.applyInTransaction(db);
+   91 |             db.appStateDao().remove(STAGING_REVISION_KEY);
+   92 |             checkPause(paused);
+   93 |         });
+   94 |         return snapshot.length();
+   95 |     }
+   96 | 
+   97 |     /** Append/update only explicitly touched rows, in the same transaction as
+   98 |      * the cursor. The sole discovery owner guarantees unchanged row positions.
+   99 |      * Reject stale counts and missing appended rows rather than silently losing data. */
+  100 |     public static int updateTouched(Context context, JSONArray snapshot,int previousSize,
+  101 |             java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress)
+  102 |             throws JSONException {
+  103 |         checkPause(paused);
+  104 |         if(snapshot==null||progress==null)throw new IllegalArgumentException("Invalid incremental build");
+  105 |         validateTouchedRows(previousSize,snapshot.length(),touched);
+  106 |         ArrayList<CatalogueBuildRowEntity> changed=new ArrayList<>();
+  107 |         for(int i:touched){
+  108 |             checkPause(paused);
+  109 |             if(i<0||i>=snapshot.length())throw new IllegalArgumentException("Invalid touched row");
+  110 |             JSONObject record=snapshot.getJSONObject(i);
+  111 |             if(record.optString("name","").trim().isEmpty()||record.optString("url","").trim().isEmpty())
+  112 |                 throw new JSONException("Invalid incremental build row "+i);
+  113 |             changed.add(new CatalogueBuildRowEntity(
+  114 |                 String.format(java.util.Locale.ROOT,"row-%08d",i),i,record.toString()));
+  115 |         }
+  116 |         AppDatabase db=RoomDatabaseProvider.get(context);
+  117 |         ChannelDao dao=db.channelDao();
+  118 |         db.runInTransaction(()->{
+  119 |             checkPause(paused);
+  120 |             if(dao.countCatalogueBuildRows()!=previousSize)
+  121 |                 throw new IllegalStateException("Staging count changed");
+  122 |             for(int i=0;i<changed.size();i+=64){
+  123 |                 checkPause(paused);
+  124 |                 dao.insertCatalogueBuildRows(changed.subList(i,Math.min(i+64,changed.size())));
+  125 |             }
+  126 |             if(dao.countCatalogueBuildRows()!=snapshot.length())
+  127 |                 throw new IllegalStateException("Incremental staging count mismatch");
+  128 |             progress.applyInTransaction(db);
+  129 |             checkPause(paused);
+  130 |         });
+  131 |         return snapshot.length();
+  132 |     }
+  133 | 
+  134 |     public static void validateTouchedRows(int previousSize,int nextSize,java.util.Set<Integer> touched) {
+  135 |         if(touched==null||previousSize<0||nextSize<previousSize)
+  136 |             throw new IllegalArgumentException("Invalid incremental build");
+  137 |         for(Integer row:touched)
+  138 |             if(row==null||row<0||row>=nextSize)throw new IllegalArgumentException("Invalid touched row");
+  139 |         for(int i=previousSize;i<nextSize;i++)
+  140 |             if(!touched.contains(i))throw new IllegalArgumentException("Missing appended row");
+  141 |     }
+  142 | 
+  143 |     private static void checkPause(BooleanSupplier paused) {
+  144 |         if (paused != null) SourceProbeTimePolicy.checkPublicationPaused(paused);
+  145 |     }
+  146 | 
+  147 |     public static void clear(Context context) {
+  148 |         clear(context,null,null);
+  149 |     }
+  150 | 
+  151 |     public static void clear(Context context, AppStateEditor progress, BooleanSupplier paused) {
+  152 |         AppDatabase db=RoomDatabaseProvider.get(context);
+  153 |         db.runInTransaction(() -> {
+  154 |             checkPause(paused);
+  155 |             db.channelDao().clearCatalogueBuildRows();
+  156 |             if(progress!=null)progress.applyInTransaction(db);
+  157 |             db.appStateDao().remove(STAGING_REVISION_KEY);
+  158 |             checkPause(paused);
+  159 |         });
+  160 |     }
+  161 | }
+  162 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/RoomCatalogueMutations.java — 原始行 1–52
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import java.util.List;
+    5 | 
+    6 | /** Direct Room mutations for user actions that change favorites or active source. */
+    7 | public final class RoomCatalogueMutations {
+    8 |     private RoomCatalogueMutations() {}
+    9 | 
+   10 |     public static boolean setFavorite(Context context, String legacyKey, boolean favorite) {
+   11 |         if (context == null || legacyKey == null || legacyKey.isEmpty()) return false;
+   12 |         AppDatabase database = RoomDatabaseProvider.get(context.getApplicationContext());
+   13 |         ChannelDao dao = database.channelDao();
+   14 |         final boolean[] persisted = {false};
+   15 |         database.runInTransaction(() -> {
+   16 |             String migrationKey = MasterCatalogueRepository.MIGRATION_KEY;
+   17 |             CatalogueMigrationEntity checkpoint = dao.getMigration(migrationKey);
+   18 |             if (checkpoint == null) return;
+   19 |             List<String> ids = dao.getChannelIdsByLegacyKey(legacyKey);
+   20 |             if (ids == null || ids.isEmpty()) return;
+   21 |             long addedAt = System.currentTimeMillis();
+   22 |             for (String id : ids) {
+   23 |                 if (favorite) dao.addFavorite(new FavoriteEntity(id, addedAt));
+   24 |                 else dao.removeFavorite(id);
+   25 |             }
+   26 |             dao.refreshFavoriteCheckpointCount(migrationKey,
+   27 |                     Math.max(System.currentTimeMillis(), checkpoint.completedAt + 1L));
+   28 |             persisted[0] = true;
+   29 |         });
+   30 |         // A deleted/replaced channel must not be reported as successfully saved.
+   31 |         return persisted[0];
+   32 |     }
+   33 | 
+   34 |     public static boolean setActiveSourceUrl(Context context, String legacyKey, String sourceUrl) {
+   35 |         if (context == null || legacyKey == null || legacyKey.isEmpty()
+   36 |                 || sourceUrl == null || sourceUrl.isEmpty()) return false;
+   37 |         AppDatabase database = RoomDatabaseProvider.get(context.getApplicationContext());
+   38 |         ChannelDao dao = database.channelDao();
+   39 |         final boolean[] changed = {false};
+   40 |         database.runInTransaction(() -> {
+   41 |             changed[0] = dao.setActiveSourceByLegacyKeyAndUrl(legacyKey, sourceUrl) > 0;
+   42 |             if (changed[0] && dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY) != null) {
+   43 |                 CatalogueMigrationEntity checkpoint =
+   44 |                         dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+   45 |                 dao.touchCatalogueCheckpoint(MasterCatalogueRepository.MIGRATION_KEY,
+   46 |                         Math.max(System.currentTimeMillis(), checkpoint.completedAt + 1L));
+   47 |             }
+   48 |         });
+   49 |         return changed[0];
+   50 |     }
+   51 | }
+   52 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/ChannelDao.java — 原始行 1–290
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import androidx.room.Dao;
+    4 | import androidx.room.Insert;
+    5 | import androidx.room.OnConflictStrategy;
+    6 | import androidx.room.Query;
+    7 | import androidx.room.Transaction;
+    8 | import java.util.List;
+    9 | 
+   10 | @Dao
+   11 | public interface ChannelDao {
+   12 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   13 |     void insertCategory(CategoryEntity category);
+   14 | 
+   15 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   16 |     void insertCategories(List<CategoryEntity> categories);
+   17 | 
+   18 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   19 |     void insertChannels(List<ChannelEntity> channels);
+   20 | 
+   21 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   22 |     void insertBackupSources(List<BackupSourceEntity> sources);
+   23 | 
+   24 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   25 |     void insertFavorites(List<FavoriteEntity> favorites);
+   26 | 
+   27 |     // Write-through primitives: update an existing channel row in place rather
+   28 |     // than REPLACE it. SQLite REPLACE deletes the old row first and would cascade
+   29 |     // delete its favorites and backup sources through the declared foreign keys.
+   30 |     @Insert(onConflict = OnConflictStrategy.IGNORE)
+   31 |     void insertCategoryIfAbsent(CategoryEntity category);
+   32 | 
+   33 |     @Insert(onConflict = OnConflictStrategy.IGNORE)
+   34 |     void insertChannelIfAbsent(ChannelEntity channel);
+   35 | 
+   36 |     @Query("UPDATE channels SET legacyKey = :legacyKey, name = :name, "
+   37 |             + "primaryUrl = :primaryUrl, groupName = :groupName, categoryId = :categoryId, "
+   38 |             + "tvgId = :tvgId, tvgName = :tvgName, channelScopesJson = :scopesJson, "
+   39 |             + "activeSource = :activeSource, sortOrder = :sortOrder WHERE id = :id "
+   40 |             + "AND (legacyKey != :legacyKey OR name != :name OR primaryUrl != :primaryUrl "
+   41 |             + "OR groupName != :groupName OR categoryId != :categoryId OR tvgId != :tvgId "
+   42 |             + "OR tvgName != :tvgName OR channelScopesJson != :scopesJson "
+   43 |             + "OR activeSource != :activeSource OR sortOrder != :sortOrder)")
+   44 |     void updateChannelFields(String id, String legacyKey, String name, String primaryUrl,
+   45 |             String groupName, String categoryId, String tvgId, String tvgName,
+   46 |             String scopesJson, int activeSource, int sortOrder);
+   47 | 
+   48 |     @Query("DELETE FROM backup_sources WHERE channelId = :channelId")
+   49 |     void clearBackupSourcesForChannel(String channelId);
+   50 | 
+   51 |     @Query("DELETE FROM backup_sources WHERE channelId = :channelId AND url = :url")
+   52 |     void deleteBackupSource(String channelId, String url);
+   53 | 
+   54 |     @Transaction
+   55 |     default void writeChannelWithSources(CategoryEntity category, ChannelEntity channel,
+   56 |             List<BackupSourceEntity> sources) {
+   57 |         insertCategoryIfAbsent(category);
+   58 |         insertChannelIfAbsent(channel);
+   59 |         updateChannelFields(channel.id, channel.legacyKey, channel.name, channel.primaryUrl,
+   60 |                 channel.groupName, channel.categoryId, channel.tvgId, channel.tvgName,
+   61 |                 channel.channelScopesJson, channel.activeSource, channel.sortOrder);
+   62 |         // Merge source rows instead of clearing the relation. A partial feed
+   63 |         // refresh must never erase previously verified fallback URLs that were
+   64 |         // absent from this particular update batch.
+   65 |         if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
+   66 |     }
+   67 | 
+   68 |     // Exact source-list replacement for a complete catalogue snapshot. The
+   69 |     // channel row is updated in place, so favorites remain attached; only that
+   70 |     // channel's obsolete backup URL rows are replaced.
+   71 |     @Transaction
+   72 |     default void replaceChannelWithSources(CategoryEntity category, ChannelEntity channel,
+   73 |             List<BackupSourceEntity> sources) {
+   74 |         insertCategoryIfAbsent(category);
+   75 |         insertChannelIfAbsent(channel);
+   76 |         updateChannelFields(channel.id, channel.legacyKey, channel.name, channel.primaryUrl,
+   77 |                 channel.groupName, channel.categoryId, channel.tvgId, channel.tvgName,
+   78 |                 channel.channelScopesJson, channel.activeSource, channel.sortOrder);
+   79 |         clearBackupSourcesForChannel(channel.id);
+   80 |         if (sources != null && !sources.isEmpty()) insertBackupSources(sources);
+   81 |     }
+   82 | 
+   83 |     @Query("SELECT * FROM categories ORDER BY sortOrder, name")
+   84 |     List<CategoryEntity> getCategories();
+   85 | 
+   86 |     @Query("SELECT id FROM categories")
+   87 |     List<String> getAllCategoryIds();
+   88 | 
+   89 |     @Query("UPDATE categories SET name = :name, sortOrder = :sortOrder WHERE id = :id "
+   90 |             + "AND (name != :name OR sortOrder != :sortOrder)")
+   91 |     void updateCategoryFields(String id, String name, int sortOrder);
+   92 | 
+   93 |     @Query("DELETE FROM categories WHERE id = :id")
+   94 |     void deleteCategoryById(String id);
+   95 | 
+   96 |     @Query("SELECT id FROM channels")
+   97 |     List<String> getAllChannelIds();
+   98 | 
+   99 |     @Query("DELETE FROM channels WHERE id = :id")
+  100 |     void deleteChannelById(String id);
+  101 | 
+  102 |     @Query("SELECT channelId FROM favorites")
+  103 |     List<String> getFavoriteChannelIds();
+  104 | 
+  105 |     @Query("SELECT addedAt FROM favorites WHERE channelId = :channelId LIMIT 1")
+  106 |     Long getFavoriteAddedAt(String channelId);
+  107 | 
+  108 |     @Transaction
+  109 |     @Query("SELECT * FROM channels WHERE categoryId = :categoryId ORDER BY sortOrder, name, id")
+  110 |     List<ChannelWithSources> getChannelsByCategory(String categoryId);
+  111 | 
+  112 |     // Lightweight paged projection for startup/category rendering. Unlike
+  113 |     // ChannelWithSources, this query does not load backup_sources relations.
+  114 |     @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+  115 |             + "activeSource, sortOrder FROM channels WHERE categoryId = :categoryId "
+  116 |             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+  117 |     List<ChannelListRow> getChannelListPage(String categoryId, int limit, int offset);
+  118 | 
+  119 |     @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+  120 |             + "activeSource, sortOrder FROM channels ORDER BY sortOrder, name, id "
+  121 |             + "LIMIT :limit OFFSET :offset")
+  122 |     List<ChannelListRow> getAllChannelListPage(int limit, int offset);
+  123 | 
+  124 |     // Load source URLs only after a user selects a channel.
+  125 |     @Query("SELECT * FROM backup_sources WHERE channelId = :channelId ORDER BY priority, url")
+  126 |     List<BackupSourceEntity> getBackupSourcesForChannel(String channelId);
+  127 | 
+  128 |     // Bounded reads for TV lists: avoid materializing every channel and every
+  129 |     // backup-source relation merely to render the first screen of a category.
+  130 |     @Transaction
+  131 |     @Query("SELECT * FROM channels WHERE categoryId = :categoryId "
+  132 |             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+  133 |     List<ChannelWithSources> getChannelsPage(String categoryId, int limit, int offset);
+  134 | 
+  135 |     @Transaction
+  136 |     @Query("SELECT * FROM channels ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+  137 |     List<ChannelWithSources> getAllChannelsPage(int limit, int offset);
+  138 | 
+  139 |     @Query("SELECT COUNT(*) FROM channels WHERE categoryId = :categoryId")
+  140 |     int countChannelsInCategory(String categoryId);
+  141 | 
+  142 |     @Transaction
+  143 |     @Query("SELECT c.* FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
+  144 |     List<ChannelWithSources> getFavoriteChannels();
+  145 | 
+  146 |     @Transaction
+  147 |     @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' ORDER BY sortOrder, name, id")
+  148 |     List<ChannelWithSources> searchChannels(String query);
+  149 | 
+  150 |     @Query("SELECT c.id, c.legacyKey, c.name, c.primaryUrl, c.groupName, c.categoryId, c.tvgId, "
+  151 |             + "c.tvgName, c.activeSource, c.sortOrder FROM channels c "
+  152 |             + "INNER JOIN favorites f ON f.channelId = c.id "
+  153 |             + "ORDER BY f.addedAt DESC, c.sortOrder, c.name, c.id "
+  154 |             + "LIMIT :limit OFFSET :offset")
+  155 |     List<ChannelListRow> getFavoriteChannelListPage(int limit, int offset);
+  156 | 
+  157 |     @Query("SELECT COUNT(*) FROM channels c INNER JOIN favorites f ON f.channelId = c.id")
+  158 |     int countFavoriteChannels();
+  159 | 
+  160 |     // Search projections stay lightweight too: the list screen does not need
+  161 |     // to load every backup-source relation just to show matching channel names.
+  162 |     @Query("SELECT id, legacyKey, name, primaryUrl, groupName, categoryId, tvgId, tvgName, "
+  163 |             + "activeSource, sortOrder FROM channels "
+  164 |             + "WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%' "
+  165 |             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+  166 |     List<ChannelListRow> getSearchChannelListPage(String query, int limit, int offset);
+  167 | 
+  168 |     @Query("SELECT COUNT(*) FROM channels "
+  169 |             + "WHERE name LIKE '%' || :query || '%' OR tvgName LIKE '%' || :query || '%'")
+  170 |     int countSearchChannels(String query);
+  171 | 
+  172 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+  173 |     void addFavorite(FavoriteEntity favorite);
+  174 | 
+  175 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+  176 |     void insertMigration(CatalogueMigrationEntity migration);
+  177 | 
+  178 |     @Query("SELECT * FROM catalogue_migrations WHERE migrationKey = :key LIMIT 1")
+  179 |     CatalogueMigrationEntity getMigration(String key);
+  180 | 
+  181 |     @Query("DELETE FROM catalogue_migrations WHERE migrationKey = :key")
+  182 |     void removeMigration(String key);
+  183 | 
+  184 |     @Query("DELETE FROM favorites WHERE channelId = :channelId")
+  185 |     void removeFavorite(String channelId);
+  186 | 
+  187 |     @Query("SELECT EXISTS(SELECT 1 FROM favorites WHERE channelId = :channelId)")
+  188 |     boolean isFavorite(String channelId);
+  189 | 
+  190 |     // Keep the Room shadow aligned with explicit source choices without relying
+  191 |     // on an array index that may differ after a source-ranking refresh.
+  192 |     @Query("UPDATE channels SET activeSource = (SELECT priority FROM backup_sources "
+  193 |             + "WHERE channelId = :channelId AND url = :sourceUrl LIMIT 1) "
+  194 |             + "WHERE id = :channelId AND EXISTS (SELECT 1 FROM backup_sources "
+  195 |             + "WHERE channelId = :channelId AND url = :sourceUrl)")
+  196 |     int setActiveSourceByUrl(String channelId, String sourceUrl);
+  197 | 
+  198 |     // Legacy favorites are keyed by name|primaryUrl. Update every matching row
+  199 |     // so duplicate legacy entries keep the same behavior as the old Set<String>.
+  200 |     @Query("SELECT id FROM channels WHERE legacyKey = :legacyKey")
+  201 |     List<String> getChannelIdsByLegacyKey(String legacyKey);
+  202 | 
+  203 |     // Scoped catalogue row IDs differ from IDs in the unfiltered master list.
+  204 |     @Query("UPDATE channels SET activeSource = (SELECT priority FROM backup_sources "
+  205 |             + "WHERE channelId = channels.id AND url = :sourceUrl LIMIT 1) "
+  206 |             + "WHERE legacyKey = :legacyKey AND EXISTS (SELECT 1 FROM backup_sources "
+  207 |             + "WHERE channelId = channels.id AND url = :sourceUrl)")
+  208 |     int setActiveSourceByLegacyKeyAndUrl(String legacyKey, String sourceUrl);
+  209 | 
+  210 |     @Query("UPDATE catalogue_migrations SET favoritesCount = (SELECT COUNT(*) FROM favorites), "
+  211 |             + "completedAt = :completedAt WHERE migrationKey = :migrationKey")
+  212 |     int refreshFavoriteCheckpointCount(String migrationKey, long completedAt);
+  213 | 
+  214 |     @Query("UPDATE catalogue_migrations SET completedAt = :completedAt "
+  215 |             + "WHERE migrationKey = :migrationKey")
+  216 |     int touchCatalogueCheckpoint(String migrationKey, long completedAt);
+  217 | 
+  218 |     @Query("DELETE FROM favorites WHERE channelId IN "
+  219 |             + "(SELECT id FROM channels WHERE legacyKey = :legacyKey)")
+  220 |     void removeFavoritesForLegacyKey(String legacyKey);
+  221 | 
+  222 |     @Query("DELETE FROM backup_sources")
+  223 |     void clearBackupSources();
+  224 | 
+  225 |     @Query("DELETE FROM favorites")
+  226 |     void clearFavorites();
+  227 | 
+  228 |     @Query("DELETE FROM channels")
+  229 |     void clearChannels();
+  230 | 
+  231 |     @Query("DELETE FROM categories")
+  232 |     void clearCategories();
+  233 | 
+  234 |     /** Checkpoint and table counts must describe the same committed snapshot. */
+  235 |     @Transaction
+  236 |     default CatalogueMigrationEntity getValidatedCheckpoint(String migrationKey) {
+  237 |         CatalogueMigrationEntity checkpoint = getMigration(migrationKey);
+  238 |         if (checkpoint == null || checkpoint.channelsCount < 0
+  239 |                 || checkpoint.backupSourcesCount < 0 || checkpoint.favoritesCount < 0
+  240 |                 || checkpoint.categoriesCount < 0) return null;
+  241 |         return countChannels() == checkpoint.channelsCount
+  242 |                 && countBackupSources() == checkpoint.backupSourcesCount
+  243 |                 && countFavorites() == checkpoint.favoritesCount
+  244 |                 && countCategories() == checkpoint.categoriesCount ? checkpoint : null;
+  245 |     }
+  246 | 
+  247 |     @Query("SELECT COUNT(*) FROM categories")
+  248 |     int countCategories();
+  249 | 
+  250 |     @Query("SELECT COUNT(*) FROM channels")
+  251 |     int countChannels();
+  252 | 
+  253 |     @Query("SELECT COUNT(*) FROM backup_sources")
+  254 |     int countBackupSources();
+  255 | 
+  256 |     @Query("SELECT COUNT(*) FROM favorites")
+  257 |     int countFavorites();
+  258 | 
+  259 |     @Query("SELECT c.legacyKey FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
+  260 |     List<String> getFavoriteLegacyKeys();
+  261 | 
+  262 |     // Isolated full-rebuild staging. These rows are never visible to the live UI.
+  263 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+  264 |     void insertCatalogueBuildRows(List<CatalogueBuildRowEntity> rows);
+  265 | 
+  266 |     @Query("SELECT * FROM catalogue_build_rows ORDER BY sortOrder, rowId")
+  267 |     List<CatalogueBuildRowEntity> getCatalogueBuildRows();
+  268 | 
+  269 |     @Query("SELECT COUNT(*) FROM catalogue_build_rows")
+  270 |     int countCatalogueBuildRows();
+  271 | 
+  272 |     @Query("DELETE FROM catalogue_build_rows")
+  273 |     void clearCatalogueBuildRows();
+  274 | 
+  275 |     @Query("DELETE FROM catalogue_build_rows WHERE sortOrder >= :size")
+  276 |     void deleteCatalogueBuildRowsFrom(int size);
+  277 | 
+  278 |     @Transaction
+  279 |     default void replaceCatalogueBuildRows(List<CatalogueBuildRowEntity> rows) {
+  280 |         clearCatalogueBuildRows();
+  281 |         if (rows != null && !rows.isEmpty()) insertCatalogueBuildRows(rows);
+  282 |     }
+  283 | 
+  284 |     @Transaction
+  285 |     default void mergeCatalogueBuildRows(List<CatalogueBuildRowEntity> changedRows, int size) {
+  286 |         if (changedRows != null && !changedRows.isEmpty()) insertCatalogueBuildRows(changedRows);
+  287 |         deleteCatalogueBuildRowsFrom(Math.max(0, size));
+  288 |     }
+  289 | }
+  290 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/AppStateDao.java — 原始行 1–28
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import androidx.room.Dao;
+    4 | import androidx.room.Insert;
+    5 | import androidx.room.OnConflictStrategy;
+    6 | import androidx.room.Query;
+    7 | 
+    8 | @Dao
+    9 | public interface AppStateDao {
+   10 |     @Query("SELECT stateValue FROM app_state WHERE key = :key LIMIT 1")
+   11 |     String getValue(String key);
+   12 | 
+   13 |     @Query("SELECT * FROM app_state WHERE key IN (:keys)")
+   14 |     java.util.List<AppStateEntity> getValues(java.util.List<String> keys);
+   15 | 
+   16 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   17 |     void put(AppStateEntity value);
+   18 | 
+   19 |     @Insert(onConflict = OnConflictStrategy.REPLACE)
+   20 |     void putAll(java.util.List<AppStateEntity> values);
+   21 | 
+   22 |     @Query("DELETE FROM app_state WHERE key IN (:keys)")
+   23 |     void removeAll(java.util.List<String> keys);
+   24 | 
+   25 |     @Query("DELETE FROM app_state WHERE key = :key")
+   26 |     void remove(String key);
+   27 | }
+   28 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/AppStateEditor.java — 原始行 1–63
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | import java.util.ArrayList;
+    5 | import java.util.LinkedHashMap;
+    6 | import java.util.LinkedHashSet;
+    7 | import java.util.Map;
+    8 | 
+    9 | /** Transactional editor for Room-backed application business state. */
+   10 | public final class AppStateEditor {
+   11 |     private final Context context;
+   12 |     private final LinkedHashMap<String, String> updates = new LinkedHashMap<>();
+   13 |     private final LinkedHashSet<String> removals = new LinkedHashSet<>();
+   14 | 
+   15 |     public AppStateEditor(Context context) {
+   16 |         if (context == null) throw new IllegalArgumentException("context is null");
+   17 |         this.context = context.getApplicationContext();
+   18 |     }
+   19 | 
+   20 |     public AppStateEditor putString(String key, String value) {
+   21 |         updates.put(key, value == null ? "" : value);
+   22 |         removals.remove(key);
+   23 |         return this;
+   24 |     }
+   25 | 
+   26 |     public AppStateEditor putInt(String key, int value) {
+   27 |         return putString(key, Integer.toString(value));
+   28 |     }
+   29 | 
+   30 |     public AppStateEditor putLong(String key, long value) {
+   31 |         return putString(key, Long.toString(value));
+   32 |     }
+   33 | 
+   34 |     public AppStateEditor putBoolean(String key, boolean value) {
+   35 |         return putString(key, Boolean.toString(value));
+   36 |     }
+   37 | 
+   38 |     public AppStateEditor remove(String key) {
+   39 |         updates.remove(key);
+   40 |         removals.add(key);
+   41 |         return this;
+   42 |     }
+   43 | 
+   44 |     public void apply() {
+   45 |         AppDatabase db = RoomDatabaseProvider.get(context);
+   46 |         db.runInTransaction(() -> applyInTransaction(db));
+   47 |     }
+   48 | 
+   49 |     /** The catalogue writer owns the outer transaction and its rollback. */
+   50 |     void applyInTransaction(AppDatabase db) {
+   51 |         if (!db.inTransaction()) throw new IllegalStateException("App state requires Room transaction");
+   52 |         AppStateDao dao = db.appStateDao();
+   53 |         ArrayList<AppStateEntity> rows = new ArrayList<>(updates.size());
+   54 |         long now = System.currentTimeMillis();
+   55 |         for (Map.Entry<String, String> entry : updates.entrySet()) {
+   56 |             rows.add(new AppStateEntity(entry.getKey(), entry.getValue(), now));
+   57 |         }
+   58 |         ArrayList<String> deleteKeys = new ArrayList<>(removals);
+   59 |         if (!deleteKeys.isEmpty()) dao.removeAll(deleteKeys);
+   60 |         if (!rows.isEmpty()) dao.putAll(rows);
+   61 |     }
+   62 | }
+   63 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/AppStateStore.java — 原始行 1–29
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | 
+    5 | /** Background-thread-only access to durable non-setting app state in Room. */
+    6 | public final class AppStateStore {
+    7 |     private AppStateStore() {}
+    8 | 
+    9 |     public static String get(Context context, String key, String fallback) {
+   10 |         if (context == null || key == null) throw new IllegalArgumentException("context/key is null");
+   11 |         String value = RoomDatabaseProvider.get(context.getApplicationContext())
+   12 |                 .appStateDao().getValue(key);
+   13 |         return value == null ? fallback : value;
+   14 |     }
+   15 | 
+   16 |     public static void put(Context context, String key, String value) {
+   17 |         if (context == null || key == null || value == null) {
+   18 |             throw new IllegalArgumentException("context/key/value is null");
+   19 |         }
+   20 |         RoomDatabaseProvider.get(context.getApplicationContext()).appStateDao()
+   21 |                 .put(new AppStateEntity(key, value, System.currentTimeMillis()));
+   22 |     }
+   23 | 
+   24 |     public static void remove(Context context, String key) {
+   25 |         if (context == null || key == null) return;
+   26 |         RoomDatabaseProvider.get(context.getApplicationContext()).appStateDao().remove(key);
+   27 |     }
+   28 | }
+   29 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/CatalogueMigrationEntity.java — 原始行 1–30
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import androidx.annotation.NonNull;
+    4 | import androidx.room.Entity;
+    5 | import androidx.room.ColumnInfo;
+    6 | import androidx.room.PrimaryKey;
+    7 | 
+    8 | /** Durable migration checkpoint stored atomically with the imported catalogue. */
+    9 | @Entity(tableName = "catalogue_migrations")
+   10 | public class CatalogueMigrationEntity {
+   11 |     @PrimaryKey @NonNull public String migrationKey;
+   12 |     @NonNull @ColumnInfo(defaultValue = "''") public String catalogueFingerprint;
+   13 |     public int channelsCount;
+   14 |     public int backupSourcesCount;
+   15 |     public int favoritesCount;
+   16 |     @ColumnInfo(defaultValue = "0") public int categoriesCount;
+   17 |     public long completedAt;
+   18 | 
+   19 |     public CatalogueMigrationEntity(@NonNull String migrationKey, int channelsCount,
+   20 |             int backupSourcesCount, int favoritesCount, int categoriesCount, long completedAt, @NonNull String catalogueFingerprint) {
+   21 |         this.migrationKey = migrationKey;
+   22 |         this.catalogueFingerprint = catalogueFingerprint;
+   23 |         this.channelsCount = channelsCount;
+   24 |         this.backupSourcesCount = backupSourcesCount;
+   25 |         this.favoritesCount = favoritesCount;
+   26 |         this.categoriesCount = categoriesCount;
+   27 |         this.completedAt = completedAt;
+   28 |     }
+   29 | }
+   30 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/CatalogueVersionPolicy.java — 原始行 1–14
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | /**
+    4 |  * Pure version predicate used under Room's write transaction.
+    5 |  * A missing checkpoint is never a match for a previously loaded catalogue.
+    6 |  */
+    7 | final class CatalogueVersionPolicy {
+    8 |     private CatalogueVersionPolicy() {}
+    9 | 
+   10 |     static boolean matches(long expected, Long observed) {
+   11 |         return expected >= 0L && observed != null && observed.longValue() == expected;
+   12 |     }
+   13 | }
+   14 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/CatalogueReadCompletenessPolicy.java — 原始行 1–18
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | /** Guards paged Room reads against silently publishing a truncated directory. */
+    4 | public final class CatalogueReadCompletenessPolicy {
+    5 |     private CatalogueReadCompletenessPolicy() {}
+    6 | 
+    7 |     public static boolean isComplete(int expectedCount, int loadedCount) {
+    8 |         return expectedCount >= 0 && loadedCount == expectedCount;
+    9 |     }
+   10 | 
+   11 |     public static void requireComplete(int expectedCount, int loadedCount) {
+   12 |         if (!isComplete(expectedCount, loadedCount)) {
+   13 |             throw new IllegalStateException("Room catalogue read incomplete: expected "
+   14 |                     + expectedCount + " channels but loaded " + loadedCount);
+   15 |         }
+   16 |     }
+   17 | }
+   18 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/BackgroundSnapshotPolicy.java — 原始行 1–18
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | /**
+    4 |  * Validates the shape of a fully collected catalogue snapshot.
+    5 |  *
+    6 |  * The number of rows may legitimately grow or shrink after deduplication,
+    7 |  * channel validation and removal of dead entries. A positive row count alone
+    8 |  * is not the completeness check; RoomCatalogueWriter validates every row and
+    9 |  * commits the exact snapshot atomically.
+   10 |  */
+   11 | public final class BackgroundSnapshotPolicy {
+   12 |     private BackgroundSnapshotPolicy() {}
+   13 | 
+   14 |     public static boolean isComplete(int existingChannels, int incomingChannels) {
+   15 |         return incomingChannels > 0;
+   16 |     }
+   17 | }
+   18 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/MasterCatalogueRepository.java — 原始行 1–78
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | 
+    5 | import java.util.Collections;
+    6 | import java.util.List;
+    7 | 
+    8 | /**
+    9 |  * Authoritative read access to the single Room catalogue, including custom
+   10 |  * channels and entries outside the China/international display filters.
+   11 |  * All calls are blocking Room operations and must run on a background executor.
+   12 |  */
+   13 | public final class MasterCatalogueRepository {
+   14 |     public static final String MIGRATION_KEY = "room_native_catalogue_v1";
+   15 |     private final ChannelDao dao;
+   16 | 
+   17 |     public MasterCatalogueRepository(Context context) {
+   18 |         if (context == null) throw new IllegalArgumentException("context is null");
+   19 |         dao = RoomDatabaseProvider.get(context.getApplicationContext()).channelDao();
+   20 |     }
+   21 | 
+   22 |     /** The master snapshot is usable only when every imported table matches its checkpoint. */
+   23 |     public boolean isSnapshotReady() {
+   24 |         return dao.getValidatedCheckpoint(MIGRATION_KEY) != null;
+   25 |     }
+   26 | 
+   27 |     /** Return the category index only after the complete master snapshot validates. */
+   28 |     public List<CategoryEntity> getCategories() {
+   29 |         return isSnapshotReady() ? dao.getCategories() : Collections.emptyList();
+   30 |     }
+   31 | 
+   32 |     /** Fetch a bounded list page without loading backup-source relations. */
+   33 |     public List<ChannelListRow> getPage(String categoryId, int limit, int offset) {
+   34 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) return Collections.emptyList();
+   35 |         if (categoryId == null || categoryId.isEmpty()) {
+   36 |             return dao.getAllChannelListPage(limit, offset);
+   37 |         }
+   38 |         return dao.getChannelListPage(categoryId, limit, offset);
+   39 |     }
+   40 | 
+   41 |     /** Fetch a bounded favorites page without loading source relations. */
+   42 |     public List<ChannelListRow> getFavoritePage(int limit, int offset) {
+   43 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) return Collections.emptyList();
+   44 |         return dao.getFavoriteChannelListPage(limit, offset);
+   45 |     }
+   46 | 
+   47 |     public int getFavoriteCount() {
+   48 |         return isSnapshotReady() ? dao.countFavoriteChannels() : -1;
+   49 |     }
+   50 | 
+   51 |     /** Search a bounded result page without hydrating every channel's backup URLs. */
+   52 |     public List<ChannelListRow> getSearchPage(String query, int limit, int offset) {
+   53 |         if (query == null || query.trim().isEmpty() || limit <= 0 || offset < 0
+   54 |                 || !isSnapshotReady()) return Collections.emptyList();
+   55 |         return dao.getSearchChannelListPage(query.trim(), limit, offset);
+   56 |     }
+   57 | 
+   58 |     public int getSearchCount(String query) {
+   59 |         if (query == null || query.trim().isEmpty() || !isSnapshotReady()) return -1;
+   60 |         return dao.countSearchChannels(query.trim());
+   61 |     }
+   62 | 
+   63 |     /** Load playback URLs only after a user selects a channel. */
+   64 |     public List<BackupSourceEntity> getSourcesForSelectedChannel(String channelId) {
+   65 |         if (channelId == null || channelId.isEmpty() || !isSnapshotReady()) {
+   66 |             return Collections.emptyList();
+   67 |         }
+   68 |         return dao.getBackupSourcesForChannel(channelId);
+   69 |     }
+   70 | 
+   71 |     /** Total row count for list paging; -1 means no validated snapshot is available. */
+   72 |     public int getChannelCount(String categoryId) {
+   73 |         if (!isSnapshotReady()) return -1;
+   74 |         return categoryId == null || categoryId.isEmpty()
+   75 |                 ? dao.countChannels() : dao.countChannelsInCategory(categoryId);
+   76 |     }
+   77 | }
+   78 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/ChinaCatalogueRepository.java — 原始行 1–96
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | 
+    5 | import java.util.Collections;
+    6 | import java.util.List;
+    7 | 
+    8 | /**
+    9 |  * Read-only access to the validated China catalogue snapshot.
+   10 |  *
+   11 |  * All methods are blocking Room calls and MUST be invoked from a background
+   12 |  * executor, never from the Android main thread.
+   13 |  *
+   14 |  * The importer replaces the rows inside one SQLite transaction. Readers see
+   15 |  * the previous committed catalogue until that transaction commits, then see
+   16 |  * the complete replacement; they can never observe the import's intermediate
+   17 |  * DELETE/INSERT state. The migration checkpoint and row counts are checked
+   18 |  * before every read so a partial or stale shadow is never treated as active.
+   19 |  *
+   20 |  * This repository intentionally does not make Room authoritative yet. The
+   21 |  * legacy catalogue remains the playback/editing source until every mutation
+   22 |  * path has write-through coverage.
+   23 |  */
+   24 | public final class ChinaCatalogueRepository {
+   25 |     private static final String MIGRATION_KEY =
+   26 |             "legacy_china_partition_v2";
+   27 | 
+   28 |     private final ChannelDao dao;
+   29 | 
+   30 |     public ChinaCatalogueRepository(Context context) {
+   31 |         if (context == null) throw new IllegalArgumentException("context is null");
+   32 |         dao = RoomDatabaseProvider.getChina(context.getApplicationContext()).channelDao();
+   33 |     }
+   34 | 
+   35 |     /** True only when the last China import committed and all row counts still match. */
+   36 |     public boolean isSnapshotReady() {
+   37 |         CatalogueMigrationEntity checkpoint = dao.getMigration(MIGRATION_KEY);
+   38 |         if (checkpoint == null || checkpoint.channelsCount <= 0) return false;
+   39 |         return dao.countChannels() == checkpoint.channelsCount
+   40 |                 && dao.countBackupSources() == checkpoint.backupSourcesCount
+   41 |                 && dao.countFavorites() == checkpoint.favoritesCount
+   42 |                 && dao.countCategories() == checkpoint.categoriesCount;
+   43 |     }
+   44 | 
+   45 |     /**
+   46 |      * Read a small page without hydrating backup-source relations.
+   47 |      * Returns an empty immutable list when no validated China snapshot exists.
+   48 |      */
+   49 |     public List<ChannelListRow> getPage(String categoryId, int limit, int offset) {
+   50 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) {
+   51 |             return Collections.emptyList();
+   52 |         }
+   53 |         if (categoryId == null || categoryId.isEmpty()) {
+   54 |             return dao.getAllChannelListPage(limit, offset);
+   55 |         }
+   56 |         return dao.getChannelListPage(categoryId, limit, offset);
+   57 |     }
+   58 | 
+   59 |     /** Fetch a bounded favorites page without loading source relations. */
+   60 |     public List<ChannelListRow> getFavoritePage(int limit, int offset) {
+   61 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) return Collections.emptyList();
+   62 |         return dao.getFavoriteChannelListPage(limit, offset);
+   63 |     }
+   64 | 
+   65 |     public int getFavoriteCount() {
+   66 |         return isSnapshotReady() ? dao.countFavoriteChannels() : -1;
+   67 |     }
+   68 | 
+   69 |     /** Search a bounded result page without hydrating every backup URL. */
+   70 |     public List<ChannelListRow> getSearchPage(String query, int limit, int offset) {
+   71 |         if (query == null || query.trim().isEmpty() || limit <= 0 || offset < 0
+   72 |                 || !isSnapshotReady()) return Collections.emptyList();
+   73 |         return dao.getSearchChannelListPage(query.trim(), limit, offset);
+   74 |     }
+   75 | 
+   76 |     public int getSearchCount(String query) {
+   77 |         if (query == null || query.trim().isEmpty() || !isSnapshotReady()) return -1;
+   78 |         return dao.countSearchChannels(query.trim());
+   79 |     }
+   80 | 
+   81 |     /** Load playback candidates only after the selected channel is known. */
+   82 |     public List<BackupSourceEntity> getSourcesForSelectedChannel(String channelId) {
+   83 |         if (channelId == null || channelId.isEmpty() || !isSnapshotReady()) {
+   84 |             return Collections.emptyList();
+   85 |         }
+   86 |         return dao.getBackupSourcesForChannel(channelId);
+   87 |     }
+   88 | 
+   89 |     /** Total row count for paging controls; -1 means the snapshot is not ready. */
+   90 |     public int getChannelCount(String categoryId) {
+   91 |         if (!isSnapshotReady()) return -1;
+   92 |         return categoryId == null || categoryId.isEmpty()
+   93 |                 ? dao.countChannels() : dao.countChannelsInCategory(categoryId);
+   94 |     }
+   95 | }
+   96 | 
+```
+
+
+## app/src/main/java/com/wodedianshi/tv/db/InternationalCatalogueRepository.java — 原始行 1–84
+
+```text
+    1 | package com.wodedianshi.tv.db;
+    2 | 
+    3 | import android.content.Context;
+    4 | 
+    5 | import java.util.Collections;
+    6 | import java.util.List;
+    7 | 
+    8 | /**
+    9 |  * Read-only access to the validated international catalogue snapshot.
+   10 |  *
+   11 |  * Blocking Room calls: invoke only from a background executor. This is a
+   12 |  * shadow-read API; it does not change the legacy SharedPreferences authority.
+   13 |  */
+   14 | public final class InternationalCatalogueRepository {
+   15 |     private static final String MIGRATION_KEY =
+   16 |             "legacy_international_partition_v2";
+   17 | 
+   18 |     private final ChannelDao dao;
+   19 | 
+   20 |     public InternationalCatalogueRepository(Context context) {
+   21 |         if (context == null) throw new IllegalArgumentException("context is null");
+   22 |         dao = RoomDatabaseProvider.getInternational(
+   23 |                 context.getApplicationContext()).channelDao();
+   24 |     }
+   25 | 
+   26 |     /** True only when the last international import committed and all row counts match. */
+   27 |     public boolean isSnapshotReady() {
+   28 |         CatalogueMigrationEntity checkpoint = dao.getMigration(MIGRATION_KEY);
+   29 |         if (checkpoint == null || checkpoint.channelsCount <= 0) return false;
+   30 |         return dao.countChannels() == checkpoint.channelsCount
+   31 |                 && dao.countBackupSources() == checkpoint.backupSourcesCount
+   32 |                 && dao.countFavorites() == checkpoint.favoritesCount
+   33 |                 && dao.countCategories() == checkpoint.categoriesCount;
+   34 |     }
+   35 | 
+   36 |     /** Read a bounded page without loading backup-source relations. */
+   37 |     public List<ChannelListRow> getPage(String categoryId, int limit, int offset) {
+   38 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) {
+   39 |             return Collections.emptyList();
+   40 |         }
+   41 |         if (categoryId == null || categoryId.isEmpty()) {
+   42 |             return dao.getAllChannelListPage(limit, offset);
+   43 |         }
+   44 |         return dao.getChannelListPage(categoryId, limit, offset);
+   45 |     }
+   46 | 
+   47 |     /** Fetch a bounded favorites page without loading source relations. */
+   48 |     public List<ChannelListRow> getFavoritePage(int limit, int offset) {
+   49 |         if (limit <= 0 || offset < 0 || !isSnapshotReady()) return Collections.emptyList();
+   50 |         return dao.getFavoriteChannelListPage(limit, offset);
+   51 |     }
+   52 | 
+   53 |     public int getFavoriteCount() {
+   54 |         return isSnapshotReady() ? dao.countFavoriteChannels() : -1;
+   55 |     }
+   56 | 
+   57 |     /** Search a bounded result page without hydrating every backup URL. */
+   58 |     public List<ChannelListRow> getSearchPage(String query, int limit, int offset) {
+   59 |         if (query == null || query.trim().isEmpty() || limit <= 0 || offset < 0
+   60 |                 || !isSnapshotReady()) return Collections.emptyList();
+   61 |         return dao.getSearchChannelListPage(query.trim(), limit, offset);
+   62 |     }
+   63 | 
+   64 |     public int getSearchCount(String query) {
+   65 |         if (query == null || query.trim().isEmpty() || !isSnapshotReady()) return -1;
+   66 |         return dao.countSearchChannels(query.trim());
+   67 |     }
+   68 | 
+   69 |     /** Load playback candidates only after the selected channel is known. */
+   70 |     public List<BackupSourceEntity> getSourcesForSelectedChannel(String channelId) {
+   71 |         if (channelId == null || channelId.isEmpty() || !isSnapshotReady()) {
+   72 |             return Collections.emptyList();
+   73 |         }
+   74 |         return dao.getBackupSourcesForChannel(channelId);
+   75 |     }
+   76 | 
+   77 |     /** Total row count for paging controls; -1 means the snapshot is not ready. */
+   78 |     public int getChannelCount(String categoryId) {
+   79 |         if (!isSnapshotReady()) return -1;
+   80 |         return categoryId == null || categoryId.isEmpty()
+   81 |                 ? dao.countChannels() : dao.countChannelsInCategory(categoryId);
+   82 |     }
+   83 | }
+   84 | 
+```
