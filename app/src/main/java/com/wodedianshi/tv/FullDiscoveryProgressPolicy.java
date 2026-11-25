@@ -40,6 +40,18 @@ public final class FullDiscoveryProgressPolicy {
                 &&revision.equals(durableRevision)&&savedAt>=0L&&now>=savedAt&&now-savedAt<=60000L;
     }
 
+    /** A fresh empty staging set can be initialized during stable viewing.
+     * Never clear a populated staging build while the viewer is watching. */
+    public static boolean canResetInitialStaging(boolean stableViewing,int stagedRows) {
+        return !stableViewing || stagedRows==0;
+    }
+
+    /** The optional idle bootstrap must not block the bounded viewing path. */
+    public static boolean shouldRunIdleBootstrap(boolean stableViewing,int attempted,
+            int mainlandCount,int checked,long indexedEntries,boolean complete) {
+        return !stableViewing&&isMainlandIndexPhase(attempted,mainlandCount,checked,indexedEntries,complete);
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // At most two extra publications: an early useful set, then mainland coverage.
     // A milestone is not a completed full build and does not change the probe policy.

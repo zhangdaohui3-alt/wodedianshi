@@ -5,6 +5,16 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void playingSeedDoesNotBlockEmptyStagingOrOptionalBootstrap() {
+        assertTrue(FullDiscoveryProgressPolicy.canResetInitialStaging(true,0));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canResetInitialStaging(true,1));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canResetInitialStaging(true,-1));
+        assertTrue(FullDiscoveryProgressPolicy.canResetInitialStaging(false,100));
+        assertTrue(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(false,0,10,0,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(true,0,10,0,0,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(false,2,10,0,0,false));
+    }
+
     @Test public void stagingReuseRequiresMatchingCommittedRevisionAndFreshBoundedRows() {
         assertTrue(FullDiscoveryProgressPolicy.canRetainStaging(512,true));
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canRetainStaging(513,true));
