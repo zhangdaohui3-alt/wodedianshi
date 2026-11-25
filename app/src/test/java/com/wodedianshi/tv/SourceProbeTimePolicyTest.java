@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @Test public void rangeResumeRejectsWeakValidatorAndInexactContentRanges() {
+        assertTrue(SourceProbeTimePolicy.strongDirectoryValidator("\"a\""));
+        assertFalse(SourceProbeTimePolicy.strongDirectoryValidator("W/\"a\""));
+        assertFalse(SourceProbeTimePolicy.strongDirectoryValidator(null));
+        assertFalse(SourceProbeTimePolicy.strongDirectoryValidator("\"a\nb\""));
+        org.junit.Assert.assertArrayEquals(new long[]{262144L,524288L},
+            SourceProbeTimePolicy.liveDirectoryRange("bytes 262144-524287/524288",262144L,524288L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-262143/524288",262144L,524288L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 262144-524287/524289",262144L,524288L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-262144/524288",0L,-1L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-1/*",0L,-1L));
+        org.junit.Assert.assertNull(SourceProbeTimePolicy.liveDirectoryRange("bytes 0-1/8388609",0L,-1L));
+    }
+
     @Test public void viewingDirectoryUsesBoundedSizeAndPacing() {
         assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(-1L));
         assertTrue(SourceProbeTimePolicy.fitsLiveDirectory(262144L));
