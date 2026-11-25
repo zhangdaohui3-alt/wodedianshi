@@ -50,6 +50,12 @@ public final class SourceUpdateSchedulePolicy {
                 && now - measuredAt <= (valid ? 300_000L : 15_000L);
     }
 
+    /** Continue immediately only after a successful committed discovery advance.
+     * Keep the existing delay for failed/empty-progress slices to avoid retry churn. */
+    static long manualContinuationDelaySeconds(boolean feedRead,int discoveryScanned,boolean pageComplete) {
+        return feedRead&&(discoveryScanned>0||pageComplete)?0L:10L;
+    }
+
     /** Manual refresh advances only at EOF, never just because a page was processed. */
     public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
             int pageSize) {
