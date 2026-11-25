@@ -7,6 +7,20 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void manualAndInitialIdleUseSameParallelPolicy() {
+        assertTrue(IdleProbeWavePolicy.permitsParallel(true,false,false));
+        assertTrue(IdleProbeWavePolicy.permitsParallel(false,true,false));
+        assertFalse(IdleProbeWavePolicy.permitsParallel(false,false,false));
+        assertFalse(IdleProbeWavePolicy.permitsParallel(true,false,true));
+        assertFalse(IdleProbeWavePolicy.permitsParallel(false,true,true));
+    }
+    @Test public void manualWaveKeepsFullStageDeadlineButDoesNotStartNearEnd() {
+        assertTrue(IdleProbeWavePolicy.canStart(false,73000L,90000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(false,73001L,90000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(false,91000L,90000L,90000L));
+        assertTrue(IdleProbeWavePolicy.canStart(true,1000L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(true,1000L,89000L,90000L));
+    }
     @Test public void hostLimitAndGlobalLimitAreIndependent() {
         IdleProbeWavePolicy wave=new IdleProbeWavePolicy();
         wave.add("a","one"); wave.add("b","one");
