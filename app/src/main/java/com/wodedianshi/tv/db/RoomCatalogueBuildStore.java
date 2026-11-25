@@ -20,6 +20,16 @@ public final class RoomCatalogueBuildStore {
     public static final String MANUAL_OWNER_KEY="source_manual_staging_owner";
     public static final String MANUAL_BASE_VERSION_KEY="source_manual_staging_base_version";
     public static final String MANUAL_BASE_STRUCTURE_KEY="source_manual_staging_base_structure";
+    public static final String MANUAL_READY_KEY="source_manual_staging_ready";
+    public static final String MANUAL_SCORES_KEY="source_manual_staging_scores";
+    public static final String MANUAL_STREAKS_KEY="source_manual_staging_streaks";
+
+    public static boolean manualStructureStillCurrent(Context context,String owner){
+        AppStateDao state=RoomDatabaseProvider.get(context).appStateDao();
+        requireMatchingOwner(owner,state.getValue(MANUAL_OWNER_KEY));
+        return CatalogueVersionPolicy.structureMatches(state.getValue(MANUAL_BASE_STRUCTURE_KEY),
+                state.getValue(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY));
+    }
 
     /** Never authorize a final publish solely from a fresh total version: a
      * structural edit may have changed the old directory since staging began. */
@@ -45,6 +55,9 @@ public final class RoomCatalogueBuildStore {
         db.appStateDao().remove(MANUAL_OWNER_KEY);
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
         db.appStateDao().remove(MANUAL_BASE_STRUCTURE_KEY);
+        db.appStateDao().remove(MANUAL_READY_KEY);
+        db.appStateDao().remove(MANUAL_SCORES_KEY);
+        db.appStateDao().remove(MANUAL_STREAKS_KEY);
     }
 
     /** Seed an isolated manual build only from a still-current published snapshot.
