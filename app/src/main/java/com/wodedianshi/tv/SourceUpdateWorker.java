@@ -711,6 +711,7 @@ public class SourceUpdateWorker extends Worker {
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(pauseRequested.getAsBoolean()){
+          idleWave.close();
           saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
@@ -759,6 +760,7 @@ public class SourceUpdateWorker extends Worker {
             }
           }
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
+            idleWave.close();
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
@@ -886,6 +888,7 @@ public class SourceUpdateWorker extends Worker {
       // Never leave speculative network work alive while committing a prefix.
       // A missing result at the stage deadline leaves that slice for retry.
       idleWave.finishBeforeCommit();
+      idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
       if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
@@ -1329,9 +1332,12 @@ public class SourceUpdateWorker extends Worker {
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
           ?Result.retry():Result.success();
     }catch(SourceProbeTimePolicy.PublicationPausedException paused){
+      // Signal probe cancellation before any Room status write or WorkManager
+      // query/enqueue, either of which can block this background owner.
+      idleWave.close();
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
       return deferredViewingResult(manual,initialDiscoveryChain);
-    }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+    }catch(Exception e){idleWave.close();saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
     finally{idleWave.close();}
   }
   private static void discardStagingReuse(){
@@ -1817,9 +1823,18 @@ public class SourceUpdateWorker extends Worker {
       if(executor!=null)executor.shutdown();
     }
     void close(){
-      if(executor==null)return;
-      retiringProbeExecutor=executor;
-      if(pending.isEmpty())executor.shutdown();else executor.shutdownNow();
+      java.util.concurrent.ExecutorService owned=executor;
+      if(owned==null)return;
+      executor=null; // owner-confined; finally may close again safely
+      retiringProbeExecutor=owned;
+      if(pending.isEmpty())owned.shutdown();
+      else{
+        int outstanding=pending.size();
+        for(java.util.concurrent.Future<TimedProbe> task:pending.values())task.cancel(true);
+        owned.shutdownNow();
+        android.util.Log.i("MyTVSourceDiscovery","probe_cancel_signalled pending="+outstanding
+            +" terminated="+owned.isTerminated());
+      }
       pending.clear();
     }
   }
