@@ -29,6 +29,18 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true, -1, 999));
     }
 
+    @Test public void manualRefreshLargerPageAndContinuationDelay() {
+        assertEquals(24,DiscoveryBatchPolicy.MANUAL_PAGE_SIZE);
+        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,24,49,24));
+        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(24,24,49,24));
+        assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(48,1,49,24));
+        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,24,-1,24));
+        assertEquals(0L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,1,false));
+        assertEquals(0L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,0,true));
+        assertEquals(10L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,0,false));
+        assertEquals(10L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(false,5,true));
+    }
+
     @org.junit.Test public void manualRefreshProcessesAllPagesBeforeAdvancing() {
         org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,12,25,12));
         org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(12,12,25,12));
