@@ -22,7 +22,7 @@ public final class RoomCatalogueWriter {
     // Keep relation reads bounded on low-memory TV devices and comfortably
     // below SQLite bind parameter limits. No full second catalogue in memory.
     private static final int SOURCE_QUERY_BATCH_SIZE = 64;
-    private static final class PreparedChannel {
+    static final class PreparedChannel {
         final ChannelEntity channel;
         final List<BackupSourceEntity> sources;
         PreparedChannel(ChannelEntity channel,List<BackupSourceEntity> sources) {
@@ -371,7 +371,7 @@ public final class RoomCatalogueWriter {
 
     /** Read one bounded set of existing relations, then apply the original
      * per-channel reconciliation inside the same outer Room transaction. */
-    private static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
+    static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
             HashSet<String> previousChannelIds,BooleanSupplier paused) {
         checkPause(paused);
         ArrayList<String> existingIds=new ArrayList<>(batch.size());
