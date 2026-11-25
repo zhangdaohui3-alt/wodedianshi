@@ -171,6 +171,7 @@ public class SourceUpdateWorker extends Worker {
                .remove("source_manual_saved_scanned");
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
+          for(String key:ManualSavedCoverage.keys())reset.remove(key);
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           reset.apply();
         }
@@ -675,25 +676,31 @@ public class SourceUpdateWorker extends Worker {
         }
       }
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
-      // Manual coverage uses a deterministic distinct-endpoint order independent
-      // of quality ranking. A changed pool invalidates the positional checkpoint.
-      String manualSavedFingerprint="";
+      // Persist exact per-round endpoint opportunities, rather than invalidating
+      // every completed check when discovery adds or retires a different route.
+      ManualSavedCoverage manualCoverage=null;
+      ArrayList<String> manualSavedKeys=new ArrayList<>();
       int manualSavedStart=0;
       if(manualRefresh){
-        TreeMap<String,Entry> sorted=new TreeMap<>();
+        Map<String,String> persisted=new HashMap<>();
+        for(com.wodedianshi.tv.db.AppStateEntity state:com.wodedianshi.tv.db.RoomDatabaseProvider
+            .get(getApplicationContext()).appStateDao().getValues(ManualSavedCoverage.keys()))
+          persisted.put(state.key,state.stateValue);
+        manualCoverage=new ManualSavedCoverage(persisted);
+        ArrayList<Entry> covered=new ArrayList<>(),uncovered=new ArrayList<>();
+        ArrayList<String> uncoveredKeys=new ArrayList<>();
+        HashSet<String> currentKeys=new HashSet<>();
         for(Entry entry:savedPool){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          sorted.put(SourceSelectionPolicy.endpointKey(entry.url),entry);
+          String id=manualCoverage.identity(SourceSelectionPolicy.endpointKey(entry.url));
+          currentKeys.add(id);
+          if(manualCoverage.contains(id)){covered.add(entry);manualSavedKeys.add(id);}
+          else{uncovered.add(entry);uncoveredKeys.add(id);}
         }
-        StringBuilder identity=new StringBuilder();
-        savedPool.clear();
-        for(Map.Entry<String,Entry> entry:sorted.entrySet()){
-          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          appendFingerprintPart(identity,entry.getKey());savedPool.add(entry.getValue());
-        }
-        manualSavedFingerprint=CatalogueFingerprint.sha256(identity.toString());
-        manualSavedStart=DiscoveryBatchPolicy.scannedForBatch(manualSavedFingerprint,
-            roomString("source_manual_saved_pool_fingerprint",""),roomInt("source_manual_saved_scanned",0),savedPool.size());
+        manualCoverage.retainOnly(currentKeys);
+        manualSavedStart=covered.size();
+        savedPool.clear();savedPool.addAll(covered);savedPool.addAll(uncovered);
+        manualSavedKeys.addAll(uncoveredKeys);
       }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
@@ -1262,7 +1269,13 @@ public class SourceUpdateWorker extends Worker {
         // A directory slice can add or retire routes after its saved pool was
         // built. Only a saved-only slice may certify the post-discovery pool.
         manualComplete=SourceUpdateSchedulePolicy.manualRoundComplete(manualSavedOnly,next,feeds.length,savedCovered,savedPool.size());
-        update.putString("source_manual_saved_pool_fingerprint",manualSavedFingerprint)
+        for(int i=manualSavedStart;i<savedCovered;i++)manualCoverage.mark(manualSavedKeys.get(i));
+        for(Map.Entry<String,String> change:manualCoverage.changes().entrySet()){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          if(change.getValue().isEmpty())update.remove(change.getKey());
+          else update.putString(change.getKey(),change.getValue());
+        }
+        update.remove("source_manual_saved_pool_fingerprint")
             .putInt("source_manual_saved_scanned",savedCovered)
             .putInt("source_manual_next_feed",next)
             .putInt("source_manual_failed_feeds",failed)
@@ -1272,8 +1285,10 @@ public class SourceUpdateWorker extends Worker {
                 +(savedPool.size()>=20000?"检测池达到本轮容量上限；":"")
                 +(manualComplete?"本轮目录及当前检测池处理结束；":"已保存断点，空闲时继续；")
                 +"超时未确认不等于有效，旧频道保留，媒体预检不等于实播。");
-        if(manualComplete)update.putString("source_manual_completed_id",manualId)
-            .remove("source_manual_active_id");
+        if(manualComplete){
+          update.putString("source_manual_completed_id",manualId).remove("source_manual_active_id");
+          for(String key:ManualSavedCoverage.keys())update.remove(key);
+        }
       }else if(!initialDiscoveryChain){
         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
         update.putInt("source_routine_next_feed_index",nextRoutine);
