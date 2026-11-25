@@ -30,11 +30,13 @@ public class SourceUpdateSchedulePolicyTest {
     }
 
     @Test public void manualRefreshLargerPageAndContinuationDelay() {
-        assertEquals(24,DiscoveryBatchPolicy.MANUAL_PAGE_SIZE);
-        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,24,49,24));
-        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(24,24,49,24));
-        assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(48,1,49,24));
-        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,24,-1,24));
+        assertEquals(DiscoveryBatchPolicy.INITIAL_PAGE_SIZE,DiscoveryBatchPolicy.MANUAL_PAGE_SIZE);
+        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,48,49,48));
+        assertTrue(SourceUpdateSchedulePolicy.manualFeedFinished(48,1,49,48));
+        assertFalse(SourceUpdateSchedulePolicy.manualFeedFinished(0,48,-1,48));
+        assertTrue(DiscoveryBatchPolicy.manualRevalidateDirectory(0,""));
+        assertFalse(DiscoveryBatchPolicy.manualRevalidateDirectory(0,"partial-page"));
+        assertFalse(DiscoveryBatchPolicy.manualRevalidateDirectory(48,""));
         assertEquals(0L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,1,false));
         assertEquals(0L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,0,true));
         assertEquals(10L,SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(true,0,false));
