@@ -11,6 +11,8 @@ import static org.junit.Assert.*;
 public class RoomCatalogueBatchReconciliationTest {
     private static final class RecordingDao {
         final List<BackupSourceEntity> oldRows=new ArrayList<>();
+        final List<ChannelDao.ActiveSelection> liveSelections=new ArrayList<>();
+        final Map<String,Integer> selectedIndices=new HashMap<>();
         final List<List<String>> queries=new ArrayList<>();
         final List<String> updates=new ArrayList<>(), inserts=new ArrayList<>(), deletes=new ArrayList<>();
         final List<BackupSourceEntity> sourceWrites=new ArrayList<>();
@@ -26,7 +28,9 @@ public class RoomCatalogueBatchReconciliationTest {
                             if(ids.contains(row.channelId))found.add(row);
                         pauseAfterQuery=true;
                         return found;
-                    case "updateChannelFields": updates.add((String)args[0]);return null;
+                    case "getActiveSelectionsForChannels":
+                        return liveSelections;
+                    case "updateChannelFields": updates.add((String)args[0]);selectedIndices.put((String)args[0],(Integer)args[9]);return null;
                     case "insertChannelIfAbsent": inserts.add(((ChannelEntity)args[0]).id);return null;
                     case "deleteBackupSource": deletes.add(args[0]+"|"+args[1]);return null;
                     case "insertBackupSources": sourceWrites.addAll((List<BackupSourceEntity>)args[0]);return null;
@@ -41,6 +45,24 @@ public class RoomCatalogueBatchReconciliationTest {
         ChannelEntity row=new ChannelEntity(id,id,id,"https://example.invalid/shared","group","group",
             "","","[]",0,0);
         return new RoomCatalogueWriter.PreparedChannel(row,Arrays.asList(sources));
+    }
+    private static ChannelDao.ActiveSelection selection(String id,String legacy,String url){
+        ChannelDao.ActiveSelection row=new ChannelDao.ActiveSelection();
+        row.channelId=id;row.legacyKey=legacy;row.url=url;return row;
+    }
+    @Test public void manualPublishPreservesLatestExactUrlAcrossReordering(){
+        RecordingDao r=new RecordingDao();
+        r.liveSelections.add(selection("a","a","chosen"));
+        r.liveSelections.add(selection("b","b","removed"));
+        r.liveSelections.add(selection("c","different-legacy","chosen"));
+        RoomCatalogueWriter.writePreparedBatch(r.dao,Arrays.asList(
+            channel("a",source("a","best",0,"[]"),source("a","chosen",1,"[]")),
+            channel("b",source("b","best",0,"[]")),
+            channel("c",source("c","best",0,"[]"),source("c","chosen",1,"[]"))),
+            new HashSet<>(Arrays.asList("a","b","c")),null,true);
+        assertEquals(Integer.valueOf(1),r.selectedIndices.get("a"));
+        assertEquals(Integer.valueOf(0),r.selectedIndices.get("b"));
+        assertEquals(Integer.valueOf(0),r.selectedIndices.get("c"));
     }
     @Test public void batchPreservesChannelIsolationAndWritesOnlyChangedSources() {
         RecordingDao r=new RecordingDao();
