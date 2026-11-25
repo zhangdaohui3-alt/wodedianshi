@@ -38,6 +38,14 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    private static final Migration MIGRATION_8_9 = new Migration(8, 9) {
+        @Override public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS manual_probe_quality ("
+                + "owner TEXT NOT NULL, sourceKey TEXT NOT NULL, score INTEGER, failureStreak INTEGER, "
+                + "PRIMARY KEY(owner,sourceKey))");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -50,7 +58,7 @@ public final class RoomDatabaseProvider {
                             context.getApplicationContext(),
                             AppDatabase.class,
                             "mytv_catalogue_clean_v1.db"
-                    ).addMigrations(MIGRATION_6_7,MIGRATION_7_8).build();
+                    ).addMigrations(MIGRATION_6_7,MIGRATION_7_8,MIGRATION_8_9).build();
                     instance = local;
                 }
             }
