@@ -14,10 +14,12 @@ public class SourceUpdateSchedulePolicyTest {
     }
 
     @Test public void manualCompletionRequiresBothDirectoryAndSavedPoolCoverage() {
-        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(25,26,100,100));
-        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,99,100));
-        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,100,100));
-        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(26,26,0,0));
+        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(false,25,26,100,100));
+        // Last directory can introduce routes absent from the pre-merge pool.
+        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(false,26,26,100,100));
+        assertFalse(SourceUpdateSchedulePolicy.manualRoundComplete(true,26,26,99,100));
+        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(true,26,26,100,100));
+        assertTrue(SourceUpdateSchedulePolicy.manualRoundComplete(true,26,26,0,0));
         assertEquals(12,SourceUpdateSchedulePolicy.manualSavedWindow(100,0,false));
         assertEquals(48,SourceUpdateSchedulePolicy.manualSavedWindow(100,0,true));
         assertEquals(5,SourceUpdateSchedulePolicy.manualSavedWindow(100,95,true));
