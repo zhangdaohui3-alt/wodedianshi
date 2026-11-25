@@ -166,7 +166,9 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_manual_feed_attempts",0)
               .remove("source_manual_feed_batch_fingerprint")
               .remove("source_manual_feed_batch_scanned")
-               .remove("source_manual_prepared_feed_version");
+               .remove("source_manual_prepared_feed_version")
+               .remove("source_manual_saved_pool_fingerprint")
+               .remove("source_manual_saved_scanned");
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -412,8 +414,9 @@ public class SourceUpdateWorker extends Worker {
         for(int i=0;i<feeds.length;i++)
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
       }
-      int routineStart=InitialFeedRotationPolicy.normalizeStart(
-          roomInt(manualRefresh?"source_manual_next_feed":"source_routine_next_feed_index",0),feeds.length);
+      int routineStart=manualRefresh?Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
+          InitialFeedRotationPolicy.normalizeStart(roomInt("source_routine_next_feed_index",0),feeds.length);
+      final boolean manualSavedOnly=manualRefresh&&routineStart>=feeds.length;
       int routineEnd=manualRefresh?Math.min(feeds.length,routineStart+1):
           SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
@@ -672,15 +675,37 @@ public class SourceUpdateWorker extends Worker {
         }
       }
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
+      // Manual coverage uses a deterministic distinct-endpoint order independent
+      // of quality ranking. A changed pool invalidates the positional checkpoint.
+      String manualSavedFingerprint="";
+      int manualSavedStart=0;
+      if(manualRefresh){
+        TreeMap<String,Entry> sorted=new TreeMap<>();
+        for(Entry entry:savedPool){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          sorted.put(SourceSelectionPolicy.endpointKey(entry.url),entry);
+        }
+        StringBuilder identity=new StringBuilder();
+        savedPool.clear();
+        for(Map.Entry<String,Entry> entry:sorted.entrySet()){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          appendFingerprintPart(identity,entry.getKey());savedPool.add(entry.getValue());
+        }
+        manualSavedFingerprint=CatalogueFingerprint.sha256(identity.toString());
+        manualSavedStart=DiscoveryBatchPolicy.scannedForBatch(manualSavedFingerprint,
+            roomString("source_manual_saved_pool_fingerprint",""),roomInt("source_manual_saved_scanned",0),savedPool.size());
+      }
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
       for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
-      int savedScanStart=SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
+      int savedScanStart=manualRefresh?manualSavedStart:SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
       // During a full rebuild every probe slot belongs to newly discovered feed
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
-      int savedWindow=initialDiscoveryChain?0:Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      int savedWindow=initialDiscoveryChain?0:manualRefresh?
+          SourceUpdateSchedulePolicy.manualSavedWindow(savedPool.size(),manualSavedStart,manualSavedOnly):
+          Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
       int pageFeed=-1;
       if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
         if(batch.success&&!batch.unavailable){pageFeed=batch.index;break;}
@@ -1233,13 +1258,18 @@ public class SourceUpdateWorker extends Worker {
         if(advance||page!=null&&page.success&&!page.unavailable)
           update.putInt("source_manual_feed_attempts",0);
         if(advance)update.remove("source_manual_prepared_feed_version");
-        manualComplete=next>=feeds.length;
-        update.putInt("source_manual_next_feed",next)
+        int savedCovered=Math.min(savedPool.size(),manualSavedStart+savedScanned);
+        manualComplete=SourceUpdateSchedulePolicy.manualRoundComplete(next,feeds.length,savedCovered,savedPool.size());
+        update.putString("source_manual_saved_pool_fingerprint",manualSavedFingerprint)
+            .putInt("source_manual_saved_scanned",savedCovered)
+            .putInt("source_manual_next_feed",next)
             .putInt("source_manual_failed_feeds",failed)
             .putString("source_update_result","手动完整目录轮检：已处理 "+next+"/"+feeds.length
                 +" 个来源，暂不可用 "+failed+" 个。"
-                +(manualComplete?"本轮目录处理结束；":"已保存断点，空闲时继续；")
-                +"旧频道保留，媒体预检不等于实播。");
+                +"旧线路检测池已处理 "+savedCovered+"/"+savedPool.size()+" 个不同地址；"
+                +(savedPool.size()>=20000?"检测池达到本轮容量上限；":"")
+                +(manualComplete?"本轮目录及当前检测池处理结束；":"已保存断点，空闲时继续；")
+                +"超时未确认不等于有效，旧频道保留，媒体预检不等于实播。");
         if(manualComplete)update.putString("source_manual_completed_id",manualId)
             .remove("source_manual_active_id");
       }else if(!initialDiscoveryChain){
@@ -1365,7 +1395,8 @@ public class SourceUpdateWorker extends Worker {
                 .setConstraints(new androidx.work.Constraints.Builder()
                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
                 .setInitialDelay(SourceUpdateSchedulePolicy.manualContinuationDelaySeconds(
-                    feedsOk>0,discoveryScanned,feedBatchComplete),java.util.concurrent.TimeUnit.SECONDS)
+                    feedsOk>0||manualSavedOnly,discoveryScanned+ (manualSavedOnly?savedScanned:0),
+                    !manualSavedOnly&&feedBatchComplete),java.util.concurrent.TimeUnit.SECONDS)
                 .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
                     .putString("manual_refresh_id",manualId).build()).build();
