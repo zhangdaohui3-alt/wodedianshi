@@ -1492,7 +1492,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
-              "percent","phase"})keys.add(prefix+suffix);
+              "percent","basis_points","phase"})keys.add(prefix+suffix);
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
@@ -1514,6 +1514,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int cursor=(int)readStateLong(snapshot,prefix+"feed_cursor",0L);
           final int entries=(int)readStateLong(snapshot,prefix+"feed_entries",0L);
           final int percent=(int)readStateLong(snapshot,prefix+"percent",0L);
+          final int basisPoints=(int)readStateLong(snapshot,prefix+"basis_points",100L*Math.max(0,Math.min(99,percent)));
           final String phase=snapshot.getOrDefault(prefix+"phase","尚未开始首次完整抓源");
           final String freshCoverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
           runOnUiThread(()->{
@@ -1556,7 +1557,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
             initialDiscoveryProgressTitle.setText(indexing
                 ?"首批中国目录尝试 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
-                :"首次完整抓源 · "+Math.max(0,Math.min(99,percent))+"%");
+                :"首次完整抓源 · "+FullDiscoveryProgressPolicy.formatIncompleteProgress(basisPoints)
+                    +" · 已检 "+Math.max(0,checked)+" 条");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             initialDiscoveryProgressDetail.setText(
