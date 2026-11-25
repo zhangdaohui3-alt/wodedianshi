@@ -5883,6 +5883,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(audioTrackCheck!=null){uiHandler.removeCallbacks(audioTrackCheck);audioTrackCheck=null;}
   }
   private void scheduleAudioTrackCheck(){
+    long delay=TrackHealthPolicy.initialTrackCheckDelayMs(
+        audioTrackPresent&&audioTrackSupported&&audioTrackSelected,
+        videoTrackPresent&&videoTrackSupported&&videoTrackSelected);
+    scheduleAudioTrackCheck(delay,delay==8000L);
+  }
+  private void scheduleAudioTrackCheck(long delay,boolean earlyCheck){
     cancelAudioTrackCheck();
     if(player==null||player.getPlaybackState()!=Player.STATE_READY)return;
     final String expectedMediaId=currentMediaId;
@@ -5891,8 +5897,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       audioTrackCheck=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)
           ||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
-      boolean missingAudio=!audioTrackPresent||!audioTrackSupported||!audioTrackSelected||!audioPositionAdvancing;
-      boolean missingVideo=!videoTrackPresent||!videoTrackSupported||!videoTrackSelected;
+      boolean usableAudioTrack=audioTrackPresent&&audioTrackSupported&&audioTrackSelected;
+      boolean usableVideoTrack=videoTrackPresent&&videoTrackSupported&&videoTrackSelected;
+      long grace=TrackHealthPolicy.remainingAudioGraceMs(earlyCheck,usableAudioTrack,
+          usableVideoTrack,audioPositionAdvancing);
+      if(grace>0L){
+        scheduleAudioTrackCheck(grace,false);
+        return;
+      }
+      boolean missingAudio=!usableAudioTrack||!audioPositionAdvancing;
+      boolean missingVideo=!usableVideoTrack;
       if(TrackHealthPolicy.shouldFailoverForTrackHealth(missingAudio,missingVideo)){
         String reason=missingAudio?"音频轨道或输出不可用":"没有可用视频轨道";
         if(!tryStartLibVlcFallback("检测到当前源"+reason)){
@@ -5905,9 +5919,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     };
     // Earlier check for missing/unsupported tracks; keep the longer audio
     // advancement grace when both tracks are already selected.
-    uiHandler.postDelayed(audioTrackCheck,
-        audioTrackPresent&&audioTrackSupported&&audioTrackSelected
-            &&videoTrackPresent&&videoTrackSupported&&videoTrackSelected?12000L:8000L);
+    uiHandler.postDelayed(audioTrackCheck,delay);
   }
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
