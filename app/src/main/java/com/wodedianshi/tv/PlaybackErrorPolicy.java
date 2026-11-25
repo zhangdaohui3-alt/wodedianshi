@@ -10,14 +10,30 @@ public final class PlaybackErrorPolicy {
      * Connection establishment failures and timeouts are endpoint/network
      * failures, not decoder compatibility signals. Skip a same-URL engine retry
      * so automatic backup selection is not delayed by a second connection timeout.
-     * HTTP status, manifest/container parsing and decoder errors still retain the
+     * Ambiguous HTTP status, manifest/container parsing and decoder errors still retain the
      * LibVLC fallback because a different network stack or demuxer may recover.
      */
     public static boolean shouldSkipSameUrlVlcRetry(String errorCodeName) {
+        return shouldSkipSameUrlVlcRetry(errorCodeName, 0);
+    }
+
+    /** Only explicit endpoint failures bypass compatibility fallback. Unknown
+     * HTTP responses (including 401/403) still may differ across network stacks. */
+    public static boolean shouldSkipSameUrlVlcRetry(String errorCodeName, int httpStatus) {
+        if (httpStatus == 404 || httpStatus == 410 || httpStatus == 429
+                || (httpStatus >= 500 && httpStatus <= 599)) return true;
         if (errorCodeName == null) return false;
         String name = errorCodeName.trim().toUpperCase(Locale.ROOT);
         return "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED".equals(name)
-                || "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT".equals(name);
+                || "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT".equals(name)
+                || "ERROR_CODE_IO_FILE_NOT_FOUND".equals(name)
+                || "ERROR_CODE_BEHIND_LIVE_WINDOW".equals(name);
+    }
+
+    /** A live stream that already rendered video and advanced audio is not
+     * initially codec-incompatible merely because its stream ended. */
+    public static boolean shouldTryVlcForEndedLive(boolean renderedVideo, boolean advancedAudio) {
+        return !renderedVideo || !advancedAudio;
     }
 
     /**
