@@ -153,10 +153,21 @@ public class SourceUpdateWorker extends Worker {
     String[] feeds=SourceDiscoveryFeedCatalog.feeds();
     final IdleProbeWave idleWave=new IdleProbeWave();
     try{
+      final String manualOwnerKey=com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_OWNER_KEY;
+      JSONArray manualWorkingRows=null;
       if(manualRefresh){
         String config=discoveryFeedsFingerprint(feeds);
-        if(!manualId.equals(roomString("source_manual_active_id",""))
-            ||!config.equals(roomString("source_manual_feed_config",""))){
+        String owner=roomString(manualOwnerKey,"");
+        boolean resume=manualId.equals(owner)&&manualId.equals(roomString("source_manual_active_id",""))
+            &&config.equals(roomString("source_manual_feed_config",""));
+        if(!resume){
+          // An older cancelled/failed request may leave private staging, never
+          // a partially published directory. Only the source owner discards it.
+          if(!owner.isEmpty())com.wodedianshi.tv.db.RoomCatalogueBuildStore.discardManual(
+              getApplicationContext(),owner,null,pauseRequested);
+          JSONArray seed=new JSONArray();
+          com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot baseSnapshot=readPublishedRows(seed);
+          if(baseSnapshot==null||seed.length()==0)throw new IllegalStateException("Manual base catalogue unavailable");
           com.wodedianshi.tv.db.AppStateEditor reset=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
               .putString("source_manual_active_id",manualId)
@@ -166,24 +177,32 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_manual_feed_attempts",0)
               .remove("source_manual_feed_batch_fingerprint")
               .remove("source_manual_feed_batch_scanned")
-               .remove("source_manual_prepared_feed_version")
-               .remove("source_manual_saved_pool_fingerprint")
-               .remove("source_manual_saved_scanned");
+              .remove("source_manual_prepared_feed_version")
+              .remove("source_manual_saved_pool_fingerprint")
+              .remove("source_manual_saved_scanned")
+              .remove(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY)
+              .putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,roomString("source_probe_scores_v1","{}"))
+              .putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,roomString("source_probe_failure_streaks_v1","{}"));
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
           for(String key:ManualSavedCoverage.keys())reset.remove(key);
-          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          reset.apply();
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.seedManual(
+              getApplicationContext(),seed,baseSnapshot.catalogueVersion,manualId,pauseRequested,reset);
+          manualWorkingRows=seed;
+        }else{
+          if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId))
+            return abortManualStructuralConflict(manualId);
+          manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
         }
+        if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
+          return publishReadyManual(manualId,manualWorkingRows);
       }
-      // First discovery works solely on isolated staging. Do not deserialize
-      // the published catalogue every slice; read it afresh at publication.
-      // For ordinary/manual work convert Room pages directly into the mutable
-      // working array, retaining only the validated optimistic checkpoint.
-      final JSONArray publishedWorkingRows=initialDiscoveryChain?null:new JSONArray();
+      // Manual and initial work now use isolated staging. Routine maintenance
+      // alone reads the published directory for each bounded slice.
+      final JSONArray publishedWorkingRows=initialDiscoveryChain||manualRefresh?null:new JSONArray();
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          initialDiscoveryChain?null:readPublishedRows(publishedWorkingRows);
-      if(initialDiscoveryChain
+          initialDiscoveryChain||manualRefresh?null:readPublishedRows(publishedWorkingRows);
+      if(initialDiscoveryChain||manualRefresh
           ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
           :roomSnapshot==null) {
         saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
@@ -348,25 +367,25 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
-        // The reader has already checked the version and full row count.
-        // A partially converted array is never used after a stale/failed read.
-        saved=publishedWorkingRows;
+        // Manual work never mutates the published directory before completion.
+        saved=manualRefresh?manualWorkingRows:publishedWorkingRows;
 
       }
       final int previousStagedSize=saved.length();
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
       HashSet<Integer> touchedStagedRows=new HashSet<>();
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
-      JSONObject measuredScores=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_probe_scores_v1","{}"));
+      final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
+      final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
+      JSONObject measuredScores=new JSONObject(roomString(scoresKey,"{}"));
       // A single failed probe merely reduces its score. It cannot delete an
       // existing saved backup; three independent failures are needed.
-      JSONObject probeFailureStreaks=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(
-          getApplicationContext(),"source_probe_failure_streaks_v1","{}"));
+      JSONObject probeFailureStreaks=new JSONObject(roomString(streaksKey,"{}"));
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject c=saved.getJSONObject(i);
-        if(initialDiscoveryChain)stagedPositions.put(c,i);
+        if(initialDiscoveryChain||manualRefresh)stagedPositions.put(c,i);
         byIdentity.put(identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
       }
@@ -893,7 +912,7 @@ public class SourceUpdateWorker extends Worker {
           target.put("name",canonicalDisplayName(e));target.put("url",e.url);target.put("group",e.group);
           target.put("tvgId",e.tvgId);target.put("tvgName",e.tvgName);target.put("sources",sources);
           addBackupSourceScope(target,e.url,e.scope);
-          if(initialDiscoveryChain)stagedPositions.put(target,saved.length());
+          if(initialDiscoveryChain||manualRefresh)stagedPositions.put(target,saved.length());
           saved.put(target);byIdentity.put(key,target);added++;
         }else{
           JSONArray currentSources=target.optJSONArray("sources");
@@ -946,7 +965,7 @@ public class SourceUpdateWorker extends Worker {
             addBackupSourceScope(target,retainedEndpointUrl,e.scope);
           }
         }
-        if(initialDiscoveryChain)touchedStagedRows.add(stagedPositions.get(target));
+        if(initialDiscoveryChain||manualRefresh)touchedStagedRows.add(stagedPositions.get(target));
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
@@ -971,6 +990,7 @@ public class SourceUpdateWorker extends Worker {
       for(int i:rankingRows){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
+        String beforeRanking=manualRefresh?channel.toString():null;
         JSONArray sourceArray=channel.optJSONArray("sources");
         if(sourceArray==null||sourceArray.length()==0){String primary=channel.optString("url","");if(primary.isEmpty())continue;sourceArray=new JSONArray();sourceArray.put(primary);}
         // Preserve the user's last selected source across background re-ranking.
@@ -1001,6 +1021,7 @@ public class SourceUpdateWorker extends Worker {
           channel.put("sources",ranked);channel.put("activeSource",restoredActiveIndex);
           retainBackupSourceScopes(channel,ranked);
         }
+        if(manualRefresh&&!beforeRanking.equals(channel.toString()))touchedStagedRows.add(i);
       }
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
@@ -1054,8 +1075,8 @@ public class SourceUpdateWorker extends Worker {
               ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
-          .putString("source_probe_scores_v1",measuredScores.toString())
-          .putString("source_probe_failure_streaks_v1",probeFailureStreaks.toString())
+          .putString(scoresKey,measuredScores.toString())
+          .putString(streaksKey,probeFailureStreaks.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
@@ -1248,7 +1269,7 @@ public class SourceUpdateWorker extends Worker {
           update.putLong("source_update_last_success_at",completedAt)
               .putLong("source_full_rebuild_completed_at",completedAt);
         }
-      }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
+      }else if(!initialDiscoveryChain&&!manualRefresh&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }
       // A completed, committed probe pass advances the 30-day deadline;
@@ -1283,11 +1304,10 @@ public class SourceUpdateWorker extends Worker {
                 +" 个来源，暂不可用 "+failed+" 个。"
                 +"旧线路检测池已处理 "+savedCovered+"/"+savedPool.size()+" 个不同地址；"
                 +(savedPool.size()>=20000?"检测池达到本轮容量上限；":"")
-                +(manualComplete?"本轮目录及当前检测池处理结束；":"已保存断点，空闲时继续；")
+                +(manualComplete?"检测完成，等待整体发布；":"已保存暂存断点，空闲时继续；")
                 +"超时未确认不等于有效，旧频道保留，媒体预检不等于实播。");
         if(manualComplete){
-          update.putString("source_manual_completed_id",manualId).remove("source_manual_active_id");
-          for(String key:ManualSavedCoverage.keys())update.remove(key);
+          update.putBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,true);
         }
       }else if(!initialDiscoveryChain){
         int nextRoutine=SourceUpdateSchedulePolicy.routineNextFeed(routineStart,feeds.length,feedBatchComplete);
@@ -1378,6 +1398,12 @@ public class SourceUpdateWorker extends Worker {
               getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
         }
+      }else if(manualRefresh){
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouched(
+            getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId);
+        // Commit completion of detection first. A preference conflict or process
+        // death during final publication retries only publication, not probes.
+        if(manualComplete)return publishReadyManual(manualId,saved);
       }else{
         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
             getApplicationContext(),publication,roomSnapshot.catalogueVersion,
@@ -1435,6 +1461,36 @@ public class SourceUpdateWorker extends Worker {
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){idleWave.close();saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
     finally{idleWave.close();}
+  }
+  private Result abortManualStructuralConflict(String manualId){
+    com.wodedianshi.tv.db.AppStateEditor status=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+        .remove("source_manual_active_id")
+        .putString("source_update_result","频道目录在手动整理期间已修改；未覆盖用户目录，请重新手动刷新");
+    for(String key:ManualSavedCoverage.keys())status.remove(key);
+    com.wodedianshi.tv.db.RoomCatalogueBuildStore.discardManual(getApplicationContext(),manualId,status,pauseRequested);
+    return Result.failure();
+  }
+  private Result publishReadyManual(String manualId,JSONArray rows)throws Exception{
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId))
+      return abortManualStructuralConflict(manualId);
+    com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=com.wodedianshi.tv.db.RoomDatabaseProvider
+        .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
+            com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+    if(checkpoint==null)throw new IllegalStateException("Live catalogue checkpoint unavailable");
+    com.wodedianshi.tv.db.AppStateEditor finish=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+        .putString("source_manual_completed_id",manualId)
+        .remove("source_manual_active_id")
+        .putString("source_probe_scores_v1",roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}"))
+        .putString("source_probe_failure_streaks_v1",roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{}"))
+        .putString("source_update_time",now())
+        .putLong("source_update_last_success_at",System.currentTimeMillis())
+        .putString("source_update_result",roomString("source_update_result","")+" 已原子发布完整手动目录。");
+    for(String key:ManualSavedCoverage.keys())finish.remove(key);
+    int written=com.wodedianshi.tv.db.RoomCatalogueWriter.publishManualSnapshot(
+        getApplicationContext(),rows,checkpoint.completedAt,manualId,pauseRequested,finish);
+    if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
+    return Result.success();
   }
   private static void discardStagingReuse(){
     committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
