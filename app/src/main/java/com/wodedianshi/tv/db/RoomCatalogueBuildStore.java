@@ -21,6 +21,16 @@ public final class RoomCatalogueBuildStore {
     public static final String MANUAL_BASE_VERSION_KEY="source_manual_staging_base_version";
     public static final String MANUAL_BASE_STRUCTURE_KEY="source_manual_staging_base_structure";
     public static final String MANUAL_READY_KEY="source_manual_staging_ready";
+    public static final String MANUAL_BASE_COUNT_KEY="source_manual_staging_base_count";
+
+    public static String currentStructureVersion(Context context){
+        return RoomDatabaseProvider.get(context).appStateDao().getValue(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY);
+    }
+    static void requireReconciledManualStructure(AppDatabase db,String owner,String expected){
+        requireManualOwner(db,owner);
+        if(!CatalogueVersionPolicy.structureMatches(expected,db.appStateDao().getValue(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY)))
+            throw new RoomCatalogueWriter.StaleCatalogueException();
+    }
     public static final String MANUAL_SCORES_KEY="source_manual_staging_scores";
     public static final String MANUAL_STREAKS_KEY="source_manual_staging_streaks";
 
@@ -56,6 +66,7 @@ public final class RoomCatalogueBuildStore {
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
         db.appStateDao().remove(MANUAL_BASE_STRUCTURE_KEY);
         db.appStateDao().remove(MANUAL_READY_KEY);
+        db.appStateDao().remove(MANUAL_BASE_COUNT_KEY);
         db.appStateDao().remove(MANUAL_SCORES_KEY);
         db.appStateDao().remove(MANUAL_STREAKS_KEY);
     }
