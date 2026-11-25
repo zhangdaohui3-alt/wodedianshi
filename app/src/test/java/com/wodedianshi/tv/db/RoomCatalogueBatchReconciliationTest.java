@@ -64,6 +64,17 @@ public class RoomCatalogueBatchReconciliationTest {
         assertEquals(Integer.valueOf(0),r.selectedIndices.get("b"));
         assertEquals(Integer.valueOf(0),r.selectedIndices.get("c"));
     }
+    @Test public void restoreSelectionOnlyUsesFreeSlotOrNewNonprimaryRoute(){
+        BackupSourceEntity[] rows=new BackupSourceEntity[8];
+        Map<String,BackupSourceEntity> previous=new HashMap<>();
+        for(int i=0;i<8;i++){rows[i]=source("a","https://example.invalid/"+i,i,"[]");previous.put(rows[i].url,rows[i]);}
+        assertEquals(-1,RoomCatalogueWriter.selectionRetentionSlot(channel("a",rows),previous));
+        previous.remove(rows[6].url);
+        assertEquals(6,RoomCatalogueWriter.selectionRetentionSlot(channel("a",rows),previous));
+        assertEquals(7,RoomCatalogueWriter.selectionRetentionSlot(channel("a",Arrays.copyOf(rows,7)),previous));
+        previous.put(rows[6].url,rows[6]);previous.remove(rows[0].url);
+        assertEquals(-1,RoomCatalogueWriter.selectionRetentionSlot(channel("a",rows),previous));
+    }
     @Test public void batchPreservesChannelIsolationAndWritesOnlyChangedSources() {
         RecordingDao r=new RecordingDao();
         r.oldRows.add(source("a","shared",0,"[]"));
