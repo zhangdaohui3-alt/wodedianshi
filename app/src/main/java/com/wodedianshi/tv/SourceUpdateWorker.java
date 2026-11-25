@@ -714,8 +714,11 @@ public class SourceUpdateWorker extends Worker {
           saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
-        if(checked>=MAX_PROBES_PER_RUN||isStopped()||android.os.SystemClock.elapsedRealtime()>=probeDeadline)break;
         Entry e=probeCandidates.get(offset);
+        // A completed speculative result can still be consumed after the batch
+        // deadline, but no fresh request may begin after it.
+        if(checked>=MAX_PROBES_PER_RUN||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
+            &&!idleWave.has(SourceSelectionPolicy.endpointKey(e.url))))break;
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=SourceSelectionPolicy.endpointKey(e.url);
@@ -730,6 +733,7 @@ public class SourceUpdateWorker extends Worker {
           long addressDeadline=probeDeadline;
           long measuredAt=clock;
           boolean prefetched=idleWave.has(endpoint);
+          boolean parallelOutcome=false;
           if(initialDiscoveryChain&&!reuse&&!prefetched){
             addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(probeDeadline,clock);
             if(addressDeadline==0L){
@@ -745,9 +749,10 @@ public class SourceUpdateWorker extends Worker {
             checked++;
             noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
             if(initialDiscoveryChain&&!slowPlayback&&(prefetched||idleWave.start(
-                probeCandidates,offset,measuredByEndpoint,visitedUrls,addressDeadline))){
+                probeCandidates,offset,measuredByEndpoint,visitedUrls,addressDeadline,probeDeadline))){
               TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
+              parallelOutcome=true;
             }else{
               measured=probe(e.url,addressDeadline);
               measuredAt=android.os.SystemClock.elapsedRealtime();
@@ -757,13 +762,13 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
-          if(probeDeadlineReached(probeDeadline)){
+          if(parallelOutcome?measuredAt>=probeDeadline:probeDeadlineReached(probeDeadline)){
             // A source interrupted by the global deadline is inconclusive, not a failed source.
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
           }
           if(initialDiscoveryChain&&!reuse
-              &&measuredAt>=addressDeadline){
+              &&SourceProbeTimePolicy.initialProbeInconclusive(measured.socketTimedOut,measuredAt,addressDeadline)){
             // The address received its bounded first-pass opportunity. Do not
             // promote, penalize or cache an inconclusive result. The later
             // manual/routine scan can retry with the normal probe budget.
@@ -1750,7 +1755,7 @@ public class SourceUpdateWorker extends Worker {
       catch(Exception invalid){return "";}
     }
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
-        Set<String> visited,long deadline){
+        Set<String> visited,long deadline,long batchDeadline){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       ArrayList<Entry> wave=new ArrayList<>();
@@ -1769,7 +1774,7 @@ public class SourceUpdateWorker extends Worker {
         }
         endpoints.add(endpoint);hosts.put(host,hosts.getOrDefault(host,0)+1);wave.add(entry);
       }
-      if(wave.size()<2)return false;
+      if(wave.size()<2||!SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,deadline))return false;
       if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(4,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
@@ -1795,9 +1800,9 @@ public class SourceUpdateWorker extends Worker {
       for(;;){
         if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
         long remaining=batchDeadline-android.os.SystemClock.elapsedRealtime();
-        if(remaining<=0)throw new java.util.concurrent.TimeoutException("Probe wave exceeded slice budget");
+        if(remaining<=0&&!future.isDone())throw new java.util.concurrent.TimeoutException("Probe wave exceeded slice budget");
         try{
-          TimedProbe outcome=future.get(Math.min(100L,remaining),java.util.concurrent.TimeUnit.MILLISECONDS);
+          TimedProbe outcome=future.get(Math.max(0L,Math.min(100L,remaining)),java.util.concurrent.TimeUnit.MILLISECONDS);
           pending.remove(endpoint);return outcome;
         }catch(java.util.concurrent.TimeoutException waiting){/* poll viewing gate */}
         catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new SourceProbeTimePolicy.PublicationPausedException();}
@@ -1815,6 +1820,7 @@ public class SourceUpdateWorker extends Worker {
   }
   private static class ProbeResult {
     boolean valid;
+    boolean socketTimedOut;
     int score;
     int width,height;
     long latencyMs;
@@ -2003,7 +2009,8 @@ public class SourceUpdateWorker extends Worker {
       result.valid=true;
       result.score=350+(int)Math.min(300L,(initialBytes.length*1000L/result.latencyMs)/2048L);
       return result;
-    }catch(Exception e){return result;}
+    }catch(java.net.SocketTimeoutException timeout){result.socketTimedOut=true;return result;}
+    catch(Exception e){return result;}
   }
   // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
   // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
@@ -2025,7 +2032,9 @@ public class SourceUpdateWorker extends Worker {
     SampleResponse(byte[] data,String url,boolean wasTruncated){bytes=data;finalUrl=url;truncated=wasTruncated;}
   }
   private boolean probeDeadlineReached(long deadline){
-    return pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()
+    // A local cancelled probe must not latch a global viewing pause solely
+    // because its own executor thread was interrupted.
+    return Thread.currentThread().isInterrupted()||pauseRequested.getAsBoolean()
         ||android.os.SystemClock.elapsedRealtime()>=deadline;
   }
   private byte[] fetchSample(String address,int maxBytes,long deadline)throws Exception{
