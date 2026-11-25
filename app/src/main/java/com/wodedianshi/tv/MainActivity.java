@@ -1302,7 +1302,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       uiHandler.post(()->{
         if(!isFinishing()&&!isDestroyed()&&info!=null)
           info.setText("已保护后台更新的完整频道目录，本次旧目录保存被拒绝；"
-              +"重新打开应用后加载最新快照。");
+              +"将尝试重新读取已保存快照。");
+        if(activityStarted&&!isFinishing()&&!isDestroyed())
+          reloadChannelsAfterBackgroundUpdateIfNeeded();
       });
       return false;
     }catch(Throwable failure){
@@ -1504,10 +1506,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
               boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
               roomFullRebuildCompletedAt=completed;
-              if(newlyPublished){
-                reloadChannelsAfterBackgroundUpdateIfNeeded();
-                scheduleAutomaticSourceUpdates();
-              }
+              if(newlyPublished||!catalogueSnapshotTrusted)reloadChannelsAfterBackgroundUpdateIfNeeded();
+              if(newlyPublished)scheduleAutomaticSourceUpdates();
               initialDiscoveryProgressBar.setProgress(100);
               initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
               initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
@@ -7452,7 +7452,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
-    if(!catalogueSnapshotTrusted){
+    final boolean recoveryRead=!catalogueSnapshotTrusted;
+    if(!RoomCatalogueReloadPolicy.canReadForRecovery(catalogueSnapshotTrusted,channels.size(),
+        player!=null||libVlcEngine!=null||currentVodPanel!=null)){
       android.util.Log.w("MyTVStartup","Room reload skipped: startup catalogue restore was incomplete");
       saveLiveDiagnostic("BACKGROUND_CATALOGUE_PUBLISH_BLOCKED",
           "startup restore incomplete; existing in-memory catalogue retained");
@@ -7470,7 +7472,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=
               com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
                   .channelDao().getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
-          if(RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
+          if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
               checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
@@ -7532,6 +7534,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             synchronized(channels){
               if(!activityStarted||isFinishing()||isDestroyed()
                   ||generation!=backgroundCatalogueReloadGeneration)return;
+              if(recoveryRead&&!RoomCatalogueReloadPolicy.canReadForRecovery(false,channels.size(),
+                  player!=null||libVlcEngine!=null||currentVodPanel!=null))return;
               if(catalogueMutationGeneration!=expectedMutationGeneration){
                 // Rare second race between the preceding UI gate and taking
                 // the short channel lock. Do not publish the stale read.
