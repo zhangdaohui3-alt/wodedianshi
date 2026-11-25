@@ -155,6 +155,7 @@ public class SourceUpdateWorker extends Worker {
     try{
       final String manualOwnerKey=com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_OWNER_KEY;
       JSONArray manualWorkingRows=null;
+      boolean manualQueueOnly=false;
       if(manualRefresh){
         String config=discoveryFeedsFingerprint(feeds);
         String owner=roomString(manualOwnerKey,"");
@@ -199,12 +200,15 @@ public class SourceUpdateWorker extends Worker {
         }else{
           // Structural edits are reconciled at the final publication, not by
           // throwing away already committed network work at every slice.
-          manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
+          manualQueueOnly=com.wodedianshi.tv.db.RoomCatalogueBuildStore.canRunManualQueueOnly(getApplicationContext(),manualId,feeds.length);
+          if(!manualQueueOnly)manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
         }
-        com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualQueue(getApplicationContext(),manualId,manualWorkingRows,pauseRequested);
-        com.wodedianshi.tv.db.ManualProbeQualityStore.ensure(getApplicationContext(),manualId,pauseRequested);
-        if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
-          return publishReadyManual(manualId,manualWorkingRows);
+        if(!manualQueueOnly){
+          com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualQueue(getApplicationContext(),manualId,manualWorkingRows,pauseRequested);
+          com.wodedianshi.tv.db.ManualProbeQualityStore.ensure(getApplicationContext(),manualId,pauseRequested);
+          if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
+            return publishReadyManual(manualId,manualWorkingRows);
+        }
       }
       // Manual and initial work now use isolated staging. Routine maintenance
       // alone reads the published directory for each bounded slice.
@@ -377,7 +381,8 @@ public class SourceUpdateWorker extends Worker {
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
         // Manual work never mutates the published directory before completion.
-        saved=manualRefresh?manualWorkingRows:publishedWorkingRows;
+        // Queue-only slices must not mutate or serialize a staging catalogue.
+        saved=manualQueueOnly?new JSONArray():manualRefresh?manualWorkingRows:publishedWorkingRows;
 
       }
       final int previousStagedSize=saved.length();
@@ -450,6 +455,7 @@ public class SourceUpdateWorker extends Worker {
       int routineStart=manualRefresh?Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
           InitialFeedRotationPolicy.normalizeStart(roomInt("source_routine_next_feed_index",0),feeds.length);
       final boolean manualSavedOnly=manualRefresh&&routineStart>=feeds.length;
+      if(manualQueueOnly&&!manualSavedOnly)throw new IllegalStateException("Queue-only feed cursor changed");
       int routineEnd=manualRefresh?Math.min(feeds.length,routineStart+1):
           SourceUpdateSchedulePolicy.routineSliceEnd(routineStart,feeds.length);
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
@@ -1386,13 +1392,22 @@ public class SourceUpdateWorker extends Worker {
           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
         }
       }else if(manualRefresh){
-        manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouchedWithQuality(
+        if(manualQueueOnly){
+          if(!touchedStagedRows.isEmpty()||saved.length()!=0||!candidates.isEmpty()||!manualSavedOnly)
+            throw new IllegalStateException("Unexpected discovery in queue-only slice");
+          manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.commitManualQueueOnly(
+              getApplicationContext(),manualId,feeds.length,manualFailedFeeds,
+              new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),
+              com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks),
+              pauseRequested,update);
+        }else manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouchedWithQuality(
             getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId,
             new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),manualSavedOnly,manualNextFeed,feeds.length,manualFailedFeeds,
             com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks));
         // Commit completion of detection first. A preference conflict or process
         // death during final publication retries only publication, not probes.
-        if(manualComplete)return publishReadyManual(manualId,saved);
+        if(manualComplete)return publishReadyManual(manualId,manualQueueOnly?
+            com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested):saved);
       }else{
         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
             getApplicationContext(),publication,roomSnapshot.catalogueVersion,
@@ -1407,7 +1422,7 @@ public class SourceUpdateWorker extends Worker {
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback+" manual="+manualRefresh
+            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":Integer.toString(saved.length()))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
             +" inconclusive_endpoints="+inconclusiveAttempts.size());
