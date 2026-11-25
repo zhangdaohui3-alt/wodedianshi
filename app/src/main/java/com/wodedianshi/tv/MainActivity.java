@@ -1443,7 +1443,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,
         SourceUpdateSchedulePolicy.ROUTINE_ELIGIBILITY_CHECK_DAYS,TimeUnit.DAYS)
         .setConstraints(constraints).build();
-    // The daily job only checks whether a weekly maintenance pass is due.
+    // The daily job only checks whether a 30-day maintenance pass is due.
     // The worker exits before discovery while busy or not due.
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
   }
@@ -1643,7 +1643,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       wm.cancelUniqueWork("mytv_periodic_source_update");
       wm.cancelUniqueWork("mytv_startup_source_refresh");
     }
-    toast(enabled?"后台自动更新已开启（完整建库后约每 7 天、空闲时维护）":"后台自动更新已关闭；仍可在设置中手动更新");
+    toast(enabled?"后台自动更新已开启（完整建库后约每 30 天、空闲时维护）":"后台自动更新已关闭；仍可在设置中手动更新");
   }
   private void startManualSourceUpdate(){
     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
@@ -1716,7 +1716,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(isFinishing()||isDestroyed())return;
           new AlertDialog.Builder(this).setTitle("频道源更新状态")
             .setMessage("后台自动更新："+(autoEnabled?"开启":"关闭")
-                +"（完整建库后约每7天启动轮检，空闲时分批继续；播放或前台使用时跳过）\n上次检查："+time
+                +"（完整建库后约每30天启动轮检，空闲时分批继续；播放或前台使用时跳过）\n上次检查："+time
                 +"\n更新结果："+result
                 +"\n中国大陆目录："+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                 +" · 中国线路预检通过："+Math.max(0,chinaValidated)+" 次"
