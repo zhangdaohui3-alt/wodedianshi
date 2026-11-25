@@ -81,6 +81,7 @@ public class SourceUpdateWorker extends Worker {
     }
   }
   private Result runOwnedWork(){
+    final long sliceStartedAt=android.os.SystemClock.elapsedRealtime();
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     final boolean manual=getInputData().getBoolean("manual",false);
     final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
@@ -693,7 +694,8 @@ public class SourceUpdateWorker extends Worker {
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
-      long probeDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
+      final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
+      long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       HashSet<String> visitedUrls=new HashSet<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
@@ -858,7 +860,8 @@ public class SourceUpdateWorker extends Worker {
       // health checks while public catalogue services are down; retry discovery
       // separately after persisting these local probe results.
       boolean discoveryUnavailable=feedsOk==0;
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts);
+      final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1228,6 +1231,7 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+      final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
@@ -1261,6 +1265,15 @@ public class SourceUpdateWorker extends Worker {
             initialDiscoveryComplete,pauseRequested,update);
         if(written!=publishedChannelCount)
           throw new IllegalStateException("Committed directory count mismatch");
+      }
+      if(initialDiscoveryChain){
+        final long commitFinishedAt=android.os.SystemClock.elapsedRealtime();
+        android.util.Log.i("MyTVSourceDiscovery","slice_committed prepare_ms="+(probeStartedAt-sliceStartedAt)
+            +" probe_merge_ms="+(probesFinishedAt-probeStartedAt)
+            +" finalize_ms="+(commitStartedAt-probesFinishedAt)
+            +" commit_ms="+(commitFinishedAt-commitStartedAt)
+            +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
+            +" reused="+reusedPreflights+" staged="+saved.length()+" viewing="+slowPlayback);
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
