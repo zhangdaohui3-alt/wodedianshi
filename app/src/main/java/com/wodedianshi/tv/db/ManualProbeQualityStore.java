@@ -1,0 +1,81 @@
+package com.wodedianshi.tv.db;
+
+import android.content.Context;
+import com.wodedianshi.tv.SourceProbeTimePolicy;
+import com.wodedianshi.tv.StableKey;
+import java.util.*;
+import java.util.function.BooleanSupplier;
+import org.json.JSONObject;
+import org.json.JSONException;
+
+/** Private-round quality rows; no per-slice full score JSON rewrite. */
+public final class ManualProbeQualityStore {
+    private ManualProbeQualityStore(){}
+    static final String READY_KEY="source_manual_quality_owner_v1";
+    static final String PUBLISHED_OWNER="@published";
+
+    public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
+        String a=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
+        String b=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
+        JSONObject scores=new JSONObject(a==null?"{}":a),streaks=new JSONObject(b==null?"{}":b);
+        Set<String> keys=new HashSet<>();
+        Iterator<String> it=scores.keys();while(it.hasNext())keys.add(it.next());
+        it=streaks.keys();while(it.hasNext())keys.add(it.next());
+        List<ManualProbeQualityEntity> rows=changes(owner,keys,scores,streaks);
+        db.runInTransaction(()->{
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            RoomCatalogueBuildStore.requireManualOwner(db,owner);
+            if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
+            db.manualProbeQualityDao().clearOwner(owner);
+            writeInTransaction(db,owner,rows,paused);
+            db.appStateDao().put(new AppStateEntity(READY_KEY,owner,System.currentTimeMillis()));
+            db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
+            db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+        });
+    }
+
+    public static void loadUrls(Context context,String owner,Collection<String> urls,Set<String> loaded,
+            JSONObject scores,JSONObject streaks,BooleanSupplier paused)throws JSONException{
+        LinkedHashSet<String> keys=new LinkedHashSet<>();
+        for(String url:urls){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            if(url==null||url.isEmpty())continue;
+            for(String key:new String[]{StableKey.url(url),StableKey.legacyUrl(url)})
+                if(!loaded.contains(key))keys.add(key);
+        }
+        List<String> list=new ArrayList<>(keys);
+        ManualProbeQualityDao dao=RoomDatabaseProvider.get(context).manualProbeQualityDao();
+        for(int i=0;i<list.size();i+=256){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<String> page=list.subList(i,Math.min(i+256,list.size()));
+            for(ManualProbeQualityEntity row:dao.load(owner,page)){
+                if(row.score!=null)scores.put(row.sourceKey,row.score);
+                if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
+            }
+            loaded.addAll(page);
+        }
+    }
+
+    public static List<ManualProbeQualityEntity> changes(String owner,Collection<String> keys,
+            JSONObject scores,JSONObject streaks){
+        List<ManualProbeQualityEntity> result=new ArrayList<>();
+        for(String key:keys)result.add(new ManualProbeQualityEntity(owner,key,
+            scores.has(key)?Integer.valueOf(scores.optInt(key,0)):null,
+            streaks.has(key)?Integer.valueOf(streaks.optInt(key,0)):null));
+        return result;
+    }
+
+    static void writeInTransaction(AppDatabase db,String owner,List<ManualProbeQualityEntity> rows,
+            BooleanSupplier paused){
+        RoomCatalogueBuildStore.requireManualOwner(db,owner);
+        for(ManualProbeQualityEntity row:rows)
+            if(!owner.equals(row.owner))throw new IllegalArgumentException("Wrong quality owner");
+        for(int i=0;i<rows.size();i+=256){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            db.manualProbeQualityDao().put(rows.subList(i,Math.min(i+256,rows.size())));
+        }
+    }
+}
