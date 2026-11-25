@@ -102,9 +102,9 @@ public final class PlaylistFeedCache {
         String key=sha256("initial|"+feedUrl);
         File cached=new File(directory,key+".m3u");
         if(cached.isFile()){
-            if(!SourceProbeTimePolicy.fitsLiveDirectory(cached.length()))
-                throw new IOException("Complete large directory awaits idle indexing");
-            return obtainSmallInitialDuringViewing(context,feedUrl,preserveExistingSnapshot,paused);
+            if(lowRate&&!SourceProbeTimePolicy.fitsLiveFullDirectory(cached.length()))
+                throw new IOException("Directory exceeds stable-viewing size limit");
+            return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,lowRate);
         }
         File partial=new File(directory,key+".range-part");
         File checkpoint=new File(directory,key+".range-state");
@@ -134,11 +134,11 @@ public final class PlaylistFeedCache {
             try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
         }
         HttpURLConnection connection=null;
-        final long deadline=android.os.SystemClock.elapsedRealtime()+(lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
+        long deadline=android.os.SystemClock.elapsedRealtime()+(lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
         try{
             if(offset>0L&&offset==total){
-                if(lowRate&&!SourceProbeTimePolicy.fitsLiveDirectory(total))
-                    throw new IOException("Complete directory awaits idle validation");
+                // The bytes and strong validator are complete. Digest in a
+                // separate bounded slice, even during confirmed stable playback.
                 return publishRangeBody(directory,cached,partial,checkpoint,oldTag,paused,deadline);
             }
             connection=(HttpURLConnection)new URL(feedUrl).openConnection();
@@ -155,11 +155,18 @@ public final class PlaylistFeedCache {
             String tag=connection.getHeaderField("ETag");
             String location=sha256(connection.getURL().toExternalForm());
             long expected;
+            long transferLimit=chunkLimit;
             if(status==206){
                 long[] range=SourceProbeTimePolicy.directoryRange(connection.getHeaderField("Content-Range"),offset,total,chunkLimit);
                 if(range==null||!SourceProbeTimePolicy.strongDirectoryValidator(tag)
                         ||(offset>0L&&(!oldTag.equals(tag)||!oldLocation.equals(location)))){
                     clearRangeCheckpoint(checkpoint,partial);
+                    // A server may support Range without a strong validator.
+                    // Never concatenate such responses; use one bounded full body.
+                    if(lowRate){
+                        connection.disconnect();connection=null;
+                        return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
+                    }
                     throw new IOException("Directory range identity changed or unsupported");
                 }
                 expected=range[0];total=range[1];
@@ -167,8 +174,12 @@ public final class PlaylistFeedCache {
                 // Range ignored or representation changed. Never append a 200.
                 clearRangeCheckpoint(checkpoint,partial);offset=0L;
                 expected=connection.getContentLength();total=expected;
-                if(expected>chunkLimit)
-                    throw new IOException("Large directory does not support safe range transfer");
+                if(lowRate){
+                    transferLimit=SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES;
+                    deadline=android.os.SystemClock.elapsedRealtime()+SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS;
+                }
+                if(expected>transferLimit)
+                    throw new IOException("Directory exceeds bounded full transfer size");
             }else{
                 if(status==416){clearRangeCheckpoint(checkpoint,partial);}
                 throw new IOException("Directory range HTTP "+status);
@@ -184,10 +195,10 @@ public final class PlaylistFeedCache {
                     checkDownloadBudget(paused,deadline);
                     if(n<0)break;
                     copied+=n;
-                    if(copied>chunkLimit||(expected>=0L&&copied>expected))
+                    if(copied>transferLimit||(expected>=0L&&copied>expected))
                         throw new IOException("Directory response exceeded range budget");
                     out.write(buffer,0,n);
-                    long delay=lowRate?SourceProbeTimePolicy.liveDirectoryPacingMillis(copied,android.os.SystemClock.elapsedRealtime()-started):0L;
+                    long delay=lowRate?SourceProbeTimePolicy.liveFullDirectoryPacingMillis(copied,android.os.SystemClock.elapsedRealtime()-started):0L;
                     while(delay>0L){
                         checkDownloadBudget(paused,deadline);
                         long step=Math.min(50L,delay);android.os.SystemClock.sleep(step);delay-=step;
@@ -204,13 +215,9 @@ public final class PlaylistFeedCache {
                 next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
                 writePropertiesAtomically(checkpoint,checkpointTemp,next);
                 if(length<total)return null;
-                // Preserve the final bytes before any expensive digest/index work.
-                // A large completed range is finalized only when playback is idle.
-                if(!SourceProbeTimePolicy.fitsLiveDirectory(length)){
-                    if(lowRate)throw new IOException("Complete directory awaits idle validation");
-                    // Give the local digest its own fresh idle budget.
-                    return null;
-                }
+                // Preserve the final bytes before any digest/index work.
+                // Give a large completed range its own fresh validation slice.
+                if(!SourceProbeTimePolicy.fitsLiveDirectory(length))return null;
             }
             return publishRangeBody(directory,cached,partial,checkpoint,tag,paused,deadline);
         }finally{
@@ -256,7 +263,7 @@ public final class PlaylistFeedCache {
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
             boolean lowRate) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
-        long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES:MAX_BYTES;
+        long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES:MAX_BYTES;
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
@@ -268,8 +275,8 @@ public final class PlaylistFeedCache {
         File cached = new File(directory, key + ".m3u");
         File metadata = new File(directory, key + ".m3u.properties");
         Properties old = readProperties(metadata);
-        if(lowRate&&cached.isFile()&&!SourceProbeTimePolicy.fitsLiveDirectory(cached.length()))
-            throw new IOException("Large cached directory requires idle indexing");
+        if(lowRate&&cached.isFile()&&!SourceProbeTimePolicy.fitsLiveFullDirectory(cached.length()))
+            throw new IOException("Directory exceeds stable-viewing size limit");
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
                 && isPlaylistFile(cached);
         // Do not trust validators or index files after a body replacement crash,
@@ -295,7 +302,7 @@ public final class PlaylistFeedCache {
         HttpURLConnection connection = null;
         File temporary = new File(directory, key + ".m3u.tmp");
         File metadataTemporary = new File(directory, key + ".m3u.properties.tmp");
-        final long deadline = android.os.SystemClock.elapsedRealtime() + (lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
+        final long deadline = android.os.SystemClock.elapsedRealtime() + (lowRate?SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
         try {
             SourceProbeTimePolicy.checkPaused(paused);
             connection = (HttpURLConnection) new URL(feedUrl).openConnection();
@@ -353,7 +360,7 @@ public final class PlaylistFeedCache {
                     output.write(buffer, 0, count);
                     digest.update(buffer, 0, count);
                     if(lowRate){
-                        long delay=SourceProbeTimePolicy.liveDirectoryPacingMillis(
+                        long delay=SourceProbeTimePolicy.liveFullDirectoryPacingMillis(
                                 copied,android.os.SystemClock.elapsedRealtime()-readStarted);
                         while(delay>0L){
                             checkDownloadBudget(paused,deadline);
