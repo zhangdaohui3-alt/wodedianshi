@@ -8,6 +8,13 @@ package com.wodedianshi.tv;
 public final class DiscoveryBatchPolicy {
     private DiscoveryBatchPolicy() {}
 
+    // Fixed across idle/viewing transitions so partial page fingerprints stay
+    // stable. Only the number of probes admitted per slice changes.
+    static final int INITIAL_PAGE_SIZE=48;
+    static int probeLimit(boolean initial,boolean viewing,int ordinaryLimit) {
+        return initial?(viewing?1:INITIAL_PAGE_SIZE):ordinaryLimit;
+    }
+
     /** Independent partial page checkpoints enable fair rotation. */
     public static String initialBatchPrefix(int feedIndex) {
         return "source_initial_page_"+feedIndex+"_";
