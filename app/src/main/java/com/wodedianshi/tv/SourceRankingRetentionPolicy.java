@@ -8,6 +8,14 @@ import java.util.List;
 public final class SourceRankingRetentionPolicy {
     private SourceRankingRetentionPolicy() {}
 
+    /** One ranking operation only: preserve descending score and stable ties,
+     * without recomputing the same URL for each comparator invocation. */
+    static java.util.Comparator<String> memoizedBestFirst(java.util.function.ToDoubleFunction<String> score) {
+        java.util.HashMap<String,Double> scores=new java.util.HashMap<>();
+        return (a,b)->Double.compare(scores.computeIfAbsent(b,key->score.applyAsDouble(key)),
+                scores.computeIfAbsent(a,key->score.applyAsDouble(key)));
+    }
+
     /**
      * Input is already quality-ranked from best to worst. Required URLs are retained
      * even when they fall below the cap; remaining slots are filled in ranked order.
