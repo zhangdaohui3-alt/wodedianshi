@@ -19,6 +19,17 @@ import java.util.Map;
 public final class RoomCatalogueWriter {
     private RoomCatalogueWriter() {}
 
+    // Keep relation reads bounded on low-memory TV devices and comfortably
+    // below SQLite bind parameter limits. No full second catalogue in memory.
+    private static final int SOURCE_QUERY_BATCH_SIZE = 64;
+    private static final class PreparedChannel {
+        final ChannelEntity channel;
+        final List<BackupSourceEntity> sources;
+        PreparedChannel(ChannelEntity channel,List<BackupSourceEntity> sources) {
+            this.channel=channel;this.sources=sources;
+        }
+    }
+
     public static final class ChannelSnapshot {
         public String name, url, group, tvgId, tvgName;
         public int activeSource;
@@ -181,6 +192,7 @@ public final class RoomCatalogueWriter {
                 }
             }
             HashMap<String, Integer> categoryOrders = new HashMap<>();
+            ArrayList<PreparedChannel> pendingChannels = new ArrayList<>(SOURCE_QUERY_BATCH_SIZE);
 
             for (int row = 0; row < snapshot.size(); row++) {
                 checkPause(paused);
@@ -244,39 +256,21 @@ public final class RoomCatalogueWriter {
                     }
                     sourceRows.add(new BackupSourceEntity(id, url, i, scopes.toString()));
                 }
-                if (previousChannelIds.contains(id)) {
-                    dao.updateChannelFields(channel.id, channel.legacyKey, channel.name,
-                            channel.primaryUrl, channel.groupName, channel.categoryId,
-                            channel.tvgId, channel.tvgName, channel.channelScopesJson,
-                            channel.activeSource, channel.sortOrder);
-                    // Read only this channel's indexed source rows. No second
-                    // full catalogue in memory and no delete/reinsert of equal URLs.
-                    HashMap<String, BackupSourceEntity> oldSources = new HashMap<>();
-                    for (BackupSourceEntity old : dao.getBackupSourcesForChannel(id)) {
-                        oldSources.put(old.url, old);
-                    }
-                    ArrayList<BackupSourceEntity> changedSources = new ArrayList<>();
-                    for (BackupSourceEntity next : sourceRows) {
-                        BackupSourceEntity old = oldSources.remove(next.url);
-                        if (old == null || old.priority != next.priority
-                                || !old.scopesJson.equals(next.scopesJson)) {
-                            changedSources.add(next);
-                        }
-                    }
-                    for (String staleUrl : oldSources.keySet()) {
-                        checkPause(paused);
-                        dao.deleteBackupSource(id, staleUrl);
-                    }
-                    if (!changedSources.isEmpty()) dao.insertBackupSources(changedSources);
-                } else {
-                    dao.insertChannelIfAbsent(channel);
-                    if (!sourceRows.isEmpty()) dao.insertBackupSources(sourceRows);
+                pendingChannels.add(new PreparedChannel(channel,sourceRows));
+                if (pendingChannels.size() == SOURCE_QUERY_BATCH_SIZE) {
+                    writePreparedBatch(dao,pendingChannels,previousChannelIds,paused);
+                    pendingChannels.clear();
                 }
                 presentChannelIds.add(id);
                 if (favoriteKeys != null && favoriteKeys.contains(legacyKey)) {
                     desiredFavoriteIds.add(id);
                 }
                 written[0]++;
+            }
+
+            if (!pendingChannels.isEmpty()) {
+                writePreparedBatch(dao,pendingChannels,previousChannelIds,paused);
+                pendingChannels.clear();
             }
 
             // A catalogue snapshot is an all-or-nothing unit. Skipping even one
@@ -373,6 +367,50 @@ public final class RoomCatalogueWriter {
             checkPause(paused);
         });
         return written[0];
+    }
+
+    /** Read one bounded set of existing relations, then apply the original
+     * per-channel reconciliation inside the same outer Room transaction. */
+    private static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
+            HashSet<String> previousChannelIds,BooleanSupplier paused) {
+        checkPause(paused);
+        ArrayList<String> existingIds=new ArrayList<>(batch.size());
+        for(PreparedChannel item:batch)
+            if(previousChannelIds.contains(item.channel.id))existingIds.add(item.channel.id);
+        HashMap<String,HashMap<String,BackupSourceEntity>> oldByChannel=new HashMap<>();
+        if(!existingIds.isEmpty()) {
+            for(BackupSourceEntity old:dao.getBackupSourcesForChannels(existingIds)) {
+                checkPause(paused);
+                oldByChannel.computeIfAbsent(old.channelId,key->new HashMap<>()).put(old.url,old);
+            }
+        }
+        for(PreparedChannel item:batch) {
+            checkPause(paused);
+            ChannelEntity channel=item.channel;
+            String id=channel.id;
+            if(previousChannelIds.contains(id)) {
+                dao.updateChannelFields(channel.id,channel.legacyKey,channel.name,
+                        channel.primaryUrl,channel.groupName,channel.categoryId,
+                        channel.tvgId,channel.tvgName,channel.channelScopesJson,
+                        channel.activeSource,channel.sortOrder);
+                HashMap<String,BackupSourceEntity> oldSources=oldByChannel.remove(id);
+                if(oldSources==null)oldSources=new HashMap<>();
+                ArrayList<BackupSourceEntity> changedSources=new ArrayList<>();
+                for(BackupSourceEntity next:item.sources) {
+                    BackupSourceEntity old=oldSources.remove(next.url);
+                    if(old==null||old.priority!=next.priority||!old.scopesJson.equals(next.scopesJson))
+                        changedSources.add(next);
+                }
+                for(String staleUrl:oldSources.keySet()) {
+                    checkPause(paused);
+                    dao.deleteBackupSource(id,staleUrl);
+                }
+                if(!changedSources.isEmpty())dao.insertBackupSources(changedSources);
+            } else {
+                dao.insertChannelIfAbsent(channel);
+                if(!item.sources.isEmpty())dao.insertBackupSources(item.sources);
+            }
+        }
     }
 
     private static void checkPause(BooleanSupplier paused) {
