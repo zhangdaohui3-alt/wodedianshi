@@ -21,6 +21,17 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
     }
 
+    @Test public void stableDiscoveryUsesContinuousReadyTimeNotRetryRefreshTime() {
+        long readyAt=1000L, refreshedAt=121000L, now=122000L;
+        assertTrue(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,Math.max(readyAt,refreshedAt),now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,now-100L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-5000L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-100L,now-5000L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(false,readyAt,1000L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,now-29000L,1000L,now-100L,now-100L,now));
+    }
+
     @Test public void retryBudgetRequiresConfirmedRecentOutput() {
         assertTrue(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,120000L,121000L));
         assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(false,1000L,120000L,120000L,121000L));
