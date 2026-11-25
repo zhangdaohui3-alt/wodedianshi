@@ -45,14 +45,14 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
   private static final int MAX_SOURCES_PER_CHANNEL = 8;
-  // The full rebuild reads one feed page per worker run and spends its 24-probe
-  // budget on that page. This prevents large China playlists from being starved
+  // The full rebuild reads one fixed-size feed page per worker run and spends
+  // its initial probe budget on that page. This prevents large China playlists from being starved
   // by small pages interleaved from every worldwide feed.
   // Per-worker memory safety bound only; it is not a lifetime catalogue cap.
   // Reaching it must leave the feed cursor untouched rather than skip entries.
   private static final int MAX_DISCOVERY_CANDIDATES_PER_RUN = 24000;
   private static final int MAX_DISCOVERY_PER_FEED = 4;
-  private static final int MAX_INITIAL_DISCOVERY_PER_FEED = MAX_PROBES_PER_RUN;
+  private static final int MAX_INITIAL_DISCOVERY_PER_FEED = DiscoveryBatchPolicy.INITIAL_PAGE_SIZE;
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true)){
@@ -525,7 +525,7 @@ public class SourceUpdateWorker extends Worker {
               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
           if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Preserve every address and the exact raw index cursor. Within the
-            // current 24-row page, probe mainland candidates first. Java's List
+            // current fixed-size page, probe mainland candidates first. Java's List
             // sort is stable, so partial-batch fingerprint/resume stays deterministic.
             feedCandidates.sort((aEntry,bEntry)->Integer.compare(
                 ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
@@ -685,8 +685,9 @@ public class SourceUpdateWorker extends Worker {
       // the last duplicate URL can skip entries that were not yet scanned.
       int discoveryScanStart=DiscoveryBatchPolicy.startIndex(
           initialDiscoveryScanned,candidates.size());
+      final int runProbeLimit=DiscoveryBatchPolicy.probeLimit(initialDiscoveryChain,slowPlayback,MAX_PROBES_PER_RUN);
       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
-          initialDiscoveryScanned,candidates.size()),MAX_PROBES_PER_RUN-savedWindow);
+          initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
       if(slowPlayback)discoveryWindow=Math.min(1,discoveryWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
@@ -718,7 +719,7 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         // A completed speculative result can still be consumed after the batch
         // deadline, but no fresh request may begin after it.
-        if(checked>=MAX_PROBES_PER_RUN||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
+        if(checked>=runProbeLimit||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
             &&!idleWave.has(SourceSelectionPolicy.endpointKey(e.url))))break;
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
