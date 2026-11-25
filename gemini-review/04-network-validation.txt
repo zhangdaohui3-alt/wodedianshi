@@ -1,0 +1,1578 @@
+My TV source review — PR #222 fixed commit 5556c7ab3bfba30278e265f229c587e6116a79a2
+Original UTF-8 source with line numbers added for review.
+
+===== app/src/main/java/com/wodedianshi/tv/PlaylistFeedCache.java | blob fbacef5524999be6d89cfc74d12617febfd24a81 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import android.content.Context;
+4 | 
+5 | import java.io.BufferedInputStream;
+6 | import java.io.BufferedReader;
+7 | import java.io.BufferedOutputStream;
+8 | import java.io.File;
+9 | import java.io.FileInputStream;
+10 | import java.io.FileOutputStream;
+11 | import java.io.IOException;
+12 | import java.io.InputStream;
+13 | import java.io.InputStreamReader;
+14 | import java.io.OutputStream;
+15 | import java.net.HttpURLConnection;
+16 | import java.net.URL;
+17 | import java.nio.charset.StandardCharsets;
+18 | import java.security.MessageDigest;
+19 | import java.util.Properties;
+20 | 
+21 | /**
+22 |  * Small, bounded disk cache for remote M3U feeds.
+23 |  *
+24 |  * A feed page is resumed by parsing the cached snapshot rather than downloading
+25 |  * the same playlist prefix on every WorkManager continuation. Only a completely
+26 |  * downloaded and validated playlist replaces the previous cache file.
+27 |  */
+28 | public final class PlaylistFeedCache {
+29 |     // Keep a stable feed snapshot long enough for multi-run full-catalogue pagination.
+30 |     private static final long MAX_AGE_MS = 24L * 60L * 60L * 1000L;
+31 |     private static final long MAX_BYTES = 96L * 1024L * 1024L;
+32 |     private static final long MAX_CACHE_BYTES = 256L * 1024L * 1024L;
+33 |     private static final int CONNECT_TIMEOUT_MS = 5000;
+34 |     private static final int READ_TIMEOUT_MS = 8000;
+35 |     private static final long DOWNLOAD_BUDGET_MS = 60_000L;
+36 | 
+37 |     private PlaylistFeedCache() { }
+38 | 
+39 |     /**
+40 |      * Keep routine refreshes and the full-rebuild snapshot in separate cache slots.
+41 |      * This prevents a routine update from replacing a file under an active rebuild cursor.
+42 |      */
+43 |     public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
+44 |                               boolean preserveExistingSnapshot) throws IOException {
+45 |         return obtain(context, feedUrl, initialDiscovery, preserveExistingSnapshot, () -> false);
+46 |     }
+47 | 
+48 |     public static File obtain(Context context, String feedUrl, boolean initialDiscovery,
+49 |                               boolean preserveExistingSnapshot,
+50 |                               java.util.function.BooleanSupplier paused) throws IOException {
+51 |         return obtainBounded(context,feedUrl,initialDiscovery,preserveExistingSnapshot,paused,false);
+52 |     }
+53 | 
+54 |     public static File obtainSmallInitialDuringViewing(Context context,String feedUrl,
+55 |             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
+56 |         return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
+57 |     }
+58 | 
+59 |     /**
+60 |      * One bounded HTTP range per stable-viewing slice. A null result means a
+61 |      * durable partial download, never a usable directory. Strong ETag and
+62 |      * matching total/offset are mandatory for combining separate responses.
+63 |      */
+64 |     public static File obtainInitialViewingChunk(Context context,String feedUrl,
+65 |             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
+66 |         return obtainInitialRange(context,feedUrl,preserveExistingSnapshot,paused,true);
+67 |     }
+68 | 
+69 |     /** Resume an existing range checkpoint at idle speed, otherwise use the
+70 |      * normal full download. Null means a committed, incomplete body. */
+71 |     public static File obtainInitialDuringIdle(Context context,String feedUrl,
+72 |             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
+73 |         SourceProbeTimePolicy.checkPaused(paused);
+74 |         File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+75 |         String key=sha256("initial|"+feedUrl);
+76 |         File cached=new File(directory,key+".m3u");
+77 |         File partial=new File(directory,key+".range-part");
+78 |         File checkpoint=new File(directory,key+".range-state");
+79 |         if(!cached.isFile()&&partial.isFile()&&checkpoint.isFile()){
+80 |             try{
+81 |                 return obtainInitialRange(context,feedUrl,preserveExistingSnapshot,paused,false);
+82 |             }catch(SourceProbeTimePolicy.PausedException deferred){throw deferred;}
+83 |             catch(IOException failure){
+84 |                 // A server that no longer honors Range must not prevent a
+85 |                 // normal idle full download. Retain any valid old checkpoint
+86 |                 // until that download actually succeeds.
+87 |                 SourceProbeTimePolicy.checkPaused(paused);
+88 |             }
+89 |         }
+90 |         File result=obtain(context,feedUrl,true,preserveExistingSnapshot,paused);
+91 |         if(result!=null){checkpoint.delete();partial.delete();}
+92 |         return result;
+93 |     }
+94 | 
+95 |     private static File obtainInitialRange(Context context,String feedUrl,
+96 |             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
+97 |             boolean lowRate) throws IOException {
+98 |         SourceProbeTimePolicy.checkPaused(paused);
+99 |         final long chunkLimit=lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES:2L*1024L*1024L;
+100 |         File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+101 |         if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Cache directory unavailable");
+102 |         String key=sha256("initial|"+feedUrl);
+103 |         File cached=new File(directory,key+".m3u");
+104 |         if(cached.isFile()){
+105 |             if(lowRate&&!SourceProbeTimePolicy.fitsLiveFullDirectory(cached.length()))
+106 |                 throw new IOException("Directory exceeds stable-viewing size limit");
+107 |             return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,lowRate);
+108 |         }
+109 |         File partial=new File(directory,key+".range-part");
+110 |         File checkpoint=new File(directory,key+".range-state");
+111 |         File checkpointTemp=new File(directory,key+".range-state.tmp");
+112 |         // Bound partial-file storage globally. Eviction never advances a feed cursor.
+113 |         File[] parts=directory.listFiles((dir,name)->name.endsWith(".range-part"));
+114 |         if(parts!=null){
+115 |             java.util.Arrays.sort(parts,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+116 |             int retained=0;
+117 |             for(File other:parts){
+118 |                 if(other.equals(partial))continue;
+119 |                 if(retained++>=2){
+120 |                     String prefix=other.getName().substring(0,other.getName().length()-".range-part".length());
+121 |                     if(other.delete())new File(directory,prefix+".range-state").delete();
+122 |                 }
+123 |             }
+124 |         }
+125 |         Properties previous=readProperties(checkpoint);
+126 |         String oldTag=previous.getProperty("etag","");
+127 |         String oldLocation=previous.getProperty("location","");
+128 |         long offset=parseLong(previous.getProperty("length"),0L);
+129 |         long total=parseLong(previous.getProperty("total"),-1L);
+130 |         if(!partial.isFile()||!SourceProbeTimePolicy.validDirectoryCheckpoint(
+131 |                 offset,total,partial.length(),oldTag,oldLocation)){
+132 |             clearRangeCheckpoint(checkpoint,partial);offset=0L;total=-1L;oldTag="";oldLocation="";
+133 |         }else if(partial.length()!=offset){
+134 |             try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
+135 |         }
+136 |         HttpURLConnection connection=null;
+137 |         long deadline=android.os.SystemClock.elapsedRealtime()+(lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
+138 |         try{
+139 |             if(offset>0L&&offset==total){
+140 |                 // The bytes and strong validator are complete. Digest in a
+141 |                 // separate bounded slice, even during confirmed stable playback.
+142 |                 return publishRangeBody(directory,cached,partial,checkpoint,oldTag,paused,deadline);
+143 |             }
+144 |             connection=(HttpURLConnection)new URL(feedUrl).openConnection();
+145 |             connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
+146 |             connection.setUseCaches(false);connection.setInstanceFollowRedirects(true);
+147 |             connection.setRequestProperty("User-Agent","MyTV/1.19 Android TV");
+148 |             connection.setRequestProperty("Accept-Encoding","identity");
+149 |             connection.setRequestProperty("Range","bytes="+offset+"-"+(offset+chunkLimit-1L));
+150 |             if(offset>0L)connection.setRequestProperty("If-Range",oldTag);
+151 |             int status=connection.getResponseCode();
+152 |             checkDownloadBudget(paused,deadline);
+153 |             String encoding=connection.getHeaderField("Content-Encoding");
+154 |             if(encoding!=null&&!encoding.equalsIgnoreCase("identity"))throw new IOException("Encoded range response");
+155 |             String tag=connection.getHeaderField("ETag");
+156 |             String location=sha256(connection.getURL().toExternalForm());
+157 |             long expected;
+158 |             long transferLimit=chunkLimit;
+159 |             if(status==206){
+160 |                 long[] range=SourceProbeTimePolicy.directoryRange(connection.getHeaderField("Content-Range"),offset,total,chunkLimit);
+161 |                 if(range==null||!SourceProbeTimePolicy.strongDirectoryValidator(tag)
+162 |                         ||(offset>0L&&(!oldTag.equals(tag)||!oldLocation.equals(location)))){
+163 |                     clearRangeCheckpoint(checkpoint,partial);
+164 |                     // A server may support Range without a strong validator.
+165 |                     // Never concatenate such responses; use one bounded full body.
+166 |                     if(lowRate){
+167 |                         connection.disconnect();connection=null;
+168 |                         return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
+169 |                     }
+170 |                     throw new IOException("Directory range identity changed or unsupported");
+171 |                 }
+172 |                 expected=range[0];total=range[1];
+173 |             }else if(status==200){
+174 |                 // Range ignored or representation changed. Never append a 200.
+175 |                 clearRangeCheckpoint(checkpoint,partial);offset=0L;
+176 |                 expected=connection.getContentLength();total=expected;
+177 |                 if(lowRate){
+178 |                     transferLimit=SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES;
+179 |                     deadline=android.os.SystemClock.elapsedRealtime()+SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS;
+180 |                 }
+181 |                 if(expected>transferLimit)
+182 |                     throw new IOException("Directory exceeds bounded full transfer size");
+183 |             }else{
+184 |                 if(status==416){clearRangeCheckpoint(checkpoint,partial);}
+185 |                 throw new IOException("Directory range HTTP "+status);
+186 |             }
+187 |             long copied=0L;
+188 |             long started=android.os.SystemClock.elapsedRealtime();
+189 |             try(InputStream input=connection.getInputStream();
+190 |                 FileOutputStream out=new FileOutputStream(partial,offset>0L)){
+191 |                 byte[] buffer=new byte[lowRate?4096:32768];
+192 |                 while(true){
+193 |                     checkDownloadBudget(paused,deadline);
+194 |                     int n=input.read(buffer);
+195 |                     checkDownloadBudget(paused,deadline);
+196 |                     if(n<0)break;
+197 |                     copied+=n;
+198 |                     if(copied>transferLimit||(expected>=0L&&copied>expected))
+199 |                         throw new IOException("Directory response exceeded range budget");
+200 |                     out.write(buffer,0,n);
+201 |                     long delay=lowRate?SourceProbeTimePolicy.liveFullDirectoryPacingMillis(copied,android.os.SystemClock.elapsedRealtime()-started):0L;
+202 |                     while(delay>0L){
+203 |                         checkDownloadBudget(paused,deadline);
+204 |                         long step=Math.min(50L,delay);android.os.SystemClock.sleep(step);delay-=step;
+205 |                     }
+206 |                 }
+207 |                 if(copied<=0L||(expected>=0L&&copied!=expected))throw new IOException("Incomplete directory range");
+208 |                 out.getFD().sync();
+209 |             }
+210 |             checkDownloadBudget(paused,deadline);
+211 |             long length=offset+copied;
+212 |             if(status==206){
+213 |                 Properties next=new Properties();
+214 |                 next.setProperty("etag",tag);next.setProperty("location",location);
+215 |                 next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
+216 |                 writePropertiesAtomically(checkpoint,checkpointTemp,next);
+217 |                 if(length<total)return null;
+218 |                 // Preserve the final bytes before any digest/index work.
+219 |                 // Give a large completed range its own fresh validation slice.
+220 |                 if(!SourceProbeTimePolicy.fitsLiveDirectory(length))return null;
+221 |             }
+222 |             return publishRangeBody(directory,cached,partial,checkpoint,tag,paused,deadline);
+223 |         }finally{
+224 |             if(connection!=null)connection.disconnect();
+225 |             checkpointTemp.delete();
+226 |             // Uncommitted tail is truncated on next attempt, never trusted.
+227 |             if(!checkpoint.isFile())partial.delete();
+228 |         }
+229 |     }
+230 | 
+231 |     private static File publishRangeBody(File directory,File cached,File partial,File checkpoint,
+232 |             String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
+233 |         checkDownloadBudget(paused,deadline);
+234 |         // No partial body is ever parsed or published.
+235 |         if(!isPlaylistFile(partial)){
+236 |             clearRangeCheckpoint(checkpoint,partial);
+237 |             throw new IOException("Downloaded resource is not M3U");
+238 |         }
+239 |         String digest=contentDigest(partial,paused);
+240 |         checkDownloadBudget(paused,deadline);
+241 |         invalidateIndex(cached);
+242 |         File metadata=new File(cached.getPath()+".properties");
+243 |         if(metadata.exists()&&!metadata.delete())throw new IOException("Cannot invalidate old metadata");
+244 |         atomicReplace(partial,cached);
+245 |         Properties fresh=new Properties();
+246 |         describeBody(fresh,cached,digest);
+247 |         fresh.setProperty("cachedAt",Long.toString(System.currentTimeMillis()));
+248 |         if(tag!=null)fresh.setProperty("etag",tag);
+249 |         writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
+250 |         checkpoint.delete();
+251 |         pruneOldEntries(directory,cached);
+252 |         return cached;
+253 |     }
+254 | 
+255 |     private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
+256 |         // Remove the old authority before changing bytes. If removal fails,
+257 |         // do not overwrite the body under a still-valid old checkpoint.
+258 |         if(checkpoint.exists()&&!checkpoint.delete())throw new IOException("Cannot invalidate range checkpoint");
+259 |         if(partial.exists()&&!partial.delete())throw new IOException("Cannot remove old range body");
+260 |     }
+261 | 
+262 |     private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
+263 |             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
+264 |             boolean lowRate) throws IOException {
+265 |         SourceProbeTimePolicy.checkPaused(paused);
+266 |         long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES:MAX_BYTES;
+267 |         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
+268 |             throw new IllegalArgumentException("context/feedUrl is empty");
+269 |         }
+270 |         File directory = new File(context.getFilesDir(), "playlist-feed-cache");
+271 |         if (!directory.exists() && !directory.mkdirs()) {
+272 |             throw new IOException("Cannot create playlist cache directory");
+273 |         }
+274 |         String key = sha256((initialDiscovery ? "initial|" : "routine|") + feedUrl);
+275 |         File cached = new File(directory, key + ".m3u");
+276 |         File metadata = new File(directory, key + ".m3u.properties");
+277 |         Properties old = readProperties(metadata);
+278 |         if(lowRate&&cached.isFile()&&!SourceProbeTimePolicy.fitsLiveFullDirectory(cached.length()))
+279 |             throw new IOException("Directory exceeds stable-viewing size limit");
+280 |         boolean hasValidCache = cached.isFile() && cached.length() > 0L
+281 |                 && isPlaylistFile(cached);
+282 |         // Do not trust validators or index files after a body replacement crash,
+283 |         // eviction, or migration from an older cache format.
+284 |         if (hasValidCache && !matchesBody(old, cached)) {
+285 |             invalidateIndex(cached);
+286 |             old = new Properties();
+287 |             describeBody(old, cached, contentDigest(cached, paused));
+288 |             writePropertiesAtomically(metadata, new File(metadata.getPath()+".tmp"), old);
+289 |         } else if (!hasValidCache) {
+290 |             old = new Properties();
+291 |         }
+292 |         long cachedAt = parseLong(old.getProperty("cachedAt"), 0L);
+293 | 
+294 |         if (hasValidCache && (preserveExistingSnapshot
+295 |                 || (System.currentTimeMillis() - cachedAt >= 0L
+296 |                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
+297 |             metadata.setLastModified(System.currentTimeMillis());
+298 |             pruneOldEntries(directory, cached);
+299 |             return cached;
+300 |         }
+301 | 
+302 |         HttpURLConnection connection = null;
+303 |         File temporary = new File(directory, key + ".m3u.tmp");
+304 |         File metadataTemporary = new File(directory, key + ".m3u.properties.tmp");
+305 |         final long deadline = android.os.SystemClock.elapsedRealtime() + (lowRate?SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
+306 |         try {
+307 |             SourceProbeTimePolicy.checkPaused(paused);
+308 |             connection = (HttpURLConnection) new URL(feedUrl).openConnection();
+309 |             connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);
+310 |             connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
+311 |             connection.setInstanceFollowRedirects(true);
+312 |             connection.setUseCaches(false);
+313 |             connection.setRequestProperty("User-Agent", "MyTV/1.19 Android TV");
+314 |             connection.setRequestProperty("Accept", "*/*");
+315 |             String etag = old.getProperty("etag", "");
+316 |             String modified = old.getProperty("lastModified", "");
+317 |             // A validator is useful only when its matching cached body still exists.
+318 |             // Android may evict cache files independently of the metadata sidecar.
+319 |             if (hasValidCache && !etag.isEmpty()) {
+320 |                 connection.setRequestProperty("If-None-Match", etag);
+321 |             }
+322 |             if (hasValidCache && !modified.isEmpty()) {
+323 |                 connection.setRequestProperty("If-Modified-Since", modified);
+324 |             }
+325 | 
+326 |             int status = connection.getResponseCode();
+327 |             checkDownloadBudget(paused, deadline);
+328 |             if (status == HttpURLConnection.HTTP_NOT_MODIFIED && hasValidCache) {
+329 |                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
+330 |                 writePropertiesAtomically(metadata, metadataTemporary, old);
+331 |                 metadata.setLastModified(System.currentTimeMillis());
+332 |                 pruneOldEntries(directory, cached);
+333 |                 return cached;
+334 |             }
+335 |             if (status < 200 || status >= 300) {
+336 |                 throw new IOException("Playlist HTTP " + status);
+337 |             }
+338 | 
+339 |             long declaredLength = connection.getContentLength();
+340 |             if (declaredLength > maxBytes) {
+341 |                 throw new IOException("Playlist exceeds cache size limit");
+342 |             }
+343 |             long copied = 0L;
+344 |             MessageDigest digest = newDigest();
+345 |             try (InputStream input = new BufferedInputStream(connection.getInputStream());
+346 |                  FileOutputStream fileOutput = new FileOutputStream(temporary);
+347 |                  OutputStream output = new BufferedOutputStream(fileOutput)) {
+348 |                 byte[] buffer = new byte[lowRate?4096:32 * 1024];
+349 |                 final long readStarted=android.os.SystemClock.elapsedRealtime();
+350 |                 int count;
+351 |                 while (true) {
+352 |                     checkDownloadBudget(paused, deadline);
+353 |                     count = input.read(buffer);
+354 |                     checkDownloadBudget(paused, deadline);
+355 |                     if (count == -1) break;
+356 |                     copied += count;
+357 |                     if (copied > maxBytes) {
+358 |                         throw new IOException("Playlist exceeds cache size limit");
+359 |                     }
+360 |                     output.write(buffer, 0, count);
+361 |                     digest.update(buffer, 0, count);
+362 |                     if(lowRate){
+363 |                         long delay=SourceProbeTimePolicy.liveFullDirectoryPacingMillis(
+364 |                                 copied,android.os.SystemClock.elapsedRealtime()-readStarted);
+365 |                         while(delay>0L){
+366 |                             checkDownloadBudget(paused,deadline);
+367 |                             long step=Math.min(50L,delay);
+368 |                             android.os.SystemClock.sleep(step);
+369 |                             delay-=step;
+370 |                         }
+371 |                     }
+372 |                 }
+373 |                 output.flush();
+374 |                 fileOutput.getFD().sync();
+375 |             }
+376 |             if (copied == 0L || !isPlaylistFile(temporary)) {
+377 |                 throw new IOException("Downloaded resource is not a valid M3U playlist");
+378 |             }
+379 | 
+380 |             // The index is tied to the exact cached body. Remove it before replacing
+381 |             // that body so a later page can never seek into records from an older feed.
+382 |             checkDownloadBudget(paused, deadline);
+383 |             invalidateIndex(cached);
+384 |             // Remove the old body's metadata BEFORE the atomic replacement.
+385 |             // A crash leaves either the old or new body, with no stale validator.
+386 |             // The next obtain can reconstruct its content identity safely.
+387 |             if (metadata.exists() && !metadata.delete()) {
+388 |                 throw new IOException("Cannot invalidate old playlist metadata");
+389 |             }
+390 |             atomicReplace(temporary, cached);
+391 | 
+392 |             Properties fresh = new Properties();
+393 |             describeBody(fresh, cached, hex(digest.digest()));
+394 |             fresh.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
+395 |             String responseEtag = connection.getHeaderField("ETag");
+396 |             String responseModified = connection.getHeaderField("Last-Modified");
+397 |             if (responseEtag != null) fresh.setProperty("etag", responseEtag);
+398 |             if (responseModified != null) fresh.setProperty("lastModified", responseModified);
+399 |             writePropertiesAtomically(metadata, metadataTemporary, fresh);
+400 |             pruneOldEntries(directory, cached);
+401 |             return cached;
+402 |         } finally {
+403 |             if (connection != null) connection.disconnect();
+404 |             if (temporary.exists()) temporary.delete();
+405 |             if (metadataTemporary.exists()) metadataTemporary.delete();
+406 |         }
+407 |     }
+408 | 
+409 |     /** Stable viewing may read an already indexed, matching snapshot only.
+410 |      * No network, pruning, hash rebuild or index construction on this path. */
+411 |     public static File findIndexedInitial(Context context,String feedUrl) throws IOException {
+412 |         File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+413 |         File cached=new File(directory,sha256("initial|"+feedUrl)+".m3u");
+414 |         Properties metadata=readProperties(new File(cached.getPath()+".properties"));
+415 |         return matchesBody(metadata,cached)&&PlaylistFeedIndex.indexedEntryCount(cached)>=0
+416 |                 ?cached:null;
+417 |     }
+418 | 
+419 |     private static void checkDownloadBudget(java.util.function.BooleanSupplier paused,
+420 |                                             long deadline) throws IOException {
+421 |         SourceProbeTimePolicy.checkPaused(paused);
+422 |         if (android.os.SystemClock.elapsedRealtime() >= deadline)
+423 |             throw new IOException("Playlist download budget exceeded");
+424 |     }
+425 | 
+426 |     private static void invalidateIndex(File playlist) throws IOException {
+427 |         File records = new File(playlist.getAbsolutePath() + ".index-data");
+428 |         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
+429 |         if (records.exists() && !records.delete()) {
+430 |             throw new IOException("Cannot invalidate stale playlist record index");
+431 |         }
+432 |         if (offsets.exists() && !offsets.delete()) {
+433 |             throw new IOException("Cannot invalidate stale playlist offset index");
+434 |         }
+435 |     }
+436 | 
+437 |     /** Keep the app's private cache bounded even when many feeds are configured. */
+438 |     private static void pruneOldEntries(File directory, File keep) {
+439 |         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
+440 |         if (files == null || files.length == 0) return;
+441 |         long total = 0L;
+442 |         for (File file : files) total += cacheEntrySize(file);
+443 |         if (total <= MAX_CACHE_BYTES) return;
+444 |         java.util.Arrays.sort(files, (left, right) ->
+445 |                 Long.compare(lastAccess(left), lastAccess(right)));
+446 |         for (File file : files) {
+447 |             if (total <= MAX_CACHE_BYTES) break;
+448 |             if (file.equals(keep)) continue;
+449 |             long size = cacheEntrySize(file);
+450 |             if (!file.delete()) continue;
+451 |             deleteSidecar(file, ".index-data");
+452 |             deleteSidecar(file, ".index-offsets");
+453 |             deleteSidecar(file, ".index-data.tmp");
+454 |             deleteSidecar(file, ".index-offsets.tmp");
+455 |             deleteSidecar(file, ".properties");
+456 |             deleteSidecar(file, ".properties.tmp");
+457 |             total = Math.max(0L, total - size);
+458 |         }
+459 |     }
+460 | 
+461 |     private static long cacheEntrySize(File playlist) {
+462 |         long total = Math.max(0L, playlist.length());
+463 |         total += sidecarLength(playlist, ".index-data");
+464 |         total += sidecarLength(playlist, ".index-offsets");
+465 |         total += sidecarLength(playlist, ".properties");
+466 |         total += sidecarLength(playlist, ".index-data.tmp");
+467 |         total += sidecarLength(playlist, ".index-offsets.tmp");
+468 |         total += sidecarLength(playlist, ".properties.tmp");
+469 |         return total;
+470 |     }
+471 | 
+472 |     private static long sidecarLength(File playlist, String suffix) {
+473 |         File sidecar = new File(playlist.getAbsolutePath() + suffix);
+474 |         return sidecar.isFile() ? Math.max(0L, sidecar.length()) : 0L;
+475 |     }
+476 | 
+477 |     private static void deleteSidecar(File playlist, String suffix) {
+478 |         File sidecar = new File(playlist.getAbsolutePath() + suffix);
+479 |         if (sidecar.exists()) sidecar.delete();
+480 |     }
+481 | 
+482 |     private static boolean isPlaylistFile(File file) {
+483 |         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+484 |                 new FileInputStream(file), StandardCharsets.UTF_8))) {
+485 |             String first = reader.readLine();
+486 |             return first != null && first.replace("\uFEFF", "").trim().startsWith("#EXTM3U");
+487 |         } catch (IOException ignored) {
+488 |             return false;
+489 |         }
+490 |     }
+491 | 
+492 |     private static Properties readProperties(File file) {
+493 |         Properties properties = new Properties();
+494 |         if (!file.isFile()) return properties;
+495 |         try (InputStream input = new FileInputStream(file)) {
+496 |             properties.load(input);
+497 |         } catch (IOException | IllegalArgumentException ignored) {
+498 |             // Never trust even the successfully parsed prefix of corrupt metadata.
+499 |             properties.clear();
+500 |         }
+501 |         return properties;
+502 |     }
+503 | 
+504 |     private static void writePropertiesAtomically(File target, File temporary,
+505 |                                                    Properties properties) throws IOException {
+506 |         try (FileOutputStream output = new FileOutputStream(temporary)) {
+507 |             properties.store(output, "My TV playlist cache metadata");
+508 |             output.flush();
+509 |             output.getFD().sync();
+510 |         }
+511 |         atomicReplace(temporary, target);
+512 |     }
+513 | 
+514 |     /** Version identifies the exact cached feed body and its URL-derived slot. */
+515 |     public static String contentVersion(File playlist) throws IOException {
+516 |         Properties properties = readProperties(new File(playlist.getPath()+".properties"));
+517 |         if (!matchesBody(properties, playlist))
+518 |             throw new IOException("Playlist content identity is unavailable");
+519 |         return playlist.getName()+":"+properties.getProperty("bodySha256");
+520 |     }
+521 | 
+522 |     private static boolean matchesBody(Properties p, File body) {
+523 |         String digest=p.getProperty("bodySha256","");
+524 |         return body.isFile() && digest.matches("[0-9a-f]{64}")
+525 |             && parseLong(p.getProperty("bodyLength"),-1L)==body.length()
+526 |             && parseLong(p.getProperty("bodyModified"),-1L)==body.lastModified();
+527 |     }
+528 | 
+529 |     private static void describeBody(Properties p, File body, String digest) {
+530 |         p.setProperty("bodySha256",digest);
+531 |         p.setProperty("bodyLength",Long.toString(body.length()));
+532 |         p.setProperty("bodyModified",Long.toString(body.lastModified()));
+533 |     }
+534 | 
+535 |     private static long lastAccess(File body) {
+536 |         File metadata=new File(body.getPath()+".properties");
+537 |         return Math.max(body.lastModified(),metadata.lastModified());
+538 |     }
+539 | 
+540 |     private static String contentDigest(File body, java.util.function.BooleanSupplier paused)
+541 |             throws IOException {
+542 |         MessageDigest digest=newDigest();
+543 |         try (InputStream input=new BufferedInputStream(new FileInputStream(body))) {
+544 |             byte[] buffer=new byte[32*1024];
+545 |             while(true) {
+546 |                 SourceProbeTimePolicy.checkPaused(paused);
+547 |                 int n=input.read(buffer);
+548 |                 if(n<0)break;
+549 |                 digest.update(buffer,0,n);
+550 |             }
+551 |         }
+552 |         return hex(digest.digest());
+553 |     }
+554 | 
+555 |     private static MessageDigest newDigest() throws IOException {
+556 |         try { return MessageDigest.getInstance("SHA-256"); }
+557 |         catch(java.security.NoSuchAlgorithmException failure) {
+558 |             throw new IOException("SHA-256 unavailable",failure);
+559 |         }
+560 |     }
+561 | 
+562 |     private static String hex(byte[] digest) {
+563 |         char[] alphabet="0123456789abcdef".toCharArray();
+564 |         char[] result=new char[digest.length*2];
+565 |         for(int i=0;i<digest.length;i++) {
+566 |             int value=digest[i]&255;
+567 |             result[i*2]=alphabet[value>>>4];
+568 |             result[i*2+1]=alphabet[value&15];
+569 |         }
+570 |         return new String(result);
+571 |     }
+572 | 
+573 |     private static void atomicReplace(File temporary,File target) throws IOException {
+574 |         // Both paths are in the same private directory; POSIX rename replaces
+575 |         // the destination atomically, without an unlink-first failure window.
+576 |         try { android.system.Os.rename(temporary.getAbsolutePath(),target.getAbsolutePath()); }
+577 |         catch(android.system.ErrnoException failure) {
+578 |             throw new IOException("Cannot atomically replace playlist cache file",failure);
+579 |         }
+580 |     }
+581 | 
+582 |     private static long parseLong(String value, long fallback) {
+583 |         try {
+584 |             return Long.parseLong(value);
+585 |         } catch (Exception ignored) {
+586 |             return fallback;
+587 |         }
+588 |     }
+589 | 
+590 |     private static String sha256(String value) throws IOException {
+591 |         try {
+592 |             byte[] digest = MessageDigest.getInstance("SHA-256")
+593 |                     .digest(value.getBytes(StandardCharsets.UTF_8));
+594 |             StringBuilder result = new StringBuilder(digest.length * 2);
+595 |             for (byte item : digest) result.append(String.format("%02x", item & 0xff));
+596 |             return result.toString();
+597 |         } catch (Exception error) {
+598 |             throw new IOException("SHA-256 is unavailable", error);
+599 |         }
+600 |     }
+601 | }
+602 | 
+
+===== app/src/main/java/com/wodedianshi/tv/PlaylistFeedIndex.java | blob 1edfd4e2f44d2b93e0e8dec55e9e438ee202b64e =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import java.io.BufferedReader;
+4 | import java.io.File;
+5 | import java.io.FileInputStream;
+6 | import java.io.IOException;
+7 | import java.io.InputStreamReader;
+8 | import java.io.RandomAccessFile;
+9 | import java.nio.charset.StandardCharsets;
+10 | import java.util.ArrayList;
+11 | import java.util.List;
+12 | 
+13 | /**
+14 |  * One-time random-access index for a cached M3U snapshot.
+15 |  *
+16 |  * The first pass parses the playlist and writes compact channel records plus
+17 |  * a count-checked fixed-width offset table. Later WorkManager pages seek
+18 |  * directly to the next record instead of reparsing the entire prefix.
+19 |  */
+20 | public final class PlaylistFeedIndex {
+21 |     private static final int OFFSET_INDEX_MAGIC = 0x4D545649; // MTVI
+22 |     private static final long OFFSET_HEADER_BYTES = 12L;
+23 | 
+24 |     private PlaylistFeedIndex() { }
+25 | 
+26 |     public static int readPage(File playlist, int startEntry, int maxEntries,
+27 |                                PlaylistParser.EntryConsumer consumer) throws IOException {
+28 |         return readPage(playlist, startEntry, maxEntries, consumer, () -> false);
+29 |     }
+30 | 
+31 |     public static int readPage(File playlist, int startEntry, int maxEntries,
+32 |                                PlaylistParser.EntryConsumer consumer,
+33 |                                java.util.function.BooleanSupplier paused) throws IOException {
+34 |         SourceProbeTimePolicy.checkPaused(paused);
+35 |         if (playlist == null || !playlist.isFile() || startEntry < 0
+36 |                 || maxEntries <= 0 || consumer == null) {
+37 |             throw new IllegalArgumentException("Invalid playlist page arguments");
+38 |         }
+39 |         File records = new File(playlist.getAbsolutePath() + ".index-data");
+40 |         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
+41 |         if (!isUsableIndex(records, offsets)) {
+42 |             deleteIndex(records, offsets);
+43 |             buildIndex(playlist, records, offsets, paused);
+44 |         }
+45 | 
+46 |         // Decode the whole page before invoking the consumer. If a sidecar is
+47 |         // corrupt halfway through, rebuilding cannot duplicate partial emissions.
+48 |         List<PlaylistParser.ChannelSource> page;
+49 |         try {
+50 |             page = readIndexedPage(records, offsets, startEntry, maxEntries);
+51 |         } catch (IOException corruptIndex) {
+52 |             deleteIndex(records, offsets);
+53 |             buildIndex(playlist, records, offsets, paused);
+54 |             // A second failure is a real I/O/source-data problem; preserve the cursor.
+55 |             page = readIndexedPage(records, offsets, startEntry, maxEntries);
+56 |         }
+57 |         SourceProbeTimePolicy.checkPaused(paused);
+58 |         for (PlaylistParser.ChannelSource source : page) consumer.accept(source);
+59 |         return page.size();
+60 |     }
+61 | 
+62 |     /** No rebuilding while viewing; a damaged index is deferred to idle work. */
+63 |     public static int readExistingPage(File playlist,int startEntry,int maxEntries,
+64 |             PlaylistParser.EntryConsumer consumer,java.util.function.BooleanSupplier paused) throws IOException {
+65 |         SourceProbeTimePolicy.checkPaused(paused);
+66 |         File records=new File(playlist.getAbsolutePath()+".index-data");
+67 |         File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
+68 |         if(!isUsableIndex(records,offsets))throw new IOException("Cached index unavailable");
+69 |         List<PlaylistParser.ChannelSource> page=readIndexedPage(records,offsets,startEntry,maxEntries);
+70 |         for(PlaylistParser.ChannelSource source:page){
+71 |             SourceProbeTimePolicy.checkPaused(paused);
+72 |             consumer.accept(source);
+73 |         }
+74 |         return page.size();
+75 |     }
+76 | 
+77 |     /**
+78 |      * Cheap, checked entry count from the already built feed index. Do not
+79 |      * claim a fractional percentage if the cache/index is missing or corrupt.
+80 |      */
+81 |     public static int indexedEntryCount(File playlist) {
+82 |         if (playlist == null) return -1;
+83 |         File records = new File(playlist.getAbsolutePath() + ".index-data");
+84 |         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
+85 |         if (!isUsableIndex(records, offsets)) return -1;
+86 |         try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
+87 |             if (input.readInt() != OFFSET_INDEX_MAGIC) return -1;
+88 |             long count = input.readLong();
+89 |             return count >= 0L && count <= Integer.MAX_VALUE ? (int)count : -1;
+90 |         } catch (IOException ignored) {
+91 |             return -1;
+92 |         }
+93 |     }
+94 | 
+95 |     private static List<PlaylistParser.ChannelSource> readIndexedPage(
+96 |             File records, File offsets, int startEntry, int maxEntries) throws IOException {
+97 |         List<PlaylistParser.ChannelSource> page = new ArrayList<>();
+98 |         try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r");
+99 |              RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
+100 |             if (offsetFile.readInt() != OFFSET_INDEX_MAGIC) {
+101 |                 throw new IOException("Playlist index header is invalid");
+102 |             }
+103 |             long count = offsetFile.readLong();
+104 |             if (count < 0L || count > Integer.MAX_VALUE
+105 |                     || offsetFile.length() != OFFSET_HEADER_BYTES + count * 8L) {
+106 |                 throw new IOException("Playlist index count does not match offset table");
+107 |             }
+108 |             if (startEntry >= count) return page;
+109 |             int emitted = (int) Math.min((long) maxEntries, count - startEntry);
+110 |             long recordsLength = recordFile.length();
+111 |             long previousOffset = -1L;
+112 |             for (int i = 0; i < emitted; i++) {
+113 |                 offsetFile.seek(OFFSET_HEADER_BYTES + ((long) startEntry + i) * 8L);
+114 |                 long recordOffset = offsetFile.readLong();
+115 |                 if (recordOffset <= previousOffset || recordOffset < 0L
+116 |                         || recordOffset >= recordsLength) {
+117 |                     throw new IOException("Playlist index offset is invalid");
+118 |                 }
+119 |                 previousOffset = recordOffset;
+120 |                 recordFile.seek(recordOffset);
+121 |                 page.add(readRecord(recordFile));
+122 |             }
+123 |         }
+124 |         return page;
+125 |     }
+126 | 
+127 |     private static boolean isUsableIndex(File records, File offsets) {
+128 |         if (!records.isFile() || !offsets.isFile()
+129 |                 || offsets.length() < OFFSET_HEADER_BYTES
+130 |                 || (offsets.length() - OFFSET_HEADER_BYTES) % 8L != 0L) {
+131 |             return false;
+132 |         }
+133 |         try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
+134 |             if (input.readInt() != OFFSET_INDEX_MAGIC) return false;
+135 |             long count = input.readLong();
+136 |             return count >= 0L && count <= Integer.MAX_VALUE
+137 |                     && offsets.length() == OFFSET_HEADER_BYTES + count * 8L;
+138 |         } catch (IOException ignored) {
+139 |             return false;
+140 |         }
+141 |     }
+142 | 
+143 |     private static void deleteIndex(File records, File offsets) throws IOException {
+144 |         if (records.exists() && !records.delete()) {
+145 |             throw new IOException("Cannot remove corrupt playlist record index");
+146 |         }
+147 |         if (offsets.exists() && !offsets.delete()) {
+148 |             throw new IOException("Cannot remove corrupt playlist offset index");
+149 |         }
+150 |     }
+151 | 
+152 |     private static void buildIndex(File playlist, File records, File offsets,
+153 |             java.util.function.BooleanSupplier paused) throws IOException {
+154 |         File recordsTemporary = new File(records.getAbsolutePath() + ".tmp");
+155 |         File offsetsTemporary = new File(offsets.getAbsolutePath() + ".tmp");
+156 |         final IOException[] writeFailure = new IOException[1];
+157 |         final long[] written = new long[1];
+158 | 
+159 |         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+160 |                      new FileInputStream(playlist), StandardCharsets.UTF_8), 8192);
+161 |              RandomAccessFile recordFile = new RandomAccessFile(recordsTemporary, "rw");
+162 |              RandomAccessFile offsetFile = new RandomAccessFile(offsetsTemporary, "rw")) {
+163 |             recordFile.setLength(0L);
+164 |             offsetFile.setLength(0L);
+165 |             offsetFile.writeInt(OFFSET_INDEX_MAGIC);
+166 |             offsetFile.writeLong(0L); // Filled after the complete index is written.
+167 |             String header = reader.readLine();
+168 |             if (header == null || !header.replace("\uFEFF", "").trim().startsWith("#EXTM3U")) {
+169 |                 throw new IOException("Cached resource is not a valid M3U playlist");
+170 |             }
+171 |             PlaylistParser.parseEach(reader, 0, Integer.MAX_VALUE, source -> {
+172 |                 if (writeFailure[0] != null) return;
+173 |                 try {
+174 |                     offsetFile.writeLong(recordFile.getFilePointer());
+175 |                     writeRecord(recordFile, source);
+176 |                     written[0]++;
+177 |                 } catch (IOException error) {
+178 |                     writeFailure[0] = error;
+179 |                 }
+180 |             }, paused);
+181 |             SourceProbeTimePolicy.checkPaused(paused);
+182 |             if (writeFailure[0] != null) throw writeFailure[0];
+183 |             offsetFile.seek(4L);
+184 |             offsetFile.writeLong(written[0]);
+185 |             if (offsetFile.length() != OFFSET_HEADER_BYTES + written[0] * 8L) {
+186 |                 throw new IOException("Playlist index offset count mismatch");
+187 |             }
+188 |             offsetFile.getFD().sync();
+189 |             recordFile.getFD().sync();
+190 |         } catch (IOException error) {
+191 |             recordsTemporary.delete();
+192 |             offsetsTemporary.delete();
+193 |             throw error;
+194 |         }
+195 | 
+196 |         // If the process stops between the two renames, the incomplete pair
+197 |         // fails the header/count validation and is rebuilt on the next read.
+198 |         if (records.exists() && !records.delete()) {
+199 |             recordsTemporary.delete();
+200 |             offsetsTemporary.delete();
+201 |             throw new IOException("Cannot replace playlist record index");
+202 |         }
+203 |         if (offsets.exists() && !offsets.delete()) {
+204 |             recordsTemporary.delete();
+205 |             offsetsTemporary.delete();
+206 |             throw new IOException("Cannot replace playlist offset index");
+207 |         }
+208 |         if (!recordsTemporary.renameTo(records)) {
+209 |             offsetsTemporary.delete();
+210 |             throw new IOException("Cannot publish playlist record index");
+211 |         }
+212 |         if (!offsetsTemporary.renameTo(offsets)) {
+213 |             records.delete();
+214 |             throw new IOException("Cannot publish playlist offset index");
+215 |         }
+216 |     }
+217 | 
+218 |     private static void writeRecord(RandomAccessFile output,
+219 |                                     PlaylistParser.ChannelSource source) throws IOException {
+220 |         output.writeUTF(source.name);
+221 |         output.writeUTF(source.url);
+222 |         output.writeUTF(source.group);
+223 |         output.writeUTF(source.tvgId);
+224 |         output.writeUTF(source.tvgName);
+225 |     }
+226 | 
+227 |     private static PlaylistParser.ChannelSource readRecord(RandomAccessFile input)
+228 |             throws IOException {
+229 |         return PlaylistParser.indexedSource(input.readUTF(), input.readUTF(),
+230 |                 input.readUTF(), input.readUTF(), input.readUTF());
+231 |     }
+232 | }
+233 | 
+
+===== app/src/main/java/com/wodedianshi/tv/PlaylistParser.java | blob 99d3354555e2b1e25daa92f61d3eec6ba1ddb67e =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import java.io.BufferedReader;
+4 | import java.io.IOException;
+5 | import java.io.Reader;
+6 | import java.io.StringReader;
+7 | import java.util.ArrayList;
+8 | import java.util.Collections;
+9 | import java.util.List;
+10 | import java.util.regex.Matcher;
+11 | import java.util.regex.Pattern;
+12 | 
+13 | /** Pure M3U parser shared by discovery and deterministic unit tests. */
+14 | public final class PlaylistParser {
+15 |     private static final Pattern TVG_NAME = Pattern.compile("(?i)(?:^|\\s)tvg-name\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+16 |     private static final Pattern TVG_ID = Pattern.compile("(?i)(?:^|\\s)tvg-id\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+17 |     private static final Pattern GROUP_TITLE = Pattern.compile("(?i)(?:^|\\s)group-title\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
+18 | 
+19 |     private PlaylistParser() {}
+20 | 
+21 |     public static final class ChannelSource {
+22 |         public final String name;
+23 |         public final String url;
+24 |         public final String group;
+25 |         public final String tvgId;
+26 |         public final String tvgName;
+27 | 
+28 |         private ChannelSource(String name, String url, String group, String tvgId, String tvgName) {
+29 |             this.name = name;
+30 |             this.url = url;
+31 |             this.group = group;
+32 |             this.tvgId = tvgId;
+33 |             this.tvgName = tvgName;
+34 |         }
+35 |     }
+36 | 
+37 |     public interface EntryConsumer {
+38 |         void accept(ChannelSource entry);
+39 |     }
+40 | 
+41 |     /** Recreate a parser record from the private on-disk playlist index. */
+42 |     public static ChannelSource indexedSource(String name, String url, String group,
+43 |                                               String tvgId, String tvgName) {
+44 |         return new ChannelSource(name, url, group, tvgId, tvgName);
+45 |     }
+46 | 
+47 |     public static List<ChannelSource> parse(String data, int maxEntries) {
+48 |         if (data == null || data.isEmpty() || maxEntries <= 0) return Collections.emptyList();
+49 |         ArrayList<ChannelSource> result = new ArrayList<>();
+50 |         parseEach(data, maxEntries, result::add);
+51 |         return result;
+52 |     }
+53 | 
+54 |     /** Compatibility overload for callers that already have an in-memory string. */
+55 |     public static int parseEach(String data, int maxEntries, EntryConsumer consumer) {
+56 |         if (data == null || data.isEmpty() || maxEntries <= 0 || consumer == null) return 0;
+57 |         try {
+58 |             return parseEach(new StringReader(data), maxEntries, consumer);
+59 |         } catch (IOException impossible) {
+60 |             // StringReader never performs I/O; keep the historical no-throws API.
+61 |             throw new IllegalStateException("Unexpected StringReader failure", impossible);
+62 |         }
+63 |     }
+64 | 
+65 |     /**
+66 |      * Parse directly from a stream without materializing the complete playlist or
+67 |      * a split-line array. The caller owns and closes the Reader.
+68 |      */
+69 |     public static int parseEach(Reader source, int maxEntries, EntryConsumer consumer)
+70 |             throws IOException {
+71 |         return parseEach(source, 0, maxEntries, consumer);
+72 |     }
+73 | 
+74 |     /** Stream a bounded page from a playlist; skipEntries counts valid HTTP entries. */
+75 |     public static int parseEach(Reader source, int skipEntries, int maxEntries,
+76 |                                 EntryConsumer consumer) throws IOException {
+77 |         return parseEach(source, skipEntries, maxEntries, consumer, () -> false);
+78 |     }
+79 | 
+80 |     public static int parseEach(Reader source, int skipEntries, int maxEntries,
+81 |                                 EntryConsumer consumer, java.util.function.BooleanSupplier paused)
+82 |             throws IOException {
+83 |         if (source == null || skipEntries < 0 || maxEntries <= 0 || consumer == null) return 0;
+84 |         SourceProbeTimePolicy.checkPaused(paused);
+85 |         BufferedReader reader = source instanceof BufferedReader
+86 |                 ? (BufferedReader) source : new BufferedReader(source, 8192);
+87 |         String name = null;
+88 |         String group = "";
+89 |         String pendingGroup = "";
+90 |         boolean groupTitlePresent = false;
+91 |         String tvgId = "";
+92 |         String tvgName = "";
+93 |         ChannelSource lastEntry = null;
+94 |         int emitted = 0;
+95 |         int skipped = 0;
+96 |         String rawLine;
+97 |         while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
+98 |             SourceProbeTimePolicy.checkPaused(paused);
+99 |             String line = rawLine.replace("\uFEFF", "").trim();
+100 |             if (line.isEmpty()) continue;
+101 |             if (line.startsWith("#EXTBURL:")) {
+102 |                 // Some maintained IPTV aggregators publish backup URLs as a
+103 |                 // non-standard tag immediately after the primary channel URL.
+104 |                 // Emit them as separate candidates with the same channel identity
+105 |                 // so the normal merge/quality policy can attach them as backups.
+106 |                 String backupUrl = line.substring("#EXTBURL:".length()).trim();
+107 |                 if (lastEntry != null && isHttpUrl(backupUrl)) {
+108 |                     ChannelSource backup = new ChannelSource(lastEntry.name, backupUrl,
+109 |                             lastEntry.group, lastEntry.tvgId, lastEntry.tvgName);
+110 |                     if (skipped < skipEntries) {
+111 |                         skipped++;
+112 |                     } else {
+113 |                         consumer.accept(backup);
+114 |                         emitted++;
+115 |                     }
+116 |                 }
+117 |                 continue;
+118 |             }
+119 |             if (line.startsWith("#EXTGRP:")) {
+120 |                 String extGroup = line.substring(8).trim();
+121 |                 if (name != null) {
+122 |                     if (!groupTitlePresent) group = extGroup;
+123 |                 } else {
+124 |                     pendingGroup = extGroup;
+125 |                 }
+126 |                 continue;
+127 |             }
+128 |             if (line.startsWith("#EXTINF")) {
+129 |                 lastEntry = null;
+130 |                 int comma = firstCommaOutsideQuotes(line);
+131 |                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
+132 |                 if (name.isEmpty()) {
+133 |                     Matcher matcher = TVG_NAME.matcher(line);
+134 |                     if (matcher.find()) name = attributeValue(matcher).trim();
+135 |                 }
+136 |                 if (name.isEmpty()) name = "未命名频道";
+137 |                 Matcher idMatcher = TVG_ID.matcher(line);
+138 |                 tvgId = idMatcher.find() ? attributeValue(idMatcher).trim() : "";
+139 |                 Matcher tvgNameMatcher = TVG_NAME.matcher(line);
+140 |                 tvgName = tvgNameMatcher.find() ? attributeValue(tvgNameMatcher).trim() : "";
+141 |                 group = pendingGroup;
+142 |                 pendingGroup = "";
+143 |                 groupTitlePresent = false;
+144 |                 Matcher groupMatcher = GROUP_TITLE.matcher(line);
+145 |                 if (groupMatcher.find() && !attributeValue(groupMatcher).trim().isEmpty()) {
+146 |                     group = attributeValue(groupMatcher).trim();
+147 |                     groupTitlePresent = true;
+148 |                 }
+149 |             } else if (!line.startsWith("#")
+150 |                     && (line.startsWith("http://") || line.startsWith("https://"))) {
+151 |                 if (name != null && !name.trim().isEmpty()) {
+152 |                     lastEntry = new ChannelSource(name, line, group, tvgId, tvgName);
+153 |                     if (skipped < skipEntries) {
+154 |                         skipped++;
+155 |                     } else {
+156 |                         consumer.accept(lastEntry);
+157 |                         emitted++;
+158 |                     }
+159 |                 }
+160 |                 name = null;
+161 |                 group = "";
+162 |                 groupTitlePresent = false;
+163 |                 tvgId = "";
+164 |                 tvgName = "";
+165 |             }
+166 |         }
+167 |         SourceProbeTimePolicy.checkPaused(paused);
+168 |         return emitted;
+169 |     }
+170 | 
+171 |     private static String attributeValue(Matcher matcher) {
+172 |         String quoted = matcher.group(1);
+173 |         return quoted != null ? quoted : matcher.group(2);
+174 |     }
+175 | 
+176 |     private static boolean isHttpUrl(String value) {
+177 |         return value != null && (value.startsWith("http://") || value.startsWith("https://"));
+178 |     }
+179 | 
+180 |     private static int firstCommaOutsideQuotes(String line) {
+181 |         boolean quoted = false;
+182 |         for (int i = 0; i < line.length(); i++) {
+183 |             char ch = line.charAt(i);
+184 |             if (ch == '"') quoted = !quoted;
+185 |             else if (ch == ',' && !quoted) return i;
+186 |         }
+187 |         return -1;
+188 |     }
+189 | }
+190 | 
+
+===== app/src/main/java/com/wodedianshi/tv/HlsVariantPolicy.java | blob b0f82920db07ce146ab2dde76ad9df981956bce9 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import java.net.URL;
+4 | import java.util.ArrayList;
+5 | import java.util.Collections;
+6 | import java.util.Comparator;
+7 | import java.util.regex.Matcher;
+8 | import java.util.regex.Pattern;
+9 | 
+10 | /** Bounded, deterministic ordering of playable HLS media renditions. */
+11 | public final class HlsVariantPolicy {
+12 |     private static final int MAX_VARIANTS = 8;
+13 |     private static final Pattern BANDWIDTH = Pattern.compile("(?:^|[, :])BANDWIDTH=(\\d+)");
+14 |     private static final Pattern RESOLUTION = Pattern.compile("(?:^|[, :])RESOLUTION=(\\d+)x(\\d+)");
+15 | 
+16 |     private HlsVariantPolicy() {}
+17 | 
+18 |     public static final class Variant {
+19 |         public final String url;
+20 |         public final long bandwidth;
+21 |         public final int width;
+22 |         public final int height;
+23 | 
+24 |         public Variant(String url, long bandwidth, int width, int height) {
+25 |             this.url = url;
+26 |             this.bandwidth = bandwidth;
+27 |             this.width = width;
+28 |             this.height = height;
+29 |         }
+30 |     }
+31 | 
+32 |     /** True only when the payload begins with the HLS playlist marker (BOM/space tolerant). */
+33 |     public static boolean isPlaylist(String manifest) {
+34 |         return manifest != null && manifest.replace(String.valueOf((char)0xFEFF), "").trim().startsWith("#EXTM3U");
+35 |     }
+36 | 
+37 |     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
+38 |         ArrayList<Variant> variants = new ArrayList<>();
+39 |         if (manifest == null || finalManifestUrl == null) return variants;
+40 |         String[] lines = manifest.replace("\r", "").split("\n");
+41 |         for (int i = 0; i < lines.length; i++) {
+42 |             String line = lines[i].trim();
+43 |             if (!line.startsWith("#EXT-X-STREAM-INF:")) continue;
+44 |             long bandwidth = 0L;
+45 |             int width = 0, height = 0;
+46 |             Matcher bm = BANDWIDTH.matcher(line.substring("#EXT-X-STREAM-INF:".length()));
+47 |             if (bm.find()) {
+48 |                 try { bandwidth = Long.parseLong(bm.group(1)); } catch (NumberFormatException ignored) {}
+49 |             }
+50 |             Matcher rm = RESOLUTION.matcher(line.substring("#EXT-X-STREAM-INF:".length()));
+51 |             if (rm.find()) {
+52 |                 try { width = Integer.parseInt(rm.group(1)); height = Integer.parseInt(rm.group(2)); }
+53 |                 catch (NumberFormatException ignored) {}
+54 |             }
+55 | 
+56 |             // RFC 8216 places the URI on the next non-empty line. Do not scan
+57 |             // past another tag: doing so can bind a malformed rendition to the
+58 |             // following rendition's URI and create duplicate/wrong fallbacks.
+59 |             String child = "";
+60 |             for (int j = i + 1; j < lines.length; j++) {
+61 |                 String candidate = lines[j].trim();
+62 |                 if (candidate.isEmpty()) continue;
+63 |                 if (candidate.startsWith("#")) break;
+64 |                 child = candidate;
+65 |                 break;
+66 |             }
+67 |             if (!child.isEmpty()) {
+68 |                 variants.add(new Variant(new URL(new URL(finalManifestUrl), child).toString(),
+69 |                         bandwidth, width, height));
+70 |             }
+71 |         }
+72 |         Collections.sort(variants, new Comparator<Variant>() {
+73 |             @Override public int compare(Variant a, Variant b) {
+74 |                 return Long.compare(b.bandwidth, a.bandwidth);
+75 |             }
+76 |         });
+77 |         if (variants.size() > MAX_VARIANTS) {
+78 |             return new ArrayList<>(variants.subList(0, MAX_VARIANTS));
+79 |         }
+80 |         return variants;
+81 |     }
+82 | }
+
+===== app/src/main/java/com/wodedianshi/tv/HlsMediaPlaylistPolicy.java | blob e150b6b77e4e752a4ee4aed8cfa8fbf6fd162e77 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import java.net.URL;
+4 | import java.util.ArrayList;
+5 | import java.util.Locale;
+6 | import java.util.regex.Matcher;
+7 | import java.util.regex.Pattern;
+8 | 
+9 | /** Extracts bounded media/init resources and conservative encryption metadata from HLS playlists. */
+10 | public final class HlsMediaPlaylistPolicy {
+11 |     private static final int MAX_MEDIA_SEGMENTS = 4;
+12 |     private static final Pattern URI_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*URI=\\\"([^\\\"]+)\\\"");
+13 |     private static final Pattern METHOD_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*METHOD=([^,\\s]+)");
+14 |     private static final Pattern IV_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*IV=([^,\\s]+)");
+15 |     private static final Pattern KEYFORMAT_ATTRIBUTE = Pattern.compile("(?:^|,)\\s*KEYFORMAT=\\\"([^\\\"]+)\\\"");
+16 |     private HlsMediaPlaylistPolicy() {}
+17 | 
+18 |     public static final class Resources {
+19 |         public final String initializationUrl;
+20 |         public final boolean unsupportedInitializationByteRange;
+21 |         public final boolean unsupportedInitializationMap;
+22 |         public final boolean aes128Encrypted;
+23 |         public final String encryptionKeyUrl;
+24 |         public final String encryptionIv;
+25 |         public final long firstMediaSequenceNumber;
+26 |         public final boolean unsupportedEncryption;
+27 |         public final ArrayList<String> mediaUrls;
+28 |         Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
+29 |                   String iv, long firstSequence, boolean encryptionUnsupported, ArrayList<String> media) {
+30 |             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
+31 |             unsupportedInitializationMap=mapUnsupported;
+32 |             aes128Encrypted=aes128; encryptionKeyUrl=keyUrl; encryptionIv=iv;
+33 |             firstMediaSequenceNumber=firstSequence;
+34 |             unsupportedEncryption=encryptionUnsupported; mediaUrls=media;
+35 |         }
+36 |     }
+37 | 
+38 |     public static Resources parse(String playlist, String finalPlaylistUrl) throws Exception {
+39 |         ArrayList<String> media = new ArrayList<>();
+40 |         String initialization = null, activeKeyUrl = null, aesKeyUrl = null, activeIv = null, aesIv = null;
+41 |         boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
+42 |         boolean activeKeyHasExplicitIv = false, hasFirstSequence = false;
+43 |         long mediaSequence = 0L, nextSequence = 0L, firstSequence = 0L;
+44 |         if (playlist == null || finalPlaylistUrl == null)
+45 |             return new Resources(null,false,false,false,null,null,0L,false,media);
+46 |         String[] lines = playlist.replace("\\r", "").split("\\n");
+47 |         // Continue scanning the bounded playlist after the media URL cap is reached: key
+48 |         // rotation or METHOD=NONE may appear later and must not be missed.
+49 |         for (int i=0;i<lines.length;i++) {
+50 |             String line=lines[i].trim();
+51 |             if(line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+52 |                 try {
+53 |                     long parsed=Long.parseLong(line.substring("#EXT-X-MEDIA-SEQUENCE:".length()).trim());
+54 |                     if(parsed<0L)unsupportedEncryption=true;
+55 |                     else { mediaSequence=parsed; nextSequence=parsed; }
+56 |                 } catch(NumberFormatException invalid) { unsupportedEncryption=true; }
+57 |             } else if(line.startsWith("#EXT-X-KEY:")) {
+58 |                 String attrs=line.substring("#EXT-X-KEY:".length());
+59 |                 String method=attribute(METHOD_ATTRIBUTE,attrs);
+60 |                 String format=attribute(KEYFORMAT_ATTRIBUTE,attrs);
+61 |                 if("NONE".equals(method)) {
+62 |                     // Resources expose one encryption timeline only; do not probe a mixed
+63 |                     // encrypted/clear playlist using a stale key.
+64 |                     if(aes128) unsupportedEncryption=true;
+65 |                     activeKeyUrl=null; activeIv=null; activeKeyHasExplicitIv=false;
+66 |                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
+67 |                     String uri=uriAttribute(attrs);
+68 |                     String resolved=resolve(uri,finalPlaylistUrl);
+69 |                     if(resolved==null) unsupportedEncryption=true;
+70 |                     else {
+71 |                         String iv=attribute(IV_ATTRIBUTE,attrs);
+72 |                         if(iv!=null&&!isValidIv(iv))unsupportedEncryption=true;
+73 |                         String normalizedIv=iv==null?null:iv.toLowerCase(Locale.ROOT);
+74 |                         if(aesKeyUrl!=null && (!aesKeyUrl.equals(resolved)
+75 |                                 || (aesIv==null?normalizedIv!=null:!aesIv.equals(normalizedIv))))
+76 |                             unsupportedEncryption=true;
+77 |                         aesKeyUrl=resolved; aesIv=normalizedIv;
+78 |                         activeKeyUrl=resolved; activeIv=normalizedIv;
+79 |                         activeKeyHasExplicitIv=normalizedIv!=null; aes128=true;
+80 |                     }
+81 |                 } else {
+82 |                     // SAMPLE-AES, DRM key formats and unknown methods are not
+83 |                     // treated as clear media; fail closed during source preflight.
+84 |                     unsupportedEncryption=true;
+85 |                 }
+86 |             } else if(line.startsWith("#EXT-X-MAP:")) {
+87 |                 String attrs=line.substring("#EXT-X-MAP:".length());
+88 |                 String mapUrl=resolve(uriAttribute(attrs),finalPlaylistUrl);
+89 |                 if(mapUrl==null) {
+90 |                     unsupportedMap=true; initialization=null;
+91 |                     if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*"))unsupportedMapRange=true;
+92 |                 } else if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*")) {
+93 |                     unsupportedMapRange=true; initialization=null;
+94 |                 } else {
+95 |                     if(initialization!=null&&!initialization.equals(mapUrl))unsupportedMap=true;
+96 |                     // RFC 8216 requires an explicit IV for an AES-128 encrypted EXT-X-MAP.
+97 |                     if(activeKeyUrl!=null&&!activeKeyHasExplicitIv)unsupportedEncryption=true;
+98 |                     initialization=mapUrl;
+99 |                 }
+100 |             } else if(line.startsWith("#EXT-X-PART:")) {
+101 |                 String attrs=line.substring("#EXT-X-PART:".length());
+102 |                 if(activeKeyUrl!=null) {
+103 |                     // This bounded probe does not map LL-HLS parts to media sequence IVs.
+104 |                     unsupportedEncryption=true;
+105 |                 } else if(!attrs.contains("BYTERANGE=")) {
+106 |                     String uri=uriAttribute(attrs);
+107 |                     if(uri!=null)addUnique(media,resolve(uri,finalPlaylistUrl));
+108 |                 }
+109 |             } else if(line.startsWith("#EXTINF:")) {
+110 |                 for(int j=i+1;j<lines.length;j++) {
+111 |                     String candidate=lines[j].trim();
+112 |                     if(candidate.isEmpty())continue;
+113 |                     if(candidate.startsWith("#"))break;
+114 |                     if(!hasFirstSequence) { firstSequence=nextSequence; hasFirstSequence=true; }
+115 |                     addUnique(media,resolve(candidate,finalPlaylistUrl));
+116 |                     if(nextSequence==Long.MAX_VALUE)unsupportedEncryption=true;
+117 |                     else nextSequence++;
+118 |                     i=j; break;
+119 |                 }
+120 |             }
+121 |         }
+122 |         if(aes128&&!hasFirstSequence)unsupportedEncryption=true;
+123 |         return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,
+124 |                 aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,media);
+125 |     }
+126 | 
+127 |     private static String attribute(Pattern pattern,String attributes) {
+128 |         Matcher m=pattern.matcher(attributes); return m.find()?m.group(1):null;
+129 |     }
+130 |     private static boolean isValidIv(String iv) {
+131 |         return iv!=null&&iv.matches("0[xX][0-9a-fA-F]{32}");
+132 |     }
+133 |     private static String uriAttribute(String attributes) {
+134 |         return attribute(URI_ATTRIBUTE,attributes);
+135 |     }
+136 |     private static String resolve(String uri,String base)throws Exception {
+137 |         return uri==null||uri.isEmpty()?null:new URL(new URL(base),uri).toString();
+138 |     }
+139 |     private static void addUnique(ArrayList<String> values,String value) {
+140 |         if(value!=null&&!values.contains(value)&&values.size()<MAX_MEDIA_SEGMENTS)values.add(value);
+141 |     }
+142 | }
+143 | 
+
+===== app/src/main/java/com/wodedianshi/tv/HlsProbeValidationPolicy.java | blob cc91c606a3ed23bce4adfb79f3e9dd312e959767 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | /** Acceptance rules for bounded HLS media-sequence preflight. */
+4 | public final class HlsProbeValidationPolicy {
+5 |     private HlsProbeValidationPolicy() {}
+6 | 
+7 |     /**
+8 |      * Once a playlist advertises a second media segment, it must also be
+9 |      * retrievable and pass container/decryption validation. This prevents a
+10 |      * stale first segment from making a dead live endpoint look healthy.
+11 |      */
+12 |     public static boolean acceptsSecondSegment(boolean secondSegmentValid) {
+13 |         return secondSegmentValid;
+14 |     }
+15 | 
+16 |     /** A capped sample is not a complete resource, even when its byte count equals the cap. */
+17 |     public static boolean isCompleteSample(boolean truncated) {
+18 |         return !truncated;
+19 |     }
+20 | 
+21 |     /** The extra sentinel byte is the proof that the original resource exceeded the retained cap. */
+22 |     public static boolean isTruncatedSample(int receivedBytes, int maxBytes) {
+23 |         return maxBytes > 0 && receivedBytes > maxBytes;
+24 |     }
+25 | 
+26 |     /**
+27 |      * A 206 response can be capped by an origin or CDN below the requested range.
+28 |      * Its Content-Range total/end must therefore participate in completeness checks.
+29 |      * Malformed or missing range metadata is treated conservatively as incomplete.
+30 |      */
+31 |     public static boolean isIncompleteContentRange(String contentRange, int maxBytes) {
+32 |         if (contentRange == null || maxBytes <= 0) return true;
+33 |         java.util.regex.Matcher match = java.util.regex.Pattern
+34 |                 .compile("(?i)^bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)$")
+35 |                 .matcher(contentRange.trim());
+36 |         if (!match.matches()) return true;
+37 |         try {
+38 |             long start = Long.parseLong(match.group(1));
+39 |             long end = Long.parseLong(match.group(2));
+40 |             if (start != 0L || end < 0L || end < start) return true;
+41 |             String totalText = match.group(3);
+42 |             if ("*".equals(totalText)) return end + 1L < (long) maxBytes + 1L;
+43 |             long total = Long.parseLong(totalText);
+44 |             if (total <= end || total <= 0L) return true;
+45 |             return total > maxBytes || end + 1L < total;
+46 |         } catch (NumberFormatException invalidRange) {
+47 |             return true;
+48 |         }
+49 |     }
+50 | }
+51 | 
+
+===== app/src/main/java/com/wodedianshi/tv/HlsAes128Preflight.java | blob 6d8a37dc2fb3236ceb2dd1ec8264d3fbfc4eecb8 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | import java.security.GeneralSecurityException;
+4 | import javax.crypto.Cipher;
+5 | import javax.crypto.spec.IvParameterSpec;
+6 | import javax.crypto.spec.SecretKeySpec;
+7 | 
+8 | /** Bounded AES-128 HLS sample decryption and post-decryption container validation. */
+9 | public final class HlsAes128Preflight {
+10 |     private HlsAes128Preflight() {}
+11 | 
+12 |     /** RFC 8216: encode the media sequence number as a 16-byte, big-endian unsigned integer. */
+13 |     public static byte[] ivForMediaSequence(long sequence) {
+14 |         if (sequence < 0L) return null;
+15 |         byte[] iv = new byte[16];
+16 |         long value = sequence;
+17 |         for (int i = 15; i >= 8; i--) {
+18 |             iv[i] = (byte) value;
+19 |             value >>>= 8;
+20 |         }
+21 |         return iv;
+22 |     }
+23 | 
+24 |     /** Parse a validated 0x-prefixed 128-bit HLS IV. */
+25 |     public static byte[] parseExplicitIv(String value) {
+26 |         if (value == null || !value.matches("0[xX][0-9a-fA-F]{32}")) return null;
+27 |         byte[] iv = new byte[16];
+28 |         for (int i = 0; i < iv.length; i++) {
+29 |             int at = 2 + i * 2;
+30 |             iv[i] = (byte) Integer.parseInt(value.substring(at, at + 2), 16);
+31 |         }
+32 |         return iv;
+33 |     }
+34 | 
+35 |     /**
+36 |      * Decrypt a bounded sample. A complete segment uses PKCS7-compatible PKCS5
+37 |      * padding validation; a range-truncated prefix uses NoPadding and must be
+38 |      * block aligned. Plaintext is returned only to the caller for immediate checks.
+39 |      */
+40 |     public static byte[] decryptSample(byte[] encrypted, byte[] key, byte[] iv, boolean completeSegment) {
+41 |         if (encrypted == null || key == null || key.length != 16 || iv == null || iv.length != 16
+42 |                 || encrypted.length < 32 || (encrypted.length & 15) != 0) return null;
+43 |         try {
+44 |             Cipher cipher = Cipher.getInstance(completeSegment ? "AES/CBC/PKCS5Padding" : "AES/CBC/NoPadding");
+45 |             cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(iv));
+46 |             return cipher.doFinal(encrypted);
+47 |         } catch (GeneralSecurityException invalidCiphertext) {
+48 |             return null;
+49 |         }
+50 |     }
+51 | 
+52 |     public static boolean validatesMediaSegment(byte[] encrypted, byte[] key, byte[] iv,
+53 |                                                   boolean completeSegment) {
+54 |         byte[] clear = decryptSample(encrypted, key, iv, completeSegment);
+55 |         return clear != null && MediaPayloadValidator.looksLikeHlsSegment(clear);
+56 |     }
+57 | 
+58 |     public static boolean validatesInitializationSegment(byte[] encrypted, byte[] key, byte[] iv,
+59 |                                                             boolean completeResource) {
+60 |         byte[] clear = decryptSample(encrypted, key, iv, completeResource);
+61 |         return clear != null && MediaPayloadValidator.hasIsoBmffInitializationSegment(clear);
+62 |     }
+63 | }
+64 | 
+
+===== app/src/main/java/com/wodedianshi/tv/MediaPayloadValidator.java | blob 5e19e1d20de579f430abc96066755bb1375a6449 =====
+1 | package com.wodedianshi.tv;
+2 | 
+3 | /**
+4 |  * Conservative, dependency-free checks for sampled IPTV media payloads.
+5 |  * This is only a transport/container sanity check, not proof that a decoder
+6 |  * can render the stream or produce audible audio.
+7 |  */
+8 | public final class MediaPayloadValidator {
+9 |     private MediaPayloadValidator() {}
+10 | 
+11 |     public static boolean looksLikeHlsSegment(byte[] data) {
+12 |         if (data == null || data.length < 8) return false;
+13 |         int maxOffset = Math.min(187, data.length - 1);
+14 |         for (int offset = 0; offset <= maxOffset; offset++) {
+15 |             if (isValidTransportStreamPacket(data, offset)
+16 |                     && isValidTransportStreamPacket(data, offset + 188)) {
+17 |                 return true;
+18 |             }
+19 |         }
+20 |         return hasIsoBmffMediaFragment(data);
+21 |     }
+22 | 
+23 |     private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
+24 |         if (data == null || offset < 0 || offset + 188 > data.length
+25 |                 || (data[offset] & 0xFF) != 0x47) return false;
+26 |         int adaptationControl = (data[offset + 3] >>> 4) & 0x03;
+27 |         if (adaptationControl == 0) return false;
+28 |         if (adaptationControl == 2 || adaptationControl == 3) {
+29 |             int adaptationLength = data[offset + 4] & 0xFF;
+30 |             int maximum = adaptationControl == 2 ? 183 : 182;
+31 |             if (adaptationLength > maximum) return false;
+32 |             if (adaptationControl == 3 && 5 + adaptationLength >= 188) return false;
+33 |         }
+34 |         return true;
+35 |     }
+36 | 
+37 |     /**
+38 |      * Generic ISO-BMFF signature check for on-demand payloads. This intentionally
+39 |      * accepts file-type and index boxes; HLS media segments use the stricter
+40 |      * hasIsoBmffMediaFragment check below.
+41 |      */
+42 |     public static boolean hasIsoBmffBox(byte[] data) {
+43 |         if (data == null || data.length < 8) return false;
+44 |         int offset = 0;
+45 |         int examined = 0;
+46 |         while (offset >= 0 && offset + 8 <= data.length && examined++ < 8) {
+47 |             long size = uint32(data, offset);
+48 |             String type = fourCc(data, offset + 4);
+49 |             int headerSize = 8;
+50 |             if (size == 1L) {
+51 |                 if (offset + 16 > data.length) return false;
+52 |                 size = uint64(data, offset + 8);
+53 |                 headerSize = 16;
+54 |             } else if (size == 0L) {
+55 |                 size = data.length - offset;
+56 |             }
+57 |             if (size < headerSize) return false;
+58 |             if (isGenericIsoBmffBox(type)) return true;
+59 |             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+60 |             offset += (int) size;
+61 |         }
+62 |         return false;
+63 |     }
+64 | 
+65 |     /**
+66 |      * A fragmented MP4 HLS media segment must contain a top-level moof followed
+67 |      * by a top-level mdat. The mdat body may extend beyond the bounded HTTP sample,
+68 |      * but its complete box header must be present and structurally valid.
+69 |      */
+70 |     public static boolean hasIsoBmffMediaFragment(byte[] data) {
+71 |         if (data == null || data.length < 16) return false;
+72 |         int offset = 0;
+73 |         boolean hasMovieFragment = false;
+74 |         int examined = 0;
+75 |         while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+76 |             long size = uint32(data, offset);
+77 |             String type = fourCc(data, offset + 4);
+78 |             int headerSize = 8;
+79 |             if (size == 1L) {
+80 |                 if (offset + 16 > data.length) return false;
+81 |                 size = uint64(data, offset + 8);
+82 |                 headerSize = 16;
+83 |             } else if (size == 0L) {
+84 |                 size = data.length - offset;
+85 |             }
+86 |             if (size < headerSize) return false;
+87 |             if ("moof".equals(type)) {
+88 |                 if (size > data.length - offset) return false;
+89 |                 hasMovieFragment = true;
+90 |             } else if ("mdat".equals(type)) {
+91 |                 return hasMovieFragment;
+92 |             }
+93 |             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+94 |             offset += (int) size;
+95 |         }
+96 |         return false;
+97 |     }
+98 | 
+99 |     /**
+100 |      * An HLS fMP4 initialization section must contain file-type and movie
+101 |      * metadata boxes. The moov payload may exceed the bounded sample, so validate
+102 |      * its header but do not require the full box body to have been downloaded.
+103 |      */
+104 |     public static boolean hasIsoBmffInitializationSegment(byte[] data) {
+105 |         if (data == null || data.length < 16) return false;
+106 |         int offset = 0;
+107 |         boolean hasFileType = false;
+108 |         boolean hasMovie = false;
+109 |         int examined = 0;
+110 |         while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+111 |             long size = uint32(data, offset);
+112 |             String type = fourCc(data, offset + 4);
+113 |             int headerSize = 8;
+114 |             if (size == 1L) {
+115 |                 if (offset + 16 > data.length) return false;
+116 |                 size = uint64(data, offset + 8);
+117 |                 headerSize = 16;
+118 |             } else if (size == 0L) {
+119 |                 return false;
+120 |             }
+121 |             if (size < headerSize) return false;
+122 |             if ("ftyp".equals(type)) hasFileType = true;
+123 |             if ("moov".equals(type)) hasMovie = true;
+124 |             if (hasFileType && hasMovie) return true;
+125 |             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+126 |             offset += (int) size;
+127 |         }
+128 |         return false;
+129 |     }
+130 | 
+131 |     public static boolean looksLikeMediaPayload(byte[] data) {
+132 |         if (data == null || data.length < 7) return false;
+133 |         if (looksLikeHlsSegment(data)) return true;
+134 |         if (hasIsoBmffBox(data)) return true;
+135 |         if (isValidFlvHeader(data)) return true;
+136 |         return isValidAdtsHeader(data);
+137 |     }
+138 | 
+139 |     /**
+140 |      * A familiar URL suffix must never turn an HTML/error payload into a valid source.
+141 |      */
+142 |     public static boolean looksLikeMediaPayload(byte[] data, String address) {
+143 |         return looksLikeMediaPayload(data);
+144 |     }
+145 | 
+146 |     private static boolean isGenericIsoBmffBox(String type) {
+147 |         return "ftyp".equals(type) || "styp".equals(type)
+148 |                 || "moof".equals(type) || "mdat".equals(type)
+149 |                 || "sidx".equals(type);
+150 |     }
+151 | 
+152 |     private static boolean isValidAdtsHeader(byte[] data) {
+153 |         if (data == null || data.length < 7
+154 |                 || (data[0] & 0xFF) != 0xFF
+155 |                 || ((data[1] & 0xF0) != 0xF0)
+156 |                 || ((data[1] & 0x06) != 0)) return false;
+157 |         int samplingFrequencyIndex = (data[2] & 0x3C) >>> 2;
+158 |         if (samplingFrequencyIndex > 12) return false;
+159 |         boolean protectionAbsent = (data[1] & 0x01) != 0;
+160 |         int headerLength = protectionAbsent ? 7 : 9;
+161 |         if (data.length < headerLength) return false;
+162 |         int frameLength = ((data[3] & 0x03) << 11)
+163 |                 | ((data[4] & 0xFF) << 3)
+164 |                 | ((data[5] & 0xE0) >>> 5);
+165 |         return frameLength >= headerLength;
+166 |     }
+167 | 
+168 |     private static boolean isValidFlvHeader(byte[] data) {
+169 |         if (data == null || data.length < 9
+170 |                 || data[0] != 'F' || data[1] != 'L' || data[2] != 'V'
+171 |                 || (data[3] & 0xFF) != 1) return false;
+172 |         if (((data[4] & 0xFF) & 0xFA) != 0) return false;
+173 |         long dataOffset = uint32(data, 5);
+174 |         return dataOffset >= 9L && dataOffset <= data.length;
+175 |     }
+176 | 
+177 |     private static long uint32(byte[] data, int offset) {
+178 |         return ((long) (data[offset] & 0xFF) << 24)
+179 |                 | ((long) (data[offset + 1] & 0xFF) << 16)
+180 |                 | ((long) (data[offset + 2] & 0xFF) << 8)
+181 |                 | (long) (data[offset + 3] & 0xFF);
+182 |     }
+183 | 
+184 |     private static long uint64(byte[] data, int offset) {
+185 |         long high = uint32(data, offset);
+186 |         long low = uint32(data, offset + 4);
+187 |         if (high > 0x7FFFFFFFL) return Long.MAX_VALUE;
+188 |         return (high << 32) | low;
+189 |     }
+190 | 
+191 |     private static String fourCc(byte[] data, int offset) {
+192 |         return new String(data, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+193 |     }
+194 | }
+195 | 
