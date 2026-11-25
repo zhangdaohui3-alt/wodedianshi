@@ -1374,14 +1374,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     initialDiscoveryProgressPanel.setPadding(dp(6),dp(7),dp(6),dp(7));
     initialDiscoveryProgressPanel.setBackground(makeButtonBg(Color.rgb(25,40,64),false));
     initialDiscoveryProgressTitle=new TextView(this);
-    initialDiscoveryProgressTitle.setText("首次完整抓源 · 0%");
+    initialDiscoveryProgressTitle.setText("首次完整抓源 · 正在读取进度");
     initialDiscoveryProgressTitle.setTextSize(13);
     initialDiscoveryProgressTitle.setTextColor(Color.WHITE);
     initialDiscoveryProgressTitle.setTypeface(null,android.graphics.Typeface.BOLD);
     initialDiscoveryProgressPanel.addView(initialDiscoveryProgressTitle);
     initialDiscoveryProgressBar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
     initialDiscoveryProgressBar.setIndeterminate(false);
-    initialDiscoveryProgressBar.setMax(100);
+    initialDiscoveryProgressBar.setMax(10000);
     initialDiscoveryProgressBar.setProgress(0);
     LinearLayout.LayoutParams progressBarParams=new LinearLayout.LayoutParams(-1,dp(12));
     progressBarParams.topMargin=dp(3);
@@ -1390,7 +1390,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     initialDiscoveryProgressDetail.setText("正在准备读取来源目录…");
     initialDiscoveryProgressDetail.setTextSize(11);
     initialDiscoveryProgressDetail.setTextColor(Color.LTGRAY);
-    initialDiscoveryProgressDetail.setMaxLines(4);
+    initialDiscoveryProgressDetail.setMaxLines(6);
     initialDiscoveryProgressPanel.addView(initialDiscoveryProgressDetail);
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,-2));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
@@ -1566,7 +1566,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               roomFullRebuildCompletedAt=completed;
               if(newlyPublished||!catalogueSnapshotTrusted)reloadChannelsAfterBackgroundUpdateIfNeeded();
               if(newlyPublished)scheduleAutomaticSourceUpdates();
-              initialDiscoveryProgressBar.setProgress(100);
+              initialDiscoveryProgressBar.setProgress(10000);
               initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
               // The panel is limited to four lines. Put the fresh core counts
               // and coverage warning ahead of supplementary probe statistics.
@@ -1588,7 +1588,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               return;
             }
             initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
-            initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(99,percent)));
+            initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(9999,basisPoints)));
             int bootstrapLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
             boolean indexing=!indexBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
@@ -1598,8 +1598,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +" · 已检 "+Math.max(0,checked)+" 条");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
+            final int loadedCount=channels.size();
             initialDiscoveryProgressDetail.setText(
-                (indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
+                (initialDiscoveryTerminalStatus.isEmpty()?(liveStage.isEmpty()?phase:liveStage):initialDiscoveryTerminalStatus)
+                +"\n当前已载入 "+loadedCount+" 个频道（不等于本轮完成）"
+                +"\n"+(indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                     :"正在准备来源列表"))
@@ -1607,8 +1610,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
-                +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage)
-                +(initialDiscoveryTerminalStatus.isEmpty()?"":"\n"+initialDiscoveryTerminalStatus));
+                +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:""));
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
@@ -4052,7 +4054,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean isSatelliteChannel(Channel c){
     if(c==null)return false;
-    String metadata=regionalMetadata(c);
+    return isSatelliteChannel(c,regionalMetadata(c));
+  }
+  private boolean isSatelliteChannel(Channel c,String metadata){
     // Legacy and partially imported records can have a null group. Keep the
     // same normalized value for both the policy call and the fast group checks.
     String rawGroup=c.group==null?"":c.group;
@@ -4061,8 +4065,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
   private boolean matchesProvinceLocal(Channel c,String province){
-    if(c==null||province==null||isSatelliteChannel(c))return false;
+    if(c==null||province==null)return false;
     String metadata=regionalMetadata(c);
+    if(isSatelliteChannel(c,metadata))return false;
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     // The shared classifier also recognizes county stations (e.g. 上虞、固镇、
@@ -4096,16 +4101,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return cached;
   }
   private boolean isLocalChannel(Channel c){
-    if(c==null||isSatelliteChannel(c))return false;
+    if(c==null)return false;
     String metadata=regionalMetadata(c);
+    if(isSatelliteChannel(c,metadata))return false;
     if(metadata.contains("地方")||metadata.contains("local"))return true;
     if(!explicitProvinceIn(metadata).isEmpty())return true;
     for(String token:localRegionTokens())if(metadata.contains(token))return true;
     return false;
   }
   private boolean matchesProvinceCity(Channel c,String province,String city){
-    if(c==null||province==null||city==null||isSatelliteChannel(c))return false;
+    if(c==null||province==null||city==null)return false;
     String metadata=regionalMetadata(c);
+    if(isSatelliteChannel(c,metadata))return false;
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     if(!java.util.Arrays.asList(citiesForProvince(province)).contains(city))return false;
@@ -4117,6 +4124,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean categoryMatch(Channel c,String cat){
     if(c==null||cat==null)return false;
+    if("地方".equals(cat))return isLocalChannel(c);
+    if("卫视".equals(cat))return isSatelliteChannel(c);
     // Legacy/imported M3U entries may omit group or metadata fields. Category
     // counting runs before a refresh, so a single incomplete record must never
     // crash the UI or prevent the rest of the saved catalogue from being counted.
@@ -4145,7 +4154,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.equals("全球频道"))return ChannelCatalogueScopePolicy.matches(c.sourceScopes,"global");
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
     if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
-    if(cat.equals("卫视"))return isSatelliteChannel(c);
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("香港")||cat.equals("澳门")||cat.equals("台湾"))return cat.equals(RegionCategoryPolicy.subcategory(c.name,c.group));
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
@@ -4153,7 +4161,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
     if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
-    if(cat.equals("地方"))return isLocalChannel(c);
     return false;
   }
   private int findChannelIndexByKey(String key){
