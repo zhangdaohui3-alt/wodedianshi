@@ -206,8 +206,11 @@ public final class PlaylistFeedCache {
                 if(length<total)return null;
                 // Preserve the final bytes before any expensive digest/index work.
                 // A large completed range is finalized only when playback is idle.
-                if(lowRate&&!SourceProbeTimePolicy.fitsLiveDirectory(length))
-                    throw new IOException("Complete directory awaits idle validation");
+                if(!SourceProbeTimePolicy.fitsLiveDirectory(length)){
+                    if(lowRate)throw new IOException("Complete directory awaits idle validation");
+                    // Give the local digest its own fresh idle budget.
+                    return null;
+                }
             }
             return publishRangeBody(directory,cached,partial,checkpoint,tag,paused,deadline);
         }finally{
