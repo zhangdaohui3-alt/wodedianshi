@@ -186,12 +186,19 @@ public class SourceUpdateWorker extends Worker {
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
           for(String key:ManualSavedCoverage.keys())reset.remove(key);
+          for(int i=0;i<seed.length();i++){
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            JSONObject row=seed.getJSONObject(i);
+            row.put("manualBaseIdentity",manualRowIdentity(row));
+            row.put("manualBaseFingerprint",manualRowFingerprint(row));
+          }
+          reset.putInt(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_BASE_COUNT_KEY,seed.length());
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.seedManual(
               getApplicationContext(),seed,baseSnapshot.catalogueVersion,manualId,pauseRequested,reset);
           manualWorkingRows=seed;
         }else{
-          if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId))
-            return abortManualStructuralConflict(manualId);
+          // Structural edits are reconciled at the final publication, not by
+          // throwing away already committed network work at every slice.
           manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
         }
         if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
@@ -1472,8 +1479,22 @@ public class SourceUpdateWorker extends Worker {
   }
   private Result publishReadyManual(String manualId,JSONArray rows)throws Exception{
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-    if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId))
-      return abortManualStructuralConflict(manualId);
+    String reconciledStructure=null;
+    long reconciledVersion=-1L;
+    if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId)){
+      reconciledStructure=com.wodedianshi.tv.db.RoomCatalogueBuildStore.currentStructureVersion(getApplicationContext());
+      JSONArray live=new JSONArray();
+      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot liveSnapshot=readPublishedRows(live);
+      if(liveSnapshot==null)throw new IllegalStateException("Live directory unavailable for rebase");
+      reconciledVersion=liveSnapshot.catalogueVersion;
+      try{
+        int baseCount=roomInt(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_BASE_COUNT_KEY,-1);
+        List<JSONObject> merged=ManualSnapshotRebase.merge(manualRebaseRows(rows,true),manualRebaseRows(live,false),baseCount,pauseRequested);
+        JSONArray publication=new JSONArray();for(JSONObject row:merged)publication.put(row);
+        if(publication.length()==0)throw new IllegalArgumentException("Empty reconciled directory");
+        rows=publication;
+      }catch(IllegalArgumentException ambiguous){return abortManualStructuralConflict(manualId);}
+    }
     com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=com.wodedianshi.tv.db.RoomDatabaseProvider
         .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
             com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
@@ -1487,10 +1508,57 @@ public class SourceUpdateWorker extends Worker {
         .putLong("source_update_last_success_at",System.currentTimeMillis())
         .putString("source_update_result",roomString("source_update_result","")+" 已原子发布完整手动目录。");
     for(String key:ManualSavedCoverage.keys())finish.remove(key);
-    int written=com.wodedianshi.tv.db.RoomCatalogueWriter.publishManualSnapshot(
-        getApplicationContext(),rows,checkpoint.completedAt,manualId,pauseRequested,finish);
+    int written=reconciledStructure==null?com.wodedianshi.tv.db.RoomCatalogueWriter.publishManualSnapshot(
+        getApplicationContext(),rows,checkpoint.completedAt,manualId,pauseRequested,finish):
+        com.wodedianshi.tv.db.RoomCatalogueWriter.publishReconciledManualSnapshot(
+            getApplicationContext(),rows,reconciledVersion,manualId,reconciledStructure,pauseRequested,finish);
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     return Result.success();
+  }
+  private String manualRowIdentity(JSONObject row){
+    return com.wodedianshi.tv.db.LegacyChannelIdPolicy.stableIdentityKey(row.optString("name"),row.optString("url"),
+        row.optString("tvgId"),row.optString("group"),row.optString("tvgName"));
+  }
+  private String manualRowFingerprint(JSONObject row){
+    StringBuilder value=new StringBuilder();
+    for(String key:new String[]{"name","url","group","tvgId","tvgName"})appendFingerprintPart(value,row.optString(key));
+    JSONArray sources=row.optJSONArray("sources");
+    appendFingerprintPart(value,Integer.toString(sources==null?0:sources.length()));
+    if(sources!=null)for(int i=0;i<sources.length();i++)appendFingerprintPart(value,sources.optString(i));
+    appendManualScopes(value,row.optJSONArray("sourceScopes"));
+    TreeMap<String,TreeSet<String>> owned=new TreeMap<>();
+    JSONArray ownership=row.optJSONArray("backupSourceScopes");
+    if(ownership!=null)for(int i=0;i<ownership.length();i++){
+      JSONObject item=ownership.optJSONObject(i);if(item==null)continue;
+      String url=item.optString("url");TreeSet<String> scopes=owned.get(url);
+      if(scopes==null){scopes=new TreeSet<>();owned.put(url,scopes);}
+      JSONArray raw=item.optJSONArray("scopes");
+      if(raw!=null)for(int j=0;j<raw.length();j++)scopes.add(raw.optString(j));
+    }
+    appendFingerprintPart(value,Integer.toString(owned.size()));
+    for(Map.Entry<String,TreeSet<String>> entry:owned.entrySet()){
+      appendFingerprintPart(value,entry.getKey());appendFingerprintPart(value,Integer.toString(entry.getValue().size()));
+      for(String scope:entry.getValue())appendFingerprintPart(value,scope);
+    }
+    return CatalogueFingerprint.sha256(value.toString());
+  }
+  private void appendManualScopes(StringBuilder value,JSONArray raw){
+    TreeSet<String> scopes=new TreeSet<>();
+    if(raw!=null)for(int i=0;i<raw.length();i++)scopes.add(raw.optString(i));
+    appendFingerprintPart(value,Integer.toString(scopes.size()));
+    for(String scope:scopes)appendFingerprintPart(value,scope);
+  }
+  private List<ManualSnapshotRebase.Row<JSONObject>> manualRebaseRows(JSONArray rows,boolean staged)throws JSONException{
+    List<ManualSnapshotRebase.Row<JSONObject>> result=new ArrayList<>();
+    for(int i=0;i<rows.length();i++){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      JSONObject row=rows.getJSONObject(i);
+      result.add(new ManualSnapshotRebase.Row<>(manualRowIdentity(row),
+          staged?row.optString("manualBaseIdentity",""):"",
+          staged?row.optString("manualBaseFingerprint",""):"",
+          staged?"":manualRowFingerprint(row),row));
+    }
+    return result;
   }
   private static void discardStagingReuse(){
     committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
