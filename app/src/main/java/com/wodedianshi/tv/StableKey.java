@@ -15,6 +15,11 @@ public final class StableKey {
         return digest("channel\n" + safe(name) + "\n" + safe(group) + "\n" + safe(primaryUrl));
     }
 
+    /** Stable channel identity independent of whichever backup URL is currently primary. */
+    public static String channelIdentity(String identity) {
+        return digest("channel-identity\n" + safe(identity));
+    }
+
     public static String legacyUrl(String value) {
         String raw = safe(value);
         return Integer.toHexString(raw.hashCode()) + ":" + raw.length();
