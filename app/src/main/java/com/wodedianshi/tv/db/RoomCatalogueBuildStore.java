@@ -93,6 +93,39 @@ public final class RoomCatalogueBuildStore {
         return replaceInternal(context,snapshot,paused,progress,owner,baseVersion);
     }
 
+    /** Only the saved-only tail can work without reading any staging JSON.
+     * Upgraded or not-yet-initialized rounds must take the normal seed path. */
+    public static boolean canRunManualQueueOnly(Context context,String owner,int feedCount){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        return queueOnlyReady(db.appStateDao(),owner,feedCount);
+    }
+
+    private static boolean queueOnlyReady(AppStateDao state,String owner,int feedCount){
+        if(owner==null||owner.isEmpty()||feedCount<=0)return false;
+        return owner.equals(state.getValue(MANUAL_OWNER_KEY))
+            &&owner.equals(state.getValue(MANUAL_QUEUE_KEY))
+            &&owner.equals(state.getValue(ManualProbeQualityStore.READY_KEY))
+            &&Integer.toString(feedCount).equals(state.getValue("source_manual_next_feed"))
+            &&!"true".equals(state.getValue(MANUAL_READY_KEY));
+    }
+
+    public static boolean commitManualQueueOnly(Context context,String owner,int feedCount,int failedFeeds,
+            List<String> processed,List<ManualProbeQualityEntity> quality,BooleanSupplier paused,AppStateEditor progress){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        boolean[] ready={false};
+        db.runInTransaction(()->{
+            checkPause(paused);
+            requireManualOwner(db,owner);
+            if(!queueOnlyReady(db.appStateDao(),owner,feedCount)||db.channelDao().countCatalogueBuildRows()<=0)
+                throw new IllegalStateException("Manual queue-only checkpoint changed");
+            commitManualProbeProgress(db,owner,processed,true,feedCount,feedCount,
+                new ManualCommit(ready,failedFeeds,quality),paused,progress);
+            progress.applyInTransaction(db);
+            checkPause(paused);
+        });
+        return ready[0];
+    }
+
     public static JSONArray readManual(Context context,String owner,BooleanSupplier paused)throws JSONException {
         requireMatchingOwner(owner,RoomDatabaseProvider.get(context).appStateDao().getValue(MANUAL_OWNER_KEY));
         return readRows(context,paused);
@@ -339,28 +372,37 @@ public final class RoomCatalogueBuildStore {
                 // Add endpoints before certifying completion. Repeated insert
                 // preserves already processed state via INSERT IGNORE.
                 for(int index:touched)enqueueRow(db,manualOwner,snapshot.optJSONObject(index),index,paused);
-                if(manualCommit.quality!=null){
-                    requireMatchingOwner(manualOwner,db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY));
-                    ManualProbeQualityStore.writeInTransaction(db,manualOwner,manualCommit.quality,paused);
-                }
-                ManualProbeQueueDao queue=db.manualProbeQueueDao();
-                if(!processed.isEmpty()&&queue.markProcessed(manualOwner,processed)!=processed.size())
-                    throw new IllegalStateException("Manual queue checkpoint mismatch");
-                int total=queue.count(manualOwner),pending=queue.countPending(manualOwner);
-                boolean ready=directoryExhausted&&nextFeed>=feedCount&&pending==0;
-                manualCommit.ready[0]=ready;
-                progress.putInt("source_manual_saved_scanned",total-pending)
-                    .putString("source_update_result","手动完整目录轮检：已处理 "+nextFeed+"/"+feedCount
-                        +" 个来源，暂不可用 "+manualCommit.failedFeeds+" 个；线路检测机会 "
-                        +(total-pending)+"/"+total+"；"+(ready?"检测完成，等待整体发布；":"已保存暂存断点；")
-                        +"超时未确认不等于有效，媒体预检不等于实播。");
-                if(ready)progress.putBoolean(MANUAL_READY_KEY,true);
-                else progress.remove(MANUAL_READY_KEY);
+                commitManualProbeProgress(db,manualOwner,processed,directoryExhausted,nextFeed,feedCount,
+                    manualCommit,paused,progress);
             }
             progress.applyInTransaction(db);
             checkPause(paused);
         });
         return snapshot.length();
+    }
+
+    private static void commitManualProbeProgress(AppDatabase db,String owner,List<String> processed,
+            boolean directoryExhausted,int nextFeed,int feedCount,ManualCommit manualCommit,
+            BooleanSupplier paused,AppStateEditor progress){
+        requireManualOwner(db,owner);
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_QUEUE_KEY));
+        if(manualCommit.quality!=null){
+            requireMatchingOwner(owner,db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY));
+            ManualProbeQualityStore.writeInTransaction(db,owner,manualCommit.quality,paused);
+        }
+        ManualProbeQueueDao queue=db.manualProbeQueueDao();
+        if(!processed.isEmpty()&&queue.markProcessed(owner,processed)!=processed.size())
+            throw new IllegalStateException("Manual queue checkpoint mismatch");
+        int total=queue.count(owner),pending=queue.countPending(owner);
+        boolean ready=directoryExhausted&&nextFeed>=feedCount&&pending==0;
+        manualCommit.ready[0]=ready;
+        progress.putInt("source_manual_saved_scanned",total-pending)
+            .putString("source_update_result","手动完整目录轮检：已处理 "+nextFeed+"/"+feedCount
+                +" 个来源，暂不可用 "+manualCommit.failedFeeds+" 个；线路检测机会 "
+                +(total-pending)+"/"+total+"；"+(ready?"检测完成，等待整体发布；":"已保存暂存断点；")
+                +"超时未确认不等于有效，媒体预检不等于实播。");
+        if(ready)progress.putBoolean(MANUAL_READY_KEY,true);
+        else progress.remove(MANUAL_READY_KEY);
     }
 
     public static void validateTouchedRows(int previousSize,int nextSize,java.util.Set<Integer> touched) {
