@@ -114,18 +114,18 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true, 0L));
         assertFalse(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(false, 1234L));
         assertTrue(SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true, 1234L));
-        assertEquals(7L, SourceUpdateSchedulePolicy.ROUTINE_REFRESH_DAYS);
+        assertEquals(30L, SourceUpdateSchedulePolicy.ROUTINE_REFRESH_DAYS);
     }
 
-    @Test public void weeklyDeadlineSurvivesBusyDailyChecks() {
+    @Test public void monthlyDeadlineSurvivesBusyDailyChecks() {
         long start=1_700_000_000_000L;
         long day=24L*60L*60L*1000L;
         assertEquals(1L, SourceUpdateSchedulePolicy.ROUTINE_ELIGIBILITY_CHECK_DAYS);
-        assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+6*day));
-        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+7*day));
-        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+8*day));
-        assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,start+8*day,start+9*day));
-        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,start+8*day,start+15*day));
+        assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+29*day));
+        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+30*day));
+        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,0,start+31*day));
+        assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,start+31*day,start+32*day));
+        assertTrue(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(start,start+31*day,start+61*day));
         assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(0,0,start));
     }
 
