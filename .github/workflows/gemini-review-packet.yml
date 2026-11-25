@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Combine group 3 evidence into one text file
+      - name: Combine group 4 evidence
         run: |
-          cat review/PR196-Gemini-03A-Room-Snapshot.txt review/PR196-Gemini-03B-Room-Callsites.txt review/PR196-Gemini-03C-Room-Tests.txt > PR196-Gemini-03-Room-Full-Snapshot.txt
-          wc -lc PR196-Gemini-03-Room-Full-Snapshot.txt
+          cat review/PR196-Gemini-04A-WorkManager.txt review/PR196-Gemini-04B-Recent-Fixes.txt > PR196-Gemini-04-WorkManager-Full.txt
+          wc -lc PR196-Gemini-04-WorkManager-Full.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Gemini-PR196-Group3
-          path: PR196-Gemini-03-Room-Full-Snapshot.txt
+          name: Gemini-PR196-Group4
+          path: PR196-Gemini-04-WorkManager-Full.txt
           retention-days: 7
