@@ -1,0 +1,543 @@
+# 第四组 B：后续累计修复对照（非 PR196 原始版本）
+固定对照提交：032e78dc9364abaf44e61ec4e6f1d233bb34d2a2，PR199 head，基于 PR198、PR197。仅供确认后续改动没有重复建议，第四组 A 仍是统一审查基准。
+- PR197 使用 Room 完整发布记录判断完成，区分失败/取消，避免重复重载；不直接改 APPEND 为 REPLACE。
+- PR198 保存最后一个完整目录分段，空闲续传与校验。
+- PR199 空目录且无活动播放时允许受保护的 Room 只读恢复。其余已采纳、暂缓及未解决问题详见联合决策记录。
+
+## MainActivity.java, 1390–1630, blob f1c19c2b48bc36350010624493d6ee16846c9101
+```text
+ 1390 |     if(!channels.isEmpty())info.setText("已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
+ 1391 |     // Restore the last channel only after the first frame is on screen. Player creation
+ 1392 |     // can be expensive on older Android TV boxes and should not block app entry.
+ 1393 |     // Last-channel restoration is scheduled after asynchronous catalogue recovery in onCreate.
+ 1394 |     updateNetworkSpeedMonitor();
+ 1395 |   }
+ 1396 |   // Do not forward every remote-control key to PlayerView.
+ 1397 |   // Doing so steals DPAD focus from AlertDialog lists on Android TV.
+ 1398 |   private void scheduleAutomaticSourceUpdates(){
+ 1399 |     WorkManager wm=WorkManager.getInstance(this);
+ 1400 |     android.content.SharedPreferences prefs=getSharedPreferences("mytv",0);
+ 1401 |     boolean enabled=prefs.getBoolean("auto_source_update",true);
+ 1402 |     if(!enabled){
+ 1403 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+ 1404 |       wm.cancelUniqueWork("mytv_startup_source_refresh");
+ 1405 |       return;
+ 1406 |     }
+ 1407 |     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+ 1408 |     // The one-time full rebuild publishes an entire catalogue before routine
+ 1409 |     // maintenance is eligible. Existing channels remain usable during this build.
+ 1410 |     if(SourceUpdateSchedulePolicy.shouldRunInitialDiscovery(
+ 1411 |         enabled,roomFullRebuildCompletedAt)){
+ 1412 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+ 1413 |       // The first discovery is part of first-run setup, not a routine background
+ 1414 |       // refresh. Let it run while the catalogue screen is open; playback-active
+ 1415 |       // protection inside the Worker still pauses it if the user starts watching.
+ 1416 |       OneTimeWorkRequest startupRefresh=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+ 1417 |           .setConstraints(constraints)
+ 1418 |           .setInputData(new Data.Builder().putBoolean("manual",true).putBoolean("initial_discovery_chain",true).build())
+ 1419 |           .build();
+ 1420 |       wm.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,startupRefresh);
+ 1421 |       return; // Never run a routine refresh concurrently with the first full build.
+ 1422 |     }
+ 1423 |     if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(
+ 1424 |         enabled,roomFullRebuildCompletedAt))return;
+ 1425 |     PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(SourceUpdateWorker.class,
+ 1426 |         SourceUpdateSchedulePolicy.ROUTINE_ELIGIBILITY_CHECK_DAYS,TimeUnit.DAYS)
+ 1427 |         .setConstraints(constraints).build();
+ 1428 |     // The daily job only checks whether a weekly maintenance pass is due.
+ 1429 |     // The worker exits before discovery while busy or not due.
+ 1430 |     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
+ 1431 |   }
+ 1432 |   private void startInitialDiscoveryProgressTicker(){
+ 1433 |     stopInitialDiscoveryProgressTicker();
+ 1434 |     if(initialDiscoveryProgressPanel==null)return;
+ 1435 |     if(roomFullRebuildCompletedAt>0L){
+ 1436 |       initialDiscoveryProgressPanel.setVisibility(View.GONE);
+ 1437 |       return;
+ 1438 |     }
+ 1439 |     initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
+ 1440 |     initialDiscoveryProgressTicker=new Runnable(){
+ 1441 |       @Override public void run(){
+ 1442 |         if(!activityStarted||isFinishing()||isDestroyed()||initialDiscoveryProgressPanel==null)return;
+ 1443 |         requestInitialDiscoveryProgress();
+ 1444 |         if(roomFullRebuildCompletedAt<=0L)
+ 1445 |           uiHandler.postDelayed(this,4000L);
+ 1446 |       }
+ 1447 |     };
+ 1448 |     uiHandler.post(initialDiscoveryProgressTicker);
+ 1449 |   }
+ 1450 | 
+ 1451 |   private void stopInitialDiscoveryProgressTicker(){
+ 1452 |     if(initialDiscoveryProgressTicker!=null){
+ 1453 |       uiHandler.removeCallbacks(initialDiscoveryProgressTicker);
+ 1454 |       initialDiscoveryProgressTicker=null;
+ 1455 |     }
+ 1456 |   }
+ 1457 | 
+ 1458 |   private void requestInitialDiscoveryProgress(){
+ 1459 |     if(initialDiscoveryProgressPanel==null||!activityStarted
+ 1460 |         ||!initialDiscoveryProgressReadPending.compareAndSet(false,true))return;
+ 1461 |     try{
+ 1462 |       worker.execute(()->{
+ 1463 |         try{
+ 1464 |           final android.content.Context context=getApplicationContext();
+ 1465 |           final String prefix="source_initial_progress_";
+ 1466 |           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
+ 1467 |           keys.add("source_full_rebuild_completed_at");
+ 1468 |           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
+ 1469 |           keys.add("source_initial_index_attempted");
+ 1470 |           keys.add("source_initial_index_bypassed");
+ 1471 |           keys.add("source_initial_index_ready");
+ 1472 |           keys.add("source_initial_index_entries");
+ 1473 |           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
+ 1474 |               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
+ 1475 |               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
+ 1476 |               "percent","phase"})keys.add(prefix+suffix);
+ 1477 |           final Map<String,String> snapshot=readRoomStateValues(context,keys);
+ 1478 |           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+ 1479 |           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
+ 1480 |           final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
+ 1481 |           final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
+ 1482 |           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
+ 1483 |           final long indexEntries=readStateLong(snapshot,"source_initial_index_entries",0L);
+ 1484 |           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
+ 1485 |           final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
+ 1486 |           final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
+ 1487 |           final int chinaTotal=(int)readStateLong(snapshot,prefix+"china_total_feeds",0L);
+ 1488 |           final int chinaValidated=(int)readStateLong(snapshot,prefix+"china_validated_urls",0L);
+ 1489 |           final int staged=(int)readStateLong(snapshot,prefix+"staged_channels",0L);
+ 1490 |           final int checked=(int)readStateLong(snapshot,prefix+"checked_urls",0L);
+ 1491 |           final int validated=(int)readStateLong(snapshot,prefix+"validated_urls",0L);
+ 1492 |           final int timeouts=(int)readStateLong(snapshot,prefix+"timeout_urls",0L);
+ 1493 |           final int unavailable=(int)readStateLong(snapshot,prefix+"unavailable_feeds",0L);
+ 1494 |           final int feedIndex=(int)readStateLong(snapshot,prefix+"feed_index",0L);
+ 1495 |           final int cursor=(int)readStateLong(snapshot,prefix+"feed_cursor",0L);
+ 1496 |           final int entries=(int)readStateLong(snapshot,prefix+"feed_entries",0L);
+ 1497 |           final int percent=(int)readStateLong(snapshot,prefix+"percent",0L);
+ 1498 |           final String phase=snapshot.getOrDefault(prefix+"phase","尚未开始首次完整抓源");
+ 1499 |           runOnUiThread(()->{
+ 1500 |             if(isFinishing()||isDestroyed()||!activityStarted
+ 1501 |                 ||initialDiscoveryProgressPanel==null)return;
+ 1502 |             if(completed<=0L&&startupDataReady&&previewLevel!=displayedInitialPreviewLevel){
+ 1503 |               displayedInitialPreviewLevel=previewLevel;
+ 1504 |               if(previewLevel>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
+ 1505 |             }
+ 1506 |             if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
+ 1507 |               boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
+ 1508 |               roomFullRebuildCompletedAt=completed;
+ 1509 |               if(newlyPublished||!catalogueSnapshotTrusted)reloadChannelsAfterBackgroundUpdateIfNeeded();
+ 1510 |               if(newlyPublished)scheduleAutomaticSourceUpdates();
+ 1511 |               initialDiscoveryProgressBar.setProgress(100);
+ 1512 |               initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
+ 1513 |               initialDiscoveryProgressDetail.setText("完整频道快照已保存 · 已整理 "
+ 1514 |                   +Math.max(0,staged)+" 个频道"+"\n中国来源初筛通过 "
+ 1515 |                   +Math.max(0,chinaValidated)+" 次 · 全部来源 "
+ 1516 |                   +Math.max(0,validated)+" 次"+"\n暂不可用来源 "
+ 1517 |                   +Math.max(0,unavailable)+" 个 · 超时未确认 "+Math.max(0,timeouts)+" 次，待补查"
+ 1518 |                   +"\n100%不代表全部频道可播，详见设置→查看更新状态");
+ 1519 |               stopInitialDiscoveryProgressTicker();
+ 1520 |               // Give the user a confirmation, then restore the channel list space.
+ 1521 |               uiHandler.postDelayed(()->{
+ 1522 |                 if(initialDiscoveryProgressPanel!=null&&roomFullRebuildCompletedAt>0L)
+ 1523 |                   initialDiscoveryProgressPanel.setVisibility(View.GONE);
+ 1524 |               },12000L);
+ 1525 |               return;
+ 1526 |             }
+ 1527 |             initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
+ 1528 |             initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(99,percent)));
+ 1529 |             int bootstrapLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+ 1530 |             boolean indexing=!indexBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
+ 1531 |                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
+ 1532 |             initialDiscoveryProgressTitle.setText(indexing
+ 1533 |                 ?"首批中国目录尝试 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
+ 1534 |                 :"首次完整抓源 · "+Math.max(0,Math.min(99,percent))+"%");
+ 1535 |             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
+ 1536 |             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
+ 1537 |             initialDiscoveryProgressDetail.setText(
+ 1538 |                 (indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
+ 1539 |                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
+ 1540 |                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
+ 1541 |                     :"正在准备来源列表"))
+ 1542 |                 +"\n已整理频道 "+Math.max(0,staged)+(previewLevel>0?" · 阶段目录已发布":"")+" · 中国初筛通过 "
+ 1543 |                     +Math.max(0,chinaValidated)+" 次"
+ 1544 |                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
+ 1545 |                     +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
+ 1546 |                 +"\n"+(liveStage.isEmpty()?phase+(total>0?" · 第 "+(Math.max(0,feedIndex)+1)+" 个"+fraction:""):liveStage)
+ 1547 |                 +(initialDiscoveryTerminalStatus.isEmpty()?"":"\n"+initialDiscoveryTerminalStatus));
+ 1548 |           });
+ 1549 |         }catch(Throwable error){
+ 1550 |           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
+ 1551 |         }finally{
+ 1552 |           initialDiscoveryProgressReadPending.set(false);
+ 1553 |         }
+ 1554 |       });
+ 1555 |     }catch(RuntimeException ignored){initialDiscoveryProgressReadPending.set(false);}
+ 1556 |   }
+ 1557 | 
+ 1558 |   private static Map<String,String> readRoomStateValues(Context context,List<String> keys){
+ 1559 |     Map<String,String> values=new HashMap<>();
+ 1560 |     for(com.wodedianshi.tv.db.AppStateEntity row:
+ 1561 |         com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).appStateDao().getValues(keys))
+ 1562 |       values.put(row.key,row.stateValue);
+ 1563 |     return values;
+ 1564 |   }
+ 1565 |   private static long readStateLong(Map<String,String> state,String key,long fallback){
+ 1566 |     try{return Long.parseLong(state.getOrDefault(key,Long.toString(fallback)));}
+ 1567 |     catch(NumberFormatException invalid){return fallback;}
+ 1568 |   }
+ 1569 | 
+ 1570 |   private void observeStartupSourceUpdateResults(){
+ 1571 |     // Apply the guarded catalogue snapshot as soon as the startup refresh finishes.
+ 1572 |     // This avoids requiring the user to exit and relaunch to see newly found channels.
+ 1573 |     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
+ 1574 |         .observe(this,workInfos->{
+ 1575 |           if(workInfos==null)return;
+ 1576 |           boolean unfinished=false,failed=false,cancelled=false;
+ 1577 |           for(androidx.work.WorkInfo workInfo:workInfos){
+ 1578 |             androidx.work.WorkInfo.State state=workInfo.getState();
+ 1579 |             if(!state.isFinished())unfinished=true;
+ 1580 |             if(state==androidx.work.WorkInfo.State.FAILED)failed=true;
+ 1581 |             if(state==androidx.work.WorkInfo.State.CANCELLED)cancelled=true;
+ 1582 |           }
+ 1583 |           initialDiscoveryTerminalStatus=unfinished||roomFullRebuildCompletedAt>0L?""
+ 1584 |               :failed?"抓源任务已停止，尚未完整发布，可在设置中手动继续"
+ 1585 |               :cancelled?"抓源任务已取消，已保存进度可在设置中继续":"";
+ 1586 |           // Room's durable completion marker, read by the existing ticker,
+ 1587 |           // is the sole authority for completion and routine scheduling.
+ 1588 |           // Do not reload or overwrite state simply because a WorkInfo list
+ 1589 |           // happens to be all SUCCEEDED.
+ 1590 |           requestInitialDiscoveryProgress();
+ 1591 |         });
+ 1592 |   }
+ 1593 |   private void toggleAutomaticSourceUpdates(){
+ 1594 |     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
+ 1595 |     boolean enabled=!p.getBoolean("auto_source_update",true);
+ 1596 |     p.edit().putBoolean("auto_source_update",enabled).apply();
+ 1597 |     if(enabled)scheduleAutomaticSourceUpdates();else{
+ 1598 |       WorkManager wm=WorkManager.getInstance(this);
+ 1599 |       wm.cancelUniqueWork("mytv_periodic_source_update");
+ 1600 |       wm.cancelUniqueWork("mytv_startup_source_refresh");
+ 1601 |     }
+ 1602 |     toast(enabled?"后台自动更新已开启（完整建库后约每 7 天、空闲时维护）":"后台自动更新已关闭；仍可在设置中手动更新");
+ 1603 |   }
+ 1604 |   private void startManualSourceUpdate(){
+ 1605 |     Constraints constraints=new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+ 1606 |     boolean needsInitialFullRebuild=roomFullRebuildCompletedAt<=0L;
+ 1607 |     OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+ 1608 |         .setConstraints(constraints)
+ 1609 |         .setInputData(new Data.Builder().putBoolean("manual",true)
+ 1610 |             .putBoolean("initial_discovery_chain",needsInitialFullRebuild).build())
+ 1611 |         .build();
+ 1612 |     WorkManager manager=WorkManager.getInstance(this);
+ 1613 |     if(needsInitialFullRebuild){
+ 1614 |       // The startup and manual entry points must share one unique chain: two
+ 1615 |       // simultaneous first-run rebuilds would race on the same Room staging rows
+ 1616 |       // and feed cursors. KEEP reuses an already-running startup rebuild.
+ 1617 |       manager.enqueueUniqueWork("mytv_startup_source_refresh",ExistingWorkPolicy.KEEP,request);
+ 1618 |       toast("已提交首次全量频道整理；可以在频道列表查看真实完成百分比");
+ 1619 |       startInitialDiscoveryProgressTicker();
+ 1620 |       return;
+ 1621 |     }
+ 1622 |     manager.enqueueUniqueWork("mytv_manual_source_update",ExistingWorkPolicy.KEEP,request);
+ 1623 |     toast("已请求完整频道轮检；已有任务将继续，播放优先，可在更新状态查看进度");
+ 1624 |     // The first WorkInfo is only one bounded slice, not the whole refresh.
+ 1625 |     // Existing Room reload-on-resume and status view consume committed state.
+ 1626 |   }
+ 1627 |   private void showSourceUpdateStatus(){
+ 1628 |     final boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+ 1629 |     try{
+ 1630 |       worker.execute(()->{
+```
+
+
+## SourceUpdateWorker.java, 1205–1435, blob 3bf87c5d69ff9c6da0f72dca552fcec85b751ded
+```text
+ 1205 |         discardStagingReuse();
+ 1206 |         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
+ 1207 |             getApplicationContext(),failedBuildReset,pauseRequested);
+ 1208 |         saveStatus(prefs,saved.length()==0
+ 1209 |             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
+ 1210 |             :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
+ 1211 |         return Result.failure();
+ 1212 |       }
+ 1213 |       // Commit one unit: either unpublished staging + progress or published
+ 1214 |       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+ 1215 |       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
+ 1216 |       if(initialDiscoveryChain&&!initialDiscoveryComplete){
+ 1217 |         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
+ 1218 |             getApplicationContext(),saved,pauseRequested,update);
+ 1219 |         else {
+ 1220 |           String revision=java.util.UUID.randomUUID().toString();
+ 1221 |           update.putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,revision);
+ 1222 |           com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
+ 1223 |               getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
+ 1224 |           // Remember only after the transaction has returned successfully.
+ 1225 |           if(FullDiscoveryProgressPolicy.canRetainStaging(saved.length(),slowPlayback)){
+ 1226 |             committedStaging=saved;committedStagingRevision=revision;
+ 1227 |             committedStagingAt=android.os.SystemClock.elapsedRealtime();
+ 1228 |           }
+ 1229 |         }
+ 1230 |         if(!slowPlayback&&previewLevel>previousPreviewLevel){
+ 1231 |           // First commit staging and cursors. A failed preview never loses that work.
+ 1232 |           noteInitialStage("正在发布阶段性已预检频道");
+ 1233 |           roomSnapshot=readPublishedForInitialCommit();
+ 1234 |           JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
+ 1235 |           com.wodedianshi.tv.db.AppStateEditor previewState=
+ 1236 |               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+ 1237 |                   .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel);
+ 1238 |           int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+ 1239 |               getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
+ 1240 |           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
+ 1241 |         }
+ 1242 |       }else{
+ 1243 |         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+ 1244 |             getApplicationContext(),publication,roomSnapshot.catalogueVersion,
+ 1245 |             initialDiscoveryComplete,pauseRequested,update);
+ 1246 |         if(written!=publishedChannelCount)
+ 1247 |           throw new IllegalStateException("Committed directory count mismatch");
+ 1248 |       }
+ 1249 |       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
+ 1250 |       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
+ 1251 |         // Empty pages and recorded failures are durable progress too; rotate
+ 1252 |         // rather than repeatedly back off the same WorkRequest.
+ 1253 |         enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?20L:0L);
+ 1254 |         return Result.success();
+ 1255 |       }
+ 1256 |       if(manualRefresh&&!manualComplete){
+ 1257 |         // Each bounded slice commits before a successor is enqueued. A retry
+ 1258 |         // after process death reads the committed cursor, not an old input offset.
+ 1259 |         androidx.work.OneTimeWorkRequest continuation=
+ 1260 |             new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+ 1261 |                 .setConstraints(new androidx.work.Constraints.Builder()
+ 1262 |                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+ 1263 |                 .setInitialDelay(10,java.util.concurrent.TimeUnit.SECONDS)
+ 1264 |                 .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+ 1265 |                     .putString("manual_refresh_id",manualId).build()).build();
+ 1266 |         androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
+ 1267 |             "mytv_manual_source_update",androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,continuation)
+ 1268 |             .getResult().get();
+ 1269 |       }
+ 1270 |       // Routine failures rotate to other directories and wait for the next idle
+ 1271 |       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
+ 1272 |       if(!initialDiscoveryChain)return Result.success();
+ 1273 |       if(initialDiscoveryComplete){INITIAL_PROBES.clear();discardStagingReuse();}
+ 1274 |       return (discoveryUnavailable&&!initialDiscoveryComplete
+ 1275 |               &&!(initialDiscoveryChain&&candidates.size()>0))
+ 1276 |           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
+ 1277 |           ?Result.retry():Result.success();
+ 1278 |     }catch(SourceProbeTimePolicy.PublicationPausedException paused){
+ 1279 |       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
+ 1280 |       return deferredViewingResult(manual,initialDiscoveryChain);
+ 1281 |     }catch(Exception e){saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+ 1282 |   }
+ 1283 |   private static void discardStagingReuse(){
+ 1284 |     committedStaging=null;committedStagingRevision="";committedStagingAt=0L;
+ 1285 |   }
+ 1286 |   private JSONArray takeCommittedStaging() throws JSONException {
+ 1287 |     JSONArray candidate=committedStaging;
+ 1288 |     String revision=committedStagingRevision;
+ 1289 |     long savedAt=committedStagingAt;
+ 1290 |     discardStagingReuse();
+ 1291 |     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+ 1292 |     if(candidate!=null&&FullDiscoveryProgressPolicy.canRetainStaging(candidate.length(),slowPlayback)
+ 1293 |         &&FullDiscoveryProgressPolicy.canReuseStaging(candidate.length(),revision,
+ 1294 |         roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,""),
+ 1295 |         savedAt,android.os.SystemClock.elapsedRealtime())){
+ 1296 |       return candidate;
+ 1297 |     }
+ 1298 |     return com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
+ 1299 |   }
+ 1300 |   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(){
+ 1301 |     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+ 1302 |     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
+ 1303 |         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+ 1304 |     if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
+ 1305 |     return snapshot;
+ 1306 |   }
+ 1307 |   // A scheduler failure after a successful acquisition is not a feed failure.
+ 1308 |   private Result continueAfterAcquisition(){
+ 1309 |     try{enqueueInitialContinuation();return Result.success();}
+ 1310 |     catch(Exception failure){
+ 1311 |       android.util.Log.w("MyTVSourceDiscovery","Prepared directory saved; continuation needs retry",failure);
+ 1312 |       return Result.retry();
+ 1313 |     }
+ 1314 |   }
+ 1315 |   private void enqueueInitialContinuation() throws Exception {
+ 1316 |     enqueueInitialContinuation(slowPlayback?20L:0L);
+ 1317 |   }
+ 1318 |   private void enqueueInitialContinuation(long delaySeconds) throws Exception {
+ 1319 |     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException("Initial source work cancelled");
+ 1320 |     androidx.work.OneTimeWorkRequest continuation=
+ 1321 |         new androidx.work.OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+ 1322 |             .setInitialDelay(delaySeconds,java.util.concurrent.TimeUnit.SECONDS)
+ 1323 |             .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,java.util.concurrent.TimeUnit.SECONDS)
+ 1324 |             .setConstraints(new androidx.work.Constraints.Builder()
+ 1325 |                 .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+ 1326 |             .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+ 1327 |                 .putBoolean("initial_discovery_chain",true).build())
+ 1328 |             .build();
+ 1329 |     androidx.work.WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
+ 1330 |         "mytv_startup_source_refresh",androidx.work.ExistingWorkPolicy.APPEND,continuation)
+ 1331 |         .getResult().get();
+ 1332 |   }
+ 1333 |   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
+ 1334 |           List<FeedBatch> batches,int feedCount){
+ 1335 |     for(int i=0;i<feedCount;i++){
+ 1336 |       boolean done=roomBoolean(initialFeedDoneKey(i),false);
+ 1337 |       if(!done){
+ 1338 |         for(FeedBatch batch:batches){
+ 1339 |           if(batch.index==i&&batch.success
+ 1340 |               &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
+ 1341 |             done=true;break;
+ 1342 |           }
+ 1343 |         }
+ 1344 |       }
+ 1345 |       if(!done)return false;
+ 1346 |     }
+ 1347 |     return true;
+ 1348 |   }
+ 1349 |   private String discoveryFeedsFingerprint(String[] feeds){
+ 1350 |     StringBuilder value=new StringBuilder();
+ 1351 |     // A prior pending full build may contain dead routes from the old
+ 1352 |     // "stage even if probe failed" behavior. Restart only that isolated build
+ 1353 |     // after the acceptance policy changes; never discard published Room rows.
+ 1354 |     appendFingerprintPart(value,SourceDiscoveryAcceptancePolicy.BUILD_POLICY_VERSION);
+ 1355 |     if(feeds!=null)for(String feed:feeds)appendFingerprintPart(value,feed);
+ 1356 |     return CatalogueFingerprint.sha256(value.toString());
+ 1357 |   }
+ 1358 |   private String discoveryFingerprint(List<Entry> entries){
+ 1359 |     StringBuilder value=new StringBuilder(entries.size()*96);
+ 1360 |     for(Entry entry:entries){
+ 1361 |       appendFingerprintPart(value,SourceSelectionPolicy.endpointKey(entry.url));
+ 1362 |       appendFingerprintPart(value,entry.name);
+ 1363 |       appendFingerprintPart(value,entry.group);
+ 1364 |       appendFingerprintPart(value,entry.tvgId);
+ 1365 |       appendFingerprintPart(value,entry.tvgName);
+ 1366 |       appendFingerprintPart(value,entry.scope);
+ 1367 |     }
+ 1368 |     return CatalogueFingerprint.sha256(value.toString())+":"+entries.size();
+ 1369 |   }
+ 1370 |   private void appendFingerprintPart(StringBuilder target,String raw){
+ 1371 |     String value=raw==null?"":raw;
+ 1372 |     target.append(value.length()).append(':').append(value);
+ 1373 |   }
+ 1374 |   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
+ 1375 |       throws JSONException {
+ 1376 |     JSONArray result=new JSONArray();
+ 1377 |     for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+ 1378 |       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+ 1379 |       JSONObject channel=new JSONObject();
+ 1380 |       channel.put("name",row.name);channel.put("url",row.url);channel.put("group",row.group);
+ 1381 |       channel.put("tvgId",row.tvgId);channel.put("tvgName",row.tvgName);
+ 1382 |       channel.put("activeSource",row.activeSource);
+ 1383 |       JSONArray sources=new JSONArray();
+ 1384 |       for(String source:row.sources)sources.put(source);
+ 1385 |       channel.put("sources",sources);
+ 1386 |       JSONArray channelScopes=new JSONArray();
+ 1387 |       for(String scope:row.sourceScopes)channelScopes.put(scope);
+ 1388 |       channel.put("sourceScopes",channelScopes);
+ 1389 |       JSONArray ownership=new JSONArray();
+ 1390 |       for(java.util.Map.Entry<String,java.util.HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+ 1391 |         JSONObject item=new JSONObject();item.put("url",entry.getKey());
+ 1392 |         JSONArray scopes=new JSONArray();
+ 1393 |         for(String scope:entry.getValue())scopes.put(scope);
+ 1394 |         item.put("scopes",scopes);ownership.put(item);
+ 1395 |       }
+ 1396 |       channel.put("backupSourceScopes",ownership);
+ 1397 |       result.put(channel);
+ 1398 |     }
+ 1399 |     return result;
+ 1400 |   }
+ 1401 | 
+ 1402 |   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
+ 1403 |       boolean initialDiscoveryChain, boolean hasPublishedChannels){
+ 1404 |     return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime()):SourceUpdateActivityPolicy.isPlaybackActive())
+ 1405 |         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
+ 1406 |             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
+ 1407 |   }
+ 1408 | 
+ 1409 |   private Result deferInitialDirectory(String reason){
+ 1410 |     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_initial_progress_phase",reason);
+ 1411 |     return continueAfterViewingDelay(true);
+ 1412 |   }
+ 1413 |   private Result continueAfterViewingDelay(boolean waitingForIdle){
+ 1414 |     // Never append work after cancellation. If the enqueue itself fails, retain
+ 1415 |     // the current durable WorkManager request via its normal retry mechanism.
+ 1416 |     if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
+ 1417 |     try{
+ 1418 |       enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialViewingDelaySeconds(waitingForIdle));
+ 1419 |       return Result.success();
+ 1420 |     }catch(Exception failure){
+ 1421 |       android.util.Log.w("MyTVSourceDiscovery","Unable to schedule deferred initial slice",failure);
+ 1422 |       return Result.retry();
+ 1423 |     }
+ 1424 |   }
+ 1425 |   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
+ 1426 |     if(initialDiscoveryChain){
+ 1427 |       // The existing counters and cursors stay unchanged while viewing.
+ 1428 |       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
+ 1429 |           "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+ 1430 |       return continueAfterViewingDelay(false);
+ 1431 |     }
+ 1432 |     // Do not repeatedly wake the periodic job every few minutes while a user
+ 1433 |     // watches television; the next daily check retains the overdue weekly intent.
+ 1434 |     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
+ 1435 |         ?Result.retry():Result.success();
+```
+
+
+## FullDiscoveryProgressPolicy.java, 1–45, blob f2f16b5b24c1a3e59928bce27df71e3379b66717
+```text
+    1 | package com.wodedianshi.tv;
+    2 | 
+    3 | /**
+    4 |  * Honest first-build progress: each configured feed is one unit of work,
+    5 |  * with fractional progress from the indexed cursor of the active feed.
+    6 |  * A percentage of work completed is not a prediction of remaining time,
+    7 |  * and 100% is reserved for a successfully published complete Room snapshot.
+    8 |  */
+    9 | public final class FullDiscoveryProgressPolicy {
+   10 |     private FullDiscoveryProgressPolicy() {}
+   11 | 
+   12 |     // Do not hold the first playable preview behind every mainland download.
+   13 |     // At most two bootstrap acquisitions, then normal fair paged discovery.
+   14 |     public static int bootstrapIndexLimit(int mainlandCount) {
+   15 |         return Math.max(0,Math.min(2,mainlandCount));
+   16 |     }
+   17 |     /** Acquisition attempts are separate from the final verified-build percent. */
+   18 |     public static boolean isMainlandIndexPhase(int attempted, int mainlandCount,
+   19 |             int checked, long indexedEntries, boolean complete) {
+   20 |         return !complete && checked <= 0 && indexedEntries <= 0
+   21 |                 && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
+   22 |     }
+   23 | 
+   24 |     /** WorkManager completion is not proof that a Room snapshot was published. */
+   25 |     public static boolean hasPublishedInitialSnapshot(long completedAt) {
+   26 |         return completedAt>0L;
+   27 |     }
+   28 | 
+   29 |     /** Finishing discovery is independent of permission to replace live rows. */
+   30 |     public static boolean awaitingIdleFinalization(boolean allFeedsInspected, boolean viewing) {
+   31 |         return allFeedsInspected && viewing;
+   32 |     }
+   33 | 
+   34 |     public static boolean canPublishInitialSnapshot(boolean allFeedsInspected,
+   35 |             boolean hasValidatedSource, boolean viewing) {
+   36 |         return allFeedsInspected && hasValidatedSource && !viewing;
+   37 |     }
+   38 | 
+   39 |     // Bounded, opportunistic cache. Room is authoritative after every commit.
+   40 |     public static boolean canRetainStaging(int rows,boolean viewing) {
+   41 |         return rows>=0&&rows<=(viewing?512:1024);
+   42 |     }
+   43 |     public static boolean canReuseStaging(int rows,String revision,String durableRevision,long savedAt,long now) {
+   44 |         return canRetainStaging(rows,false)&&revision!=null&&!revision.isEmpty()
+   45 |                 &&revision.equals(durableRevision)&&savedAt>=0L&&now>=savedAt&&now-savedAt<=60000L;
+```
+
+
+## WorkManager 依赖及 SDK 声明（PR196 原始行）
+7 |     compileSdk 36
+11 |         minSdk 23
+12 |         targetSdk 28
+67 |     implementation "androidx.work:work-runtime:2.10.1"
