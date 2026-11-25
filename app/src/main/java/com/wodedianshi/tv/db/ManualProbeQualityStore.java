@@ -68,6 +68,29 @@ public final class ManualProbeQualityStore {
         return result;
     }
 
+    public static void readFinal(Context context,String owner,JSONObject scores,JSONObject streaks,
+            BooleanSupplier paused)throws JSONException{
+        ManualProbeQualityDao dao=RoomDatabaseProvider.get(context).manualProbeQualityDao();
+        String after="";
+        for(;;){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<ManualProbeQualityEntity> page=dao.page(owner,after,256);
+            if(page.isEmpty())break;
+            for(ManualProbeQualityEntity row:page){
+                if(row.score!=null)scores.put(row.sourceKey,row.score);
+                if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
+            }
+            after=page.get(page.size()-1).sourceKey;
+        }
+    }
+    static void publishInTransaction(AppDatabase db,String owner){
+        RoomCatalogueBuildStore.requireManualOwner(db,owner);
+        RoomCatalogueBuildStore.requireMatchingOwner(owner,db.appStateDao().getValue(READY_KEY));
+        if(PUBLISHED_OWNER.equals(owner))throw new IllegalArgumentException("Reserved quality owner");
+        db.manualProbeQualityDao().clearOwner(PUBLISHED_OWNER);
+        db.manualProbeQualityDao().publish(owner,PUBLISHED_OWNER);
+    }
+
     static void writeInTransaction(AppDatabase db,String owner,List<ManualProbeQualityEntity> rows,
             BooleanSupplier paused){
         RoomCatalogueBuildStore.requireManualOwner(db,owner);

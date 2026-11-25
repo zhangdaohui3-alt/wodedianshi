@@ -202,6 +202,7 @@ public class SourceUpdateWorker extends Worker {
           manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
         }
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualQueue(getApplicationContext(),manualId,manualWorkingRows,pauseRequested);
+        com.wodedianshi.tv.db.ManualProbeQualityStore.ensure(getApplicationContext(),manualId,pauseRequested);
         if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
           return publishReadyManual(manualId,manualWorkingRows);
       }
@@ -385,10 +386,11 @@ public class SourceUpdateWorker extends Worker {
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
       final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
-      JSONObject measuredScores=new JSONObject(roomString(scoresKey,"{}"));
+      JSONObject measuredScores=new JSONObject(manualRefresh?"{}":roomString(scoresKey,"{}"));
       // A single failed probe merely reduces its score. It cannot delete an
       // existing saved backup; three independent failures are needed.
-      JSONObject probeFailureStreaks=new JSONObject(roomString(streaksKey,"{}"));
+      JSONObject probeFailureStreaks=new JSONObject(manualRefresh?"{}":roomString(streaksKey,"{}"));
+      HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -774,6 +776,23 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
+      if(manualRefresh){
+        LinkedHashSet<String> needed=new LinkedHashSet<>();
+        for(Entry entry:probeCandidates){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          needed.add(entry.url);
+          if(!entry.savedSource){
+            JSONObject target=byIdentity.get(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+            if(target!=null){
+              needed.add(target.optString("url"));
+              JSONArray urls=target.optJSONArray("sources");
+              if(urls!=null)for(int i=0;i<urls.length();i++)needed.add(urls.optString(i));
+            }
+          }
+        }
+        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),manualId,needed,
+            manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
+      }
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
       // cursor could skip most saved URLs forever as the window changed between runs.
@@ -870,12 +889,19 @@ public class SourceUpdateWorker extends Worker {
           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
           measuredScores.remove(legacyScoreKey(e.url));
         }
+        if(manualRefresh){
+          // Shared endpoint observations can be consumed by more than one exact URL.
+          measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
+          measuredScores.remove(legacyScoreKey(e.url));
+          manualQualityDirty.add(scoreKey(e.url));manualQualityDirty.add(legacyScoreKey(e.url));
+        }
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
           String streakKey=scoreKey(e.url);
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
               probeFailureStreaks.optInt(streakKey,0),measured.valid);
           if(streak==0)probeFailureStreaks.remove(streakKey);
           else probeFailureStreaks.put(streakKey,streak);
+          if(manualRefresh)manualQualityDirty.add(streakKey);
         }
         // A queued old endpoint may have been retired after enqueue. Health
         // checks update its score/streak but cannot resurrect it as a discovery.
@@ -990,8 +1016,10 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
-      trimProbeScores(measuredScores,savedPool,probeCandidates);
-      trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
+      if(!manualRefresh){
+        trimProbeScores(measuredScores,savedPool,probeCandidates);
+        trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
+      }
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
       // Playback can begin after the last probe-loop check but before persistence.
@@ -1039,13 +1067,12 @@ public class SourceUpdateWorker extends Worker {
               ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
-          .putString(scoresKey,measuredScores.toString())
-          .putString(streaksKey,probeFailureStreaks.toString())
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+      if(!manualRefresh)update.putString(scoresKey,measuredScores.toString()).putString(streaksKey,probeFailureStreaks.toString());
       if(initialDiscoveryChain){
         update.putInt("source_initial_next_feed_index",initialNextFeedIndex);
       }
@@ -1345,9 +1372,10 @@ public class SourceUpdateWorker extends Worker {
           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
         }
       }else if(manualRefresh){
-        manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouched(
+        manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouchedWithQuality(
             getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId,
-            new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),manualSavedOnly,manualNextFeed,feeds.length,manualFailedFeeds);
+            new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),manualSavedOnly,manualNextFeed,feeds.length,manualFailedFeeds,
+            com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks));
         // Commit completion of detection first. A preference conflict or process
         // death during final publication retries only publication, not probes.
         if(manualComplete)return publishReadyManual(manualId,saved);
@@ -1421,9 +1449,9 @@ public class SourceUpdateWorker extends Worker {
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     // Ranking is reproducible from the durable ready snapshot; a retry does
     // not repeat network work. Do this before rebase so user-edited rows win.
-    rankCatalogueRows(rows,allRowIndices(rows),
-        new JSONObject(roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}")),
-        new JSONObject(roomString("source_qoe_v1","{}")));
+    JSONObject finalScores=new JSONObject(),finalStreaks=new JSONObject();
+    com.wodedianshi.tv.db.ManualProbeQualityStore.readFinal(getApplicationContext(),manualId,finalScores,finalStreaks,pauseRequested);
+    rankCatalogueRows(rows,allRowIndices(rows),finalScores,new JSONObject(roomString("source_qoe_v1","{}")));
     String reconciledStructure=null;
     long reconciledVersion=-1L;
     if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId)){
@@ -1444,11 +1472,14 @@ public class SourceUpdateWorker extends Worker {
         .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
             com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
     if(checkpoint==null)throw new IllegalStateException("Live catalogue checkpoint unavailable");
+    // Existing playback/routine consumers still read the bounded legacy view.
+    // The final writer retains all private quality rows under the published owner.
+    JSONObject compatibleScores=manualCompatibilityScores(rows,finalScores),compatibleStreaks=manualCompatibilityScores(rows,finalStreaks);
     com.wodedianshi.tv.db.AppStateEditor finish=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putString("source_manual_completed_id",manualId)
         .remove("source_manual_active_id")
-        .putString("source_probe_scores_v1",roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}"))
-        .putString("source_probe_failure_streaks_v1",roomString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{}"))
+        .putString("source_probe_scores_v1",compatibleScores.toString())
+        .putString("source_probe_failure_streaks_v1",compatibleStreaks.toString())
         .putString("source_update_time",now())
         .putLong("source_update_last_success_at",System.currentTimeMillis())
         .putString("source_update_result",roomString("source_update_result","")+" 已原子发布完整手动目录。");
@@ -1459,6 +1490,24 @@ public class SourceUpdateWorker extends Worker {
             getApplicationContext(),rows,reconciledVersion,manualId,reconciledStructure,pauseRequested,finish);
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     return Result.success();
+  }
+  private JSONObject manualCompatibilityScores(JSONArray rows,JSONObject all)throws JSONException{
+    JSONObject result=new JSONObject();
+    for(int i=0;i<rows.length()&&result.length()<MAX_PERSISTED_PROBE_SCORES;i++){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      JSONObject row=rows.getJSONObject(i);JSONArray urls=row.optJSONArray("sources");
+      if(urls!=null)for(int j=0;j<urls.length()&&result.length()<MAX_PERSISTED_PROBE_SCORES;j++){
+        String url=urls.optString(j);String key=scoreKey(url),legacy=legacyScoreKey(url);
+        if(all.has(key))result.put(key,all.get(key));
+        else if(all.has(legacy))result.put(legacy,all.get(legacy));
+      }
+    }
+    Iterator<String> keys=all.keys();
+    while(keys.hasNext()&&result.length()<MAX_PERSISTED_PROBE_SCORES){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      String key=keys.next();if(!result.has(key))result.put(key,all.get(key));
+    }
+    return result;
   }
   private Iterable<Integer> allRowIndices(JSONArray rows){
     return ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<rows.length();}public Integer next(){return index++;}};

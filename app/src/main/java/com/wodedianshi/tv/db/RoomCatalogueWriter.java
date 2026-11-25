@@ -176,7 +176,7 @@ public final class RoomCatalogueWriter {
             else if(clearBuildRowsOnCommit&&db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null)
                 throw new IllegalStateException("Initial publication cannot clear manual staging");
             final java.util.function.Predicate<String> eligibleSelection=manualOwner==null?url->false:
-                    manualSelectionEligibility(db);
+                    manualSelectionEligibility(db,manualOwner);
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
             HashSet<String> presentChannelIds = new HashSet<>();
@@ -360,7 +360,11 @@ public final class RoomCatalogueWriter {
             // is the only version that the committing Activity may adopt.
             if (committedAt != null) committedAt[0] = completedAt;
             if (progress != null) progress.applyInTransaction(db);
-            if(manualOwner!=null)RoomCatalogueBuildStore.clearManualInTransaction(db,manualOwner);
+            if(manualOwner!=null){
+                if(manualOwner.equals(db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY)))
+                    ManualProbeQualityStore.publishInTransaction(db,manualOwner);
+                RoomCatalogueBuildStore.clearManualInTransaction(db,manualOwner);
+            }
             // Every full directory commit may change structure. Do not relax the
             // ordinary checkpoint that also protects user favorite/source writes.
             db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,
@@ -462,7 +466,11 @@ public final class RoomCatalogueWriter {
         }
     }
 
-    private static java.util.function.Predicate<String> manualSelectionEligibility(AppDatabase db){
+    private static java.util.function.Predicate<String> manualSelectionEligibility(AppDatabase db,String owner){
+        if(owner.equals(db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY)))return url->{
+            ManualProbeQualityEntity row=db.manualProbeQualityDao().find(owner,com.wodedianshi.tv.StableKey.url(url));
+            return row!=null&&row.score!=null&&row.score>0&&(row.failureStreak==null||row.failureStreak<com.wodedianshi.tv.SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT);
+        };
         try{
             String rawScores=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
             String rawStreaks=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
@@ -477,11 +485,12 @@ public final class RoomCatalogueWriter {
      * it. Never displace a retained old route or the ranked primary. */
     static void retainLiveSelection(PreparedChannel item,Map<String,BackupSourceEntity> oldSources,
             String selected,java.util.function.Predicate<String> eligible){
-        if(selected==null||!eligible.test(selected)||!oldSources.containsKey(selected))return;
+        if(selected==null||!oldSources.containsKey(selected))return;
         if(!selected.startsWith("http://")&&!selected.startsWith("https://"))return;
         String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(selected);
         for(BackupSourceEntity row:item.sources)
             if(endpoint.equals(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(row.url)))return;
+        if(!eligible.test(selected))return;
         int position=selectionRetentionSlot(item,oldSources);
         if(position<0)return;
         BackupSourceEntity old=oldSources.get(selected);
