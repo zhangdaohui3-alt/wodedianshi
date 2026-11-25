@@ -131,15 +131,24 @@ public final class FullDiscoveryProgressPolicy {
         return (int)Math.min(10000L, 10000L * cursor / entries);
     }
 
-    public static int overallPercent(boolean[] finished, int[] partial, boolean published) {
-        if (published) return 100;
+    public static int overallBasisPoints(boolean[] finished, int[] partial, boolean published) {
+        if (published) return 10000;
         if (finished == null || finished.length == 0) return 0;
         long work = 0;
         for (int i = 0; i < finished.length; i++) {
             work += finished[i] ? 10000 : partial != null && i < partial.length
                     ? Math.max(0, Math.min(10000, partial[i])) : 0;
         }
-        return (int)Math.min(99L, work / (100L * finished.length));
+        return (int)Math.min(9999L, work / finished.length);
+    }
+
+    public static int overallPercent(boolean[] finished, int[] partial, boolean published) {
+        return overallBasisPoints(finished,partial,published)/100;
+    }
+
+    public static String formatIncompleteProgress(int basisPoints) {
+        return String.format(java.util.Locale.ROOT,"%.2f%%",
+                Math.max(0,Math.min(9999,basisPoints))/100.0);
     }
 
     public static int percent(int completedFeeds, int totalFeeds,
