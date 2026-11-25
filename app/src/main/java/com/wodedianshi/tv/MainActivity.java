@@ -6041,10 +6041,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       boolean confirmedOutput=TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,
           audioTrackSupported,audioTrackSelected,audioPositionAdvancing,videoTrackPresent,
           videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded);
-      if(confirmedOutput&&sourceReadyAt>0L&&now-sourceReadyAt>=30000L
-          &&now-lastStableDiscoveryInteraction>=20000L
-          &&watchdogLastAdvanceAt>0L&&now-watchdogLastAdvanceAt<5000L
-          &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<5000L
+      if(TrackHealthPolicy.canGrantStableDiscovery(confirmedOutput,sourceReadyAt,
+          lastStableDiscoveryInteraction,watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)
           &&player.isPlaying()&&activityStarted&&hasWindowFocus()
           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
