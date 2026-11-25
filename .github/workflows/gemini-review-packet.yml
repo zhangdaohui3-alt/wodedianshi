@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Combine group 4 evidence
+      - name: Combine group 5 evidence
         run: |
-          cat review/PR196-Gemini-04A-WorkManager.txt review/PR196-Gemini-04B-Recent-Fixes.txt > PR196-Gemini-04-WorkManager-Full.txt
-          wc -lc PR196-Gemini-04-WorkManager-Full.txt
+          cat review/PR196-Gemini-05A-Playback-Engines.txt review/PR196-Gemini-05B-Playback-Callsites.txt review/PR196-Gemini-05C-Playback-Tests.txt > PR196-Gemini-05-Playback-Full.txt
+          wc -lc PR196-Gemini-05-Playback-Full.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Gemini-PR196-Group4
-          path: PR196-Gemini-04-WorkManager-Full.txt
+          name: Gemini-PR196-Group5
+          path: PR196-Gemini-05-Playback-Full.txt
           retention-days: 7
