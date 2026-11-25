@@ -61,8 +61,8 @@ public final class SourceUpdateSchedulePolicy {
         return Math.min(savedOnly?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:12,
                 Math.max(0,poolSize-Math.max(0,covered)));
     }
-    static boolean manualRoundComplete(int nextFeed,int feedCount,int covered,int poolSize) {
-        return feedCount>=0&&nextFeed>=feedCount&&poolSize>=0&&covered>=poolSize;
+    static boolean manualRoundComplete(boolean savedOnly,int nextFeed,int feedCount,int covered,int poolSize) {
+        return savedOnly&&feedCount>=0&&nextFeed>=feedCount&&poolSize>=0&&covered>=poolSize;
     }
 
     /** Manual refresh advances only at EOF, never just because a page was processed. */
