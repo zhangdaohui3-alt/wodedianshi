@@ -177,11 +177,7 @@ public class SourceUpdateWorker extends Worker {
       // working array, retaining only the validated optimistic checkpoint.
       final JSONArray publishedWorkingRows=initialDiscoveryChain?null:new JSONArray();
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
-          initialDiscoveryChain?null:
-              com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
-                try{appendRoomRows(publishedWorkingRows,page);}
-                catch(JSONException invalid){throw new IllegalStateException("Cannot convert Room catalogue page",invalid);}
-              },pauseRequested);
+          initialDiscoveryChain?null:readPublishedRows(publishedWorkingRows);
       if(initialDiscoveryChain
           ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
           :roomSnapshot==null) {
@@ -350,8 +346,7 @@ public class SourceUpdateWorker extends Worker {
         // The reader has already checked the version and full row count.
         // A partially converted array is never used after a stale/failed read.
         saved=publishedWorkingRows;
-        if(saved.length()!=roomSnapshot.channelCount)
-          throw new IllegalStateException("Converted Room catalogue count mismatch");
+
       }
       final int previousStagedSize=saved.length();
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
@@ -992,10 +987,13 @@ public class SourceUpdateWorker extends Worker {
           initialFeedsExhausted,initialHasValidatedSource,slowPlayback);
       // Save the last probed page in staging even while viewing. Only merging
       // the live snapshot (or resetting an unsuccessful build) requires idle.
-      if(initialDiscoveryComplete)roomSnapshot=readPublishedForInitialCommit();
+      JSONArray publication=saved;
+      if(initialDiscoveryComplete){
+        JSONArray priorRows=new JSONArray();
+        roomSnapshot=readPublishedForInitialCommit(priorRows);
+        publication=preservePreviouslyPublishedChannels(saved,priorRows);
+      }
       // Prepare the full publication and all progress before opening a write transaction.
-      JSONArray publication=initialDiscoveryComplete
-          ?preservePreviouslyPublishedChannels(saved,roomSnapshot):saved;
       int publishedChannelCount=publication.length();
       if(initialDiscoveryComplete&&saved.length()==0)
         throw new IllegalStateException("Full rebuild has no validated channels");
@@ -1303,8 +1301,9 @@ public class SourceUpdateWorker extends Worker {
         if(!slowPlayback&&previewLevel>previousPreviewLevel){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
-          roomSnapshot=readPublishedForInitialCommit();
-          JSONArray preview=preservePreviouslyPublishedChannels(saved,roomSnapshot);
+          JSONArray priorRows=new JSONArray();
+          roomSnapshot=readPublishedForInitialCommit(priorRows);
+          JSONArray preview=preservePreviouslyPublishedChannels(saved,priorRows);
           com.wodedianshi.tv.db.AppStateEditor previewState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
                   .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel);
@@ -1385,10 +1384,19 @@ public class SourceUpdateWorker extends Worker {
     }
     return com.wodedianshi.tv.db.RoomCatalogueBuildStore.read(getApplicationContext(),pauseRequested);
   }
-  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(){
+  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedRows(JSONArray rows){
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
-        com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+        com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+          try{appendRoomRows(rows,page);}
+          catch(JSONException invalid){throw new IllegalStateException("Cannot convert Room catalogue page",invalid);}
+        },pauseRequested);
+    if(snapshot!=null&&rows.length()!=snapshot.channelCount)
+      throw new IllegalStateException("Converted Room catalogue count mismatch");
+    return snapshot;
+  }
+  private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(JSONArray rows){
+    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=readPublishedRows(rows);
     if(snapshot==null)throw new IllegalStateException("Published catalogue not ready for merge");
     return snapshot;
   }
@@ -1512,13 +1520,6 @@ public class SourceUpdateWorker extends Worker {
     String value=raw==null?"":raw;
     target.append(value.length()).append(':').append(value);
   }
-  private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
-      throws JSONException {
-    JSONArray result=new JSONArray();
-    appendRoomRows(result,snapshot.channels);
-    return result;
-  }
-
   private void appendRoomRows(JSONArray result,
       List<com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord> rows) throws JSONException {
     for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:rows){
@@ -1612,22 +1613,21 @@ public class SourceUpdateWorker extends Worker {
    * remains discovery-only until this point, so interrupted builds cannot change
    * live Room rows. The writer checks its original Room catalogue version.
    */
-  private JSONArray preservePreviouslyPublishedChannels(JSONArray discovered,
-      com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot prior)throws JSONException {
-    if(prior==null||prior.channels==null||prior.channels.isEmpty())return discovered;
-    JSONArray original=roomSnapshotToArray(prior);
+  private JSONArray preservePreviouslyPublishedChannels(JSONArray discovered,JSONArray original)throws JSONException {
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    if(original.length()==0)return discovered;
     LinkedHashMap<String,ArrayDeque<JSONObject>> originalsByIdentity=new LinkedHashMap<>();
-    ArrayList<JSONObject> originalInOrder=new ArrayList<>();
     for(int i=0;i<original.length();i++){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject old=original.getJSONObject(i);
       String key=identity(old.optString("name"),old.optString("group"),
           old.optString("url"),old.optString("tvgId"),old.optString("tvgName"));
       originalsByIdentity.computeIfAbsent(key,k->new ArrayDeque<>()).add(old);
-      originalInOrder.add(old);
     }
     Set<JSONObject> matched=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
     JSONArray publish=new JSONArray();
     for(int i=0;i<discovered.length();i++){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject fresh=discovered.getJSONObject(i);
       String key=identity(fresh.optString("name"),fresh.optString("group"),
           fresh.optString("url"),fresh.optString("tvgId"),fresh.optString("tvgName"));
@@ -1642,7 +1642,12 @@ public class SourceUpdateWorker extends Worker {
     }
     // Keep even a station missing entirely from every new public directory.
     // Its old sources may still work despite a failed discovery feed.
-    for(JSONObject old:originalInOrder)if(!matched.contains(old))publish.put(old);
+    for(int i=0;i<original.length();i++){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      JSONObject old=original.getJSONObject(i);
+      if(!matched.contains(old))publish.put(old);
+    }
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery",
         "first_full_publish_discovered="+discovered.length()+
         " preserved_old="+original.length()+" final="+publish.length());
