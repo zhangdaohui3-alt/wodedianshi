@@ -854,9 +854,7 @@ public class SourceUpdateWorker extends Worker {
           String activeUrl=activeIndex<currentUrls.size()
               ?currentUrls.get(activeIndex):target.optString("url","");
           String primaryUrl=target.optString("url","");
-          java.util.Comparator<String> bestFirst=(a,b)->
-              Double.compare(combinedScore(b,measuredScores,observedQoe),
-                  combinedScore(a,measuredScores,observedQoe));
+          java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
           ArrayList<String> retainedUrls;
           if(initialDiscoveryChain){
             retainedUrls=new ArrayList<>(SourceChannelMergePolicy.attachSharedEndpoint(
@@ -936,10 +934,11 @@ public class SourceUpdateWorker extends Worker {
         String stablePrimaryUrl=channel.optString("url","");
         // Preserve both the stable channel identity and the user's last selected
         // source even when the ranked list is trimmed to the eight-source cap.
-        ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
+        java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
+        ordered.sort(bestFirst);
         ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
             ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
-        ordered.sort((a,b)->Double.compare(combinedScore(b,measuredScores,observedQoe),combinedScore(a,measuredScores,observedQoe)));
+        ordered.sort(bestFirst);
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
         if(ranked.length()>0){
@@ -1930,7 +1929,13 @@ public class SourceUpdateWorker extends Worker {
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
-  private double combinedScore(String url,JSONObject probes,JSONObject qoe){
+  private java.util.Comparator<String> rankingComparator(JSONObject probes,JSONObject qoe){
+    // Scores can change between probe merges, so never share this cache across
+    // operations. Freeze recency time within a comparison to keep it consistent.
+    final long now=System.currentTimeMillis();
+    return SourceRankingRetentionPolicy.memoizedBestFirst(url->combinedScore(url,probes,qoe,now));
+  }
+  private double combinedScore(String url,JSONObject probes,JSONObject qoe,long now){
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
     // URL resolution labels contribute at most 12 points; media preflight and
@@ -1949,7 +1954,6 @@ public class SourceUpdateWorker extends Worker {
           attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
           fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
           codecWarnings);
-      long now=System.currentTimeMillis();
       score+=qoeAdjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
       score+=SourceQoeScoringPolicy.recentSuccessBonus(
           m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
