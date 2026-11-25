@@ -165,7 +165,8 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_manual_failed_feeds",0)
               .putInt("source_manual_feed_attempts",0)
               .remove("source_manual_feed_batch_fingerprint")
-              .remove("source_manual_feed_batch_scanned");
+              .remove("source_manual_feed_batch_scanned")
+               .remove("source_manual_prepared_feed_version");
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -459,9 +460,25 @@ public class SourceUpdateWorker extends Worker {
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
           boolean manualNewPage=manualRefresh&&DiscoveryBatchPolicy.manualRevalidateDirectory(
               feedCursor,roomString("source_manual_feed_batch_fingerprint",""));
-          File cachedFeed=initialDiscoveryChain?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
-              manualRefresh?PlaylistFeedCache.obtainManual(getApplicationContext(),feed,manualNewPage,pauseRequested):
-              PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
+          File cachedFeed;
+          if(initialDiscoveryChain){
+            cachedFeed=PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed);
+          }else if(manualRefresh){
+            cachedFeed=manualNewPage?PlaylistFeedCache.findPreparedManual(getApplicationContext(),feed,
+                roomString("source_manual_prepared_feed_version","")):null;
+            if(cachedFeed==null){
+              cachedFeed=PlaylistFeedCache.obtainManual(getApplicationContext(),feed,manualNewPage,pauseRequested);
+              if(manualNewPage){
+                // Acquisition alone does not advance any candidate or feed cursor.
+                String preparedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
+                SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+                new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                    .putString("source_manual_prepared_feed_version",preparedVersion).apply();
+              }
+            }
+          }else{
+            cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
+          }
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
               roomString(initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
             // The acquisition-only slice is independent of the probe cursor.
@@ -1214,6 +1231,7 @@ public class SourceUpdateWorker extends Worker {
         if(advance&&page.unavailable)failed++;
         if(advance||page!=null&&page.success&&!page.unavailable)
           update.putInt("source_manual_feed_attempts",0);
+        if(advance)update.remove("source_manual_prepared_feed_version");
         manualComplete=next>=feeds.length;
         update.putInt("source_manual_next_feed",next)
             .putInt("source_manual_failed_feeds",failed)
