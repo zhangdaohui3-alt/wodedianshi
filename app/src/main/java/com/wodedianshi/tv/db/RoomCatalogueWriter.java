@@ -174,6 +174,8 @@ public final class RoomCatalogueWriter {
             }
             else if(clearBuildRowsOnCommit&&db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null)
                 throw new IllegalStateException("Initial publication cannot clear manual staging");
+            final java.util.function.Predicate<String> eligibleSelection=manualOwner==null?url->false:
+                    manualSelectionEligibility(db);
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
             HashSet<String> previousCategoryIds = new HashSet<>(dao.getAllCategoryIds());
             HashSet<String> presentChannelIds = new HashSet<>();
@@ -272,7 +274,7 @@ public final class RoomCatalogueWriter {
                 }
                 pendingChannels.add(new PreparedChannel(channel,sourceRows));
                 if (pendingChannels.size() == SOURCE_QUERY_BATCH_SIZE) {
-                    writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null);
+                    writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null,eligibleSelection);
                     pendingChannels.clear();
                 }
                 presentChannelIds.add(id);
@@ -283,7 +285,7 @@ public final class RoomCatalogueWriter {
             }
 
             if (!pendingChannels.isEmpty()) {
-                writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null);
+                writePreparedBatch(dao,pendingChannels,previousChannelIds,paused,manualOwner!=null,eligibleSelection);
                 pendingChannels.clear();
             }
 
@@ -397,6 +399,12 @@ public final class RoomCatalogueWriter {
 
     static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
             HashSet<String> previousChannelIds,BooleanSupplier paused,boolean preserveLiveSelection) {
+        writePreparedBatch(dao,batch,previousChannelIds,paused,preserveLiveSelection,url->false);
+    }
+
+    static void writePreparedBatch(ChannelDao dao,List<PreparedChannel> batch,
+            HashSet<String> previousChannelIds,BooleanSupplier paused,boolean preserveLiveSelection,
+            java.util.function.Predicate<String> eligibleSelection) {
         checkPause(paused);
         ArrayList<String> existingIds=new ArrayList<>(batch.size());
         for(PreparedChannel item:batch)
@@ -422,17 +430,19 @@ public final class RoomCatalogueWriter {
             ChannelEntity channel=item.channel;
             String id=channel.id;
             if(previousChannelIds.contains(id)) {
+                HashMap<String,BackupSourceEntity> oldSources=oldByChannel.remove(id);
+                if(oldSources==null)oldSources=new HashMap<>();
                 if(preserveLiveSelection&&!ambiguousSelections.contains(id)){
                     ChannelDao.ActiveSelection live=liveSelections.get(id);
-                    if(live!=null&&channel.legacyKey.equals(live.legacyKey))
+                    if(live!=null&&channel.legacyKey.equals(live.legacyKey)){
+                        retainLiveSelection(item,oldSources,live.url,eligibleSelection);
                         channel.activeSource=resolveLiveSelection(item.sources,live.url);
+                    }
                 }
                 dao.updateChannelFields(channel.id,channel.legacyKey,channel.name,
                         channel.primaryUrl,channel.groupName,channel.categoryId,
                         channel.tvgId,channel.tvgName,channel.channelScopesJson,
                         channel.activeSource,channel.sortOrder);
-                HashMap<String,BackupSourceEntity> oldSources=oldByChannel.remove(id);
-                if(oldSources==null)oldSources=new HashMap<>();
                 ArrayList<BackupSourceEntity> changedSources=new ArrayList<>();
                 for(BackupSourceEntity next:item.sources) {
                     BackupSourceEntity old=oldSources.remove(next.url);
@@ -449,6 +459,57 @@ public final class RoomCatalogueWriter {
                 if(!item.sources.isEmpty())dao.insertBackupSources(item.sources);
             }
         }
+    }
+
+    private static java.util.function.Predicate<String> manualSelectionEligibility(AppDatabase db){
+        try{
+            String rawScores=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
+            String rawStreaks=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
+            final JSONObject scores=new JSONObject(rawScores==null?"{}":rawScores);
+            final JSONObject streaks=new JSONObject(rawStreaks==null?"{}":rawStreaks);
+            return url->{String key=com.wodedianshi.tv.StableKey.url(url);
+                return scores.optInt(key,0)>0&&streaks.optInt(key,0)<com.wodedianshi.tv.SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT;};
+        }catch(org.json.JSONException malformed){return url->false;}
+    }
+
+    /** Keep a positively scored current old URL if the staged ranking evicted
+     * it. Never displace a retained old route or the ranked primary. */
+    static void retainLiveSelection(PreparedChannel item,Map<String,BackupSourceEntity> oldSources,
+            String selected,java.util.function.Predicate<String> eligible){
+        if(selected==null||!eligible.test(selected)||!oldSources.containsKey(selected))return;
+        if(!selected.startsWith("http://")&&!selected.startsWith("https://"))return;
+        String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(selected);
+        for(BackupSourceEntity row:item.sources)
+            if(endpoint.equals(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(row.url)))return;
+        int position=selectionRetentionSlot(item,oldSources);
+        if(position<0)return;
+        BackupSourceEntity old=oldSources.get(selected);
+        BackupSourceEntity restored=new BackupSourceEntity(item.channel.id,selected,position,old.scopesJson);
+        // Keep source scope ownership consistent with the restored relation.
+        final String mergedScopes;
+        try{
+            java.util.TreeSet<String> scopes=new java.util.TreeSet<>();
+            for(String raw:new String[]{item.channel.channelScopesJson,old.scopesJson}){
+                JSONArray array=new JSONArray(raw);
+                for(int i=0;i<array.length();i++)scopes.add(array.getString(i));
+            }
+            JSONArray merged=new JSONArray();for(String scope:scopes)merged.put(scope);
+            mergedScopes=merged.toString();
+        }catch(org.json.JSONException malformed){return;}
+        if(position==item.sources.size())item.sources.add(restored);
+        else item.sources.set(position,restored);
+        item.channel.channelScopesJson=mergedScopes;
+    }
+
+    static int selectionRetentionSlot(PreparedChannel item,Map<String,BackupSourceEntity> oldSources){
+        final int limit=8;
+        if(item.sources.size()>limit)return -1;
+        if(item.sources.size()<limit)return item.sources.size();
+        for(int i=item.sources.size()-1;i>0;i--){
+            BackupSourceEntity row=item.sources.get(i);
+            if(!oldSources.containsKey(row.url)&&!row.url.equals(legacyPrimaryUrl(item.channel.legacyKey,item.channel.name,item.channel.primaryUrl)))return i;
+        }
+        return -1;
     }
 
     /** Preserve an exact current URL if retained, otherwise use ranked source 0.
