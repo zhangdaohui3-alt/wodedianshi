@@ -173,10 +173,15 @@ public class SourceUpdateWorker extends Worker {
       }
       // First discovery works solely on isolated staging. Do not deserialize
       // the published catalogue every slice; read it afresh at publication.
-      // Routine maintenance still needs its original optimistic snapshot.
+      // For ordinary/manual work convert Room pages directly into the mutable
+      // working array, retaining only the validated optimistic checkpoint.
+      final JSONArray publishedWorkingRows=initialDiscoveryChain?null:new JSONArray();
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot =
           initialDiscoveryChain?null:
-              com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),null,pauseRequested);
+              com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+                try{appendRoomRows(publishedWorkingRows,page);}
+                catch(JSONException invalid){throw new IllegalStateException("Cannot convert Room catalogue page",invalid);}
+              },pauseRequested);
       if(initialDiscoveryChain
           ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
           :roomSnapshot==null) {
@@ -342,7 +347,11 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
-        saved=roomSnapshotToArray(roomSnapshot);
+        // The reader has already checked the version and full row count.
+        // A partially converted array is never used after a stale/failed read.
+        saved=publishedWorkingRows;
+        if(saved.length()!=roomSnapshot.channelCount)
+          throw new IllegalStateException("Converted Room catalogue count mismatch");
       }
       final int previousStagedSize=saved.length();
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
@@ -1506,7 +1515,13 @@ public class SourceUpdateWorker extends Worker {
   private JSONArray roomSnapshotToArray(com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot)
       throws JSONException {
     JSONArray result=new JSONArray();
-    for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+    appendRoomRows(result,snapshot.channels);
+    return result;
+  }
+
+  private void appendRoomRows(JSONArray result,
+      List<com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord> rows) throws JSONException {
+    for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:rows){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject channel=new JSONObject();
       channel.put("name",row.name);channel.put("url",row.url);channel.put("group",row.group);
@@ -1528,7 +1543,6 @@ public class SourceUpdateWorker extends Worker {
       channel.put("backupSourceScopes",ownership);
       result.put(channel);
     }
-    return result;
   }
 
   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
