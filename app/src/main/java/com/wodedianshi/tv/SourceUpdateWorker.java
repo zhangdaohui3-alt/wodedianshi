@@ -448,7 +448,10 @@ public class SourceUpdateWorker extends Worker {
           }
           if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
+          boolean manualNewPage=manualRefresh&&DiscoveryBatchPolicy.manualRevalidateDirectory(
+              feedCursor,roomString("source_manual_feed_batch_fingerprint",""));
           File cachedFeed=initialDiscoveryChain?PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed):
+              manualRefresh?PlaylistFeedCache.obtainManual(getApplicationContext(),feed,manualNewPage,pauseRequested):
               PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
               roomString(initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
