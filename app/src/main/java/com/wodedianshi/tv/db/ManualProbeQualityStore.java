@@ -19,6 +19,41 @@ public final class ManualProbeQualityStore {
         return "true".equals(RoomDatabaseProvider.get(context).appStateDao().getValue(PUBLISHED_READY_KEY));
     }
 
+    /** Read only scores used by the current catalogue, never the unbounded
+     * historical table. Called off the UI thread. A changed checkpoint
+     * invalidates the entire prepared cache rather than mixing generations. */
+    public static JSONObject readPlaybackScores(Context context,Collection<String> urls,
+            long expectedVersion,BooleanSupplier paused)throws JSONException{
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        if(!hasPublished(context))return null;
+        requireCatalogueVersion(db,expectedVersion);
+        JSONObject scores=new JSONObject();
+        LinkedHashSet<String> keys=new LinkedHashSet<>();
+        for(String url:urls){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            if(url==null||url.isEmpty())continue;
+            keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
+            if(keys.size()>=256){
+                readScorePage(db,keys,scores,paused);
+                keys.clear();
+            }
+        }
+        if(!keys.isEmpty())readScorePage(db,keys,scores,paused);
+        requireCatalogueVersion(db,expectedVersion);
+        return scores;
+    }
+    private static void readScorePage(AppDatabase db,Set<String> keys,JSONObject scores,
+            BooleanSupplier paused)throws JSONException{
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        for(ManualProbeQualityEntity row:db.manualProbeQualityDao().load(PUBLISHED_OWNER,new ArrayList<>(keys)))
+            if(row.score!=null)scores.put(row.sourceKey,row.score);
+    }
+    private static void requireCatalogueVersion(AppDatabase db,long expected){
+        CatalogueMigrationEntity checkpoint=db.channelDao().getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if(checkpoint==null||checkpoint.completedAt!=expected)
+            throw new RoomCatalogueReader.StaleSnapshotException();
+    }
+
     public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
         AppDatabase db=RoomDatabaseProvider.get(context);
         if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
