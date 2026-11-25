@@ -21,6 +21,11 @@ public final class FullDiscoveryProgressPolicy {
                 && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
     }
 
+    /** WorkManager completion is not proof that a Room snapshot was published. */
+    public static boolean hasPublishedInitialSnapshot(long completedAt) {
+        return completedAt>0L;
+    }
+
     /** Finishing discovery is independent of permission to replace live rows. */
     public static boolean awaitingIdleFinalization(boolean allFeedsInspected, boolean viewing) {
         return allFeedsInspected && viewing;
