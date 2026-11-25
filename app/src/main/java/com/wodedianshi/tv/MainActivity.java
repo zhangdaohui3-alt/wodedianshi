@@ -1400,7 +1400,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
-    liveStage=new FrameLayout(this);liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+    liveStage=new FrameLayout(this){
+      private boolean ownsVideoGesture,tapCandidate;
+      private float downX,downY;
+      private boolean hitsControl(View control,MotionEvent event){
+        return control!=null&&control.isShown()&&control.getAlpha()>0.05f
+            &&event.getX()>=control.getLeft()&&event.getX()<control.getRight()
+            &&event.getY()>=control.getTop()&&event.getY()<control.getBottom();
+      }
+      @Override public boolean dispatchTouchEvent(MotionEvent event){
+        int action=event.getActionMasked();
+        if(action==MotionEvent.ACTION_DOWN){
+          ownsVideoGesture=fullScreenPlayback&&activityStarted&&currentVodPanel==null
+              &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
+              &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
+              &&!hitsControl(fullscreenMenuButton,event)&&!hitsControl(fullscreenSourceButton,event)
+              &&!hitsControl(fullscreenFavoriteButton,event)&&!hitsControl(channelZapOverlay,event);
+          tapCandidate=ownsVideoGesture;
+          downX=event.getX();downY=event.getY();
+        }
+        if(ownsVideoGesture){
+          if(action==MotionEvent.ACTION_POINTER_DOWN||event.getPointerCount()!=1
+              ||Math.abs(event.getX()-downX)>dp(24)||Math.abs(event.getY()-downY)>dp(24))
+            tapCandidate=false;
+          if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){
+            boolean toggle=action==MotionEvent.ACTION_UP&&tapCandidate;
+            ownsVideoGesture=false;tapCandidate=false;
+            if(toggle&&fullScreenPlayback&&activityStarted&&currentVodPanel==null
+                &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
+                &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())){
+              if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();
+            }
+          }
+          return true;
+        }
+        return super.dispatchTouchEvent(event);
+      }
+    };liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
@@ -5017,7 +5053,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void showFullscreenControls(){
-    if(!fullScreenPlayback||!isTouchDevice())return;
+    if(!fullScreenPlayback)return;
     fullscreenControlsVisible=true;
     TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton};
     for(TextView control:controls){control.animate().cancel();control.setVisibility(View.VISIBLE);control.setAlpha(0f);control.animate().alpha(1f).setDuration(180).start();}
