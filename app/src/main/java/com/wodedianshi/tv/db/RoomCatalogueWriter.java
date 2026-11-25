@@ -168,7 +168,7 @@ public final class RoomCatalogueWriter {
                             checkpoint == null ? null : checkpoint.completedAt)) {
                 throw new StaleCatalogueException();
             }
-            if(manualOwner!=null)RoomCatalogueBuildStore.requireManualOwner(db,manualOwner);
+            if(manualOwner!=null)RoomCatalogueBuildStore.requireUnchangedManualStructure(db,manualOwner);
             else if(clearBuildRowsOnCommit&&db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null)
                 throw new IllegalStateException("Initial publication cannot clear manual staging");
             HashSet<String> previousChannelIds = new HashSet<>(dao.getAllChannelIds());
@@ -355,6 +355,10 @@ public final class RoomCatalogueWriter {
             if (committedAt != null) committedAt[0] = completedAt;
             if (progress != null) progress.applyInTransaction(db);
             if(manualOwner!=null)RoomCatalogueBuildStore.clearManualInTransaction(db,manualOwner);
+            // Every full directory commit may change structure. Do not relax the
+            // ordinary checkpoint that also protects user favorite/source writes.
+            db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,
+                    Long.toString(completedAt),System.currentTimeMillis()));
             if (clearBuildRowsOnCommit) {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
