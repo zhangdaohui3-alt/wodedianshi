@@ -21,6 +21,7 @@ public final class RoomCatalogueBuildStore {
     public static final String MANUAL_BASE_VERSION_KEY="source_manual_staging_base_version";
     public static final String MANUAL_BASE_STRUCTURE_KEY="source_manual_staging_base_structure";
     public static final String MANUAL_READY_KEY="source_manual_staging_ready";
+    private static final String MANUAL_QUEUE_KEY="source_manual_queue_owner_v1";
     public static final String MANUAL_BASE_COUNT_KEY="source_manual_staging_base_count";
 
     public static String currentStructureVersion(Context context){
@@ -67,6 +68,7 @@ public final class RoomCatalogueBuildStore {
         db.appStateDao().remove(MANUAL_BASE_VERSION_KEY);
         db.appStateDao().remove(MANUAL_BASE_STRUCTURE_KEY);
         db.appStateDao().remove(MANUAL_READY_KEY);
+        db.appStateDao().remove(MANUAL_QUEUE_KEY);
         db.appStateDao().remove(MANUAL_BASE_COUNT_KEY);
         db.appStateDao().remove(MANUAL_SCORES_KEY);
         db.appStateDao().remove(MANUAL_STREAKS_KEY);
@@ -201,10 +203,59 @@ public final class RoomCatalogueBuildStore {
                 long structure=CatalogueVersionPolicy.readStructureVersion(stored,baseVersion);
                 db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,Long.toString(structure),now));
                 db.appStateDao().put(new AppStateEntity(MANUAL_BASE_STRUCTURE_KEY,Long.toString(structure),now));
+                seedQueueInTransaction(db,manualOwner,snapshot,paused);
             }
             checkPause(paused);
         });
         return snapshot.length();
+    }
+
+    // Insert every distinct endpoint in the round, including addresses later
+    // retired from staging. A saved-only health check never resurrects a retired route.
+    private static void enqueueRow(AppDatabase db,String owner,JSONObject row,int ordinal,
+            BooleanSupplier paused){
+        checkPause(paused);
+        java.util.LinkedHashMap<String,ManualProbeQueueEntity> entries=new java.util.LinkedHashMap<>();
+        JSONArray urls=row.optJSONArray("sources");
+        int length=urls==null?0:urls.length();
+        for(int i=0;i<=length;i++){
+            String url=i==length?row.optString("url"):urls.optString(i);
+            if(!url.startsWith("http://")&&!url.startsWith("https://"))continue;
+            String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(url);
+            entries.putIfAbsent(endpoint,new ManualProbeQueueEntity(owner,endpoint,url,
+                row.optString("name"),row.optString("group"),row.optString("tvgId"),row.optString("tvgName"),ordinal,false));
+        }
+        if(!entries.isEmpty())db.manualProbeQueueDao().insertNew(new ArrayList<>(entries.values()));
+    }
+
+    private static void seedQueueInTransaction(AppDatabase db,String owner,JSONArray rows,BooleanSupplier paused){
+        requireManualOwner(db,owner);
+        for(int i=0;i<rows.length();i++){
+            JSONObject row=rows.optJSONObject(i);
+            if(row==null)throw new IllegalStateException("Invalid queue seed");
+            enqueueRow(db,owner,row,i,paused);
+        }
+        db.appStateDao().put(new AppStateEntity(MANUAL_QUEUE_KEY,owner,System.currentTimeMillis()));
+    }
+
+    /** Upgrade an in-flight pre-queue round without trusting old capped coverage.
+     * Keep directory cursor and staging; conservatively recheck its saved endpoints. */
+    public static void ensureManualQueue(Context context,String owner,JSONArray rows,BooleanSupplier paused){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        if(owner.equals(db.appStateDao().getValue(MANUAL_QUEUE_KEY)))return;
+        db.runInTransaction(()->{
+            checkPause(paused);
+            requireManualOwner(db,owner);
+            if(owner.equals(db.appStateDao().getValue(MANUAL_QUEUE_KEY)))return;
+            db.manualProbeQueueDao().clearOwner(owner);
+            seedQueueInTransaction(db,owner,rows,paused);
+            db.appStateDao().remove(MANUAL_READY_KEY);
+            db.appStateDao().remove("source_manual_saved_scanned");
+            ArrayList<String> legacy=new ArrayList<>();
+            for(int i=0;i<64;i++)legacy.add("source_manual_covered_v1_"+i);
+            db.appStateDao().removeAll(legacy);
+            checkPause(paused);
+        });
     }
 
     /** Append/update only explicitly touched rows, in the same transaction as
@@ -213,17 +264,27 @@ public final class RoomCatalogueBuildStore {
     public static int updateTouched(Context context, JSONArray snapshot,int previousSize,
             java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress)
             throws JSONException {
-        return updateTouchedInternal(context,snapshot,previousSize,touched,paused,progress,null);
+        return updateTouchedInternal(context,snapshot,previousSize,touched,paused,progress,null,null,false,0,0,null);
     }
 
-    public static int updateManualTouched(Context context,JSONArray snapshot,int previousSize,
-            java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String owner)throws JSONException {
-        if(owner==null||owner.isEmpty())throw new IllegalArgumentException("Missing manual staging owner");
-        return updateTouchedInternal(context,snapshot,previousSize,touched,paused,progress,owner);
+    public static boolean updateManualTouched(Context context,JSONArray snapshot,int previousSize,
+            java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String owner,
+            List<String> processed,boolean directoryExhausted,int nextFeed,int feedCount,int failedFeeds)throws JSONException {
+        if(owner==null||owner.isEmpty()||processed==null)throw new IllegalArgumentException("Missing manual queue owner/progress");
+        boolean[] ready={false};
+        updateTouchedInternal(context,snapshot,previousSize,touched,paused,progress,owner,
+                processed,directoryExhausted,nextFeed,feedCount,new ManualCommit(ready,failedFeeds));
+        return ready[0];
+    }
+
+    private static final class ManualCommit {
+        final boolean[] ready;final int failedFeeds;
+        ManualCommit(boolean[] ready,int failedFeeds){this.ready=ready;this.failedFeeds=failedFeeds;}
     }
 
     private static int updateTouchedInternal(Context context,JSONArray snapshot,int previousSize,
-            java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String manualOwner)throws JSONException {
+            java.util.Set<Integer> touched,BooleanSupplier paused,AppStateEditor progress,String manualOwner,
+            List<String> processed,boolean directoryExhausted,int nextFeed,int feedCount,ManualCommit manualCommit)throws JSONException {
         checkPause(paused);
         if(snapshot==null||progress==null)throw new IllegalArgumentException("Invalid incremental build");
         validateTouchedRows(previousSize,snapshot.length(),touched);
@@ -252,6 +313,25 @@ public final class RoomCatalogueBuildStore {
             }
             if(dao.countCatalogueBuildRows()!=snapshot.length())
                 throw new IllegalStateException("Incremental staging count mismatch");
+            if(manualOwner!=null){
+                requireMatchingOwner(manualOwner,db.appStateDao().getValue(MANUAL_QUEUE_KEY));
+                // Add endpoints before certifying completion. Repeated insert
+                // preserves already processed state via INSERT IGNORE.
+                for(int index:touched)enqueueRow(db,manualOwner,snapshot.optJSONObject(index),index,paused);
+                ManualProbeQueueDao queue=db.manualProbeQueueDao();
+                if(!processed.isEmpty()&&queue.markProcessed(manualOwner,processed)!=processed.size())
+                    throw new IllegalStateException("Manual queue checkpoint mismatch");
+                int total=queue.count(manualOwner),pending=queue.countPending(manualOwner);
+                boolean ready=directoryExhausted&&nextFeed>=feedCount&&pending==0;
+                manualCommit.ready[0]=ready;
+                progress.putInt("source_manual_saved_scanned",total-pending)
+                    .putString("source_update_result","手动完整目录轮检：已处理 "+nextFeed+"/"+feedCount
+                        +" 个来源，暂不可用 "+manualCommit.failedFeeds+" 个；线路检测机会 "
+                        +(total-pending)+"/"+total+"；"+(ready?"检测完成，等待整体发布；":"已保存暂存断点；")
+                        +"超时未确认不等于有效，媒体预检不等于实播。");
+                if(ready)progress.putBoolean(MANUAL_READY_KEY,true);
+                else progress.remove(MANUAL_READY_KEY);
+            }
             progress.applyInTransaction(db);
             checkPause(paused);
         });
