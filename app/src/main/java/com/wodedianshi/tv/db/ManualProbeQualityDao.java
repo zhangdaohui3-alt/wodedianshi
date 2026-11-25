@@ -12,6 +12,8 @@ public interface ManualProbeQualityDao {
     List<ManualProbeQualityEntity> load(String owner,List<String> keys);
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey=:key LIMIT 1")
     ManualProbeQualityEntity find(String owner,String key);
+    @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
+    List<ManualProbeQualityEntity> page(String owner,String after,int limit);
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     void put(List<ManualProbeQualityEntity> rows);
     @Query("DELETE FROM manual_probe_quality WHERE owner=:owner")
