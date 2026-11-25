@@ -3639,7 +3639,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
          private boolean isCurrent(){return vodListenerOwner==MainActivity.this.vodPlayer&&vodPlayerDialog==d&&activeVodItem==item;}
          private void showEnded(){if(!isCurrent())return;saveVodHistory(item,0,vodListenerOwner.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}
          @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
-         @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);}
+         @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;
+           if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(error.getErrorCodeName(),extractHttpStatusCode(error.getCause()))){
+             vodFallbackAttempted=true;
+             if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
+             saveVodHistory(item,Math.max(0L,vodListenerOwner.getCurrentPosition()),vodListenerOwner.getDuration());
+             releaseVodPlayerSafely(pv);
+             saveLiveDiagnostic("VOD_NETWORK_ERROR_NO_ENGINE_RETRY",error.getErrorCodeName());
+             showVodFallbackFailure.run();
+             endedSubtitle.setText("影片地址暂时不可用，请重试或返回影片列表。");
+             return;
+           }
+           long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{saveVodHistory(item,0,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);}
        });vodPlayer.play();vodProgressSaver=new Runnable(){@Override public void run(){if(activityStarted&&vodPlayerDialog==d&&activeVodItem==item&&d.isShowing()&&!isAnyPlaybackLockActive()&&(vodPlayer!=null||vodFallbackBackend!=null)){saveVodHistory(item,vodPositionMs(),vodDurationMs());uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       vodPlaybackWatchdog=new Runnable(){
         @Override public void run(){
