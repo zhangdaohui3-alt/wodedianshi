@@ -52,6 +52,14 @@ public final class RoomCatalogueBuildStore {
             throw new RoomCatalogueWriter.StaleCatalogueException();
     }
 
+    static void requireManualQueueReady(AppDatabase db,String owner){
+        requireManualOwner(db,owner);
+        AppStateDao state=db.appStateDao();
+        requireMatchingOwner(owner,state.getValue(MANUAL_QUEUE_KEY));
+        if(!"true".equals(state.getValue(MANUAL_READY_KEY))||db.manualProbeQueueDao().countPending(owner)!=0)
+            throw new IllegalStateException("Manual queue has unfinished work");
+    }
+
     static void requireManualOwner(AppDatabase db,String owner){
         if(!db.inTransaction())throw new IllegalStateException("Manual staging requires transaction");
         requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_OWNER_KEY));
