@@ -2597,7 +2597,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean vodIsPlaying(){if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.isPlaying();return vodPlayer!=null&&vodPlayer.isPlaying();}
   private void vodPause(){if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.pause();else if(vodPlayer!=null)vodPlayer.pause();}
   private void vodResume(){if(isAnyPlaybackLockActive())return;if(vodUsingLibVlc&&vodFallbackBackend!=null)vodFallbackBackend.resume();else if(vodPlayer!=null)vodPlayer.play();}
-  private boolean vodSeekTo(long position){long duration=vodDurationMs();if(duration<=0L)return false;long target=VodTimelinePolicy.clampPosition(position,duration);if(vodUsingLibVlc&&vodFallbackBackend!=null)return vodFallbackBackend.seekToMs(target);if(vodPlayer!=null){vodPlayer.seekTo(target);return true;}return false;}
+  private boolean vodSeekTo(long position){
+    long duration=vodDurationMs();if(duration<=0L)return false;
+    long target=VodTimelinePolicy.clampPosition(position,duration);
+    if(vodUsingLibVlc&&vodFallbackBackend!=null){if(!vodFallbackBackend.seekToMs(target))return false;}
+    else if(vodPlayer!=null)vodPlayer.seekTo(target);else return false;
+    // Explicit user navigation supersedes automatic resume.
+    vodHistoryPendingResumeMs=0L;
+    if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}
+    return true;
+  }
   // Release VOD Media3 in independent stages. A vendor player may throw from
   // pause()/stop(); a failed stop gets an emergency playlist clear, and final
   // release must still be attempted.
@@ -2649,9 +2658,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       if(!acquireDecoderOwnership()){if(onFailure!=null)onFailure.run();return;}
       final LibVlcVodBackend backend=new LibVlcVodBackend(this,vlcLayout,libVlcWorker);vodFallbackBackend=backend;vodUsingLibVlc=true;
+      final boolean[] resumeSeekRequested={false};
+      final Runnable restoreResume=()->{
+        if(resumeSeekRequested[0]||session!=vodSessionGeneration||vodPlayerDialog!=dialog
+            ||activeVodItem!=item||vodFallbackBackend!=backend||vodHistoryPendingResumeMs<=0L
+            ||backend.getDurationMs()<=0L)return;
+        long target=VodTimelinePolicy.clampPosition(vodHistoryPendingResumeMs,backend.getDurationMs());
+        if(backend.seekToMs(target)){
+          resumeSeekRequested[0]=true;
+          saveLiveDiagnostic("VOD_FALLBACK_RESUME","requestedMs="+target);
+          if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}
+        }
+      };
       backend.setListener(new VodPlaybackBackend.Listener(){
         private boolean current(){return session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
-        private void restorePosition(){if(current()&&resumePosition>0L&&backend.getDurationMs()>0L){backend.seekToMs(resumePosition);saveLiveDiagnostic("VOD_FALLBACK_RESUME","positionMs="+resumePosition);if(vodPendingSeekTask!=null){uiHandler.removeCallbacks(vodPendingSeekTask);vodPendingSeekTask=null;}}}
+        private void restorePosition(){if(current())restoreResume.run();}
         @Override public void onReady(){if(current()){if(vodFallbackStartupWatchdog!=null){uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;}saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");restorePosition();}}
         @Override public void onVideoOutput(boolean available){if(current()){saveLiveDiagnostic("VOD_LIBVLC_VIDEO_OUTPUT","available="+available);if(available)restorePosition();}}
         @Override public void onAudioTrackState(int count,int selected){
@@ -2677,7 +2698,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       uiHandler.postDelayed(vodFallbackStartupWatchdog,1000L);
       backend.play(item.url);
       backend.setVideoScaleMode(getSharedPreferences("mytv",0).getInt("vod_aspect_mode",0));
-      if(resumePosition>0L){final int[] attempts={0};vodPendingSeekTask=new Runnable(){@Override public void run(){if(session!=vodSessionGeneration||vodFallbackBackend!=backend||!vodUsingLibVlc)return;if(backend.getDurationMs()>0L){backend.seekToMs(resumePosition);vodPendingSeekTask=null;}else if(++attempts[0]<20)uiHandler.postDelayed(this,500L);else vodPendingSeekTask=null;}};uiHandler.postDelayed(vodPendingSeekTask,500L);}
+      if(vodHistoryPendingResumeMs>0L){
+        final int[] attempts={0};
+        vodPendingSeekTask=new Runnable(){@Override public void run(){
+          if(session!=vodSessionGeneration||vodFallbackBackend!=backend||!vodUsingLibVlc||vodPendingSeekTask!=this)return;
+          restoreResume.run();
+          if(vodPendingSeekTask!=this)return;
+          if(vodHistoryPendingResumeMs>0L&&!resumeSeekRequested[0]&&++attempts[0]<20)uiHandler.postDelayed(this,500L);
+          else vodPendingSeekTask=null;
+        }};
+        uiHandler.postDelayed(vodPendingSeekTask,500L);
+      }
     }catch(RuntimeException|LinkageError error){releaseVodFallback();if(onFailure!=null)onFailure.run();toast("LibVLC 备用播放器启动失败："+error.getClass().getSimpleName());saveLiveDiagnostic("VOD_LIBVLC_START_FAILURE","type="+error.getClass().getSimpleName());}
   }
 
