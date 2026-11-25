@@ -99,6 +99,13 @@ public class SourceProbeTimePolicyTest {
         assertFalse(SourceProbeTimePolicy.initialProbeInconclusive(false,14999L,15000L));
     }
 
+    @Test public void repeatedInconclusiveEndpointHasOneExtraOpportunityPerSlice() {
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(0));
+        assertTrue(SourceProbeTimePolicy.retryInconclusiveWithinSlice(1));
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(2));
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(20));
+    }
+
     @Test public void parallelWaveLeavesTimeForOrderedMerge() {
         assertTrue(SourceProbeTimePolicy.hasWaveDrainMargin(90000L,88000L));
         assertFalse(SourceProbeTimePolicy.hasWaveDrainMargin(90000L,88001L));
