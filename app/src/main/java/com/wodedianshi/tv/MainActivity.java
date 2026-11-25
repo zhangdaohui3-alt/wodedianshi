@@ -1484,6 +1484,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
           keys.add("source_full_rebuild_completed_at");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
+          keys.add(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY);
           keys.add("source_initial_index_attempted");
           keys.add("source_initial_index_bypassed");
           keys.add("source_initial_index_ready");
@@ -1514,6 +1515,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final int entries=(int)readStateLong(snapshot,prefix+"feed_entries",0L);
           final int percent=(int)readStateLong(snapshot,prefix+"percent",0L);
           final String phase=snapshot.getOrDefault(prefix+"phase","尚未开始首次完整抓源");
+          final String freshCoverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
@@ -1533,6 +1535,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   +Math.max(0,chinaValidated)+" 次 · 全部来源 "
                   +Math.max(0,validated)+" 次"+"\n暂不可用来源 "
                   +Math.max(0,unavailable)+" 个 · 超时未确认 "+Math.max(0,timeouts)+" 次，待补查"
+                  +"\n"+phase
+                  +(freshCoverage.isEmpty()?"\n本次中国频道覆盖尚无记录":("\n"+freshCoverage))
                   +"\n100%不代表全部频道可播，详见设置→查看更新状态");
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
