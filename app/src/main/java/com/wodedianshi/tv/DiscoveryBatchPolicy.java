@@ -11,6 +11,9 @@ public final class DiscoveryBatchPolicy {
     // Fixed across idle/viewing transitions so partial page fingerprints stay
     // stable. Only the number of probes admitted per slice changes.
     static final int INITIAL_PAGE_SIZE=48;
+    // Manual refresh processes more new candidates without reducing the existing
+    // saved-route health-check allotment or changing the routine maintenance page.
+    static final int MANUAL_PAGE_SIZE=24;
     static int probeLimit(boolean initial,boolean viewing,int ordinaryLimit) {
         return initial?(viewing?1:INITIAL_PAGE_SIZE):ordinaryLimit;
     }
