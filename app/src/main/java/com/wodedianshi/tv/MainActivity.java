@@ -1740,13 +1740,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(currentVodPanel!=null||vodCatalogueDialog!=null)return;
     resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())||libVlcEngine!=null
         ||liveVlcReleaseContinuation!=null;
-    // A VOD catalogue session owns the screen; explicitly revoke live audio before
-    // releasing the decoder so OEM TV firmware cannot keep a stale audio session.
+    // Revoke the live item BEFORE pause: synchronous or queued old Media3
+    // callbacks must not recover the live edge, play(), or start another source.
+    currentMediaId="";
+    ++liveTuneRequestSerial;
+    clearPendingRemoteZap();
+    pauseStableDiscovery();
+    cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
+    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     if(player!=null){try{player.setPlayWhenReady(false);}catch(RuntimeException ignored){}}
     // Revoke live VLC immediately and queue native release on its owner.
     // No native pause/query is allowed on the UI thread during initialization.
-    cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
-    ++liveTuneRequestSerial;
     if(liveVlcReleaseContinuation!=null){
       libVlcReleaseCallbacks.remove(liveVlcReleaseContinuation);
       liveVlcReleaseContinuation=null;
@@ -3340,7 +3344,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     revokePendingVodStart();
     final long request=vodStartRequestGeneration;
     if(decoderReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
-    if(player!=null||libVlcEngine!=null){toast("直播播放器正在释放，请稍后再选择影片");return;}
+    // A cached catalogue may be clicked before the deferred live teardown.
+    // Complete the handoff on the Media3 application looper; the existing VLC
+    // barrier below retains the latest valid VOD request until native release.
+    if(player!=null)releaseLivePlayerSafely();
+    if(libVlcEngine!=null)releaseLibVlcEngine();
+    if(decoderReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
+    if(player!=null||libVlcEngine!=null)return;
     if(vodPlayerDialog!=null){
       // Dialog dismissal posts its listener; do not build a new player before
       // the old listener finishes clearing its fields and releasing ownership.
@@ -6135,6 +6145,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private boolean isCurrentLiveAnalyticsEvent(AnalyticsListener.EventTime eventTime){
+    if(currentMediaId.isEmpty()||currentVodPanel!=null||!activityStarted)return false;
     if(eventTime==null||eventTime.timeline==null||eventTime.windowIndex<0
         ||eventTime.windowIndex>=eventTime.timeline.getWindowCount())return false;
     try{
@@ -6328,7 +6339,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           // not only after the first frame arrives; this catches black/no-frame streams.
         }
         private boolean isCurrent(){
-          if(listenerOwner!=MainActivity.this.player)return false;
+          if(listenerOwner!=MainActivity.this.player||currentMediaId.isEmpty()
+              ||currentVodPanel!=null||!activityStarted)return false;
           MediaItem item=listenerOwner.getCurrentMediaItem();
           return item!=null&&currentMediaId.equals(item.mediaId);
         }
