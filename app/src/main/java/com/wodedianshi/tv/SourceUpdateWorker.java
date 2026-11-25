@@ -437,8 +437,20 @@ public class SourceUpdateWorker extends Worker {
             // worker. Never advance the verified cursor after a download alone.
             noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
             try{
-              cachedFeed=PlaylistFeedCache.obtainSmallInitialDuringViewing(
+              cachedFeed=PlaylistFeedCache.obtainInitialViewingChunk(
                   getApplicationContext(),feed,feedCursor>0,pauseRequested);
+              if(cachedFeed==null){
+                // An exact validated byte range was committed; neither the
+                // directory nor the line-probe cursor is complete yet.
+                SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+                new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+                    .putInt("source_initial_next_feed_index",feedIndex)
+                    .putString("source_initial_progress_phase","已保存大型目录分段，稳定播放时继续下载")
+                    .apply();
+                return continueAfterAcquisition();
+              }
+              if(!SourceProbeTimePolicy.fitsLiveDirectory(cachedFeed.length()))
+                throw new IOException("Complete large directory awaits idle indexing");
               PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);

@@ -56,6 +56,143 @@ public final class PlaylistFeedCache {
         return obtainBounded(context,feedUrl,true,preserveExistingSnapshot,paused,true);
     }
 
+    /**
+     * One bounded HTTP range per stable-viewing slice. A null result means a
+     * durable partial download, never a usable directory. Strong ETag and
+     * matching total/offset are mandatory for combining separate responses.
+     */
+    public static File obtainInitialViewingChunk(Context context,String feedUrl,
+            boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused) throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
+        File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+        if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Cache directory unavailable");
+        String key=sha256("initial|"+feedUrl);
+        File cached=new File(directory,key+".m3u");
+        if(cached.isFile()){
+            if(!SourceProbeTimePolicy.fitsLiveDirectory(cached.length()))
+                throw new IOException("Complete large directory awaits idle indexing");
+            return obtainSmallInitialDuringViewing(context,feedUrl,preserveExistingSnapshot,paused);
+        }
+        File partial=new File(directory,key+".range-part");
+        File checkpoint=new File(directory,key+".range-state");
+        File checkpointTemp=new File(directory,key+".range-state.tmp");
+        // Bound partial-file storage globally. Eviction never advances a feed cursor.
+        File[] parts=directory.listFiles((dir,name)->name.endsWith(".range-part"));
+        if(parts!=null){
+            java.util.Arrays.sort(parts,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+            int retained=0;
+            for(File other:parts){
+                if(other.equals(partial))continue;
+                if(retained++>=2){
+                    String prefix=other.getName().substring(0,other.getName().length()-".range-part".length());
+                    if(other.delete())new File(directory,prefix+".range-state").delete();
+                }
+            }
+        }
+        Properties previous=readProperties(checkpoint);
+        String oldTag=previous.getProperty("etag","");
+        String oldLocation=previous.getProperty("location","");
+        long offset=parseLong(previous.getProperty("length"),0L);
+        long total=parseLong(previous.getProperty("total"),-1L);
+        if(!partial.isFile()||offset<=0L||offset>=total
+                ||total>SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES
+                ||partial.length()<offset||!SourceProbeTimePolicy.strongDirectoryValidator(oldTag)
+                ||oldLocation.isEmpty()){
+            checkpoint.delete();partial.delete();offset=0L;total=-1L;oldTag="";oldLocation="";
+        }else if(partial.length()!=offset){
+            try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
+        }
+        HttpURLConnection connection=null;
+        final long deadline=android.os.SystemClock.elapsedRealtime()+SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS;
+        try{
+            connection=(HttpURLConnection)new URL(feedUrl).openConnection();
+            connection.setConnectTimeout(2000);connection.setReadTimeout(2000);
+            connection.setUseCaches(false);connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty("User-Agent","MyTV/1.19 Android TV");
+            connection.setRequestProperty("Accept-Encoding","identity");
+            connection.setRequestProperty("Range","bytes="+offset+"-"+(offset+SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES-1L));
+            if(offset>0L)connection.setRequestProperty("If-Range",oldTag);
+            int status=connection.getResponseCode();
+            checkDownloadBudget(paused,deadline);
+            String encoding=connection.getHeaderField("Content-Encoding");
+            if(encoding!=null&&!encoding.equalsIgnoreCase("identity"))throw new IOException("Encoded range response");
+            String tag=connection.getHeaderField("ETag");
+            String location=sha256(connection.getURL().toExternalForm());
+            long expected;
+            if(status==206){
+                long[] range=SourceProbeTimePolicy.liveDirectoryRange(connection.getHeaderField("Content-Range"),offset,total);
+                if(range==null||!SourceProbeTimePolicy.strongDirectoryValidator(tag)
+                        ||(offset>0L&&(!oldTag.equals(tag)||!oldLocation.equals(location)))){
+                    checkpoint.delete();partial.delete();
+                    throw new IOException("Directory range identity changed or unsupported");
+                }
+                expected=range[0];total=range[1];
+            }else if(status==200){
+                // Range ignored or representation changed. Never append a 200.
+                checkpoint.delete();partial.delete();offset=0L;
+                expected=connection.getContentLength();total=expected;
+                if(expected>SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES)
+                    throw new IOException("Large directory does not support safe range transfer");
+            }else{
+                if(status==416){checkpoint.delete();partial.delete();}
+                throw new IOException("Directory range HTTP "+status);
+            }
+            long copied=0L;
+            long started=android.os.SystemClock.elapsedRealtime();
+            try(InputStream input=connection.getInputStream();
+                FileOutputStream out=new FileOutputStream(partial,offset>0L)){
+                byte[] buffer=new byte[4096];
+                while(true){
+                    checkDownloadBudget(paused,deadline);
+                    int n=input.read(buffer);
+                    checkDownloadBudget(paused,deadline);
+                    if(n<0)break;
+                    copied+=n;
+                    if(copied>SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES||(expected>=0L&&copied>expected))
+                        throw new IOException("Directory response exceeded range budget");
+                    out.write(buffer,0,n);
+                    long delay=SourceProbeTimePolicy.liveDirectoryPacingMillis(copied,android.os.SystemClock.elapsedRealtime()-started);
+                    while(delay>0L){
+                        checkDownloadBudget(paused,deadline);
+                        long step=Math.min(50L,delay);android.os.SystemClock.sleep(step);delay-=step;
+                    }
+                }
+                if(copied<=0L||(expected>=0L&&copied!=expected))throw new IOException("Incomplete directory range");
+                out.getFD().sync();
+            }
+            checkDownloadBudget(paused,deadline);
+            long length=offset+copied;
+            if(status==206&&length<total){
+                Properties next=new Properties();
+                next.setProperty("etag",tag);next.setProperty("location",location);
+                next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
+                writePropertiesAtomically(checkpoint,checkpointTemp,next);
+                return null;
+            }
+            // No partial body is ever parsed or published.
+            if(!isPlaylistFile(partial))throw new IOException("Downloaded resource is not M3U");
+            String digest=contentDigest(partial,paused);
+            checkDownloadBudget(paused,deadline);
+            invalidateIndex(cached);
+            File metadata=new File(cached.getPath()+".properties");
+            if(metadata.exists()&&!metadata.delete())throw new IOException("Cannot invalidate old metadata");
+            atomicReplace(partial,cached);
+            Properties fresh=new Properties();
+            describeBody(fresh,cached,digest);
+            fresh.setProperty("cachedAt",Long.toString(System.currentTimeMillis()));
+            if(tag!=null)fresh.setProperty("etag",tag);
+            writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
+            checkpoint.delete();
+            pruneOldEntries(directory,cached);
+            return cached;
+        }finally{
+            if(connection!=null)connection.disconnect();
+            checkpointTemp.delete();
+            // Uncommitted tail is truncated on next attempt, never trusted.
+            if(!checkpoint.isFile())partial.delete();
+        }
+    }
+
     private static File obtainBounded(Context context,String feedUrl,boolean initialDiscovery,
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
             boolean lowRate) throws IOException {
