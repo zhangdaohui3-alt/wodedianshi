@@ -4,6 +4,14 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RoomCatalogueReloadPolicyTest {
+    @Test public void untrustedRecoveryOnlyReadsIntoAnEmptyInactiveModel() {
+        org.junit.Assert.assertTrue(RoomCatalogueReloadPolicy.canReadForRecovery(true,10,true));
+        org.junit.Assert.assertTrue(RoomCatalogueReloadPolicy.canReadForRecovery(false,0,false));
+        org.junit.Assert.assertFalse(RoomCatalogueReloadPolicy.canReadForRecovery(false,1,false));
+        org.junit.Assert.assertFalse(RoomCatalogueReloadPolicy.canReadForRecovery(false,0,true));
+        org.junit.Assert.assertFalse(RoomCatalogueReloadPolicy.canReadForRecovery(false,1,true));
+    }
+
     @Test public void unchangedCheckpointSkipsOnlyKnownMatchingVersion() {
         assertTrue(RoomCatalogueReloadPolicy.isUnchanged(42L, 42L));
         assertFalse(RoomCatalogueReloadPolicy.isUnchanged(42L, 43L));
