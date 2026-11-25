@@ -373,11 +373,11 @@ public class SourceUpdateWorker extends Worker {
       // so a saved backup could silently die without ever losing its old score.
       ArrayList<Entry> savedPool=new ArrayList<>();
       HashSet<String> savedPoolUrls=new HashSet<>();
-      // A foreground full rebuild probes the staged discovery candidates; it does not
-      // import old catalogue sources. Routine background maintenance also checks saved URLs.
-      // Avoid allocating up to 20,000 additional saved-source Entry objects while the
-      // TV UI is open; the full rotating health-check pool is retained for background runs.
-      if(!foregroundAtStart&&!initialDiscoveryChain){
+      // First discovery keeps its independent new-candidate budget. Explicit
+      // manual refresh must check old routes even when requested from the TV UI;
+      // otherwise a user reporting dead backups can scan only new candidates.
+      // The viewing pause gate and the per-slice saved probe allotment still apply.
+      if(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(initialDiscoveryChain,manualRefresh,foregroundAtStart)){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -1018,7 +1018,8 @@ public class SourceUpdateWorker extends Worker {
       if(pauseRequested.getAsBoolean())
         return deferredViewingResult(manual,initialDiscoveryChain);
       update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
-          .putInt("source_saved_scan_cursor",savedPool.isEmpty()?0:(savedScanStart+savedScanned)%savedPool.size())
+          .putInt("source_saved_scan_cursor",savedScanned>0&&!savedPool.isEmpty()
+              ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
           .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           .putString("source_probe_scores_v1",measuredScores.toString())
