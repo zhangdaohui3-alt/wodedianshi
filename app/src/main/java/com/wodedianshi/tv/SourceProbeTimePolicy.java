@@ -84,6 +84,17 @@ public final class SourceProbeTimePolicy {
         }catch(NumberFormatException invalid){return null;}
     }
 
+    /** A socket timeout is not proof that a stream is invalid, even before the total budget. */
+    public static boolean initialProbeInconclusive(boolean socketTimedOut,long finishedAt,long addressDeadline) {
+        return socketTimedOut || finishedAt>=addressDeadline;
+    }
+
+    /** Reserve a small owner-merge margin rather than starting a last-second parallel wave. */
+    public static boolean hasWaveDrainMargin(long batchDeadline,long addressDeadline) {
+        return addressDeadline>=0L && batchDeadline>=addressDeadline
+                && batchDeadline-addressDeadline>=2000L;
+    }
+
     // First build prioritizes breadth. Keep one difficult HLS address from
     // monopolizing an entire slice. A timed-out probe is inconclusive.
     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
