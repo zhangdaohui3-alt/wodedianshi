@@ -6197,6 +6197,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     setSourceUpdatePlaybackActive(libVlcReleaseInProgress);
     if(info!=null)info.setText(reason);
     showChannelZapMessage(reason);
+    reloadDeferredCatalogueIfIdle();
   }
   private void advanceToNextChannelAutomatically(String reason){
     if(isAnyPlaybackLockActive()||currentVodPanel!=null||!activityStarted)return;
@@ -6932,7 +6933,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(libVlcReleaseNotice!=null){uiHandler.removeCallbacks(libVlcReleaseNotice);libVlcReleaseNotice=null;}
     if(decoderReleaseUnconfirmed)return;
     if(player==null&&libVlcEngine==null&&currentVodPanel==null)setSourceUpdatePlaybackActive(false);
-    if(libVlcReleaseCallbacks.isEmpty())return;
+    if(libVlcReleaseCallbacks.isEmpty()){
+      reloadDeferredCatalogueIfIdle();
+      return;
+    }
     ArrayList<Runnable> callbacks=new ArrayList<>(libVlcReleaseCallbacks);
     libVlcReleaseCallbacks.clear();
     for(Runnable callback:callbacks){
@@ -6941,6 +6945,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         saveLiveDiagnostic("VLC_RELEASE_CALLBACK_ERROR",failure.getClass().getSimpleName());
       }
     }
+    reloadDeferredCatalogueIfIdle();
   }
   private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
@@ -7558,6 +7563,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // stopped. On returning, reload its newer cache before any later persist() can
   // serialize an old in-memory list over the updated backup sources.
   private volatile long backgroundCatalogueReloadGeneration=0L;
+  // Main-looper flag only. Room retains the new durable snapshot if viewing
+  // prevents replacing the current Activity's positional catalogue.
+  private boolean catalogueReloadDeferredForPlayback;
+  private boolean hasPlaybackCatalogueOwner(){
+    return player!=null||libVlcEngine!=null||vodPlayer!=null||vodFallbackBackend!=null
+        ||currentVodPanel!=null||libVlcReleaseInProgress
+        ||PROCESS_VLC_TEARDOWNS.get()>0||SourceUpdateActivityPolicy.isPlaybackActive();
+  }
+  private void reloadDeferredCatalogueIfIdle(){
+    if(catalogueReloadDeferredForPlayback&&activityStarted&&!isFinishing()&&!isDestroyed()
+        &&!hasPlaybackCatalogueOwner())reloadChannelsAfterBackgroundUpdateIfNeeded();
+  }
   // Incremented for every persistence request; a reload may publish only if no
   // catalogue edit/save was requested while its background parse was running.
   private volatile long catalogueMutationGeneration=0L;
@@ -7663,6 +7680,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
+    if(hasPlaybackCatalogueOwner()){
+      catalogueReloadDeferredForPlayback=true;
+      return;
+    }
+    catalogueReloadDeferredForPlayback=false;
     final boolean recoveryRead=!catalogueSnapshotTrusted;
     if(!RoomCatalogueReloadPolicy.canReadForRecovery(catalogueSnapshotTrusted,channels.size(),
         player!=null||libVlcEngine!=null||currentVodPanel!=null)){
@@ -7725,6 +7747,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           uiHandler.post(()->{
             boolean activityActive=activityStarted&&!isFinishing()&&!isDestroyed();
             boolean currentRequest=generation==backgroundCatalogueReloadGeneration;
+            // Playback may have resumed during the asynchronous Room read.
+            // Never reindex the selected channel under a live watchdog/session.
+            if(activityActive&&currentRequest&&hasPlaybackCatalogueOwner()){
+              catalogueReloadDeferredForPlayback=true;
+              android.util.Log.i("MyTVStartup","room_reload_deferred_for_playback");
+              return;
+            }
             long currentMutation=catalogueMutationGeneration;
             if(!RoomCatalogueReloadPolicy.mayPublish(activityActive,currentRequest,
                 expectedMutationGeneration,currentMutation)){
