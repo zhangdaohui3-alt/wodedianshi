@@ -11,6 +11,8 @@ public final class AppStateEditor {
     private final Context context;
     private final LinkedHashMap<String, String> updates = new LinkedHashMap<>();
     private final LinkedHashSet<String> removals = new LinkedHashSet<>();
+    private java.util.List<ManualProbeQualityEntity> publishedQuality;
+    private java.util.function.BooleanSupplier qualityPaused;
 
     public AppStateEditor(Context context) {
         if (context == null) throw new IllegalArgumentException("context is null");
@@ -41,6 +43,11 @@ public final class AppStateEditor {
         return this;
     }
 
+    public AppStateEditor putPublishedQuality(java.util.List<ManualProbeQualityEntity> rows,
+            java.util.function.BooleanSupplier paused){
+        publishedQuality=new ArrayList<>(rows);qualityPaused=paused;return this;
+    }
+
     public void apply() {
         AppDatabase db = RoomDatabaseProvider.get(context);
         db.runInTransaction(() -> applyInTransaction(db));
@@ -58,5 +65,6 @@ public final class AppStateEditor {
         ArrayList<String> deleteKeys = new ArrayList<>(removals);
         if (!deleteKeys.isEmpty()) dao.removeAll(deleteKeys);
         if (!rows.isEmpty()) dao.putAll(rows);
+        if(publishedQuality!=null)ManualProbeQualityStore.writePublishedInTransaction(db,publishedQuality,qualityPaused);
     }
 }

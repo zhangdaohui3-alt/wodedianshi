@@ -12,7 +12,12 @@ import org.json.JSONException;
 public final class ManualProbeQualityStore {
     private ManualProbeQualityStore(){}
     static final String READY_KEY="source_manual_quality_owner_v1";
-    static final String PUBLISHED_OWNER="@published";
+    public static final String PUBLISHED_OWNER="@published";
+    private static final String PUBLISHED_READY_KEY="source_indexed_quality_published_v1";
+
+    public static boolean hasPublished(Context context){
+        return "true".equals(RoomDatabaseProvider.get(context).appStateDao().getValue(PUBLISHED_READY_KEY));
+    }
 
     public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
         AppDatabase db=RoomDatabaseProvider.get(context);
@@ -29,7 +34,22 @@ public final class ManualProbeQualityStore {
             RoomCatalogueBuildStore.requireManualOwner(db,owner);
             if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
             db.manualProbeQualityDao().clearOwner(owner);
-            writeInTransaction(db,owner,rows,paused);
+            if("true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY))){
+                // The compatibility JSON is not authoritative once full indexed
+                // quality has been published. Copy bounded pages in the same
+                // transaction, so a crash cannot seed a partial new round.
+                String after="";
+                for(;;){
+                    SourceProbeTimePolicy.checkPublicationPaused(paused);
+                    List<ManualProbeQualityEntity> page=db.manualProbeQualityDao().page(PUBLISHED_OWNER,after,256);
+                    if(page.isEmpty())break;
+                    List<ManualProbeQualityEntity> copy=new ArrayList<>(page.size());
+                    for(ManualProbeQualityEntity row:page)
+                        copy.add(new ManualProbeQualityEntity(owner,row.sourceKey,row.score,row.failureStreak));
+                    writeInTransaction(db,owner,copy,paused);
+                    after=page.get(page.size()-1).sourceKey;
+                }
+            }else writeInTransaction(db,owner,rows,paused);
             db.appStateDao().put(new AppStateEntity(READY_KEY,owner,System.currentTimeMillis()));
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
@@ -89,6 +109,19 @@ public final class ManualProbeQualityStore {
         if(PUBLISHED_OWNER.equals(owner))throw new IllegalArgumentException("Reserved quality owner");
         db.manualProbeQualityDao().clearOwner(PUBLISHED_OWNER);
         db.manualProbeQualityDao().publish(owner,PUBLISHED_OWNER);
+        db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
+    }
+
+    static void writePublishedInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,
+            BooleanSupplier paused){
+        if(!db.inTransaction()||!"true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY)))
+            throw new IllegalStateException("Published quality unavailable");
+        for(ManualProbeQualityEntity row:rows)
+            if(!PUBLISHED_OWNER.equals(row.owner))throw new IllegalArgumentException("Wrong published quality owner");
+        for(int i=0;i<rows.size();i+=256){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            db.manualProbeQualityDao().put(rows.subList(i,Math.min(i+256,rows.size())));
+        }
     }
 
     static void writeInTransaction(AppDatabase db,String owner,List<ManualProbeQualityEntity> rows,

@@ -386,10 +386,13 @@ public class SourceUpdateWorker extends Worker {
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
       final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
-      JSONObject measuredScores=new JSONObject(manualRefresh?"{}":roomString(scoresKey,"{}"));
+      final boolean indexedPublished=!manualRefresh&&!initialDiscoveryChain&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
+      final boolean indexedQuality=manualRefresh||indexedPublished;
+      final String qualityOwner=manualRefresh?manualId:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
+      JSONObject measuredScores=new JSONObject(indexedQuality?"{}":roomString(scoresKey,"{}"));
       // A single failed probe merely reduces its score. It cannot delete an
       // existing saved backup; three independent failures are needed.
-      JSONObject probeFailureStreaks=new JSONObject(manualRefresh?"{}":roomString(streaksKey,"{}"));
+      JSONObject probeFailureStreaks=new JSONObject(indexedQuality?"{}":roomString(streaksKey,"{}"));
       HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       for(int i=0;i<saved.length();i++){
@@ -776,8 +779,16 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
-      if(manualRefresh){
+      if(indexedQuality){
         LinkedHashSet<String> needed=new LinkedHashSet<>();
+        // Routine still re-ranks the published snapshot; include every
+        // retained URL rather than substituting the capped compatibility view.
+        if(indexedPublished)for(int i=0;i<saved.length();i++){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          JSONObject row=saved.getJSONObject(i);needed.add(row.optString("url"));
+          JSONArray urls=row.optJSONArray("sources");
+          if(urls!=null)for(int j=0;j<urls.length();j++)needed.add(urls.optString(j));
+        }
         for(Entry entry:probeCandidates){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           needed.add(entry.url);
@@ -790,7 +801,7 @@ public class SourceUpdateWorker extends Worker {
             }
           }
         }
-        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),manualId,needed,
+        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
             manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
       }
       // Use independent rotating cursors and a fixed per-run budget for discovery
@@ -889,7 +900,7 @@ public class SourceUpdateWorker extends Worker {
           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
           measuredScores.remove(legacyScoreKey(e.url));
         }
-        if(manualRefresh){
+        if(indexedQuality){
           // Shared endpoint observations can be consumed by more than one exact URL.
           measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
           measuredScores.remove(legacyScoreKey(e.url));
@@ -901,7 +912,7 @@ public class SourceUpdateWorker extends Worker {
               probeFailureStreaks.optInt(streakKey,0),measured.valid);
           if(streak==0)probeFailureStreaks.remove(streakKey);
           else probeFailureStreaks.put(streakKey,streak);
-          if(manualRefresh)manualQualityDirty.add(streakKey);
+          if(indexedQuality)manualQualityDirty.add(streakKey);
         }
         // A queued old endpoint may have been retired after enqueue. Health
         // checks update its score/streak but cannot resurrect it as a discovery.
@@ -1016,6 +1027,9 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
+      // Capture dirty rows BEFORE trimming the legacy compatibility cache.
+      if(indexedPublished)update.putPublishedQuality(
+          com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
       if(!manualRefresh){
         trimProbeScores(measuredScores,savedPool,probeCandidates);
         trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
