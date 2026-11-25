@@ -5936,6 +5936,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Monotonic timing only; never persist endpoints in tune diagnostics.
   private long sourceFirstLoadAt=0L;
   private long sourceReadyAt=0L;
+  // The retry-budget clock must never reset the continuous READY clock used
+  // by initial discovery's viewing permission.
+  private long lastRecoveryBudgetRefreshAt=0L;
   // Start the no-first-frame deadline only once a supported video track is selected.
   private long videoTrackSelectedAt=0L;
   private boolean resumePlaybackOnStart=false;
@@ -6042,7 +6045,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           &&now-lastStableDiscoveryInteraction>=20000L
           &&watchdogLastAdvanceAt>0L&&now-watchdogLastAdvanceAt<5000L
           &&lastVideoPipelineActivityAt>0L&&now-lastVideoPipelineActivityAt<5000L
-          &&player.isPlaying()&&activityStarted&&fullScreenPlayback&&hasWindowFocus()
+          &&player.isPlaying()&&activityStarted&&hasWindowFocus()
           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
           &&currentVodPanel==null&&!isAnyPlaybackLockActive()
@@ -6059,13 +6062,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           SourceMemoryStore.saveLastGood(MainActivity.this,
               SourceMemoryStore.channelIdentityKey(identity(channels.get(selected))),goodUrl);
       }
-      if(TrackHealthPolicy.canRefreshRecoveryBudget(confirmedOutput,sourceReadyAt,
+      if(TrackHealthPolicy.canRefreshRecoveryBudget(confirmedOutput,
+          Math.max(sourceReadyAt,lastRecoveryBudgetRefreshAt),
           watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)){
         automaticSwitchCount=0;
         failedEndpointsThisPass.clear();
         automaticChannelSwitchCount=0;
         sameSourceRecoveryCount=0;
-        sourceReadyAt=now;
+        lastRecoveryBudgetRefreshAt=now;
       }
       schedulePlaybackWatchdog();
     };
@@ -6397,6 +6401,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     sourceAttemptStartedAt=android.os.SystemClock.elapsedRealtime();
     sourceFirstLoadAt=0L;
     sourceReadyAt=0L;
+    lastRecoveryBudgetRefreshAt=0L;
     lastVideoPipelineActivityAt=0L;
     sourceReadyRecorded=false;
     sourceStableRecorded=false;
@@ -6605,6 +6610,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             watchdogLastPosition=player.getCurrentPosition();
             watchdogLastAdvanceAt=android.os.SystemClock.elapsedRealtime();
             sourceReadyAt=watchdogLastAdvanceAt;
+            lastRecoveryBudgetRefreshAt=0L;
             // Begin the first-frame deadline only after READY; earlier BUFFERING time is excluded.
             if(videoTrackSelected&&!sourceFirstFrameRecorded)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
