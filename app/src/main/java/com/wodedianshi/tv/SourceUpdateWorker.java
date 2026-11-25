@@ -58,7 +58,16 @@ public class SourceUpdateWorker extends Worker {
           getInputData().getBoolean("initial_discovery_chain",false))
           ?Result.retry():Result.success();
     }
+    int originalPriority=android.os.Process.THREAD_PRIORITY_DEFAULT;
+    boolean priorityChanged=false;
     try{
+      try{
+        originalPriority=android.os.Process.getThreadPriority(android.os.Process.myTid());
+        if(originalPriority<android.os.Process.THREAD_PRIORITY_BACKGROUND){
+          android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+          priorityChanged=true;
+        }
+      }catch(RuntimeException ignored){}
       long now=android.os.SystemClock.elapsedRealtime();
       if(!getInputData().getBoolean("initial_discovery_chain",false)
           ||now<committedStagingAt||now-committedStagingAt>60000L)discardStagingReuse();
@@ -67,6 +76,8 @@ public class SourceUpdateWorker extends Worker {
     }finally{
       if(isStopped()||Thread.currentThread().isInterrupted())discardStagingReuse();
       initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);
+      if(priorityChanged)try{android.os.Process.setThreadPriority(originalPriority);}
+      catch(RuntimeException ignored){}
     }
   }
   private Result runOwnedWork(){
@@ -464,8 +475,9 @@ public class SourceUpdateWorker extends Worker {
                     .apply();
                 return continueAfterAcquisition();
               }
-              if(!SourceProbeTimePolicy.fitsLiveDirectory(cachedFeed.length()))
-                throw new IOException("Complete large directory awaits idle indexing");
+              if(!SourceProbeTimePolicy.fitsLiveFullDirectory(cachedFeed.length()))
+                throw new IOException("Directory exceeds stable-viewing index limit");
+              noteInitialStage("低优先级整理目录 "+(feedIndex+1)+"/"+feeds.length);
               PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               LIVE_DIRECTORY_RETRY_AFTER.remove(feedIndex);
@@ -1131,7 +1143,7 @@ public class SourceUpdateWorker extends Worker {
       }else if(!initialDiscoveryChain&&SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(discoveryProbesValid)){
         update.putLong("source_update_last_success_at",System.currentTimeMillis());
       }
-      // A completed, committed probe pass advances the weekly deadline;
+      // A completed, committed probe pass advances the 30-day deadline;
       // skipped or failed work leaves the due date unchanged.
       boolean manualComplete=false;
       if(manualRefresh){
@@ -1450,7 +1462,7 @@ public class SourceUpdateWorker extends Worker {
       return continueAfterViewingDelay(false);
     }
     // Do not repeatedly wake the periodic job every few minutes while a user
-    // watches television; the next daily check retains the overdue weekly intent.
+    // watches television; the next daily check retains the overdue monthly intent.
     return SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
         ?Result.retry():Result.success();
   }
