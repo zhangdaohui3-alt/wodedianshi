@@ -9,6 +9,15 @@ public final class VodTimelinePolicy {
 
     private VodTimelinePolicy() {}
 
+    /** Never replace a completed history or a pending resume with a stale
+     * engine timeline. Explicit user seeks/replays clear the pending checkpoint. */
+    public static boolean shouldSaveHistory(boolean ended, boolean hasBackend,
+            long pendingResumeMs, long positionMs, long durationMs) {
+        if (ended || !hasBackend) return false;
+        if (pendingResumeMs <= 0L) return true;
+        return durationMs > 0L && positionMs >= Math.min(pendingResumeMs, durationMs);
+    }
+
     public static long clampPosition(long positionMs, long durationMs) {
         if (durationMs <= 0L) return 0L;
         return Math.max(0L, Math.min(durationMs, positionMs));
