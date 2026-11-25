@@ -125,6 +125,17 @@ public interface ChannelDao {
     @Query("SELECT * FROM backup_sources WHERE channelId = :channelId ORDER BY priority, url")
     List<BackupSourceEntity> getBackupSourcesForChannel(String channelId);
 
+    // Manual final publication needs current selected URL, not the old index.
+    final class ActiveSelection {
+        public String channelId;
+        public String legacyKey;
+        public String url;
+    }
+    @Query("SELECT c.id AS channelId, c.legacyKey AS legacyKey, b.url AS url "
+            + "FROM channels c INNER JOIN backup_sources b ON b.channelId = c.id "
+            + "AND b.priority = c.activeSource WHERE c.id IN (:channelIds)")
+    List<ActiveSelection> getActiveSelectionsForChannels(List<String> channelIds);
+
     // Only the snapshot writer calls this, with at most 64 channel IDs.
     @Query("SELECT * FROM backup_sources WHERE channelId IN (:channelIds)")
     List<BackupSourceEntity> getBackupSourcesForChannels(List<String> channelIds);
