@@ -13,7 +13,11 @@ public final class DiscoveryBatchPolicy {
     static final int INITIAL_PAGE_SIZE=48;
     // Manual refresh processes more new candidates without reducing the existing
     // saved-route health-check allotment or changing the routine maintenance page.
-    static final int MANUAL_PAGE_SIZE=24;
+    static final int MANUAL_PAGE_SIZE=INITIAL_PAGE_SIZE;
+    /** Revalidate at a new directory, not on every continuation of its page. */
+    static boolean manualRevalidateDirectory(int cursor,String partialFingerprint) {
+        return cursor<=0&&(partialFingerprint==null||partialFingerprint.isEmpty());
+    }
     static int probeLimit(boolean initial,boolean viewing,int ordinaryLimit) {
         return initial?(viewing?1:INITIAL_PAGE_SIZE):ordinaryLimit;
     }
