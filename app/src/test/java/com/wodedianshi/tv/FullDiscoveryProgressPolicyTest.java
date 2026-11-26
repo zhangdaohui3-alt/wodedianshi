@@ -5,6 +5,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void smallPreviewCanPublishWhileHealthyViewingButFinalSnapshotCannot(){
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishPreview(true,246,13));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishPreview(true,256,256));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishPreview(true,256,257));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishPreview(true,Integer.MAX_VALUE,1));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishPreview(true,-1,13));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishPreview(false,20000,13));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,true));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishInitialSnapshot(true,true,false));
+    }
+
     @org.junit.Test public void boundedPreviewMilestonesExposeUsefulGrowthWithoutRepeatedWrites() {
         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,63,20));
         org.junit.Assert.assertEquals(64, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,87,20));
