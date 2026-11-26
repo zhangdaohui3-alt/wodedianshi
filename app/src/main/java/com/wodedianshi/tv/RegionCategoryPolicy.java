@@ -11,25 +11,61 @@ final class RegionCategoryPolicy {
 
     private RegionCategoryPolicy() {}
 
+    /** Keeps Chinese regional and national channels in China when found in global indexes. */
+    static String catalogueScope(String name, String group, String tvgName,
+                                 String tvgId, String requestedScope) {
+        String combinedName = (name == null ? "" : name) + " "
+                + (tvgName == null ? "" : tvgName) + " "
+                + (tvgId == null ? "" : tvgId);
+        String scope=catalogueScope(combinedName, group, requestedScope);
+        // Country-qualified EPG IDs are metadata, not playback URLs.
+        if("global".equals(scope)&&tvgId!=null
+                &&tvgId.trim().toLowerCase(Locale.ROOT).matches("[a-z0-9][a-z0-9._-]*\\.cn"))
+            return "china";
+        return scope;
+    }
+
+    static String catalogueScope(String name, String group, String requestedScope) {
+        if (!"global".equals(requestedScope)) return requestedScope;
+        if (isHongKongMacauTaiwan(name, group)) return "china";
+        String metadata = (name == null ? "" : name) + " " + (group == null ? "" : group);
+        String normalizedGroup = normalize(group);
+        // Aggregated M3U feeds often classify local county stations under
+        // "中国大陆 · 新闻" instead of putting the province in each channel name.
+        if (normalizedGroup.contains("中国大陆") || normalizedGroup.contains("mainland china")
+                || normalizedGroup.equals("china") || normalizedGroup.equals("中国")
+                || normalizedGroup.equals("中华人民共和国")
+                || normalizedGroup.matches("^(?:china|中国)\\s*[·|;:/\\-]\\s*.+$")) {
+            return "china";
+        }
+        if (!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()) return "china";
+        if (!ChannelNamePolicy.canonicalBroadcasterName(name, "", "", group).isEmpty()) return "china";
+        return requestedScope;
+    }
+
     static boolean isHongKongMacauTaiwan(String name, String group) {
+        return !subcategory(name, group).isEmpty();
+    }
+
+    /** Returns a dedicated child category, or 港澳台 when metadata is only generic. */
+    static String subcategory(String name, String group) {
         String n = normalize(name);
         String g = normalize(group);
-        if (containsRegionName(n) || containsRegionName(g)) return true;
-        if (g.equals("hong kong") || g.equals("hongkong") || g.equals("macau")
-                || g.equals("macao") || g.equals("taiwan")) return true;
-        return HK.matcher(n).find() || HK.matcher(g).find()
-                || MO.matcher(n).find() || MO.matcher(g).find()
-                || TW.matcher(n).find() || TW.matcher(g).find();
+        if (n.contains("香港") || g.contains("香港") || n.equals("hong kong")
+                || n.equals("hongkong") || g.equals("hong kong") || g.equals("hongkong")
+                || HK.matcher(n).find() || HK.matcher(g).find()) return "香港";
+        if (n.contains("澳门") || g.contains("澳门") || n.equals("macau") || n.equals("macao")
+                || g.equals("macau") || g.equals("macao")
+                || MO.matcher(n).find() || MO.matcher(g).find()) return "澳门";
+        if (n.contains("台湾") || g.contains("台湾") || n.equals("taiwan") || g.equals("taiwan")
+                || TW.matcher(n).find() || TW.matcher(g).find()) return "台湾";
+        if (n.contains("港澳台") || g.contains("港澳台") || n.contains("港澳") || g.contains("港澳")
+                || n.contains("港台") || g.contains("港台")) return "港澳台";
+        return "";
     }
 
     private static String normalize(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT)
                 .replace('臺', '台').replace('灣', '湾').replace("澳門", "澳门");
-    }
-
-    private static boolean containsRegionName(String value) {
-        return value.contains("香港") || value.contains("澳门")
-                || value.contains("台湾") || value.contains("港澳台")
-                || value.contains("港澳") || value.contains("港台");
     }
 }
