@@ -65,20 +65,37 @@ public class SourceProbeTimePolicyTest {
         try {
             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
             SourceUpdateActivityPolicy.reportStableLive(1000L);
-            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
-            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
-            SourceUpdateActivityPolicy.reportStableLive(15000L);
-            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16000L));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            SourceUpdateActivityPolicy.reportStableLive(8999L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(8999L));
+            SourceUpdateActivityPolicy.reportStableLive(9000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(9000L));
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(23999L));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(24000L));
+
+            long expiredGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            SourceUpdateActivityPolicy.reportStableLive(25000L);
+            assertEquals(expiredGeneration+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(25000L));
+            SourceUpdateActivityPolicy.reportStableLive(33000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33000L));
+
             long generation=SourceUpdateActivityPolicy.stableRevocationGeneration();
             SourceUpdateActivityPolicy.revokeStableLive();
-            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(16001L));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33001L));
             assertEquals(generation+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
-            SourceUpdateActivityPolicy.reportStableLive(17000L);
+
+            SourceUpdateActivityPolicy.reportStableLive(34000L);
+            SourceUpdateActivityPolicy.reportStableLive(42000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(42000L));
             SourceUpdateActivityPolicy.setPlaybackActive(true);
-            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(17001L));
-            SourceUpdateActivityPolicy.reportStableLive(18000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(42001L));
+            SourceUpdateActivityPolicy.reportStableLive(43000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(43000L));
+            SourceUpdateActivityPolicy.reportStableLive(51000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(51000L));
             SourceUpdateActivityPolicy.setActivityActive(false);
-            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(18001L));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(51001L));
         } finally {
             SourceUpdateActivityPolicy.setPlaybackActive(false);
             SourceUpdateActivityPolicy.setActivityActive(false);
