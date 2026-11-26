@@ -3,7 +3,16 @@ package com.wodedianshi.tv;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-public class SourceProbeTimePolicyTest { 
+public class SourceProbeTimePolicyTest {
+    @Test public void firstBuildIdleReservesFallbackTimeOnlyWithEnoughBudget() {
+        assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,1000L,15000L));
+        assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,4000L,15000L));
+        assertEquals(15000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,4001L,15000L));
+        assertEquals(15000L,SourceProbeTimePolicy.initialRenditionDeadline(true,false,1000L,15000L));
+        assertEquals(15000L,SourceProbeTimePolicy.initialRenditionDeadline(false,true,1000L,15000L));
+        assertEquals(15000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,15001L,15000L));
+    }
+ 
     @Test public void fullViewingBodyStaysBoundedAndPacedBeyondOneRange() {
         assertTrue(SourceProbeTimePolicy.fitsLiveFullDirectory(8388608L));
         assertFalse(SourceProbeTimePolicy.fitsLiveFullDirectory(8388609L));
