@@ -96,6 +96,9 @@ public interface ChannelDao {
     @Query("SELECT id FROM channels")
     List<String> getAllChannelIds();
 
+    @Query("SELECT * FROM channels WHERE id = :id LIMIT 1")
+    ChannelEntity getChannelById(String id);
+
     @Query("DELETE FROM channels WHERE id = :id")
     void deleteChannelById(String id);
 
