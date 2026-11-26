@@ -781,9 +781,25 @@ public class SourceUpdateWorker extends Worker {
       // has actually reached the probe/commit path. Acquisition-only and
       // deferred-viewing slices return above without rebuilding these structures.
       final long mergePreparationStartedAt=android.os.SystemClock.elapsedRealtime();
+      // Only non-final large initial batches with a complete durable identity
+      // index and known category mask may use a sparse working set. The final
+      // page must keep the full ranking and publication path.
+      final String initialRevision=initialDiscoveryChain?
+          com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).appStateDao()
+              .getValue(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY):null;
+      final boolean initialIndexEligible=initialDiscoveryChain&&previousStagedSize>1024
+          &&roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1)>=0
+          &&!areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+      if(initialIndexEligible&&!slowPlayback&&!com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
+          getApplicationContext(),previousStagedSize,initialRevision))
+        com.wodedianshi.tv.db.RoomCatalogueBuildStore.backfillInitialIndex(
+            getApplicationContext(),previousStagedSize,initialRevision,pauseRequested);
+      final boolean initialIndexed=initialIndexEligible
+          &&com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
+              getApplicationContext(),previousStagedSize,initialRevision);
       if(initialDiscoveryChain){
-        saved=takeCommittedStaging();
-        if(saved.length()!=previousStagedSize)
+        saved=initialIndexed?new JSONArray():takeCommittedStaging();
+        if(!initialIndexed&&saved.length()!=previousStagedSize)
           throw new IllegalStateException("Initial staging count changed during acquisition");
       }
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
@@ -875,13 +891,16 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
-      if(manualIndexed){
-        if(manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
+      if(manualIndexed||initialIndexed){
+        if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
         for(Entry entry:probeCandidates)if(!entry.savedSource)
           identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
         for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
-            com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(getApplicationContext(),manualId,identities,pauseRequested)){
+            (initialIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.readInitialByIdentity(
+                getApplicationContext(),previousStagedSize,initialRevision,identities,pauseRequested):
+                com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(
+                    getApplicationContext(),manualId,identities,pauseRequested))){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=new JSONObject(entity.recordJson);
           String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
@@ -1146,6 +1165,9 @@ public class SourceUpdateWorker extends Worker {
       // A final idle pass re-ranks the complete snapshot before publication.
       boolean finalRanking=initialDiscoveryChain&&initialDiscoveryScanned+discoveryScanned>=candidates.size()
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
+      if(initialIndexed&&finalRanking)throw new IllegalStateException("Sparse staging cannot finalize a full snapshot");
+      final int stagedSizeAfterProbe=initialIndexed
+          ?Math.addExact(previousStagedSize,saved.length()-indexedPositions.size()):saved.length();
       // The manual directory is private until its ready marker is committed.
       // During collection rank only changed rows; health-only probes need no
       // full directory sort. A final pass uses the latest saved scoring state.
@@ -1200,7 +1222,7 @@ public class SourceUpdateWorker extends Worker {
         publication=preservePreviouslyPublishedChannels(saved,priorRows);
       }
       // Prepare the full publication and all progress before opening a write transaction.
-      int publishedChannelCount=publication.length();
+      int publishedChannelCount=initialIndexed?stagedSizeAfterProbe:publication.length();
       if(initialDiscoveryComplete&&saved.length()==0)
         throw new IllegalStateException("Full rebuild has no validated channels");
       if(pauseRequested.getAsBoolean())
@@ -1346,10 +1368,10 @@ public class SourceUpdateWorker extends Worker {
         int chinaValidatedSoFar=Math.max(0,
             roomInt("source_initial_progress_china_validated_urls",0));
         previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
-        previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,saved.length(),
+        previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,stagedSizeAfterProbe,
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
         previousPreviewMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
-        previewMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(previousPreviewMilestone,saved.length(),
+        previewMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(previousPreviewMilestone,stagedSizeAfterProbe,
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
         // At most three independent category triggers over the entire build.
         // Once all categories were observed, do not scan the staging rows again.
@@ -1521,17 +1543,31 @@ public class SourceUpdateWorker extends Worker {
         else {
           String revision=java.util.UUID.randomUUID().toString();
           update.putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY,revision);
-          com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
+          if(initialIndexed){
+            int committed=com.wodedianshi.tv.db.RoomCatalogueBuildStore.commitInitialIndexed(
+                getApplicationContext(),previousStagedSize,initialRevision,indexedPositions,saved,
+                touchedStagedRows,pauseRequested,update);
+            if(committed!=stagedSizeAfterProbe)throw new IllegalStateException("Sparse staging commit count mismatch");
+            discardStagingReuse();
+          }else com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateTouched(
               getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update);
-          // Remember only after the transaction has returned successfully.
-          if(FullDiscoveryProgressPolicy.canRetainStaging(saved.length(),slowPlayback)){
+          // Never cache a sparse working set as the complete staging catalogue.
+          if(!initialIndexed&&FullDiscoveryProgressPolicy.canRetainStaging(saved.length(),slowPlayback)){
             committedStaging=saved;committedStagingRevision=revision;
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
         }
         if(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone
-            ||previewCoreMask!=previousPreviewCoreMask)
-          publishInitialPreview(saved,previewLevel,previewMilestone,previewCoreMask);
+            ||previewCoreMask!=previousPreviewCoreMask){
+          if(!initialIndexed)publishInitialPreview(saved,previewLevel,previewMilestone,previewCoreMask);
+          else if(FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,stagedSizeAfterProbe,
+              com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
+            JSONArray completePreview=takeCommittedStaging();
+            if(completePreview.length()!=stagedSizeAfterProbe)
+              throw new IllegalStateException("Indexed preview count mismatch");
+            publishInitialPreview(completePreview,previewLevel,previewMilestone,previewCoreMask);
+          }
+        }
       }else if(manualRefresh){
         if(manualQueueOnly){
           if(!touchedStagedRows.isEmpty()||saved.length()!=0||!candidates.isEmpty()||!manualSavedOnly)
@@ -1569,7 +1605,7 @@ public class SourceUpdateWorker extends Worker {
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(saved.length()))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed?indexedPositions.size():-1)
+            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(stagedSizeAfterProbe))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed||initialIndexed?indexedPositions.size():-1)
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
             +" inconclusive_endpoints="+inconclusiveAttempts.size()+" viewing_deferred="+viewingDeferred);
