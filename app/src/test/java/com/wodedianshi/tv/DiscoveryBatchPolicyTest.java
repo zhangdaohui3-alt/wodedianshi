@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @Test public void idleInitialNetworkCapDoesNotDiscardReusablePrefix() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,true));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,5,6,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(true,true,2,2,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(false,false,24,24,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(false,false,24,24,true));
+    }
+
     @Test public void earlyTimeoutReplayTargetsMissingCoreOnly() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,3,4));
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,-1,4));
