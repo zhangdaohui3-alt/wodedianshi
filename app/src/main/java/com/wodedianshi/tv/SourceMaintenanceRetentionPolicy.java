@@ -37,13 +37,8 @@ public final class SourceMaintenanceRetentionPolicy {
         // independently failed at least three probes and only if the newly
         // preflighted candidate actually ranks better. The pinned source and
         // stable primary are never retired automatically.
-        int retireIndex=-1;
-        for (int i=0;i<old.size();i++) {
-            String url=old.get(i), key=SourceSelectionPolicy.endpointKey(url);
-            if (!permittedToEvict.contains(key)
-                    || key.equals(SourceSelectionPolicy.endpointKey(primary))
-                    || key.equals(SourceSelectionPolicy.endpointKey(active))) continue;
-            if (retireIndex<0 || bestFirst!=null
+        int retireIndex=retirementIndex(old,bestFirst,primary,active,permittedToEvict);
+        if (retireIndex<0 || bestFirst!=null
                     && bestFirst.compare(url,old.get(retireIndex))>0) retireIndex=i;
         }
         if (retireIndex<0 || bestFirst==null || verifiedCandidate==null
@@ -59,4 +54,17 @@ public final class SourceMaintenanceRetentionPolicy {
         updated.set(retireIndex,verifiedCandidate);
         return updated;
     }
+    /** Shared selection of the worst eligible backup; callers own the commit
+     * and can preserve additional protected endpoints by excluding them. */
+    public static int retirementIndex(List<String> old, Comparator<String> bestFirst,
+            String primary,String active,Set<String> permittedToEvict){
+        int retireIndex=-1;
+        for (int i=0;i<old.size();i++) {
+            String url=old.get(i), key=SourceSelectionPolicy.endpointKey(url);
+            if (!permittedToEvict.contains(key)
+                    || key.equals(SourceSelectionPolicy.endpointKey(primary))
+                    || key.equals(SourceSelectionPolicy.endpointKey(active))) continue;
+            return retireIndex;
+    }
+
 }
