@@ -35,8 +35,9 @@ public final class SingleChannelRefreshPolicy {
         // A contradictory location cannot fall back to matching EPG IDs.
         if(province==null||otherProvince==null)return false;
         if(!province.isEmpty()&&!otherProvince.isEmpty()&&!province.equals(otherProvince))return false;
-        String city=ChannelNamePolicy.localCityForChannel(firstMeta);
-        String otherCity=ChannelNamePolicy.localCityForChannel(secondMeta);
+        String city=ChannelNamePolicy.localCityEvidence(firstMeta,province);
+        String otherCity=ChannelNamePolicy.localCityEvidence(secondMeta,otherProvince);
+        if(city==null||otherCity==null)return false;
         if(!city.isEmpty()&&!otherCity.isEmpty()&&!city.equals(otherCity))return false;
         // Prefer the established strong city/station identity. An exact
         // display translation may also bridge English and Chinese labels.
