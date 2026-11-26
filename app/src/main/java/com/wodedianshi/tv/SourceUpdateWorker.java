@@ -420,7 +420,9 @@ public class SourceUpdateWorker extends Worker {
         // reloading/ranking staging on each retry while only publication waits.
         if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
           return deferInitialDirectory("线路初筛已完成，等待空闲发布完整快照");
-        saved=takeCommittedStaging();
+        // Acquisition and viewing deferral need only the durable row count.
+        // Read the actual rows after these paths have had a chance to return.
+        saved=null;
         com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
             "source_initial_progress_phase","正在继续首次完整抓源");
       }else{
@@ -429,7 +431,10 @@ public class SourceUpdateWorker extends Worker {
         saved=manualQueueOnly||manualIndexed?new JSONArray():manualRefresh?manualWorkingRows:publishedWorkingRows;
 
       }
-      final int previousStagedSize=saved.length();
+      final int previousStagedSize=initialDiscoveryChain
+          ?com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
+              .channelDao().countCatalogueBuildRows()
+          :saved.length();
       final boolean earlyFirstWatch=initialDiscoveryChain&&DiscoveryBatchPolicy.isEarlyFirstWatch(
           previousStagedSize,roomInt("source_initial_progress_checked_urls",0));
       final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
@@ -444,7 +449,8 @@ public class SourceUpdateWorker extends Worker {
       // manual refresh must check old routes even when requested from the TV UI;
       // otherwise a user reporting dead backups can scan only new candidates.
       // The viewing pause gate and the per-slice saved probe allotment still apply.
-      if(!manualRefresh&&SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(initialDiscoveryChain,false,foregroundAtStart)){
+      if(!initialDiscoveryChain&&!manualRefresh
+          &&SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(false,false,foregroundAtStart)){
         for(int i=0;i<saved.length()&&savedPool.size()<20000;i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -775,6 +781,11 @@ public class SourceUpdateWorker extends Worker {
       // has actually reached the probe/commit path. Acquisition-only and
       // deferred-viewing slices return above without rebuilding these structures.
       final long mergePreparationStartedAt=android.os.SystemClock.elapsedRealtime();
+      if(initialDiscoveryChain){
+        saved=takeCommittedStaging();
+        if(saved.length()!=previousStagedSize)
+          throw new IllegalStateException("Initial staging count changed during acquisition");
+      }
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
       HashSet<Integer> touchedStagedRows=new HashSet<>();
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
