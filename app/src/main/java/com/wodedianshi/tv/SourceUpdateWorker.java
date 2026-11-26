@@ -204,7 +204,16 @@ public class SourceUpdateWorker extends Worker {
     try{
       java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
       if(retiring!=null){
-        if(!retiring.isTerminated())return Result.retry();
+        // Worker thread only: a pool whose final task just exited may need a
+        // moment to terminate. Avoid a full WorkManager backoff for that race.
+        // Never allow a second source owner while an old request is still live.
+        try{
+          if(!retiring.isTerminated()&&!retiring.awaitTermination(250L,
+              java.util.concurrent.TimeUnit.MILLISECONDS))return Result.retry();
+        }catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();return Result.retry();
+        }
+        if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
         retiringProbeExecutor=null;
       }
       try{
@@ -2353,13 +2362,13 @@ public class SourceUpdateWorker extends Worker {
                ?"播放资源占用：本批抓源暂停，已保存进度"
                :inputYield?"频道操作优先：高并发检测已让出，已保存进度"
                :"本批任务已让出或取消，已保存进度，等待续抓");
-      if(inputYield&&!playback&&!isStopped()&&!Thread.currentThread().isInterrupted()){
+      if(!playback&&!isStopped()&&!Thread.currentThread().isInterrupted()){
         try{
           enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialPressureDelaySeconds(
               playback,inputYield));
           return Result.success();
         }catch(Exception failure){
-          android.util.Log.w("MyTVSourceDiscovery","Unable to schedule input-yield continuation",failure);
+          android.util.Log.w("MyTVSourceDiscovery","Unable to schedule idle-yield continuation",failure);
           return Result.retry();
         }
       }
