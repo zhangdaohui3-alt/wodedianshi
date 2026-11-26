@@ -5537,7 +5537,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String saved=prefs.getString("fullscreen_menu_config_v1",null);
     FullscreenMenuConfig config=saved==null?FullscreenMenuConfig.defaults()
         :FullscreenMenuConfig.decode(saved);
-    if(saved==null)prefs.edit().putString("fullscreen_menu_config_v1",config.encode()).apply();
+    if(!prefs.getBoolean("fullscreen_single_refresh_migrated",false)){
+      config.addSingleChannelRefreshForUpgrade();
+      prefs.edit().putString("fullscreen_menu_config_v1",config.encode())
+          .putBoolean("fullscreen_single_refresh_migrated",true).apply();
+    }else if(saved==null)prefs.edit().putString("fullscreen_menu_config_v1",config.encode()).apply();
     return config;
   }
   private void saveFullscreenMenuConfig(FullscreenMenuConfig config){
@@ -5603,6 +5607,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           else if("channel_list".equals(id)||"category".equals(id)){if(vodMode)vodDialog();else showFullscreenChannelMenu();}
           else if("aspect".equals(id)){if(vodMode)toast("画面比例设置请在直播菜单中调整");else showAspectRatioDialog(video,"live_aspect_mode");}
           else if("decoder".equals(id))decoderSettingsDialog();
+          else if("refresh_channel".equals(id)){if(!vodMode)requestSingleChannelRefresh();}
           else if("refresh".equals(id))startManualSourceUpdate();
           else if("vod_catalogue".equals(id)){if(vodMode&&backVodToCatalogueAction!=null)backVodToCatalogueAction.run();else vodDialog();}
           else if("vod_controls".equals(id)){if(revealVodControlsAction!=null)revealVodControlsAction.run();else toast("点播控制暂不可用");}
@@ -5679,10 +5684,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // TV remotes should choose an existing action rather than open the keyboard
     // just to add a working fullscreen menu entry.
     final String[] names={"收藏当前频道","选择备用播放源","打开频道列表",
-        "画面比例","解码与声音设置","频道分类","更新频道目录",
+        "画面比例","解码与声音设置","频道分类","更新频道目录","刷新当前频道",
         "播放控制","返回点播目录","新建自定义主项目…"};
     final String[] ids={"favorite","sources","channel_list","aspect","decoder",
-        "category","refresh","vod_controls","vod_catalogue"};
+        "category","refresh","refresh_channel","vod_controls","vod_catalogue"};
     new AlertDialog.Builder(this).setTitle("选择要添加的菜单功能")
         .setItems(names,(actionDialog,actionIndex)->{
           if(actionIndex==ids.length){
@@ -5958,6 +5963,125 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     boolean added=blocked.add(url);
     p.edit().putStringSet("blocked_ad_sources",blocked).apply();
     return added;
+  }
+  private static final class PendingSingleChannelRefresh {
+    final Channel channel;
+    final String key,group,tvgId,tvgName,activeUrl;
+    final long tuneSerial,waitUntil;
+    volatile boolean cancelled;
+    PendingSingleChannelRefresh(Channel channel,String activeUrl,long tuneSerial,long waitUntil){
+      this.channel=channel;this.key=channel.key();this.group=channel.group;
+      this.tvgId=channel.tvgId;this.tvgName=channel.tvgName;
+      this.activeUrl=activeUrl;this.tuneSerial=tuneSerial;this.waitUntil=waitUntil;
+    }
+  }
+  private PendingSingleChannelRefresh pendingSingleChannelRefresh;
+  private void cancelSingleChannelRefresh(){
+    PendingSingleChannelRefresh request=pendingSingleChannelRefresh;
+    if(request!=null){request.cancelled=true;pendingSingleChannelRefresh=null;}
+  }
+  private boolean singleChannelRequestCurrent(PendingSingleChannelRefresh request){
+    return pendingSingleChannelRefresh==request&&!request.cancelled&&activityStarted
+        &&!isFinishing()&&!isDestroyed()&&fullScreenPlayback&&currentVodPanel==null
+        &&!isAnyPlaybackLockActive()&&selected>=0&&selected<channels.size()
+        &&channels.get(selected)==request.channel&&liveTuneRequestSerial==request.tuneSerial
+        &&request.activeUrl.equals(currentSourceUrl());
+  }
+  private void requestSingleChannelRefresh(){
+    if(!activityStarted||!catalogueSnapshotTrusted||!fullScreenPlayback||selected<0
+        ||selected>=channels.size()||currentVodPanel!=null||isAnyPlaybackLockActive()){
+      toast("当前频道尚未准备好，暂不能刷新");return;
+    }
+    if(pendingSingleChannelRefresh!=null){toast("已有频道刷新任务，请勿重复提交");return;}
+    Channel target=channels.get(selected);
+    String active=currentSourceUrl();
+    if(active.isEmpty()){toast("当前没有播放线路");return;}
+    hideFullscreenControlsNow();
+    PendingSingleChannelRefresh request=new PendingSingleChannelRefresh(target,active,
+        liveTuneRequestSerial,android.os.SystemClock.elapsedRealtime()+90000L);
+    pendingSingleChannelRefresh=request;
+    toast("已申请刷新："+target.name+"，保持当前播放，待安全时检测");
+    uiHandler.postDelayed(()->pollSingleChannelRefresh(request),1000L);
+  }
+  private void pollSingleChannelRefresh(PendingSingleChannelRefresh request){
+    if(!singleChannelRequestCurrent(request)){
+      if(pendingSingleChannelRefresh==request)cancelSingleChannelRefresh();
+      return;
+    }
+    long now=android.os.SystemClock.elapsedRealtime();
+    if(now>=request.waitUntil){
+      cancelSingleChannelRefresh();toast("等待安全刷新超时，原线路未改变");return;
+    }
+    if(!hasWindowFocus()||fullscreenControlsVisible||fullscreenRemoteDialogOpen
+        ||(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())
+        ||(SourceUpdateActivityPolicy.isPlaybackActive()
+            &&!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now))){
+      uiHandler.postDelayed(()->pollSingleChannelRefresh(request),2000L);return;
+    }
+    final long admittedPressure=SourceUpdateActivityPolicy.pressureGeneration();
+    try{
+      worker.execute(()->{
+        SourceUpdateWorker.SingleRefreshResult result=null;
+        Exception failure=null;
+        try{
+          if(android.os.SystemClock.elapsedRealtime()>=request.waitUntil)
+            throw new SourceProbeTimePolicy.PausedException();
+          result=SourceUpdateWorker.refreshSingleChannelForVisibleChannel(getApplicationContext(),
+              request.key,request.group,request.tvgId,request.tvgName,request.activeUrl,
+              ()->request.cancelled||SourceUpdateActivityPolicy.pressureGeneration()!=admittedPressure);
+        }catch(Exception error){failure=error;}
+        final SourceUpdateWorker.SingleRefreshResult outcome=result;
+        final Exception error=failure;
+        uiHandler.post(()->finishSingleChannelRefresh(request,outcome,error));
+      });
+    }catch(RuntimeException rejected){
+      cancelSingleChannelRefresh();toast("刷新任务暂不可用");
+    }
+  }
+  private void finishSingleChannelRefresh(PendingSingleChannelRefresh request,
+      SourceUpdateWorker.SingleRefreshResult outcome,Exception error){
+    // Even if the user leaves the channel just after the durable commit, the
+    // new Room version must be read on the next idle reload. Do not claim that
+    // the complete in-memory catalogue now matches the new checkpoint.
+    if(outcome!=null&&outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.SAVED)
+      catalogueReloadDeferredForPlayback=true;
+    if(!singleChannelRequestCurrent(request)){
+      if(pendingSingleChannelRefresh==request)cancelSingleChannelRefresh();
+      reloadDeferredCatalogueIfIdle();return;
+    }
+    if(outcome!=null&&(outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.BUSY
+        ||outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.DEFERRED)){
+      uiHandler.postDelayed(()->pollSingleChannelRefresh(request),2000L);return;
+    }
+    cancelSingleChannelRefresh();
+    if(error!=null){
+      if(error instanceof com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException)
+        toast("频道快照已变化，请重新刷新");
+      else if(error instanceof SourceProbeTimePolicy.PausedException
+          ||error instanceof SourceProbeTimePolicy.PublicationPausedException)
+        toast("刷新已取消，原线路未改变");
+      else{android.util.Log.w("MyTVSourceDiscovery","single-channel refresh failed",error);toast("刷新未完成，保留原有线路");}
+      return;
+    }
+    if(outcome==null){toast("刷新未完成");return;}
+    if(outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.SAVED){
+      synchronized(channels){
+        synchronized(cataloguePersistLock){
+          for(Map.Entry<String,Set<String>> entry:outcome.addedRoutes.entrySet()){
+            request.channel.addBackupSource(entry.getKey(),"");
+            for(String scope:entry.getValue())request.channel.addBackupSource(entry.getKey(),scope);
+            channelsByUrl.putIfAbsent(entry.getKey(),request.channel);
+          }
+          catalogueMutationGeneration++;
+        }
+      }
+      toast("刷新完成：新增 "+outcome.added+" 条通过预检的线路，已保存；可打开换源菜单");
+    }else if(outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.FULL){
+      toast("已有 8 条线路，本次保留原线路；择优替换尚未启用");
+    }else{
+      toast("本轮未找到通过预检的新线路"+(outcome.bounded?"（搜索范围有限）":"")+"，原线路保留");
+    }
+    reloadDeferredCatalogueIfIdle();
   }
   private void showSourcePicker(){
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
@@ -8539,6 +8663,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     SourceUpdateActivityPolicy.notePressure(android.os.SystemClock.elapsedRealtime());
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
   }
-  protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();invalidateVodPosterSession();vodPosterCache.evictAll();revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){cancelSingleChannelRefresh();revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){cancelSingleChannelRefresh();activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();invalidateVodPosterSession();vodPosterCache.evictAll();revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
