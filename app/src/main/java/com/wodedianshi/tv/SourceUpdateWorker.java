@@ -434,27 +434,6 @@ public class SourceUpdateWorker extends Worker {
           previousStagedSize,roomInt("source_initial_progress_checked_urls",0));
       final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
       final ArrayList<Integer> indexedPositions=new ArrayList<>();
-      IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
-      HashSet<Integer> touchedStagedRows=new HashSet<>();
-      LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
-      final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
-      final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
-      final boolean indexedPublished=!manualRefresh&&!initialDiscoveryChain&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
-      final boolean indexedQuality=manualRefresh||indexedPublished;
-      final String qualityOwner=manualRefresh?manualId:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
-      JSONObject measuredScores=new JSONObject(indexedQuality?"{}":roomString(scoresKey,"{}"));
-      // A single failed probe merely reduces its score. It cannot delete an
-      // existing saved backup; three independent failures are needed.
-      JSONObject probeFailureStreaks=new JSONObject(indexedQuality?"{}":roomString(streaksKey,"{}"));
-      HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
-      JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
-      for(int i=0;i<saved.length();i++){
-        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        JSONObject c=saved.getJSONObject(i);
-        if(initialDiscoveryChain||manualRefresh)stagedPositions.put(c,i);
-        byIdentity.put(identity(c.optString("name"),c.optString("group"),
-            c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
-      }
       ArrayList<Entry> candidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
       // pool. Previously only URLs rediscovered in public playlists were probed,
@@ -792,6 +771,36 @@ public class SourceUpdateWorker extends Worker {
           manualSavedKeys.add(row.endpoint);
         }
       }
+      // Only prepare merge indexes and quality JSON after directory acquisition
+      // has actually reached the probe/commit path. Acquisition-only and
+      // deferred-viewing slices return above without rebuilding these structures.
+      final long mergePreparationStartedAt=android.os.SystemClock.elapsedRealtime();
+      IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
+      HashSet<Integer> touchedStagedRows=new HashSet<>();
+      LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
+      final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
+      final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
+      final boolean indexedPublished=!manualRefresh&&!initialDiscoveryChain&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
+      final boolean indexedQuality=manualRefresh||indexedPublished;
+      final String qualityOwner=manualRefresh?manualId:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
+      JSONObject measuredScores=new JSONObject(indexedQuality?"{}":roomString(scoresKey,"{}"));
+      // A single failed probe merely reduces its score. It cannot delete an
+      // existing saved backup; three independent failures are needed.
+      JSONObject probeFailureStreaks=new JSONObject(indexedQuality?"{}":roomString(streaksKey,"{}"));
+      HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
+      JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
+      // A failed/empty initial page cannot merge any new identities. Final
+      // ranking and progress still operate on the authoritative staging rows.
+      for(int i=0;(!initialDiscoveryChain||!candidates.isEmpty())&&i<saved.length();i++){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        JSONObject c=saved.getJSONObject(i);
+        if(initialDiscoveryChain||manualRefresh)stagedPositions.put(c,i);
+        byIdentity.put(identity(c.optString("name"),c.optString("group"),
+            c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
+      }
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery",
+          "merge_preparation_ms="+(android.os.SystemClock.elapsedRealtime()-mergePreparationStartedAt)
+              +" staged_rows="+saved.length()+" indexed_identities="+byIdentity.size());
       ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
       for(Entry entry:savedPool)savedScanUrls.add(entry.url);
       ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
