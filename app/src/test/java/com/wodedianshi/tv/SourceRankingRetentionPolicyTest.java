@@ -6,6 +6,18 @@ import java.util.Collections;
 import static org.junit.Assert.assertEquals;
 
 public class SourceRankingRetentionPolicyTest {
+    @Test public void trimRemovesOnlyKeysOutsideChosenKeepSet() {
+        java.util.Set<String> keep=new java.util.HashSet<>(Arrays.asList("saved","recent","fallback"));
+        assertEquals(Arrays.asList("old1","old2"),SourceRankingRetentionPolicy.surplusScoreKeys(
+            Arrays.asList("old1","saved","recent","old2","fallback").iterator(),keep,()->false));
+        assertEquals(Collections.emptyList(),SourceRankingRetentionPolicy.surplusScoreKeys(
+            Arrays.asList("saved","fallback").iterator(),keep,()->false));
+        try{
+            SourceRankingRetentionPolicy.surplusScoreKeys(Arrays.asList("old").iterator(),keep,()->true);
+            org.junit.Assert.fail("Cancelled prune must not continue");
+        }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+    }
+
     @Test public void memoizedRankingReusesScoresAcrossBothSortsAndPreservesTies() {
         java.util.Map<String,Integer> calls=new java.util.HashMap<>();
         java.util.Map<String,Double> values=new java.util.HashMap<>();
