@@ -4,6 +4,24 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ChannelNamePolicyTest {
+    @Test public void recognizesCompactLocalServiceNamesAndEpgIdsConservatively() {
+        assertEquals("广东", ChannelNamePolicy.provinceForLocalChannel("ShenzhenNews.cn"));
+        assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("ChengduComprehensive"));
+        assertEquals("湖北", ChannelNamePolicy.provinceForLocalChannel("XiangyangNews"));
+        assertEquals("深圳新闻", ChannelNamePolicy.canonicalLocalDisplayName("ShenzhenNews","","","China"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("ShenzhenNews.cn","广东","深圳"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("XiangyangNews","陕西","西安"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("FuzhouNews.cn"));
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("Fujian FuzhouNews.cn"));
+        assertEquals("江西", ChannelNamePolicy.provinceForLocalChannel("Jiangxi FuzhouNews.cn"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Fujian ShenzhenNews"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("ShenzhenMystery"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("NotShenzhenNews"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("ShenzhenNewsExtra"));
+        assertEquals(FullDiscoveryProgressPolicy.CORE_LOCAL,
+            FullDiscoveryProgressPolicy.coreCategoryMask("ShenzhenNews","China","","ShenzhenNews.cn"));
+    }
+
     @Test public void localDisplayPrefersKnownChineseLabelsWithoutGuessingUnknownServices() {
         assertEquals("深圳新闻",ChannelNamePolicy.canonicalLocalDisplayName("Shenzhen News","","","China"));
         assertEquals("成都综合",ChannelNamePolicy.canonicalLocalDisplayName("Chengdu Comprehensive","","","China"));
