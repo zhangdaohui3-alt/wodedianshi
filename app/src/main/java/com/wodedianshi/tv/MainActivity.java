@@ -219,6 +219,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long initialPreviewReloadRequestedAt;
   private volatile long appendedInitialPreviewVersion=-1L;
   private String initialDiscoveryTerminalStatus="";
+  private boolean initialDiscoveryWorkRunning,initialDiscoveryWorkUnfinished,initialDiscoveryWorkObserved;
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
   private final ArrayList<Channel> channels = new ArrayList<>();
@@ -558,7 +559,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // First installs and empty catalogues have nothing to resume.
         startupResumeIndex=resolvedResumeIndex;
         startupResumeChannel=resolvedResumeChannel;
-        startupAutoResumePending=restoreSucceeded && startupResumeChannel!=null;
+        startupAutoResumePending=restoreSucceeded && startupResumeChannel!=null
+            && FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(roomFullRebuildCompletedAt);
         scheduleStartupAutoResume();
         // Do not show the first-run progress box on later completed launches.
         if(roomFullRebuildCompletedAt>0L&&initialDiscoveryProgressPanel!=null){
@@ -1660,8 +1662,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             final int loadedCount=channels.size();
-            initialDiscoveryProgressDetail=
-                (initialDiscoveryTerminalStatus.isEmpty()?(liveStage.isEmpty()?phase:liveStage):initialDiscoveryTerminalStatus)
+            String taskStatus=initialDiscoveryTerminalStatus;
+            if(taskStatus.isEmpty()){
+              if(!liveStage.isEmpty())taskStatus=liveStage;
+              else if(initialDiscoveryWorkRunning)taskStatus="抓源任务运行中，正在准备或保存本批进度";
+              else if(initialDiscoveryWorkUnfinished)taskStatus=SourceUpdateActivityPolicy.isPlaybackActive()
+                  ?"播放资源占用，等待下一批抓源调度"
+                  :"当前没有播放资源占用，等待下一批抓源调度";
+              else taskStatus=initialDiscoveryWorkObserved?"当前无运行或排队的抓源任务，可在设置中继续":"正在读取抓源任务状态";
+            }
+            initialDiscoveryProgressDetail=taskStatus
+                +"\n上次保存状态："+phase
                 +"\n当前已载入 "+loadedCount+" 个频道（不等于本轮完成）"
                 +"\n"+(indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
@@ -1700,13 +1711,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("mytv_startup_source_refresh")
         .observe(this,workInfos->{
           if(workInfos==null)return;
-          boolean unfinished=false,failed=false,cancelled=false;
+          boolean unfinished=false,failed=false,cancelled=false,running=false;
           for(androidx.work.WorkInfo workInfo:workInfos){
             androidx.work.WorkInfo.State state=workInfo.getState();
             if(!state.isFinished())unfinished=true;
+            if(state==androidx.work.WorkInfo.State.RUNNING)running=true;
             if(state==androidx.work.WorkInfo.State.FAILED)failed=true;
             if(state==androidx.work.WorkInfo.State.CANCELLED)cancelled=true;
           }
+          initialDiscoveryWorkObserved=true;
+          initialDiscoveryWorkRunning=running;
+          initialDiscoveryWorkUnfinished=unfinished;
           initialDiscoveryTerminalStatus=unfinished||roomFullRebuildCompletedAt>0L?""
               :failed?"抓源任务已停止，尚未完整发布，可在设置中手动继续"
               :cancelled?"抓源任务已取消，已保存进度可在设置中继续":"";
