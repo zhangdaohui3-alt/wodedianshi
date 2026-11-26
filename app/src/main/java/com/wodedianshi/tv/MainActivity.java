@@ -4581,12 +4581,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Legacy/imported M3U entries may omit group or metadata fields. Category
     // counting runs before a refresh, so a single incomplete record must never
     // crash the UI or prevent the rest of the saved catalogue from being counted.
-    String name=c.name==null?"":c.name;
     String group=c.group==null?"":c.group;
+    return categoryMatch(c,cat,categoryMetadata(c,group),group.toLowerCase(Locale.ROOT));
+  }
+  private static String categoryMetadata(Channel c,String group){
+    String name=c.name==null?"":c.name;
     String tvgName=c.tvgName==null?"":c.tvgName;
     String tvgId=c.tvgId==null?"":c.tvgId;
-    String x=(name+" "+group+" "+tvgName+" "+tvgId).toLowerCase(Locale.ROOT);
-    String g=group.toLowerCase(Locale.ROOT);
+    return (name+" "+group+" "+tvgName+" "+tvgId).toLowerCase(Locale.ROOT);
+  }
+  private boolean categoryMatch(Channel c,String cat,String x,String g){
+    if("地方".equals(cat))return isLocalChannel(c);
+    if("卫视".equals(cat))return isSatelliteChannel(c);
     if(cat.equals("自建频道"))return "自建频道".equals(g)||"自定义".equals(g);
     if(cat.startsWith("城市:")){
       String city=cat.substring(3);
@@ -4611,7 +4617,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
     if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
-    if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
     for(String province:new String[]{"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"})
       if(cat.equals(province))return matchesProvinceLocal(c,province);
     return false;
@@ -4714,8 +4719,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!facts.excluded&&!facts.province.isEmpty())
         provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
       if(prepareFixed){
+        // Prepare one shared normalized metadata value for all fixed category
+        // predicates. Keep the same predicates as the uncached filter.
+        String group=candidate.group==null?"":candidate.group;
+        String metadata=categoryMetadata(candidate,group),lowerGroup=group.toLowerCase(Locale.ROOT);
         for(String category:PREPARED_FIXED_CATEGORIES)
-          if("全部".equals(category)||categoryMatch(candidate,category))fixed.get(category).add(i);
+          if("全部".equals(category)||categoryMatch(candidate,category,metadata,lowerGroup))
+            fixed.get(category).add(i);
         String key=candidate.key();
         if(candidate.sourceScopes!=null)for(String scope:candidate.sourceScopes)
           if(scope!=null&&scope.startsWith("geo:")&&ChannelCatalogueScopePolicy.isRetainableScope(scope))
