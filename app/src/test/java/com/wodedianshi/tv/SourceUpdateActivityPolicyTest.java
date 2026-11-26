@@ -29,6 +29,29 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void confirmedVlcPairGrantsBoundedLeaseButNeverRevivesExpiredOwner(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(1000L,1);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(13000L,2);
+            long old=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(27999L,old));
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(28000L,2);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28000L,old));
+            long replacement=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28000L,replacement));
+            SourceUpdateActivityPolicy.notePressure(28001L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28001L,replacement));
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(49000L,2);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(49000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
     @Test public void handoffClearsViewingOnlyWhenNoOwnerOrContinuationRemains(){
         assertTrue(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,true));
         assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(true,false,false,false,false,true));
