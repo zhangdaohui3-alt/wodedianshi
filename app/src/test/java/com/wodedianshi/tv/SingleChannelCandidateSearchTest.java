@@ -43,6 +43,28 @@ public class SingleChannelCandidateSearchTest {
         assertEquals("https://second.example/live",result.get(1).url);
         assertEquals("china",result.get(0).scope);
     }
+    @Test public void resumeBeyondFormer4096RowBoundaryAndStopAtExactCandidate()throws Exception{
+        StringBuilder body=new StringBuilder("#EXTM3U\n");
+        for(int i=0;i<4097;i++)body.append(entry("CCTV-3","https://wrong.example/"+i));
+        body.append(entry("CCTV-2","https://right.example/1"));
+        body.append(entry("CCTV-2","https://right.example/2"));
+        SingleChannelCandidateSearch.Target target=new SingleChannelCandidateSearch.Target("CCTV-2","央视","","");
+        ArrayList<SingleChannelCandidateSearch.Candidate> rows=new ArrayList<>();
+        assertEquals(2,SingleChannelCandidateSearch.scanFrom(new StringReader(body.toString()),4096,target,
+            "china",Collections.emptyList(),10,1,rows,()->false));
+        assertEquals("https://right.example/1",rows.get(0).url);
+        assertEquals(4098,SingleChannelCandidateSearch.nextOffset(4096,2,10,4099,true));
+        rows.clear();
+        assertEquals(1,SingleChannelCandidateSearch.scanFrom(new StringReader(body.toString()),4098,target,
+            "china",Collections.emptyList(),10,1,rows,()->false));
+        assertEquals("https://right.example/2",rows.get(0).url);
+        assertEquals(0,SingleChannelCandidateSearch.nextOffset(4098,1,10,4099,true));
+        assertEquals(4096,SingleChannelCandidateSearch.resumeOffset("v1","v1",4096));
+        assertEquals(0,SingleChannelCandidateSearch.resumeOffset("v1","v2",4096));
+        assertEquals(0,SingleChannelCandidateSearch.resumeOffset("","",4096));
+        assertEquals(0,SingleChannelCandidateSearch.nextOffset(4098,1,10,-1,false));
+    }
+
     @Test public void rowBudgetAndCancellationAreIndependent()throws Exception{
         String body=entry("CCTV-3","https://wrong.example/live")
             +entry("CCTV-2","https://right.example/live");
