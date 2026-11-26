@@ -440,6 +440,17 @@ public final class PlaylistFeedCache {
                 ?cached:null;
     }
 
+    /** Idle initial discovery has consumed a validated indexed page. Refresh only
+     * metadata access time, not the body timestamp or cachedAt revalidation age.
+     * Otherwise an actively scanned directory may be evicted as an old entry.
+     * Best effort: a timestamp failure must not invalidate a successful page. */
+    static void noteIndexedInitialAccess(File playlist,long now) {
+        if(playlist==null||now<=0L)return;
+        File metadata=new File(playlist.getPath()+".properties");
+        if(matchesBody(readProperties(metadata),playlist)&&now>metadata.lastModified())
+            metadata.setLastModified(now);
+    }
+
     /** Read-only lookup for an explicit single-channel search. Prefer the
      * newest validated body across the two existing cache slots; never
      * download, prune, build indexes or change a full-build checkpoint here. */
