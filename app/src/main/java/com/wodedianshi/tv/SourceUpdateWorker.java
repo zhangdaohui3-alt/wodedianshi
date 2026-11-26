@@ -653,23 +653,36 @@ public class SourceUpdateWorker extends Worker {
       int initialNextFeedIndex=initialFeedStartIndex;
       boolean[] inspectedFeeds=new boolean[feeds.length];
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
+      boolean[] visitedForCoverage=new boolean[feeds.length];
       if(initialDiscoveryChain){
         final long recheckClock=System.currentTimeMillis();
         final long[] recheckRemaining=new long[feeds.length];
         // One small, consistent Room read instead of 2–4 individual SELECTs
         // per directory. This snapshot is local to admission of this slice.
-        ArrayList<String> feedStateKeys=new ArrayList<>(feeds.length*4);
+        ArrayList<String> feedStateKeys=new ArrayList<>(feeds.length*(preferCoreCoverage?7:4));
         for(int i=0;i<feeds.length;i++){
           feedStateKeys.add(initialFeedDoneKey(i));
           feedStateKeys.add(DiscoveryBatchPolicy.initialIdleRecheckKey(i));
           feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
           feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
+          if(preferCoreCoverage){
+            feedStateKeys.add(feedCursorKey(i));
+            feedStateKeys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
+            feedStateKeys.add(initialFeedFailureCountKey(i));
+          }
         }
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         Map<String,String> feedState=readRoomValues(feedStateKeys);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=Boolean.parseBoolean(feedState.get(initialFeedDoneKey(i)));
+          if(preferCoreCoverage){
+            // Count only persisted inspection evidence, not successful acquisition
+            // alone. A newly prepared feed still deserves its first probe turn.
+            visitedForCoverage[i]=positiveFeedState(feedState,feedCursorKey(i))
+                ||positiveFeedState(feedState,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned")
+                ||positiveFeedState(feedState,initialFeedFailureCountKey(i));
+          }
           int transientState=-1;
           try{transientState=Integer.parseInt(feedState.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
           catch(NumberFormatException ignored){}
@@ -690,8 +703,8 @@ public class SourceUpdateWorker extends Worker {
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
-            &&SourceDiscoveryPriorityPolicy.nextEligibleFeed(initialNextFeedIndex,inspectedFeeds,
-                attemptedFeedsThisRun,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+            &&SourceDiscoveryPriorityPolicy.nextCoverageFeed(initialNextFeedIndex,inspectedFeeds,
+                attemptedFeedsThisRun,visitedForCoverage,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
@@ -709,8 +722,8 @@ public class SourceUpdateWorker extends Worker {
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
-            ?SourceDiscoveryPriorityPolicy.nextEligibleFeed(initialNextFeedIndex,
-                inspectedFeeds,attemptedFeedsThisRun,
+            ?SourceDiscoveryPriorityPolicy.nextCoverageFeed(initialNextFeedIndex,
+                inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)
             :routineStart+feedOffset;
@@ -3163,6 +3176,10 @@ public class SourceUpdateWorker extends Worker {
     return SourceDiscoveryIdentityPolicy.identity(name,group,url,tvgId,tvgName);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
+  private static boolean positiveFeedState(Map<String,String> values,String key){
+    try{return Long.parseLong(values.get(key))>0L;}
+    catch(NumberFormatException invalid){return false;}
+  }
   private Map<String,String> readRoomValues(List<String> keys){
     Map<String,String> values=new HashMap<>();
     if(keys.isEmpty())return values;
