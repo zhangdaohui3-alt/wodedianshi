@@ -102,6 +102,25 @@ public class SourceProbeTimePolicyTest {
         }
     }
 
+    @Test public void viewingSampleTimeoutsAreTighterWithoutChangingIdleBudgets() {
+        assertEquals(1500,SourceProbeTimePolicy.sampleConnectTimeoutCap(true));
+        assertEquals(1000,SourceProbeTimePolicy.sampleReadTimeoutCap(true));
+        assertEquals(2500,SourceProbeTimePolicy.sampleConnectTimeoutCap(false));
+        assertEquals(3000,SourceProbeTimePolicy.sampleReadTimeoutCap(false));
+        assertEquals(400,SourceProbeTimePolicy.boundedTimeoutMillis(1400L,1000L,
+                SourceProbeTimePolicy.sampleReadTimeoutCap(true)));
+    }
+
+    @Test public void boundedSampleReadsOnlyOneSentinelAndDoesNotPadShortRanges() {
+        assertEquals(4096,SourceProbeTimePolicy.sampleReadLength(8192,0,4096));
+        assertEquals(2,SourceProbeTimePolicy.sampleReadLength(8192,8191,4096));
+        assertEquals(1,SourceProbeTimePolicy.sampleReadLength(8192,8192,4096));
+        assertEquals(0,SourceProbeTimePolicy.sampleReadLength(8192,8193,4096));
+        assertEquals(0,SourceProbeTimePolicy.sampleReadLength(0,0,4096));
+        assertEquals(4096,SourceProbeTimePolicy.sampleRetainedLength(4096,8192));
+        assertEquals(8192,SourceProbeTimePolicy.sampleRetainedLength(8193,8192));
+    }
+
     @Test public void initialAddressRequiresFullBudgetBeforeStarting() {
         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(91000L,1000L));
         assertEquals(16000L, SourceProbeTimePolicy.initialAddressDeadline(16000L,1000L));
