@@ -65,6 +65,13 @@ public final class FullDiscoveryProgressPolicy {
                 &&(long)stagedRows+existingRows<=MAX_VIEWING_PREVIEW_ROWS);
     }
 
+    /** The early idle previews are small. Refresh at most once per progress
+     * ticker rather than holding newly verified channels for fifteen seconds.
+     * Keep the original throttle while viewing or once the early set is larger. */
+    static long previewReloadIntervalMs(boolean viewing,int milestone) {
+        return !viewing&&milestone>0&&milestone<=16?4000L:15000L;
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // More frequent early publication, then geometric growth to bound
     // database work. Existing watermark values remain valid on upgrade.
