@@ -68,16 +68,24 @@ public class RoomPublicationIntegrationTest {
             JSONArray nextRows=new JSONArray()
                     .put(channel("CCTV-2","https://example.invalid/new2"))
                     .put(channel("CCTV-3","https://example.invalid/new3"));
-            RoomCatalogueBuildStore.replace(context,nextRows,()->false,
+            // Model the production incremental commit that owns a durable revision.
+            RoomCatalogueBuildStore.updateTouched(context,nextRows,0,
+                    new java.util.HashSet<>(java.util.Arrays.asList(0,1)),()->false,
                     new AppStateEditor(context).putString(RoomCatalogueBuildStore.STAGING_REVISION_KEY,"test-revision"));
             AppDatabase db=RoomDatabaseProvider.get(context);
             assertEquals(1,RoomCatalogueReader.read(context).channelCount);
             assertEquals(2,db.channelDao().countCatalogueBuildRows());
+            assertEquals("test-revision",db.appStateDao().getValue(RoomCatalogueBuildStore.STAGING_REVISION_KEY));
+            assertEquals("35",db.appStateDao().getValue(PERCENT));
+            assertNull(db.appStateDao().getValue("source_full_rebuild_completed_at"));
             // Trigger cancellation only after the writer has changed the rows,
             // checkpoint, staging and progress inside its final transaction.
             try{
                 RoomCatalogueWriter.writeSnapshotWithProgress(context,nextRows,oldVersion,true,
-                        ()->db.inTransaction()&&"100".equals(db.appStateDao().getValue(PERCENT)),
+                        ()->db.inTransaction()&&"100".equals(db.appStateDao().getValue(PERCENT))
+                                &&db.channelDao().countCatalogueBuildRows()==0
+                                &&db.appStateDao().getValue(RoomCatalogueBuildStore.STAGING_REVISION_KEY)==null
+                                &&db.appStateDao().getValue("source_full_rebuild_completed_at")!=null,
                         new AppStateEditor(context).putInt(PERCENT,100));
                 fail("expected cancellation after transactional mutations");
             }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
