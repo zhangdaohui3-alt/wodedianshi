@@ -103,6 +103,20 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertEquals(-1,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,new boolean[2],1,2,false));
     }
 
+    @Test public void missingCoreCoverageGivesUnvisitedDomesticFamiliesFirstTurn() {
+        boolean[] done=new boolean[26], attempted=new boolean[26], visited=new boolean[26];
+        visited[0]=true;
+        assertEquals(2,SourceDiscoveryPriorityPolicy.nextCoverageFeed(0,done,attempted,visited,10,13,true));
+        attempted[2]=true;
+        assertEquals(4,SourceDiscoveryPriorityPolicy.nextCoverageFeed(0,done,attempted,visited,10,13,true));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextCoverageFeed(0,done,attempted,visited,10,13,false));
+        java.util.Arrays.fill(visited,0,10,true);
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextCoverageFeed(0,done,attempted,visited,10,13,true));
+        java.util.Arrays.fill(attempted,0,10,true);
+        assertEquals(10,SourceDiscoveryPriorityPolicy.nextCoverageFeed(0,done,attempted,visited,10,13,true));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.completedInStage(done,0,26));
+    }
+
     @Test public void completedAndUnavailableBothCountAsInspected() {
         boolean[] done = {true,true,false,false};
         assertEquals(2,SourceDiscoveryPriorityPolicy.completedInStage(done,0,4));
