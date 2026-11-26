@@ -2419,6 +2419,19 @@ public class SourceUpdateWorker extends Worker {
     return Thread.currentThread().isInterrupted()||pauseRequested.getAsBoolean()
         ||android.os.SystemClock.elapsedRealtime()>=deadline;
   }
+  // A pressure event interrupts pacing at the next poll. A blocked socket
+  // remains subject to its separate inactivity timeout; do not promise instant
+  // cancellation or create another player/network thread.
+  private boolean paceViewingSample(int bytes,long deadline){
+    long delay=SourceProbeTimePolicy.viewingSampleDelayMillis(bytes);
+    long end=android.os.SystemClock.elapsedRealtime()+delay;
+    for(;;){
+      if(probeDeadlineReached(deadline))return false;
+      long remaining=end-android.os.SystemClock.elapsedRealtime();
+      if(remaining<=0L)return true;
+      android.os.SystemClock.sleep(Math.min(remaining,SourceProbeTimePolicy.VIEWING_SAMPLE_PAUSE_POLL_MS));
+    }
+  }
   private byte[] fetchSample(String address,int maxBytes,long deadline)throws Exception{
     SampleResponse response=fetchSampleResponse(address,maxBytes,deadline);
     return response==null?null:response.bytes;
@@ -2451,7 +2464,7 @@ public class SourceUpdateWorker extends Worker {
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-        byte[] buffer=new byte[4096];int n,total=0;
+        byte[] buffer=new byte[SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
         while(total<=maxBytes){
           if(probeDeadlineReached(deadline))return null;
           int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
@@ -2460,6 +2473,7 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
+          if(slowPlayback&&!paceViewingSample(n,deadline))return null;
         }
         if(probeDeadlineReached(deadline))return null;
         byte[] received=out.toByteArray();
