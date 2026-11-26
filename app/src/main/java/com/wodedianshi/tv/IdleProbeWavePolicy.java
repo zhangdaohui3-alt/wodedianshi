@@ -25,6 +25,13 @@ final class IdleProbeWavePolicy {
     static boolean canBridgeKnownRow(boolean http,boolean measured) {
         return !http||measured;
     }
+    // Completed results can wait for the ordered owner, but must not create
+    // an unbounded reorder buffer or admit work beyond the original slice.
+    static int rollingAdmissionSlots(int ceiling,int running,int pending,int remaining) {
+        int limit=Math.max(0,Math.min(MAX_CONCURRENT,ceiling));
+        if(limit<2||running<0||pending<running||remaining<=0)return 0;
+        return Math.max(0,Math.min(remaining,Math.min(limit-running,2*MAX_CONCURRENT-pending)));
+    }
     private final int maxConcurrent;
     IdleProbeWavePolicy(){this(ORDINARY_CONCURRENT);}
     IdleProbeWavePolicy(int limit){maxConcurrent=Math.max(1,Math.min(MAX_CONCURRENT,limit));}
