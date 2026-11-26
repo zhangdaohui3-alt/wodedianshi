@@ -4,6 +4,21 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MediaPayloadValidatorTest {
+    @Test public void earlyTsEvidenceMatchesFullSampleAndRequiresTwoCompletePackets(){
+        byte[] full=new byte[8192];
+        int offset=187;
+        full[offset]=0x47;full[offset+3]=0x10;
+        full[offset+188]=0x47;full[offset+191]=0x10;
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets(java.util.Arrays.copyOf(full,562)));
+        assertTrue(MediaPayloadValidator.hasTransportStreamPackets(java.util.Arrays.copyOf(full,563)));
+        assertTrue(MediaPayloadValidator.hasTransportStreamPackets(java.util.Arrays.copyOf(full,1024)));
+        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(full));
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets("<html>error</html>".getBytes()));
+        byte[] mp4={0,0,0,8,'m','o','o','f',0,0,0,8,'m','d','a','t'};
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets(mp4));
+        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(mp4));
+    }
+
     @Test public void acceptsMpegTsWithTwoPacketSyncBytes() {
         byte[] sample = new byte[376];
         sample[0] = 0x47;
