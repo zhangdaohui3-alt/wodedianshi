@@ -6,7 +6,12 @@ import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
     @org.junit.Test public void earlyMilestonesExposeFirstUsefulGroupsWithoutResettingOldWatermark(){
-        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,15,20));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,0,20));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1,0));
+        org.junit.Assert.assertEquals(1,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1,1));
+        org.junit.Assert.assertEquals(4,FullDiscoveryProgressPolicy.nextPreviewMilestone(1,6,6));
+        org.junit.Assert.assertEquals(8,FullDiscoveryProgressPolicy.nextPreviewMilestone(4,15,20));
+        org.junit.Assert.assertEquals(128,FullDiscoveryProgressPolicy.nextPreviewMilestone(128,8,20));
         org.junit.Assert.assertEquals(16,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,16,20));
         org.junit.Assert.assertEquals(128,FullDiscoveryProgressPolicy.nextPreviewMilestone(64,163,20));
         org.junit.Assert.assertEquals(192,FullDiscoveryProgressPolicy.nextPreviewMilestone(128,246,20));
