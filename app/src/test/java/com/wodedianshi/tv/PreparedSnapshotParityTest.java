@@ -150,4 +150,29 @@ public class PreparedSnapshotParityTest {
         for(String[] scope:new String[][]{{"geo:countries:us","us"},{"geo:cities:us-phoenix",""}})
             assertEquals(Collections.singleton(newKey),geo.invoke(activity,after,8L,scope[0],scope[1]));
     }
+
+    @Test public void renderedPositionHintCannotSelectDifferentChannelAfterReplacement() throws Exception {
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();
+        Class<?> channel=Class.forName("com.wodedianshi.tv.MainActivity$Channel");
+        Constructor<?> constructor=channel.getDeclaredConstructor(String.class,String.class,String.class);
+        constructor.setAccessible(true);
+        Object one=constructor.newInstance("One","https://example.invalid/one","local");
+        Object two=constructor.newInstance("Two","https://example.invalid/two","local");
+        Object three=constructor.newInstance("Three","https://example.invalid/three","local");
+        Method key=channel.getDeclaredMethod("key");key.setAccessible(true);
+        String oneKey=(String)key.invoke(one),twoKey=(String)key.invoke(two);
+        @SuppressWarnings("unchecked")
+        List<Object> rows=(List<Object>)field(MainActivity.class,"channels").get(activity);
+        rows.add(one);rows.add(two);
+        Method lookup=method("findChannelIndexByKey",String.class,int.class);
+        assertEquals(0,lookup.invoke(activity,oneKey,0));
+        assertEquals(1,lookup.invoke(activity,twoKey,-1));
+        rows.clear();rows.add(two);rows.add(one);
+        assertEquals(1,lookup.invoke(activity,oneKey,0));
+        assertEquals(0,lookup.invoke(activity,twoKey,1));
+        rows.set(1,three);
+        assertEquals(-1,lookup.invoke(activity,oneKey,1));
+        assertEquals(0,lookup.invoke(activity,twoKey,999));
+        assertEquals(-1,lookup.invoke(activity,null,0));
+    }
 }
