@@ -57,7 +57,7 @@ final class ChannelNamePolicy {
         {"辽宁", "沈阳", "大连", "鞍山", "抚顺", "本溪", "丹东", "锦州", "营口", "阜新", "辽阳", "盘锦", "铁岭", "朝阳", "葫芦岛", "SHENYANG", "DALIAN", "ANSHAN", "FUSHUN", "BENXI", "DANDONG", "JINZHOU", "YINGKOU", "FUXIN", "LIAOYANG", "PANJIN", "TIELING", "CHAOYANG", "HULUDAO"},
         {"吉林", "长春", "吉林市", "四平", "辽源", "通化", "白山", "松原", "白城", "延边", "CHANGCHUN", "JILIN", "SIPING", "LIAOYUAN", "TONGHUA", "BAISHAN", "SONGYUAN", "BAICHENG", "YANBIAN"},
         {"黑龙江", "哈尔滨", "齐齐哈尔", "牡丹江", "佳木斯", "大庆", "鸡西", "鹤岗", "双鸭山", "伊春", "七台河", "黑河", "绥化", "HARBIN", "QIQIHAR", "MUDANJIANG", "JIAMUSI", "DAQING", "JIXI", "HEGANG", "SHUANGYASHAN", "YICHUN", "QITAIHE", "HEIHE", "SUIHUA", "大兴安岭"},
-        {"上海", "SHANGHAI"}, {"江苏", "南京", "苏州", "无锡", "常州", "南通", "镇江", "扬州", "淮安", "连云港", "盐城", "宿迁", "徐州", "TAIZHOU", "NANJING", "SUZHOU", "WUXI", "CHANGZHOU", "NANTONG", "ZHENJIANG", "YANGZHOU", "HUAIAN", "LIANYUNGANG", "YANCHENG", "SUQIAN", "XUZHOU"},
+        {"上海", "SHANGHAI"}, {"江苏", "南京", "苏州", "无锡", "常州", "南通", "镇江", "扬州", "淮安", "连云港", "盐城", "宿迁", "徐州", "泰州", "TAIZHOU", "NANJING", "SUZHOU", "WUXI", "CHANGZHOU", "NANTONG", "ZHENJIANG", "YANGZHOU", "HUAIAN", "LIANYUNGANG", "YANCHENG", "SUQIAN", "XUZHOU"},
         {"浙江", "杭州", "宁波", "温州", "嘉兴", "湖州", "绍兴", "金华", "衢州", "舟山", "丽水", "台州", "上虞", "余姚", "兰溪", "庆元", "开化", "文成", "新昌", "TAIZHOU", "HANGZHOU", "NINGBO", "WENZHOU", "JIAXING", "HUZHOU", "SHAOXING", "JINHUA", "QUZHOU", "ZHOUSHAN", "LISHUI", "SHANGYU", "YUYAO", "LANXI", "QINGYUAN", "KAIHUA", "WENCHENG", "XINCHANG"},
         {"安徽", "合肥", "芜湖", "蚌埠", "淮南", "马鞍山", "淮北", "铜陵", "安庆", "黄山", "滁州", "阜阳", "六安", "亳州", "池州", "宣城", "固镇", "宿州", "SUZHOU", "HEFEI", "WUHU", "BENGBU", "HUAINAN", "MAANSHAN", "HUAIBEI", "TONGLING", "ANQING", "HUANGSHAN", "CHUZHOU", "Fuyang", "LIUAN", "BOZHOU", "CHIZHOU", "XUANCHENG", "GUZHEN"},
         {"福建", "福州", "厦门", "莆田", "三明", "泉州", "漳州", "南平", "龙岩", "宁德", "FUZHOU", "XIAMEN", "PUTIAN", "SANMING", "QUANZHOU", "ZHANGZHOU", "NANPING", "LONGYAN", "NINGDE"},
@@ -122,6 +122,7 @@ final class ChannelNamePolicy {
         if (normalized.isEmpty()) return "";
         String upper = metadata.toUpperCase(Locale.ROOT);
         String explicit = "";
+        int explicitRow = -1;
         for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
             String province = LOCAL_CITY_ALIASES[row][0];
             String english = PROVINCE_ENGLISH[row];
@@ -131,6 +132,7 @@ final class ChannelNamePolicy {
                     : containsNormalizedAlias(upper, english, normalized))) {
                 if (!explicit.isEmpty() && !explicit.equals(province)) return "";
                 explicit = province;
+                explicitRow = row;
             }
         }
         String inferred = "";
@@ -145,7 +147,15 @@ final class ChannelNamePolicy {
                 for (String candidate : AMBIGUOUS_LOCAL_CITY_ALIASES) {
                     if (alias.equals(candidate)) { shared = true; break; }
                 }
-                if (shared) { ambiguous = true; continue; }
+                if (shared) {
+                    // Shared pinyin is disambiguated only by a province that
+                    // actually owns that alias; unrelated explicit metadata
+                    // must not turn a contradictory city into a local station.
+                    if (explicitRow >= 0 && !java.util.Arrays.asList(
+                            NORMALIZED_LOCAL_CITY_ALIASES[explicitRow]).contains(alias)) return "";
+                    ambiguous = true;
+                    continue;
+                }
                 // A province marker is not evidence for a contradictory unique city.
                 if (!explicit.isEmpty() && !explicit.equals(province)) return "";
                 if (!inferred.isEmpty() && !inferred.equals(province)) return "";
