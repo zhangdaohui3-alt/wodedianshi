@@ -82,6 +82,14 @@ public final class DiscoveryBatchPolicy {
         return Math.min(Math.max(0,remaining),early?24:Math.max(0,ordinaryWindow));
     }
 
+    /** An idle initial slice has separate position and network budgets. Once the
+     * network allotment is exhausted, still consume the contiguous prefix that
+     * requires no new probe; viewing and ordinary work keep their original cap. */
+    static boolean canConsumeProbePosition(boolean initial,boolean viewing,
+            int checked,int limit,boolean requiresNetwork) {
+        return checked<limit||(initial&&!viewing&&!requiresNetwork);
+    }
+
     /** Includes the current request, whose counter was incremented before
      * asking to admit a wave. Never launch speculative requests over budget. */
     static int waveRequestAllowance(int limit,int checkedIncludingCurrent) {
