@@ -38,6 +38,28 @@ public class SourceUpdateActivityPolicyTest {
         assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,true,true));
         assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,false));
     }
+    @Test public void expiredViewingLeaseCannotAuthorizeOldWorkerAfterReplacement(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            long old=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(25999L,old));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(26000L,old));
+            assertTrue(SourceUpdateActivityPolicy.stableRevocationGeneration()>old);
+            SourceUpdateActivityPolicy.reportStableLive(27000L);
+            SourceUpdateActivityPolicy.reportStableLive(37000L);
+            long replacement=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37000L,replacement));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37000L,old));
+            SourceUpdateActivityPolicy.reportStableLive(47000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(47000L,replacement));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
     @Test public void idleConcurrencyRecoversInSteps(){
         try{
             SourceUpdateActivityPolicy.setPlaybackActive(true);
