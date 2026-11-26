@@ -440,6 +440,22 @@ public final class PlaylistFeedCache {
                 ?cached:null;
     }
 
+    /** Read-only lookup for an explicit single-channel search. Prefer the
+     * newest validated body across the two existing cache slots; never
+     * download, prune, build indexes or change a full-build checkpoint here. */
+    static File findCachedForSingleChannel(Context context,String feedUrl)throws IOException {
+        File directory=new File(context.getFilesDir(),"playlist-feed-cache");
+        File newest=null;
+        for(String slot:new String[]{"initial|","routine|"}){
+            File candidate=new File(directory,sha256(slot+feedUrl)+".m3u");
+            Properties metadata=readProperties(new File(candidate.getPath()+".properties"));
+            if(matchesBody(metadata,candidate)
+                    &&(newest==null||candidate.lastModified()>newest.lastModified()))
+                newest=candidate;
+        }
+        return newest;
+    }
+
     private static void checkDownloadBudget(java.util.function.BooleanSupplier paused,
                                             long deadline) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
