@@ -274,6 +274,22 @@ public final class LibVlcPlaybackEngine {
         }
     }
 
+    /** Snapshot only on the existing serialized native worker. The retained
+     * Media returned by getMedia must be released on every path. */
+    long[] outputCounters() {
+        MediaPlayer current=mediaPlayer;
+        if(released||current==null)return null;
+        org.videolan.libvlc.interfaces.IMedia media=current.getMedia();
+        if(media==null)return null;
+        try {
+            org.videolan.libvlc.interfaces.IMedia.Stats stats=media.getStats();
+            if(stats==null)return null;
+            return new long[]{stats.displayedPictures,stats.playedAbuffers};
+        } finally {
+            media.release();
+        }
+    }
+
     public boolean isPlaying() {
         return isInitialized() && mediaPlayer.isPlaying();
     }
