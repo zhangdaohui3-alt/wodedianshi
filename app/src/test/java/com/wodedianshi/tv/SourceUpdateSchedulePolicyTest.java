@@ -103,7 +103,8 @@ public class SourceUpdateSchedulePolicyTest {
     @Test public void idleInputYieldUsesShortDelayWithoutRelaxingPlaybackGate() {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,true));
         assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(true,true));
-        assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,false));
+        assertEquals(10L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,false));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(true,false));
     }
 
     @Test public void normalInitialViewingDeferralUsesFixedDelay() {
