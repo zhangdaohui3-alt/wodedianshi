@@ -49,4 +49,16 @@ public class InitialOriginCooldownPolicyTest {
         assertFalse(InitialOriginCooldownPolicy.mayDefer(true,false,false,false,true));
         assertFalse(InitialOriginCooldownPolicy.mayDefer(false,false,false,false,false));
     }
+
+    @Test public void explicitServerPressureCoolsOnlyOriginAndSurvivesConcurrentSuccess(){
+        InitialOriginCooldownPolicy p=new InitialOriginCooldownPolicy();
+        p.observePressure("origin",1000);
+        assertTrue(p.cooling("origin",1000));
+        assertFalse(p.cooling("other",1000));
+        p.observe("origin","concurrent",2000,false,true);
+        assertTrue(p.cooling("origin",30999));
+        assertFalse(p.cooling("origin",31000));
+        p.observe("origin","new",31001,false,true);
+        assertFalse(p.cooling("origin",31001));
+    }
 }
