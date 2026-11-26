@@ -36,6 +36,18 @@ public final class FullDiscoveryProgressPolicy {
         return allFeedsInspected && hasValidatedSource && !viewing;
     }
 
+    // Small builds keep the established complete-array path. A potential
+    // final page or unknown historical category mask must also read all rows.
+    static boolean mayUseIndexedInitialRows(int rows,int stagedCoreMask,boolean potentialFinal) {
+        return rows>1024&&stagedCoreMask>=0&&!potentialFinal;
+    }
+
+    static int indexedInitialRowCount(int baseCount,int loadedRows,int workingRows) {
+        if(baseCount<=0||loadedRows<0||loadedRows>baseCount||workingRows<loadedRows)
+            throw new IllegalArgumentException("Invalid sparse initial staging count");
+        return Math.addExact(baseCount,workingRows-loadedRows);
+    }
+
     // Bounded, opportunistic cache. Room is authoritative after every commit.
     public static boolean canRetainStaging(int rows,boolean viewing) {
         return rows>=0&&rows<=(viewing?512:1024);
