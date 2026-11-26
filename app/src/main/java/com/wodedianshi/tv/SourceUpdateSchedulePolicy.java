@@ -86,6 +86,16 @@ public final class SourceUpdateSchedulePolicy {
         return !viewing&&freshDifferentNextFeed?0L:30L;
     }
 
+    static final long INITIAL_STALL_OBSERVATION_MS=180000L;
+    /** A missing chain can be restored with KEEP, never by cancelling a live
+     * owner. Failed empty-build resets and disabled auto updates stay excluded. */
+    static boolean mayRecoverMissingInitialChain(long unchangedMs,boolean observed,
+            boolean unfinished,boolean ownerActive,boolean playbackActive,
+            boolean autoEnabled,boolean buildActive,boolean alreadyRequested) {
+        return unchangedMs>=INITIAL_STALL_OBSERVATION_MS&&observed&&!unfinished
+                &&!ownerActive&&!playbackActive&&autoEnabled&&buildActive&&!alreadyRequested;
+    }
+
     // Admit at most one extra committed idle slice, and only early enough in
     // the owner lifetime. Existing per-slice network budgets still apply.
     static boolean canContinueInitialInline(int completedSlices,long elapsedMs,
