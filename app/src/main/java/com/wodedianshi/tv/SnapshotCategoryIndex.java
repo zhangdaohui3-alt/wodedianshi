@@ -22,12 +22,23 @@ final class SnapshotCategoryIndex {
         private final java.util.Map<String,List<Integer>> provinces;
         private final List<Integer> allLocal;
         private final java.util.Map<String,List<Integer>> fixedCategories;
+        private final java.util.Map<String,java.util.Set<String>> geoKeys;
+        private final boolean geoPrepared;
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince){
             this(count,local,byProvince,Collections.emptyMap());
         }
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
                 java.util.Map<String,List<Integer>> fixed){
+            this(count,local,byProvince,fixed,null);
+        }
+        LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
+                java.util.Map<String,List<Integer>> fixed,java.util.Map<String,java.util.Set<String>> geo){
             this.count=count;
+            geoPrepared=geo!=null;
+            java.util.Map<String,java.util.Set<String>> geoCopy=new java.util.HashMap<>();
+            if(geo!=null)for(java.util.Map.Entry<String,java.util.Set<String>> entry:geo.entrySet())
+                geoCopy.put(entry.getKey(),Collections.unmodifiableSet(new java.util.HashSet<>(entry.getValue())));
+            geoKeys=Collections.unmodifiableMap(geoCopy);
             if(byProvince.size()>MAX_PROVINCES)throw new IllegalArgumentException("Province index limit");
             java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
             for(java.util.Map.Entry<String,List<Integer>> entry:byProvince.entrySet())
@@ -40,6 +51,11 @@ final class SnapshotCategoryIndex {
             fixedCategories=Collections.unmodifiableMap(categories);
         }
         List<Integer> fixedCategory(String category){return fixedCategories.get(category);}
+        java.util.Set<String> geoKeys(String scope){
+            if(!geoPrepared)return null;
+            java.util.Set<String> keys=geoKeys.get(scope);
+            return keys==null?Collections.emptySet():keys;
+        }
         List<Integer> candidates(String province){
             if(province==null)return allLocal;
             List<Integer> found=provinces.get(province);
