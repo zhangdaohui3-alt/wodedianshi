@@ -1430,7 +1430,9 @@ public class SourceUpdateWorker extends Worker {
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
         }
-        if(!slowPlayback&&(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)){
+        if((previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)
+            &&FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),
+                com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
           JSONArray priorRows=new JSONArray();
