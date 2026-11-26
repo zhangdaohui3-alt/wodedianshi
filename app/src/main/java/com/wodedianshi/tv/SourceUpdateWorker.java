@@ -650,6 +650,14 @@ public class SourceUpdateWorker extends Worker {
           };
           parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
+          if(initialDiscoveryChain){
+            // Dedupe exact records only within the fixed raw page. Raw index
+            // and parsedCount remain untouched; a changed candidate fingerprint
+            // restarts that partial page rather than skipping its suffix.
+            ArrayList<Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(feedCandidates,
+                entry->Arrays.asList(entry.name,entry.url,entry.group,entry.tvgId,entry.tvgName,entry.scope));
+            feedCandidates.clear();feedCandidates.addAll(distinct);
+          }
           if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Preserve every address and the exact raw index cursor. Within the
             // current fixed-size page, probe mainland candidates first. Java's List
