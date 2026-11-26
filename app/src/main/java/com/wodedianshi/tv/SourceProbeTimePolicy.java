@@ -158,6 +158,13 @@ public final class SourceProbeTimePolicy {
         return attempts==1;
     }
 
+    /** Ordinary idle first-pass duplicates share one timed-out opportunity.
+     * Preserve the original retry for core coverage, idle replay, viewing and
+     * saved/manual work. Never promote a timeout or persist a negative score. */
+    static boolean retryInconclusiveWithinSlice(int attempts,boolean ordinaryInitialIdleTimeout) {
+        return !ordinaryInitialIdleTimeout&&retryInconclusiveWithinSlice(attempts);
+    }
+
     /** Reserve a small owner-merge margin rather than starting a last-second parallel wave. */
     public static boolean hasWaveDrainMargin(long batchDeadline,long addressDeadline) {
         return addressDeadline>=0L && batchDeadline>=addressDeadline
