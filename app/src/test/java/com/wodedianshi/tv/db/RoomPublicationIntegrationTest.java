@@ -265,6 +265,74 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void playbackStartDuringStagingCommitRollsBackAndOldWorkerCannotResume()throws Exception {
+        isolated(context->{
+            final String cursor="integration_cursor";
+            final String revision=RoomCatalogueBuildStore.STAGING_REVISION_KEY;
+            com.wodedianshi.tv.SourceUpdateActivityPolicy.setActivityActive(true);
+            com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(false);
+            ExecutorService playback=Executors.newSingleThreadExecutor();
+            try{
+                RoomCatalogueWriter.initializeEmptyCatalogue(context);
+                JSONArray original=new JSONArray().put(channel("CCTV-1","https://example.invalid/one"));
+                RoomCatalogueBuildStore.updateTouched(context,original,0,
+                        java.util.Collections.singleton(0),()->false,
+                        new AppStateEditor(context).putInt(cursor,1).putString(revision,"old"));
+                JSONArray extended=new JSONArray().put(original.getJSONObject(0))
+                        .put(channel("CCTV-2","https://example.invalid/two"));
+                AppDatabase db=RoomDatabaseProvider.get(context);
+                long admitted=com.wodedianshi.tv.SourceUpdateActivityPolicy.playbackStartGeneration();
+                // Same unpaced playback gate and sticky cancellation as the source worker.
+                java.util.function.BooleanSupplier gate=SourceProbeTimePolicy.latchPause(()->
+                        com.wodedianshi.tv.SourceUpdateActivityPolicy.playbackStartGeneration()!=admitted
+                        ||com.wodedianshi.tv.SourceUpdateActivityPolicy.isPlaybackActive());
+                java.util.concurrent.atomic.AtomicBoolean injected=new java.util.concurrent.atomic.AtomicBoolean();
+                try{
+                    RoomCatalogueBuildStore.updateTouched(context,extended,1,
+                            java.util.Collections.singleton(1),()->{
+                                // The separate playback thread signals a start only when
+                                // rows and progress have both been written, before commit.
+                                if(db.inTransaction()&&"2".equals(db.appStateDao().getValue(cursor))
+                                        &&injected.compareAndSet(false,true)){
+                                    try{
+                                        playback.submit(()->com.wodedianshi.tv.SourceUpdateActivityPolicy
+                                                .setPlaybackActive(true)).get(5,TimeUnit.SECONDS);
+                                    }catch(Exception error){throw new AssertionError(error);}
+                                }
+                                return gate.getAsBoolean();
+                            },new AppStateEditor(context).putInt(cursor,2).putString(revision,"new"));
+                    fail("playback start must roll back the staging transaction");
+                }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+                assertTrue(injected.get());
+                assertTrue(gate.getAsBoolean());
+                playback.submit(()->com.wodedianshi.tv.SourceUpdateActivityPolicy
+                        .setPlaybackActive(false)).get(5,TimeUnit.SECONDS);
+                assertTrue("old execution stays cancelled even after playback stops",gate.getAsBoolean());
+                closeProvider();
+                AppDatabase reopened=RoomDatabaseProvider.get(context);
+                assertEquals(1,reopened.channelDao().countCatalogueBuildRows());
+                assertEquals("1",reopened.appStateDao().getValue(cursor));
+                assertEquals("old",reopened.appStateDao().getValue(revision));
+                long nextGeneration=com.wodedianshi.tv.SourceUpdateActivityPolicy.playbackStartGeneration();
+                java.util.function.BooleanSupplier nextGate=SourceProbeTimePolicy.latchPause(()->
+                        com.wodedianshi.tv.SourceUpdateActivityPolicy.playbackStartGeneration()!=nextGeneration
+                        ||com.wodedianshi.tv.SourceUpdateActivityPolicy.isPlaybackActive());
+                assertFalse(nextGate.getAsBoolean());
+                assertEquals(2,RoomCatalogueBuildStore.updateTouched(context,extended,1,
+                        java.util.Collections.singleton(1),nextGate,
+                        new AppStateEditor(context).putInt(cursor,2).putString(revision,"new")));
+                assertEquals("2",reopened.appStateDao().getValue(cursor));
+                assertEquals("new",reopened.appStateDao().getValue(revision));
+                assertEquals(2,reopened.channelDao().countCatalogueBuildRows());
+                assertEquals(0,RoomCatalogueReader.read(context).channelCount);
+            }finally{
+                playback.shutdownNow();
+                com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(false);
+                com.wodedianshi.tv.SourceUpdateActivityPolicy.setActivityActive(false);
+            }
+        });
+    }
+
     private static List<String> endpoints(List<ManualProbeQueueEntity> rows){
         List<String> result=new ArrayList<>();
         for(ManualProbeQueueEntity row:rows)result.add(row.endpoint);
