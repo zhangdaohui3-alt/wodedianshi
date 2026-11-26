@@ -156,10 +156,11 @@ public final class SourceUpdateSchedulePolicy {
         return false;
     }
 
-    /** Resume an input-interrupted idle slice after a short quiet window;
-     * the next worker still rechecks playback and concurrency admission. */
+    /** Retry a cooperative yield without the full viewing delay once playback
+     * is inactive. A generic yield gets a longer quiet window than known input;
+     * the next worker still rechecks all playback and concurrency gates. */
     static long initialPressureDelaySeconds(boolean playbackActive,boolean idleWaveInterrupted) {
-        return !playbackActive&&idleWaveInterrupted?5L:30L;
+        return playbackActive?30L:idleWaveInterrupted?5L:10L;
     }
 
     /** Normal viewing deferral is not a failed network attempt. */
