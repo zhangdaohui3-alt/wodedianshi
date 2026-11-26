@@ -23,6 +23,13 @@ public final class PlaylistFeedIndex {
 
     private PlaylistFeedIndex() { }
 
+    // Bridge the parser's non-throwing consumer to the index's checked
+    // I/O contract without scanning the remaining body after a write fails.
+    private static final class IndexWriteFailure extends RuntimeException {
+        final IOException failure;
+        IndexWriteFailure(IOException failure) { super(failure); this.failure=failure; }
+    }
+
     public static int readPage(File playlist, int startEntry, int maxEntries,
                                PlaylistParser.EntryConsumer consumer) throws IOException {
         return readPage(playlist, startEntry, maxEntries, consumer, () -> false);
@@ -170,7 +177,6 @@ public final class PlaylistFeedIndex {
             java.util.function.BooleanSupplier paused) throws IOException {
         File recordsTemporary = new File(records.getAbsolutePath() + ".tmp");
         File offsetsTemporary = new File(offsets.getAbsolutePath() + ".tmp");
-        final IOException[] writeFailure = new IOException[1];
         final long[] written = new long[1];
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -186,24 +192,26 @@ public final class PlaylistFeedIndex {
                 throw new IOException("Cached resource is not a valid M3U playlist");
             }
             PlaylistParser.parseEach(reader, 0, Integer.MAX_VALUE, source -> {
-                if (writeFailure[0] != null) return;
                 try {
                     offsetFile.writeLong(recordFile.getFilePointer());
                     writeRecord(recordFile, source);
                     written[0]++;
                 } catch (IOException error) {
-                    writeFailure[0] = error;
+                    throw new IndexWriteFailure(error);
                 }
             }, paused);
             SourceProbeTimePolicy.checkPaused(paused);
-            if (writeFailure[0] != null) throw writeFailure[0];
-            offsetFile.seek(4L);
+             offsetFile.seek(4L);
             offsetFile.writeLong(written[0]);
             if (offsetFile.length() != OFFSET_HEADER_BYTES + written[0] * 8L) {
                 throw new IOException("Playlist index offset count mismatch");
             }
             offsetFile.getFD().sync();
             recordFile.getFD().sync();
+        } catch (IndexWriteFailure error) {
+            recordsTemporary.delete();
+            offsetsTemporary.delete();
+            throw error.failure;
         } catch (IOException error) {
             recordsTemporary.delete();
             offsetsTemporary.delete();
