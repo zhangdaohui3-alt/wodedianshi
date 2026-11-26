@@ -13,6 +13,15 @@ public class LivePagePolicyTest {
         assertEquals(3, LivePagePolicy.pageCount(97, 48));
     }
 
+    @Test public void directPageSelectionRejectsOutOfRangeIndexes() {
+        assertTrue(LivePagePolicy.canSelectPage(0,97,48));
+        assertTrue(LivePagePolicy.canSelectPage(2,97,48));
+        assertFalse(LivePagePolicy.canSelectPage(3,97,48));
+        assertFalse(LivePagePolicy.canSelectPage(-1,97,48));
+        assertFalse(LivePagePolicy.canSelectPage(1,0,48));
+        assertEquals(2,LivePagePolicy.choosePage(2,5,48,true));
+    }
+
     @Test public void nextPageRemainsAvailableUntilTheLastRenderedPage() {
         assertTrue(LivePagePolicy.canAdvance(0, 49, 48));
         assertTrue(LivePagePolicy.canAdvance(1, 97, 48));
