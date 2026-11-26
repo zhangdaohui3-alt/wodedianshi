@@ -1316,7 +1316,8 @@ public class SourceUpdateWorker extends Worker {
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
                     DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral,
-                    initialDiscoveryChain&&previousStagedSize>512&&!preferCoreCoverage))){
+                    DiscoveryBatchPolicy.permitsRollingInitial(initialDiscoveryChain,earlyFirstWatch,
+                        preferCoreCoverage,previousStagedSize,priorCoreMask)))){
               noteInitialStage("空闲并发检测 · 本组待合并 "+idleWave.pending.size()+" 条 · 本批第 "+checked+" 条（尚未提交）");
               TimedProbe outcome;
               try{outcome=idleWave.take(endpoint,probeDeadline);}
@@ -3019,7 +3020,9 @@ public class SourceUpdateWorker extends Worker {
         long remaining=batchDeadline-android.os.SystemClock.elapsedRealtime();
         if(remaining<=0&&!future.isDone())throw new java.util.concurrent.TimeoutException("Probe wave exceeded slice budget");
         try{
-          if(!future.isDone())refillRolling();
+          // Even a completed head may have freed slots. Refill within the
+          // same bounded pending/result window rather than wait for a slow sibling.
+          if(remaining>0L)refillRolling();
           TimedProbe outcome=future.get(Math.max(0L,Math.min(100L,remaining)),java.util.concurrent.TimeUnit.MILLISECONDS);
           pending.remove(endpoint);return outcome;
         }catch(java.util.concurrent.TimeoutException waiting){/* poll viewing gate */}
