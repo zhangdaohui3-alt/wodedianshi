@@ -2790,6 +2790,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!acquireDecoderOwnership()){if(onFailure!=null)onFailure.run();return;}
       final LibVlcVodBackend backend=new LibVlcVodBackend(this,vlcLayout,libVlcWorker);vodFallbackBackend=backend;vodUsingLibVlc=true;
       final boolean[] resumeSeekRequested={false};
+      final boolean[] fallbackPlaying={false},fallbackVideoOutput={false};
       final Runnable restoreResume=()->{
         if(resumeSeekRequested[0]||session!=vodSessionGeneration||vodPlayerDialog!=dialog
             ||activeVodItem!=item||vodFallbackBackend!=backend||vodHistoryPendingResumeMs<=0L
@@ -2802,10 +2803,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       };
       backend.setListener(new VodPlaybackBackend.Listener(){
-        private boolean current(){return session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
+        private boolean current(){return activityStarted&&session==vodSessionGeneration&&vodPlayerDialog==dialog&&activeVodItem==item&&vodFallbackBackend==backend&&!isFinishing()&&!isDestroyed();}
         private void restorePosition(){if(current())restoreResume.run();}
-        @Override public void onReady(){if(current()){if(vodFallbackStartupWatchdog!=null){uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;}saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");restorePosition();}}
-        @Override public void onVideoOutput(boolean available){if(current()){saveLiveDiagnostic("VOD_LIBVLC_VIDEO_OUTPUT","available="+available);if(available)restorePosition();}}
+        private void confirmStartup(){
+          if(vodFallbackStartupWatchdog==null||!TrackHealthPolicy.vlcVodStartupConfirmed(
+              fallbackPlaying[0],fallbackVideoOutput[0]))return;
+          uiHandler.removeCallbacks(vodFallbackStartupWatchdog);vodFallbackStartupWatchdog=null;
+          saveLiveDiagnostic("VOD_LIBVLC_START_CONFIRMED","playing and video output events received; real picture/audio unverified");
+        }
+        @Override public void onReady(){if(current()){fallbackPlaying[0]=true;saveLiveDiagnostic("VOD_LIBVLC_PLAYING","playing_event=true");confirmStartup();restorePosition();}}
+        @Override public void onVideoOutput(boolean available){if(current()){fallbackVideoOutput[0]=available;saveLiveDiagnostic("VOD_LIBVLC_VIDEO_OUTPUT","available="+available);confirmStartup();if(available)restorePosition();}}
         @Override public void onAudioTrackState(int count,int selected){
           if(current())saveLiveDiagnostic("VOD_VLC_AUDIO_TRACK_CHECK",
               "tracks="+count+" selected="+selected+"; speaker output requires device validation");
@@ -2815,12 +2822,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
       vodFallbackStartupWatchdog=new Runnable(){
         @Override public void run(){
-          if(session!=vodSessionGeneration||vodPlayerDialog!=dialog||activeVodItem!=item||vodFallbackBackend!=backend||!dialog.isShowing()){vodFallbackStartupWatchdog=null;return;}
+          if(vodFallbackStartupWatchdog!=this)return;
+          if(!activityStarted||session!=vodSessionGeneration||vodPlayerDialog!=dialog||activeVodItem!=item||vodFallbackBackend!=backend||!dialog.isShowing()){vodFallbackStartupWatchdog=null;return;}
           if(android.os.SystemClock.elapsedRealtime()-fallbackStartedAt>=30000L){
-            saveLiveDiagnostic("VOD_LIBVLC_START_TIMEOUT","timeoutMs=30000; playing_event=false");
+            saveLiveDiagnostic("VOD_LIBVLC_START_TIMEOUT","timeoutMs=30000; playing_event="+fallbackPlaying[0]+" video_output="+fallbackVideoOutput[0]);
             releaseVodFallback();
             if(onFailure!=null)onFailure.run();
-            toast("备用播放器等待 30 秒仍未启动，已停止本次播放");
+            toast("备用播放器等待 30 秒仍未确认播放及视频输出，已停止本次播放");
             return;
           }
           uiHandler.postDelayed(this,1000L);
