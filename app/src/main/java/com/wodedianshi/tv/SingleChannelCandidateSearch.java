@@ -38,6 +38,8 @@ final class SingleChannelCandidateSearch {
         boolean bounded;
         String cursorKey;
         org.json.JSONObject nextCursors;
+        org.json.JSONObject priorCursors;
+        int nextRetryFeed;
         int cachedCandidates;
     }
     private static final class CandidateLimit extends RuntimeException {}
@@ -206,9 +208,17 @@ final class SingleChannelCandidateSearch {
             BooleanSupplier paused)throws IOException{
         // No untested candidate may be skipped. The worker calls this only
         // after any verified routes have been committed to Room.
-        if(result.nextCursors==null||!conclusive||checked<result.cachedCandidates)return;
+        if(result.nextCursors==null)return;
         SourceProbeTimePolicy.checkPaused(paused);
-        com.wodedianshi.tv.db.AppStateStore.put(context,result.cursorKey,result.nextCursors.toString());
+        org.json.JSONObject state=result.nextCursors;
+        if(!conclusive||checked<result.cachedCandidates){
+            // Retain every previous row offset, but let another directory take
+            // the next turn. An inconclusive route must not monopolize all feeds.
+            state=result.priorCursors;
+            try{state.put("nextFeed",result.nextRetryFeed);}
+            catch(org.json.JSONException impossible){throw new IOException("Invalid retry cursor",impossible);}
+        }
+        com.wodedianshi.tv.db.AppStateStore.put(context,result.cursorKey,state.toString());
     }
 
     /** Search the existing configured directories in their established priority
@@ -223,6 +233,8 @@ final class SingleChannelCandidateSearch {
         catch(org.json.JSONException malformed){cursors=new org.json.JSONObject();}
         final String[] feeds=SourceDiscoveryFeedCatalog.feeds();
         final int startFeed=SourceSelectionPolicy.wrapIndex(cursors.optInt("nextFeed",0),feeds.length);
+        result.priorCursors=new org.json.JSONObject(cursors.toString());
+        result.nextRetryFeed=(startFeed+1)%feeds.length;
         final int candidateBudget=Math.max(1,Math.min(MAX_CANDIDATES,probeLimit));
         long started=SystemClock.elapsedRealtime();
         BooleanSupplier bounded=()->(paused!=null&&paused.getAsBoolean())
@@ -235,8 +247,8 @@ final class SingleChannelCandidateSearch {
             int feedIndex=(startFeed+turn)%feeds.length;
             String feed=feeds[feedIndex];
             String feedKey=StableKey.url(feed);
-            cursors.put("nextFeed",(feedIndex+1)%feeds.length);
             File body=PlaylistFeedCache.findCachedForSingleChannel(context,feed);
+            cursors.put("nextFeed",(feedIndex+1)%feeds.length);
             if(body==null){result.missingFeeds++;continue;}
             int rowLimit=Math.min(MAX_ROWS_PER_FEED,MAX_ROWS-result.rowsScanned);
             int candidateLimit=Math.min(MAX_PER_FEED,candidateBudget-result.candidates.size());
