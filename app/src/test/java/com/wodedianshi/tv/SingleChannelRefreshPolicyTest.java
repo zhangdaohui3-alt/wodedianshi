@@ -57,6 +57,20 @@ public class SingleChannelRefreshPolicyTest {
         assertTrue(match("泰州新闻","江苏","","","泰州新闻","江苏","",""));
     }
 
+    @Test public void sameProvinceConflictingCityEvidenceRejectsRefresh(){
+        assertEquals("深圳",ChannelNamePolicy.localCityEvidence("深圳新闻 Shenzhen News","广东"));
+        assertEquals("深圳",ChannelNamePolicy.localCityEvidence("Shenzhen News","广东"));
+        assertNull(ChannelNamePolicy.localCityEvidence("深圳新闻 Guangzhou News","广东"));
+        assertNull(ChannelNamePolicy.localCityEvidence("深圳新闻 广州新闻","广东"));
+        assertNull(ChannelNamePolicy.localCityEvidence("Shenzhen News Guangzhou News","广东"));
+        assertFalse(match("深圳新闻","广东","news.shenzhen","",
+            "深圳新闻","广东","news.shenzhen","Guangzhou News"));
+        assertFalse(match("深圳新闻","广东","news.shenzhen","Guangzhou News",
+            "深圳新闻","广东","news.shenzhen","Guangzhou News"));
+        assertTrue(match("深圳新闻","广东","news.shenzhen","Shenzhen News",
+            "深圳新闻","广东","news.shenzhen","Shenzhen News"));
+    }
+
     @Test public void appendOnlyUsesFreeSlotsInVerifiedQualityOrder(){
         java.util.List<String> old=Arrays.asList("https://a.example/live","https://b.example/live");
         assertEquals(Arrays.asList("https://c.example/live","https://d.example/live"),
