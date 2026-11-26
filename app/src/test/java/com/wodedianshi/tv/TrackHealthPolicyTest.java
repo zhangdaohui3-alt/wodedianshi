@@ -21,6 +21,25 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
     }
 
+    @Test public void renderedCounterNeedsSameLiveBaselineAndRecentAdvance() {
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(false,10,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,-1,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,20,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,20,1));
+        assertTrue(TrackHealthPolicy.renderedCounterAdvanced(true,20,21));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(0L,1000L));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(2000L,1000L));
+        assertTrue(TrackHealthPolicy.recentRenderedCounter(1000L,15999L));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(1000L,16000L));
+    }
+
+    @Test public void recentAudioWarningDisablesHealthPromotionTemporarily() {
+        assertTrue(TrackHealthPolicy.audioWarningQuiet(0L,1000L));
+        assertFalse(TrackHealthPolicy.audioWarningQuiet(2000L,1000L));
+        assertFalse(TrackHealthPolicy.audioWarningQuiet(1000L,30999L));
+        assertTrue(TrackHealthPolicy.audioWarningQuiet(1000L,31000L));
+    }
+
     @Test public void vlcClockRequiresMeaningfulForwardProgressFromKnownBaseline() {
         assertFalse(TrackHealthPolicy.vlcClockAdvanced(0L,12000L));
         assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,0L));
