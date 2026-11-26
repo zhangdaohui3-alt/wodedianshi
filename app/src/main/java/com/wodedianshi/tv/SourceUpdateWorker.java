@@ -1283,7 +1283,8 @@ public class SourceUpdateWorker extends Worker {
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
-                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral))){
+                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral,
+                    initialDiscoveryChain&&previousStagedSize>512&&!preferCoreCoverage))){
               noteInitialStage("空闲并发检测 · 本组待合并 "+idleWave.pending.size()+" 条 · 本批第 "+checked+" 条（尚未提交）");
               TimedProbe outcome;
               try{outcome=idleWave.take(endpoint,probeDeadline);}
@@ -2758,12 +2759,18 @@ public class SourceUpdateWorker extends Worker {
     final java.util.concurrent.atomic.AtomicInteger peakProbes=new java.util.concurrent.atomic.AtomicInteger();
     boolean initialWave;
     long waveBatchDeadline;
+    List<Entry> rollingEntries;
+    Map<String,ProbeResult> rollingMeasured;
+    Set<String> rollingVisited;
+    int rollingNext,rollingRemaining;
+    boolean rollingOriginDeferral;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
     boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
         Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests,
-        boolean allowOriginDeferral){
+        boolean allowOriginDeferral,boolean rolling){
+      rollingEntries=null;
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       long now=android.os.SystemClock.elapsedRealtime();
@@ -2774,7 +2781,8 @@ public class SourceUpdateWorker extends Worker {
       if(limit<2)return false;
       ArrayList<Entry> wave=new ArrayList<>();
       IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy(limit);
-      for(int i=offset;i<entries.size()&&wave.size()<limit;i++){
+      int i=offset;
+      for(;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
         if(initial&&entry.savedSource)break;
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
@@ -2811,21 +2819,75 @@ public class SourceUpdateWorker extends Worker {
       });
       initialWave=initial;
       waveBatchDeadline=batchDeadline;
-      for(Entry entry:wave){
-        if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
-        final String url=entry.url;
-        final String endpoint=SourceSelectionPolicy.endpointKey(url);
-        pending.put(endpoint,executor.submit(()->{
-          int active=activeProbes.incrementAndGet();
-          peakProbes.accumulateAndGet(active,Math::max);
-          try{
-            ProbeResult result=probe(url,deadline);
-            return new TimedProbe(result,deadline,android.os.SystemClock.elapsedRealtime());
-          }finally{activeProbes.decrementAndGet();}
-        }));
-        launched++;
+      for(Entry entry:wave)submit(entry,deadline);
+      if(rolling&&initial){
+        rollingEntries=entries;rollingMeasured=measured;rollingVisited=visited;
+        rollingNext=i;rollingRemaining=remainingRequests-wave.size();
+        rollingOriginDeferral=allowOriginDeferral;
       }
       return true;
+    }
+    private void submit(Entry entry,long deadline){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      final String url=entry.url;
+      final String endpoint=SourceSelectionPolicy.endpointKey(url);
+      pending.put(endpoint,executor.submit(()->{
+        int active=activeProbes.incrementAndGet();
+        peakProbes.accumulateAndGet(active,Math::max);
+        try{
+          ProbeResult result=probe(url,deadline);
+          return new TimedProbe(result,deadline,android.os.SystemClock.elapsedRealtime());
+        }finally{activeProbes.decrementAndGet();}
+      }));
+      launched++;
+    }
+    /** Refill freed network slots while the ordered owner waits for a slow
+     * result. Do not change candidate order or commit a speculative suffix.
+     * Only cross rows already proved not to require another network request. */
+    private void refillRolling(){
+      if(rollingEntries==null||rollingRemaining<=0)return;
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      long now=android.os.SystemClock.elapsedRealtime();
+      long pressureAtAdmission=SourceUpdateActivityPolicy.pressureGeneration();
+      int ceiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
+      IdleProbeWavePolicy active=new IdleProbeWavePolicy(ceiling);
+      int running=0;
+      for(Map.Entry<String,java.util.concurrent.Future<TimedProbe>> task:pending.entrySet()){
+        if(task.getValue().isDone())continue;
+        running++;
+        String endpoint=task.getKey(),host=probeHost(endpoint);
+        if(!active.canAdd(endpoint,host))return;
+        active.add(endpoint,host);
+      }
+      int slots=IdleProbeWavePolicy.rollingAdmissionSlots(ceiling,running,pending.size(),rollingRemaining);
+      while(slots>0&&rollingNext<rollingEntries.size()){
+        Entry entry=rollingEntries.get(rollingNext);
+        if(entry.savedSource)return;
+        boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
+        String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
+        if(IdleProbeWavePolicy.canBridgeKnownRow(http,rollingMeasured.containsKey(endpoint))){
+          rollingNext++;continue;
+        }
+        // Cache-only, unresolved duplicate and host/cooldown barriers are
+        // still handled by the normal owner. Never jump past fresh work.
+        if(pending.containsKey(endpoint)||rollingVisited.contains(endpoint))return;
+        String host=probeHost(entry.url);
+        if(!active.canAdd(endpoint,host))return;
+        now=android.os.SystemClock.elapsedRealtime();
+        if(rollingOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))return;
+        RecentProbe cached=INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url));
+        if(cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
+            &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now))return;
+        long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
+        if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
+        int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
+        if(running>=currentCeiling||currentCeiling<2)return;
+        if(running>=2&&idleWavePressureGeneration<0L)idleWavePressureGeneration=pressureAtAdmission;
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        active.add(endpoint,host);
+        submit(entry,deadline);
+        rollingNext++;rollingRemaining--;running++;slots--;
+      }
     }
     TimedProbe take(String endpoint,long batchDeadline)throws Exception{
       java.util.concurrent.Future<TimedProbe> future=pending.get(endpoint);
@@ -2835,6 +2897,7 @@ public class SourceUpdateWorker extends Worker {
         long remaining=batchDeadline-android.os.SystemClock.elapsedRealtime();
         if(remaining<=0&&!future.isDone())throw new java.util.concurrent.TimeoutException("Probe wave exceeded slice budget");
         try{
+          if(!future.isDone())refillRolling();
           TimedProbe outcome=future.get(Math.max(0L,Math.min(100L,remaining)),java.util.concurrent.TimeUnit.MILLISECONDS);
           pending.remove(endpoint);return outcome;
         }catch(java.util.concurrent.TimeoutException waiting){/* poll viewing gate */}
