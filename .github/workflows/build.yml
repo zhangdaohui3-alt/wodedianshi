@@ -8,6 +8,14 @@ on:
       - 'fix/**'
       - 'upgrade/**'
       - 'feat/**'
+      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+      - 'fix/**'
+      - 'upgrade/**'
+      - 'feat/**'
+      - 'feature/**'
 
 concurrency:
   # Keep builds on separate branches from cancelling each other.
@@ -57,26 +65,63 @@ jobs:
       - name: Build universal APK
         run: gradle assembleDebug --stacktrace
 
-      - name: Validate APK package and archive
+      - name: Validate universal and ABI APKs
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -type f | head -n 1)"
-          test -n "$APK"
-          test "$(stat -c%s "$APK")" -gt 1000000
-          unzip -t "$APK" >/dev/null
+          OUT="app/build/outputs/apk/debug"
+          UNIVERSAL="$OUT/app-universal-debug.apk"
+          ARM64="$OUT/app-arm64-v8a-debug.apk"
+          ARMV7="$OUT/app-armeabi-v7a-debug.apk"
+          for APK in "$UNIVERSAL" "$ARM64" "$ARMV7"; do
+            test -s "$APK"
+            test "$(stat -c%s "$APK")" -gt 1000000
+            unzip -t "$APK" >/dev/null
+          done
           AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
           test -x "$AAPT"
-          BADGING="$("$AAPT" dump badging "$APK")"
-          echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
-          echo "$BADGING" | grep -F "sdkVersion:'23'"
-          echo "$BADGING" | grep -F "targetSdkVersion:'28'"
-          echo "APK archive, package ID, minSdk and targetSdk checks passed."
+          APKSIGNER="$(dirname "$AAPT")/apksigner"
+          test -x "$APKSIGNER"
+          EXPECTED_CERT="$(keytool -exportcert -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')"
+          test "${#EXPECTED_CERT}" -eq 64
+          for APK in "$UNIVERSAL" "$ARM64" "$ARMV7"; do
+            BADGING="$("$AAPT" dump badging "$APK")"
+            echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
+            echo "$BADGING" | grep -F "sdkVersion:'23'"
+            echo "$BADGING" | grep -F "targetSdkVersion:'28'"
+            # Check the packaged branding, not just the source manifest.
+            echo "$BADGING" | grep -E "^application-icon-[0-9]+:'.*mytv_launcher\\.webp'"
+            unzip -p "$APK" res/drawable-nodpi-v4/mytv_launcher.webp | cmp - app/src/main/res/drawable-nodpi/mytv_launcher.webp
+            unzip -p "$APK" res/drawable-nodpi-v4/mytv_banner.webp | cmp - app/src/main/res/drawable-nodpi/mytv_banner.webp
+            SIGNATURE="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+            echo "$SIGNATURE"
+            echo "$SIGNATURE" | grep -Fx "Verified using v1 scheme (JAR signing): true"
+            echo "$SIGNATURE" | grep -Fx "Verified using v2 scheme (APK Signature Scheme v2): true"
+            echo "$SIGNATURE" | grep -Fx "Number of signers: 1"
+            # Build-tools versions use either the numbered or scheme-specific signer label.
+            ACTUAL_CERT="$(echo "$SIGNATURE" | sed -nE 's/^(Signer #1|V[12] Signer):? certificate SHA-256 digest: ([[:xdigit:]]{64})$/\2/p' | tr '[:upper:]' '[:lower:]' | sort -u)"
+            test "$ACTUAL_CERT" = "$EXPECTED_CERT"
+            echo "$(basename "$APK") size_bytes=$(stat -c%s "$APK")"
+            sha256sum "$APK"
+          done
+          echo "Universal and both ARM APK archives passed package checks."
 
-      - name: Upload APK
+      - name: Upload universal APK
         uses: actions/upload-artifact@v4
         with:
           name: My-TV-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-universal-debug.apk
+
+      - name: Upload arm64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: My-TV-APK-arm64-v8a
+          path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+
+      - name: Upload armv7 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: My-TV-APK-armeabi-v7a
+          path: app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
 
 # Build the latest committed source for the current release.
