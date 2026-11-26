@@ -7,6 +7,17 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void coverageBeforeBackupsKeepsEveryRouteAndPriority(){
+        java.util.List<String> input=Arrays.asList("0Aa1","0Ab2","0Aa3","0Ba1","0Cc1","0Cb2","1Za1","1Za1");
+        java.util.List<String> expected=Arrays.asList("0Aa1","0Cc1","0Ba1","0Ab2","0Cb2","0Aa3","1Za1","1Za1");
+        java.util.List<String> actual=IdleProbeWavePolicy.coverageFirst(input,
+                v->v.substring(1,2),v->v.substring(2,3),v->v.charAt(0)-'0');
+        assertEquals(expected,actual);
+        assertEquals(input.size(),actual.size());
+        assertEquals(actual,IdleProbeWavePolicy.coverageFirst(input,
+                v->v.substring(1,2),v->v.substring(2,3),v->v.charAt(0)-'0'));
+    }
+
     @Test public void initialPageInterleavesHostsWithoutCrossingPriorityOrDroppingDuplicates(){
         java.util.List<String> input=Arrays.asList("0a1","0a2","0a3","0b1","0b2","0c1","1z1","1z1","1y1");
         java.util.List<String> expected=Arrays.asList("0a1","0b1","0c1","0a2","0b2","0a3","1z1","1y1","1z1");
