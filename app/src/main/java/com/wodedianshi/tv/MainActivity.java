@@ -6070,6 +6070,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private androidx.media3.exoplayer.DecoderCounters liveRenderedCounter;
   private int liveRenderedCount=-1;
   private long liveRenderedAdvanceAt=0L,lastLiveAudioWarningAt=0L;
+  private int liveRenderedStationaryChecks;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   // A stale HLS live-window position gets one in-place recovery before source failover.
@@ -6146,7 +6147,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
   }
   private void resetLiveRenderedEvidence(){
-    liveRenderedCounter=null;liveRenderedCount=-1;liveRenderedAdvanceAt=0L;
+    liveRenderedCounter=null;liveRenderedCount=-1;liveRenderedAdvanceAt=0L;liveRenderedStationaryChecks=0;
   }
   private void sampleLiveRenderedEvidence(long now){
     androidx.media3.exoplayer.DecoderCounters counters=player==null?null:player.getVideoDecoderCounters();
@@ -6154,8 +6155,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     counters.ensureUpdated();
     int count=counters.renderedOutputBufferCount;
     boolean same=counters==liveRenderedCounter;
-    if(!same||count<liveRenderedCount)liveRenderedAdvanceAt=0L;
-    else if(TrackHealthPolicy.renderedCounterAdvanced(true,liveRenderedCount,count))liveRenderedAdvanceAt=now;
+    if(!same||count<0||count<liveRenderedCount){liveRenderedAdvanceAt=0L;liveRenderedStationaryChecks=0;}
+    else if(TrackHealthPolicy.renderedCounterAdvanced(true,liveRenderedCount,count)){
+      liveRenderedAdvanceAt=now;liveRenderedStationaryChecks=0;
+    }else if(liveRenderedAdvanceAt>0L)liveRenderedStationaryChecks=Math.min(2,liveRenderedStationaryChecks+1);
     liveRenderedCounter=counters;liveRenderedCount=count;
   }
   private void schedulePlaybackWatchdog(){
@@ -6172,7 +6175,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(state==Player.STATE_BUFFERING){pauseStableDiscovery();if(bufferingFallback==null)scheduleBufferingFallback();return;}
       if(state!=Player.STATE_READY){pauseStableDiscovery();return;}
       long now=android.os.SystemClock.elapsedRealtime();
-      sampleLiveRenderedEvidence(now);
+      if(player.isPlaying())sampleLiveRenderedEvidence(now);else resetLiveRenderedEvidence();
+      if(videoTrackSelected&&sourceFirstFrameRecorded&&TrackHealthPolicy.renderedCounterStalled(
+          liveRenderedAdvanceAt,now,liveRenderedStationaryChecks)){
+        pauseStableDiscovery();
+        saveLiveDiagnostic("MEDIA3_RENDER_STALLED","previously advancing rendered output counter stationary for at least 20 seconds");
+        recoverFromSilentFreeze("检测到 Media3 实际渲染计数持续停滞");
+        return;
+      }
       long position=player.getCurrentPosition();
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
         watchdogLastPosition=position;
