@@ -40,6 +40,33 @@ public class DiscoveryBatchPolicyTest {
         org.junit.Assert.assertEquals(Integer.valueOf(2),offsets.get(second+"scanned"));
     }
 
+    @Test public void pendingViewingPageStaysIncompleteAndIdleCanResumeIt() {
+        boolean[] completed={false,false,false};
+        boolean[] viewingAttempts={
+            DiscoveryBatchPolicy.deferPageForIdle(true,true,true),false,false};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextFeed(0,completed,viewingAttempts,2,2));
+        completed[1]=true;
+        assertEquals(-1,SourceDiscoveryPriorityPolicy.nextFeed(0,completed,viewingAttempts,2,2));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.activeStage(completed,2,2));
+        boolean[] idleAttempts={
+            DiscoveryBatchPolicy.deferPageForIdle(true,false,true),false,false};
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextFeed(0,completed,idleAttempts,2,2));
+        int scanned=DiscoveryBatchPolicy.scannedForBatch("page","page",7,48);
+        assertEquals(7,DiscoveryBatchPolicy.startIndex(scanned,48));
+        assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("changed","page",7,48));
+        org.junit.Assert.assertNotEquals(DiscoveryBatchPolicy.initialIdleRecheckKey(0),
+                DiscoveryBatchPolicy.initialIdleRecheckKey(1));
+    }
+
+    @Test public void holdOnlyInitialViewingDiscoveryCandidates() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.holdInconclusiveCandidate(true,true,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.holdInconclusiveCandidate(true,false,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.holdInconclusiveCandidate(false,true,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.holdInconclusiveCandidate(true,true,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.deferPageForIdle(false,true,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.deferPageForIdle(true,true,false));
+    }
+
     @Test public void cursorResumesOnlyForIdenticalKnownFeedVersion() {
         org.junit.Assert.assertEquals(24, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:a"));
         org.junit.Assert.assertEquals(0, DiscoveryBatchPolicy.cursorForVersion(24,"feed:a","feed:b"));
