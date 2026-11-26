@@ -175,4 +175,16 @@ public class PreparedSnapshotParityTest {
         assertEquals(0,lookup.invoke(activity,twoKey,999));
         assertEquals(-1,lookup.invoke(activity,null,0));
     }
+
+    @Test public void pageOrderKeyRejectsChangedSearchAndSameSizeReplacement() throws Exception {
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();
+        Method order=method("remoteChannelOrderKey",String.class,String.class,boolean.class,
+            long.class,long.class,int.class,int.class);
+        Object published=order.invoke(activity,"全部","news",false,7L,11L,100,0);
+        assertEquals(published,order.invoke(activity,"全部","news",false,7L,11L,100,0));
+        assertNotEquals(published,order.invoke(activity,"全部","sports",false,7L,11L,100,0));
+        assertNotEquals(published,order.invoke(activity,"全部","news",false,7L,12L,100,0));
+        assertNotEquals(published,order.invoke(activity,"全部","news",false,8L,11L,100,0));
+        assertNotEquals(published,order.invoke(activity,"央视","news",false,7L,11L,100,0));
+    }
 }
