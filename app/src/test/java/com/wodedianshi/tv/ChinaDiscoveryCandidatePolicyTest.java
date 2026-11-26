@@ -25,6 +25,18 @@ public class ChinaDiscoveryCandidatePolicyTest {
                 0,"china","CCTV-1","央视","",""));
     }
 
+    @Test public void allBroadMainlandFeedsGiveLocalStationsAnEarlyTurn() {
+        for(int i=0;i<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT;i++){
+            boolean broad=i>=MIXED;
+            assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(i,"china","福州新闻","福建","",""));
+            assertEquals(broad?1:0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(i,"china","CCTV-1","央视","",""));
+            assertEquals(broad?1:0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(i,"china","湖南卫视","卫视","",""));
+            assertEquals(broad?2:1,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(i,"china","RTHK","Hong Kong","",""));
+            assertEquals(broad?3:2,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(i,"global","Local News","US","",""));
+        }
+        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,"global","BBC News","News","",""));
+    }
+
     @Test public void mixedFeedRanksMainlandBeforeHmtAndForeign() {
         assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
                 MIXED,"china","上虞新闻综合","中国大陆 · 新闻","",""));
