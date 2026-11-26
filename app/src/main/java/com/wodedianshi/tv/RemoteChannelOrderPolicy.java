@@ -8,6 +8,15 @@ package com.wodedianshi.tv;
 public final class RemoteChannelOrderPolicy {
     private RemoteChannelOrderPolicy() {}
 
+    // Fixed, non-sliding window: a rapid burst can share one tune, while
+    // a held key (300 ms cadence) cannot postpone playback indefinitely.
+    static final long ZAP_BURST_WINDOW_MS=80L;
+
+    static boolean canDispatchQueuedZap(boolean collecting,long queuedGeneration,
+            long currentGeneration,int steps) {
+        return !collecting&&queuedGeneration==currentGeneration&&steps!=0;
+    }
+
     public static int mergeZapSteps(int pending, int delta) {
         return (int)Math.max(-12L, Math.min(12L, (long)pending + delta));
     }
