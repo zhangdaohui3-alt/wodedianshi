@@ -12,6 +12,31 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 
 public class PlaylistFeedIndexTest {
+    @Test public void bufferedIndexPreservesOffsetsAcrossBufferBoundaries() throws Exception {
+        StringBuilder body=new StringBuilder("#EXTM3U\n");
+        for(int i=0;i<2000;i++)
+            body.append("#EXTINF:-1 tvg-id=\"id").append(i).append("\" group-title=\"地方\",频道")
+                .append(i).append("\nhttps://example.invalid/live/").append(i).append(".m3u8\n");
+        File feed=playlist(body.toString());
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(48,PlaylistFeedIndex.readPage(feed,0,48,page::add));
+        assertEquals(2000,PlaylistFeedIndex.indexedEntryCount(feed));
+        for(int start:new int[]{0,47,511,1023,1952}){
+            page.clear();
+            assertEquals(48,PlaylistFeedIndex.readExistingPage(feed,start,48,page::add,()->false));
+            for(int i=0;i<48;i++){
+                int expected=start+i;
+                assertEquals("频道"+expected,page.get(i).name);
+                assertEquals("id"+expected,page.get(i).tvgId);
+                assertEquals("地方",page.get(i).group);
+                assertEquals("https://example.invalid/live/"+expected+".m3u8",page.get(i).url);
+            }
+        }
+        page.clear();
+        assertEquals(0,PlaylistFeedIndex.readPage(feed,2000,1,page::add));
+        assertEquals(12L+2000L*8L,new File(feed.getAbsolutePath()+".index-offsets").length());
+    }
+
     @Test public void failedRecordWriteAbortsWithoutPublishingPartialIndex() throws Exception {
         char[] oversized = new char[1024*1024+1];
         java.util.Arrays.fill(oversized,'x');
