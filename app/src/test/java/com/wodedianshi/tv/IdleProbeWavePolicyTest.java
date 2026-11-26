@@ -7,6 +7,21 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void rollingWindowRefillsFreedSlotsWhileSlowHeadIsStillRunning(){
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(6,6,6,42));
+        assertEquals(5,IdleProbeWavePolicy.rollingAdmissionSlots(6,1,6,42));
+        assertEquals(1,IdleProbeWavePolicy.rollingAdmissionSlots(6,1,11,37));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(6,1,12,36));
+        assertEquals(2,IdleProbeWavePolicy.rollingAdmissionSlots(6,1,6,2));
+    }
+    @Test public void rollingWindowRespectsNetworkPressureAndRemainingBudget(){
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(1,0,1,20));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(4,5,6,20));
+        assertEquals(2,IdleProbeWavePolicy.rollingAdmissionSlots(4,2,6,20));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(6,1,6,0));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(6,3,2,20));
+    }
+
     @Test public void bridgeOnlyRowsThatCannotIssueAnotherRequest(){
         assertTrue(IdleProbeWavePolicy.canBridgeKnownRow(true,true));
         assertTrue(IdleProbeWavePolicy.canBridgeKnownRow(false,false));
