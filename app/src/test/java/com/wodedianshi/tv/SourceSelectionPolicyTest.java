@@ -9,6 +9,25 @@ import static org.junit.Assert.*;
 public class SourceSelectionPolicyTest {
     private final java.util.List<String> sources = Arrays.asList("a", "b", "c", "d");
 
+    @Test public void queuedSourceResolvesByExactUrlAndCurrentTune() {
+        Object channel=new Object();
+        java.util.List<String> reordered=Arrays.asList("c","a","d","b");
+        assertEquals(2,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,new Object(),7L,7L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,8L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","c","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","a",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","d",Collections.singleton("d")));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","missing",Collections.emptySet()));
+    }
+
     @Test public void wrapIndexHandlesNegativeAndOversizedValues() {
         assertEquals(3, SourceSelectionPolicy.wrapIndex(-1, 4));
         assertEquals(2, SourceSelectionPolicy.wrapIndex(6, 4));
