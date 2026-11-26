@@ -120,9 +120,12 @@ public final class SourceProbeTimePolicy {
     }
 
     static boolean transientProbeNetworkException(java.io.IOException error) {
-        return error instanceof java.net.ConnectException
+        // A reset or premature transport EOF can be temporary, just like
+        // connect failure. Do not treat it as evidence that media is invalid.
+        // TLS/certificate errors and generic protocol errors remain distinct.
+        return error instanceof java.net.SocketException
                 ||error instanceof java.net.UnknownHostException
-                ||error instanceof java.net.NoRouteToHostException;
+                ||error instanceof java.io.EOFException;
     }
 
     /** A socket timeout is not proof that a stream is invalid, even before the total budget. */
