@@ -83,6 +83,35 @@ public final class SourceSelectionPolicy {
         }
     }
 
+    /** A stale menu must not modify another channel or silently select a changed URL. */
+    public static int resolveManualSelection(Object menuChannel, Object selectedChannel,
+            List<String> currentSources, String requestedUrl) {
+        if (menuChannel == null || menuChannel != selectedChannel || currentSources == null
+                || requestedUrl == null || requestedUrl.trim().isEmpty()) return -1;
+        return currentSources.indexOf(requestedUrl);
+    }
+
+    /** A delayed manual request belongs to the same channel and playback
+     * generation. Resolve by exact URL, never reuse a stale list position. */
+    static int resolveQueuedManualSelection(Object expectedChannel,Object currentChannel,
+            long expectedSerial,long currentSerial,List<String> sources,
+            String expectedActive,String currentActive,String target,Set<String> blocked) {
+        if(expectedSerial!=currentSerial||expectedActive==null
+                ||!expectedActive.equals(currentActive)||expectedActive.equals(target)
+                ||(blocked!=null&&blocked.contains(target)))return -1;
+        return resolveManualSelection(expectedChannel,currentChannel,sources,target);
+    }
+
+    /** Finds a remembered URL in the current list without rewriting its signed path/query. */
+    public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
+        if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
+        String rememberedKey = endpointKey(rememberedUrl);
+        for (int i = 0; i < sources.size(); i++) {
+            if (rememberedKey.equals(endpointKey(sources.get(i)))) return i;
+        }
+        return -1;
+    }
+
     /**
      * Resumes a rotating scan after the last URL identity rather than relying only
      * on a list index. This keeps progress stable when a playlist inserts or removes
