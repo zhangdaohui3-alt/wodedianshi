@@ -7,6 +7,25 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SnapshotCategoryIndexTest {
+    @Test public void completeProvinceIndexRetainsEmptyAndAmbiguousMembership(){
+        SnapshotCategoryIndex cache=new SnapshotCategoryIndex();
+        java.util.Map<String,List<Integer>> provinces=new java.util.HashMap<>();
+        ArrayList<Integer> fujian=new ArrayList<>(Arrays.asList(2,8));
+        provinces.put("福建",fujian);
+        provinces.put("广东",Arrays.asList(5));
+        cache.putLocalIndex(10,20,Arrays.asList(2,5,7,8),provinces);
+        fujian.clear();provinces.clear();
+        assertTrue(cache.hasLocalIndex(10,20));
+        assertEquals(Arrays.asList(2,5,7,8),cache.localCandidates(10,20,null));
+        assertEquals(Arrays.asList(2,8),cache.localCandidates(10,20,"福建"));
+        assertEquals(Arrays.asList(5),cache.localCandidates(10,20,"广东"));
+        assertTrue(cache.localCandidates(10,20,"湖北").isEmpty());
+        for(int i=0;i<20;i++)cache.put(10,20,Arrays.asList("地方","福建","city"+i),Arrays.asList(2));
+        assertEquals(Arrays.asList(2,8),cache.localCandidates(10,20,"福建"));
+        assertFalse(cache.hasLocalIndex(11,20));
+        assertNull(cache.localCandidates(11,20,"福建"));
+    }
+
     @Test public void sameSizeReplacementInvalidatesEveryScope(){
         SnapshotCategoryIndex cache=new SnapshotCategoryIndex();
         List<String> fujian=Arrays.asList("地方","福建",null);
