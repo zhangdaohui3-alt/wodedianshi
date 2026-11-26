@@ -9,7 +9,12 @@ public final class MediaPayloadValidator {
     private MediaPayloadValidator() {}
 
     public static boolean looksLikeHlsSegment(byte[] data) {
-        if (data == null || data.length < 8) return false;
+        return hasTransportStreamPackets(data) || hasIsoBmffMediaFragment(data);
+    }
+
+    /** Positive TS packet evidence remains valid when more bytes are appended. */
+    static boolean hasTransportStreamPackets(byte[] data) {
+        if (data == null || data.length < 376) return false;
         int maxOffset = Math.min(187, data.length - 1);
         for (int offset = 0; offset <= maxOffset; offset++) {
             if (isValidTransportStreamPacket(data, offset)
@@ -17,7 +22,7 @@ public final class MediaPayloadValidator {
                 return true;
             }
         }
-        return hasIsoBmffMediaFragment(data);
+        return false;
     }
 
     private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
