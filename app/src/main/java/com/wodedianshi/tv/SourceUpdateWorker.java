@@ -823,6 +823,8 @@ public class SourceUpdateWorker extends Worker {
             ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
                 entry->identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName),
                 entry->probeHost(entry.url),entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                    feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId),
+                entry->ChinaDiscoveryCandidatePolicy.initialCoverageRegion(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
             feedCandidates.clear();feedCandidates.addAll(ordered);
           }
