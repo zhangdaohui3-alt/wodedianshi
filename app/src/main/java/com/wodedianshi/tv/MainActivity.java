@@ -146,6 +146,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Consecutive healthy checks permit low-priority discovery, not source promotion.
   private int libVlcStableChecks=0;
   private long libVlcLastHealthClockMs;
+  private long libVlcLastDisplayed=-1L,libVlcLastPlayedAudio=-1L;
   private boolean libVlcStableRecorded=false;
   private boolean libVlcAttemptedForSource=false;
   private Runnable libVlcStartTimeout;
@@ -6793,7 +6794,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             libVlcVideoOutputReady=true;
             pauseStableDiscovery();
             libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;
+            libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;
             libVlcStableRecorded=false;
             cancelLibVlcStartTimeout();
             usingLibVlc=true;
@@ -6816,7 +6817,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
             libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;
+            libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;
             pauseStableDiscovery();
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
           }
@@ -6827,7 +6828,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           libVlcAudioTrackReady=trackCount>0&&selectedTrackId>=0;
           if(!libVlcAudioTrackReady){
             libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;
+            libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;
             pauseStableDiscovery();
             if(libVlcAudioTrackCheckAttempts<2){
               // Track metadata can arrive after the first video-output event.
@@ -6861,7 +6862,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             saveLiveDiagnostic("VLC_BUFFER_RECOVERED","buffering_percent=100");
           }else{
             libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;
+            libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;
             pauseStableDiscovery();
             if(usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");
             scheduleLibVlcBufferingTimeout(expectedMediaId,expectedChannel,engine);
@@ -6973,30 +6974,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         boolean playing;
         long clock=0L;
         boolean audio=false;
+        long[] output=null;
         try{playing=expectedEngine.isPlaying();}
         catch(RuntimeException|LinkageError failure){playing=false;}
         if(playing){
           try{clock=expectedEngine.getTimeMs();audio=expectedEngine.hasSelectedAudioTrack();}
           catch(RuntimeException|LinkageError failure){clock=0L;audio=false;}
+          try{output=expectedEngine.outputCounters();}
+          catch(RuntimeException|LinkageError failure){output=null;}
         }
         final boolean reportsPlaying=playing;
         final long playbackClock=clock;
         final boolean currentAudioSelected=audio;
+        final long displayed=output==null?-1L:output[0];
+        final long playedAudio=output==null?-1L:output[1];
         uiHandler.post(()->{
           if(libVlcWatchdog!=timeout||libVlcEngine!=expectedEngine
               ||!currentMediaId.equals(expectedMediaId)||selected!=expectedChannel)return;
           cancelLibVlcWatchdog();
-          finishLibVlcHealthCheck(expectedMediaId,expectedChannel,reportsPlaying,playbackClock,currentAudioSelected);
+          finishLibVlcHealthCheck(expectedMediaId,expectedChannel,reportsPlaying,playbackClock,currentAudioSelected,displayed,playedAudio);
         });
       });
     };
     uiHandler.postDelayed(libVlcWatchdog,12000L);
   }
-  private void finishLibVlcHealthCheck(String expectedMediaId,int expectedChannel,boolean reportsPlaying,long playbackClock,boolean currentAudioSelected){
+  private void finishLibVlcHealthCheck(String expectedMediaId,int expectedChannel,boolean reportsPlaying,long playbackClock,boolean currentAudioSelected,long displayed,long playedAudio){
       if(libVlcVideoOutputReady&&libVlcRebuffering){
         // Rebuffering follows the user's timeout setting, not this health poll.
         libVlcStableChecks=0;
-        libVlcLastHealthClockMs=0L;
+        libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;
         pauseStableDiscovery();
         scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
         return;
@@ -7016,10 +7022,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // source whose first frame was actually rendered by Media3.
       boolean advancing=TrackHealthPolicy.vlcClockAdvanced(libVlcLastHealthClockMs,playbackClock);
       libVlcLastHealthClockMs=playbackClock;
-      if(!advancing||!currentAudioSelected){
+      boolean outputsAdvanced=TrackHealthPolicy.vlcOutputsAdvanced(libVlcLastDisplayed,libVlcLastPlayedAudio,displayed,playedAudio);
+      libVlcLastDisplayed=displayed;libVlcLastPlayedAudio=playedAudio;
+      if(!advancing||!currentAudioSelected||!outputsAdvanced){
         libVlcStableChecks=0;
         SourceUpdateActivityPolicy.revokeStableLive();
-        saveLiveDiagnostic("VLC_HEALTH_UNCONFIRMED","clock_advancing="+advancing+" audio_selected="+currentAudioSelected+"; background discovery paused");
+        saveLiveDiagnostic("VLC_HEALTH_UNCONFIRMED","clock_advancing="+advancing+" audio_selected="+currentAudioSelected+" counters_advanced="+outputsAdvanced+"; background discovery paused");
         scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
         return;
       }
@@ -7039,7 +7047,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!libVlcStableRecorded&&libVlcStableChecks>=2){
         libVlcStableRecorded=true;
         saveLiveDiagnostic("VLC_ENGINE_HEALTHY_UNVERIFIED",
-            "LibVLC maintained Vout, selected audio and advancing engine clock across watchdog checks; "
+            "LibVLC maintained Vout, selected audio, advancing engine clock and output counters across watchdog checks; "
             +"actual rendered-frame visibility is unverified, so this source was not "
             +"promoted to last-known-good and no stable-play success was recorded");
       }
@@ -7105,7 +7113,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;
     if(old!=null||usingLibVlc)pauseStableDiscovery();
-    libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcAudioTrackReady=false;libVlcStableChecks=0;libVlcLastHealthClockMs=0L;libVlcStableRecorded=false;
+    libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcAudioTrackReady=false;libVlcStableChecks=0;libVlcLastHealthClockMs=0L;libVlcLastDisplayed=-1L;libVlcLastPlayedAudio=-1L;libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
     if(afterRelease!=null&&!decoderReleaseUnconfirmed){
       if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
