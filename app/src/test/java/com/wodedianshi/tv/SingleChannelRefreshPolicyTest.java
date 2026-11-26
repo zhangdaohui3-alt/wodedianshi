@@ -6,6 +6,32 @@ import java.util.Collections;
 import static org.junit.Assert.*;
 
 public class SingleChannelRefreshPolicyTest {
+    private boolean match(String n,String g,String id,String guide,String n2,String g2,String id2,String guide2){
+        return SingleChannelRefreshPolicy.matchesStation(n,g,id,guide,n2,g2,id2,guide2);
+    }
+    @Test public void recognizedNationalStationsMustAgreeAcrossMetadata(){
+        assertTrue(match("CCTV-2","央视","","","中央二套","央视","",""));
+        assertFalse(match("CCTV-2","央视","","","CCTV-3","央视","",""));
+        assertFalse(match("CCTV-2","央视","","","CCTV-2","央视","","CCTV-3"));
+        assertFalse(match("CCTV-4","央视","","","CCTV-4 Asia","央视","",""));
+        assertFalse(match("湖南卫视","卫视","","","湖南卫视","香港","",""));
+    }
+    @Test public void localAndGenericIdentityIsConservative(){
+        assertTrue(match("深圳新闻","广东","","","深圳新闻","广东","",""));
+        assertFalse(match("深圳新闻","广东","","","深圳综合","广东","",""));
+        assertFalse(match("福州新闻","福建","news.fuzhou","",
+            "福州新闻","江西","news.fuzhou",""));
+        assertFalse(match("新闻综合","地方台","","","新闻综合","地方台","",""));
+        assertFalse(match("Local News","美国","local.news","",
+            "Local News","美国","local.news",""));
+        assertTrue(match("Example Music","国际","example.music","",
+            "Example Music","国际","example.music",""));
+        assertFalse(match("Example Music","国际","example.music","",
+            "Other Music","国际","example.music",""));
+        assertFalse(match("Example Music","香港","example.music","",
+            "Example Music","台湾","example.music",""));
+    }
+
     @Test public void appendOnlyUsesFreeSlotsInVerifiedQualityOrder(){
         java.util.List<String> old=Arrays.asList("https://a.example/live","https://b.example/live");
         assertEquals(Arrays.asList("https://c.example/live","https://d.example/live"),
