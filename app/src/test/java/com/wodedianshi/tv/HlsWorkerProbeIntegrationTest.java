@@ -165,4 +165,51 @@ public class HlsWorkerProbeIntegrationTest {
         SourceUpdateWorker.ProbeResult r=runProbe(AFTER_TIMEOUT,false,false,false,true);
         assertFalse(r.valid);assertTrue(r.socketTimedOut);
     }
+
+    @Test public void idleSiblingFallbackReusesOnlyConfirmedClearInitialization()throws Exception{
+        String[] expected={"/master.m3u8","/high.m3u8","/init.mp4","/high1.ts","/high2.ts",
+                "/low.m3u8","/low1.ts","/low2.ts"};
+        byte[] init={0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0,
+                0,0,0,16,'m','o','o','v',0,0,0,0,0,0,0,0};
+        byte[] fragment={0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0,
+                0,0,0,9,'m','d','a','t',1};
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(12000);
+            Future<?> served=serverThread.submit(()->{
+                for(String path:expected){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(
+                                socket.getInputStream(),StandardCharsets.US_ASCII));
+                        String start=reader.readLine();
+                        assertNotNull(start);
+                        assertTrue(start,start.startsWith("GET "+path+" "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        byte[] body;
+                        if("/master.m3u8".equals(path))body=bytes(MASTER);
+                        else if("/high.m3u8".equals(path)||"/low.m3u8".equals(path))
+                            body=bytes(media(path.contains("high")?"high":"low")
+                                .replace("#EXTM3U\n","#EXTM3U\n#EXT-X-MAP:URI=\"/init.mp4\"\n"));
+                        else if("/init.mp4".equals(path))body=init;
+                        else if("/high2.ts".equals(path))body=bytes("not media");
+                        else body=fragment;
+                        OutputStream out=socket.getOutputStream();
+                        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n")
+                                .getBytes(StandardCharsets.US_ASCII));
+                        out.write(body);out.flush();
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(result.valid);
+            assertEquals(640,result.width);
+        }finally{serverThread.shutdownNow();}
+    }
 }
