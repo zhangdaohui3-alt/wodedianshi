@@ -215,6 +215,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
   private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone;
+  private boolean initialPreviewReloadPending;
+  private long initialPreviewReloadRequestedAt;
+  private volatile long appendedInitialPreviewVersion=-1L;
   private String initialDiscoveryTerminalStatus="";
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -1610,7 +1613,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(completed<=0L&&startupDataReady&&(previewLevel!=displayedInitialPreviewLevel||previewMilestone!=displayedInitialPreviewMilestone)){
               displayedInitialPreviewLevel=previewLevel;
               displayedInitialPreviewMilestone=previewMilestone;
-              if(previewLevel>0||previewMilestone>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
+              if(previewLevel>0||previewMilestone>0)initialPreviewReloadPending=true;
+            }
+            long previewNow=android.os.SystemClock.elapsedRealtime();
+            if(completed<=0L&&startupDataReady&&initialPreviewReloadPending
+                &&(!hasPlaybackCatalogueOwner()||mayAppendInitialLivePreview())
+                &&(initialPreviewReloadRequestedAt==0L||previewNow-initialPreviewReloadRequestedAt>=15000L)){
+              initialPreviewReloadRequestedAt=previewNow;
+              reloadChannelsAfterBackgroundUpdateIfNeeded();
             }
             if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
               boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
@@ -8043,6 +8053,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ||currentVodPanel!=null||libVlcReleaseInProgress
         ||PROCESS_VLC_TEARDOWNS.get()>0||SourceUpdateActivityPolicy.isPlaybackActive();
   }
+  private boolean mayAppendInitialLivePreview(){
+    return roomFullRebuildCompletedAt<=0L&&catalogueSnapshotTrusted&&activityStarted
+        &&currentVodPanel==null&&vodPlayer==null&&vodFallbackBackend==null
+        &&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed&&PROCESS_VLC_TEARDOWNS.get()==0
+        &&(player!=null||libVlcEngine!=null);
+  }
   private void reloadDeferredCatalogueIfIdle(){
     if(catalogueReloadDeferredForPlayback&&activityStarted&&!isFinishing()&&!isDestroyed()
         &&!hasPlaybackCatalogueOwner())reloadChannelsAfterBackgroundUpdateIfNeeded();
@@ -8172,11 +8188,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
-    if(hasPlaybackCatalogueOwner()){
+    final boolean livePreviewRead=hasPlaybackCatalogueOwner()&&mayAppendInitialLivePreview();
+    if(hasPlaybackCatalogueOwner()&&!livePreviewRead){
       catalogueReloadDeferredForPlayback=true;
       return;
     }
-    catalogueReloadDeferredForPlayback=false;
+    catalogueReloadDeferredForPlayback=livePreviewRead;
     final boolean recoveryRead=!catalogueSnapshotTrusted;
     if(!RoomCatalogueReloadPolicy.canReadForRecovery(catalogueSnapshotTrusted,channels.size(),
         player!=null||libVlcEngine!=null||currentVodPanel!=null)){
@@ -8200,6 +8217,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=
               com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
                   .channelDao().getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+          if(livePreviewRead&&(checkpoint==null
+              ||checkpoint.channelsCount>FullDiscoveryProgressPolicy.MAX_VIEWING_PREVIEW_ROWS))return;
+          if(livePreviewRead&&checkpoint.completedAt==appendedInitialPreviewVersion){
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())initialPreviewReloadPending=false;});
+            return;
+          }
           if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
               checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
             if(indexedPlaybackScoreVersion!=loadedRoomCatalogueVersion&&
@@ -8216,6 +8239,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 }
               });
             }
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())initialPreviewReloadPending=false;});
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
           }
@@ -8257,9 +8281,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           uiHandler.post(()->{
             boolean activityActive=activityStarted&&!isFinishing()&&!isDestroyed();
             boolean currentRequest=generation==backgroundCatalogueReloadGeneration;
-            // Playback may have resumed during the asynchronous Room read.
-            // Never reindex the selected channel under a live watchdog/session.
-            if(activityActive&&currentRequest&&hasPlaybackCatalogueOwner()){
+            // During initial live playback only append newly published identities.
+            // Never reindex or replace an existing object or its source list.
+            boolean appendOnly=activityActive&&currentRequest&&hasPlaybackCatalogueOwner()
+                &&mayAppendInitialLivePreview()&&prepared.entries.size()<=FullDiscoveryProgressPolicy.MAX_VIEWING_PREVIEW_ROWS;
+            if(activityActive&&currentRequest&&hasPlaybackCatalogueOwner()&&!appendOnly){
               catalogueReloadDeferredForPlayback=true;
               android.util.Log.i("MyTVStartup","room_reload_deferred_for_playback");
               return;
@@ -8274,6 +8300,32 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     "room_reload_deferred_until_user_mutation_committed");
                 scheduleRoomReloadAfterWriteConflict(generation,retriesRemaining-1);
               }
+              return;
+            }
+            if(appendOnly){
+              int added=0;
+              synchronized(channels){
+                synchronized(cataloguePersistLock){
+                  if(catalogueMutationGeneration!=expectedMutationGeneration||cataloguePersistScheduled)return;
+                  for(Channel entry:prepared.entries){
+                    String key=identity(entry);
+                    if(channelsByIdentity.containsKey(key))continue;
+                    channels.add(entry);
+                    channelsByIdentity.put(key,entry);
+                    for(String url:entry.backups)channelsByUrl.putIfAbsent(url,entry);
+                    added++;
+                  }
+                  if(added>0)catalogueMutationGeneration++;
+                  // Do NOT advance loadedRoomCatalogueVersion: existing rows
+                  // still belong to the older snapshot. A full save must fail
+                  // closed rather than overwrite the newer Room catalogue.
+                  appendedInitialPreviewVersion=roomSnapshot.catalogueVersion;
+                }
+              }
+              initialPreviewReloadPending=false;
+              catalogueReloadDeferredForPlayback=true;
+              if(added>0){cachedRemoteChannelOrder=null;refresh();}
+              android.util.Log.i("MyTVStartup","initial_preview_live_append added="+added+" visible="+channels.size());
               return;
             }
             long publishStarted=android.os.SystemClock.elapsedRealtime();
@@ -8346,6 +8398,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               favorites.addAll(prepared.favorites);
             }
             cachedRemoteChannelOrder=null;
+            initialPreviewReloadPending=false;appendedInitialPreviewVersion=-1L;
+            catalogueReloadDeferredForPlayback=false;
             catalogueSnapshotTrusted=true;
             android.util.Log.i("MyTVStartup","room_reload_ui_publish_ms="
                 +(android.os.SystemClock.elapsedRealtime()-publishStarted)
