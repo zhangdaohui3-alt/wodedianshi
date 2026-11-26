@@ -634,11 +634,7 @@ public class SourceUpdateWorker extends Worker {
           feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
         }
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        Map<String,String> feedState=new HashMap<>();
-        for(com.wodedianshi.tv.db.AppStateEntity state:
-            com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
-                .appStateDao().getValues(feedStateKeys))
-          feedState.put(state.key,state.stateValue);
+        Map<String,String> feedState=readRoomValues(feedStateKeys);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=Boolean.parseBoolean(feedState.get(initialFeedDoneKey(i)));
@@ -1565,9 +1561,20 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
         // end-of-feed was observed. A successful HTTP response alone is not done.
+        // Read the persisted baseline for all progress counters together.
+        // The current uncommitted feed outcomes are still overlaid below.
+        ArrayList<String> progressKeys=new ArrayList<>(feeds.length*3);
+        for(int i=0;i<feeds.length;i++){
+          progressKeys.add(initialFeedDoneKey(i));
+          progressKeys.add(initialFeedUnavailableKey(i));
+          progressKeys.add(initialFeedProgressKey(i));
+        }
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        Map<String,String> progressState=readRoomValues(progressKeys);
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         boolean[] finished=new boolean[feeds.length];
         int completedFeeds=0;
-        for(int i=0;i<feeds.length;i++)finished[i]=roomBoolean(initialFeedDoneKey(i),false);
+        for(int i=0;i<feeds.length;i++)finished[i]=Boolean.parseBoolean(progressState.get(initialFeedDoneKey(i)));
         if(feedBatchComplete){
           for(FeedBatch batch:feedBatches){
             if(batch.index>=0&&batch.index<feeds.length
@@ -1579,7 +1586,7 @@ public class SourceUpdateWorker extends Worker {
         for(boolean done:finished)if(done)completedFeeds++;
         boolean[] unavailableFlags=new boolean[feeds.length];
         for(int i=0;i<feeds.length;i++)
-          unavailableFlags[i]=roomBoolean(initialFeedUnavailableKey(i),false);
+          unavailableFlags[i]=Boolean.parseBoolean(progressState.get(initialFeedUnavailableKey(i)));
         if(feedBatchComplete){
           for(FeedBatch batch:feedBatches)
             if(batch.index>=0&&batch.index<feeds.length&&batch.success&&batch.unavailable)
@@ -1597,8 +1604,10 @@ public class SourceUpdateWorker extends Worker {
           }
         }
         int[] partial=new int[feeds.length];
-        for(int i=0;i<feeds.length;i++)
-          partial[i]=roomInt(initialFeedProgressKey(i),0);
+        for(int i=0;i<feeds.length;i++){
+          try{partial[i]=Integer.parseInt(progressState.get(initialFeedProgressKey(i)));}
+          catch(NumberFormatException ignored){partial[i]=0;}
+        }
         for(FeedBatch batch:feedBatches){
           if(batch.index<0||batch.index>=feeds.length||!batch.success)continue;
           int basis=finished[batch.index]?10000:
@@ -3042,6 +3051,15 @@ public class SourceUpdateWorker extends Worker {
     return SourceDiscoveryIdentityPolicy.identity(name,group,url,tvgId,tvgName);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
+  private Map<String,String> readRoomValues(List<String> keys){
+    Map<String,String> values=new HashMap<>();
+    if(keys.isEmpty())return values;
+    for(com.wodedianshi.tv.db.AppStateEntity state:
+        com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
+            .appStateDao().getValues(keys))
+      values.put(state.key,state.stateValue);
+    return values;
+  }
   private String roomString(String key,String fallback){
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
   }
