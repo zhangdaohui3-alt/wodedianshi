@@ -807,7 +807,9 @@ public class SourceUpdateWorker extends Worker {
       int discoveryScanStart=DiscoveryBatchPolicy.startIndex(
           initialDiscoveryScanned,candidates.size());
       final int runProbeLimit=manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE+savedWindow:
-          DiscoveryBatchPolicy.probeLimit(initialDiscoveryChain,slowPlayback,MAX_PROBES_PER_RUN);
+          initialDiscoveryChain?DiscoveryBatchPolicy.firstWatchProbeLimit(
+              slowPlayback,previousStagedSize,roomInt("source_initial_progress_checked_urls",0)):
+          DiscoveryBatchPolicy.probeLimit(false,slowPlayback,MAX_PROBES_PER_RUN);
       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
           initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
       if(slowPlayback)discoveryWindow=Math.min(DiscoveryBatchPolicy.VIEWING_PROBES_PER_SLICE,discoveryWindow);
