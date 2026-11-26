@@ -70,6 +70,16 @@ final class IdleProbeWavePolicy {
             java.util.function.Function<T,String> stationOf,
             java.util.function.Function<T,String> hostOf,
             java.util.function.ToIntFunction<T> priorityOf) {
+        return coverageFirst(entries,stationOf,hostOf,priorityOf,entry->"");
+    }
+
+    /** Optional regional balance within each station round and host. Keep the
+     * outer priority and host rotation unchanged; unknown regions remain a bucket. */
+    static <T> java.util.ArrayList<T> coverageFirst(java.util.List<T> entries,
+            java.util.function.Function<T,String> stationOf,
+            java.util.function.Function<T,String> hostOf,
+            java.util.function.ToIntFunction<T> priorityOf,
+            java.util.function.Function<T,String> regionOf) {
         java.util.TreeMap<Integer,java.util.LinkedHashMap<String,java.util.ArrayDeque<T>>> groups=
                 new java.util.TreeMap<>();
         for(T entry:entries){
@@ -86,7 +96,17 @@ final class IdleProbeWavePolicy {
                     round.add(queue.removeFirst());
                     if(queue.isEmpty())iterator.remove();
                 }
-                ordered.addAll(interleaveHosts(round,hostOf,entry->0));
+                // Preserve host order and rotate regions independently inside
+                // each host, then use the existing host round-robin.
+                java.util.LinkedHashMap<String,java.util.ArrayList<T>> byHost=new java.util.LinkedHashMap<>();
+                for(T entry:round){
+                    String host=hostOf.apply(entry);
+                    byHost.computeIfAbsent(host==null?"":host,k->new java.util.ArrayList<>()).add(entry);
+                }
+                java.util.ArrayList<T> balanced=new java.util.ArrayList<>(round.size());
+                for(java.util.ArrayList<T> hostRows:byHost.values())
+                    balanced.addAll(interleaveHosts(hostRows,regionOf,entry->0));
+                ordered.addAll(interleaveHosts(balanced,hostOf,entry->0));
             }
         }
         return ordered;
