@@ -54,6 +54,18 @@ public final class SourceProbeTimePolicy {
                 /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
     }
 
+    /** Full-body requests must not publish partial or non-body HTTP responses. */
+    static boolean fullDirectoryResponse(int status,String contentRange){
+        return status==200&&(contentRange==null||contentRange.trim().isEmpty());
+    }
+    /** Only compare lengths when the exposed body is unencoded. Android may
+     * transparently decompress gzip and remove the length/encoding headers. */
+    static boolean completeFullDirectoryBody(long copied,long declared,String encoding){
+        if(copied<=0L)return false;
+        boolean identity=encoding==null||encoding.trim().isEmpty()||"identity".equalsIgnoreCase(encoding.trim());
+        return !identity||declared<0L||copied==declared;
+    }
+
     /** A fully downloaded range is also a valid durable checkpoint, pending local finalization. */
     public static boolean validDirectoryCheckpoint(long offset,long total,long fileLength,
             String etag,String location) {
