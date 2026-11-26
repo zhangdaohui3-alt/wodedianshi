@@ -4,6 +4,18 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @org.junit.Test public void transientMediaResponsesDoNotProveInvalidity() {
+        for(int code:new int[]{408,429,500,502,503,504})
+            org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeHttpStatus(code));
+        for(int code:new int[]{200,206,301,400,401,403,404,410,416,501,505})
+            org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeHttpStatus(code));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.ConnectException()));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.UnknownHostException()));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.NoRouteToHostException()));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.MalformedURLException()));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.IOException()));
+    }
+
     @Test public void firstBuildIdleReservesFallbackTimeOnlyWithEnoughBudget() {
         assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,1000L,15000L));
         assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,4000L,15000L));
