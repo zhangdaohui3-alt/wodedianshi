@@ -27,6 +27,38 @@ public final class SourceUpdateSchedulePolicy {
         return now < last || now - last >= ROUTINE_REFRESH_MS;
     }
 
+    static final String PROVISIONAL_RECHECK_KEY="source_probe_provisional_recheck_v1";
+    static final int PROVISIONAL_RECHECK_CAP=2048;
+
+    /** Bounded insertion-order evidence list; retry attempts can move a key to
+     * the tail without extending the normal saved-source rotation. */
+    static void rememberProvisional(java.util.LinkedHashSet<String> keys,String key){
+        if(key==null||key.isEmpty())return;
+        keys.remove(key);keys.add(key);
+        while(keys.size()>PROVISIONAL_RECHECK_CAP)keys.remove(keys.iterator().next());
+    }
+
+    /** Reserve at most one quarter of an existing saved window for evidence
+     * upgrades outside its ordinary contiguous prefix. Never skip normal rows. */
+    static java.util.ArrayList<Integer> provisionalRecheckPositions(
+            java.util.List<String> savedKeys,int start,int window,java.util.Set<String> pending){
+        java.util.ArrayList<Integer> result=new java.util.ArrayList<>();
+        int size=savedKeys.size(),limit=Math.min(3,window/4);
+        if(size<=window||window<=0||limit<=0||pending.isEmpty())return result;
+        java.util.HashMap<String,Integer> outside=new java.util.HashMap<>();
+        for(int i=window;i<size;i++){
+            int position=(start+i)%size;
+            String key=savedKeys.get(position);
+            if(pending.contains(key))outside.putIfAbsent(key,position);
+        }
+        for(String key:pending){
+            Integer position=outside.get(key);
+            if(position!=null)result.add(position);
+            if(result.size()>=limit)break;
+        }
+        return result;
+    }
+
     // Three 4-entry feed pages fit the 12 discovery slots even when saved
     // routes consume half of the 24-probe budget. No wrap inside one slice.
     public static final int ROUTINE_FEEDS_PER_SLICE = 3;
