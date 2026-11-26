@@ -69,6 +69,40 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertEquals(-1,SourceDiscoveryPriorityPolicy.nextFeed(0,done,new boolean[2],2,3));
     }
 
+    @Test public void deferredMainlandFeedsDoNotBlockEligibleOtherRegions() {
+        boolean[] done=new boolean[26], deferred=new boolean[26];
+        java.util.Arrays.fill(done,0,8,true);
+        deferred[8]=true; deferred[9]=true;
+        boolean[] originalDone=done.clone(), originalDeferred=deferred.clone();
+        assertEquals(10,SourceDiscoveryPriorityPolicy.nextEligibleFeed(8,done,deferred,10,13,false));
+        java.util.Arrays.fill(deferred,10,13,true);
+        assertEquals(13,SourceDiscoveryPriorityPolicy.nextEligibleFeed(8,done,deferred,10,13,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.activeStage(done,10,13));
+        assertEquals(8,SourceDiscoveryPriorityPolicy.completedInStage(done,0,26));
+        assertArrayEquals(originalDone,done);
+        java.util.Arrays.fill(deferred,10,13,false);
+        assertArrayEquals(originalDeferred,deferred);
+        deferred[9]=false;
+        assertEquals(9,SourceDiscoveryPriorityPolicy.nextEligibleFeed(13,done,deferred,10,13,false));
+    }
+
+    @Test public void eligibleMainlandKeepsEarlyFamilyPriority() {
+        boolean[] done=new boolean[26], deferred=new boolean[26];
+        deferred[0]=true;
+        assertEquals(2,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,deferred,10,13,true));
+        java.util.Arrays.fill(deferred,0,10,true);
+        assertEquals(10,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,deferred,10,13,true));
+        java.util.Arrays.fill(deferred,true);
+        assertEquals(-1,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,deferred,10,13,true));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.completedInStage(done,0,26));
+    }
+
+    @Test public void eligibleSelectionRejectsMalformedAndCompletedState() {
+        boolean[] done={true,true,true}, deferred={false,false,false};
+        assertEquals(-1,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,deferred,1,2,false));
+        assertEquals(-1,SourceDiscoveryPriorityPolicy.nextEligibleFeed(0,done,new boolean[2],1,2,false));
+    }
+
     @Test public void completedAndUnavailableBothCountAsInspected() {
         boolean[] done = {true,true,false,false};
         assertEquals(2,SourceDiscoveryPriorityPolicy.completedInStage(done,0,4));
