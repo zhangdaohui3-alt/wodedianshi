@@ -40,6 +40,31 @@ public final class RemoteChannelOrderPolicy {
                 && (!favoritesOnly || (favoriteKeys != null && favoriteKeys.contains(key)));
     }
 
+    /** Do not guess between distinct channels that share a URL or legacy label. */
+    static int uniqueMatch(int count,java.util.function.IntPredicate matches) {
+        int found=-1;
+        for(int i=0;i<count;i++){
+            if(!matches.test(i))continue;
+            if(found>=0)return -1;
+            found=i;
+        }
+        return found;
+    }
+
+    /** Stable identity outranks mutable primary URL and legacy metadata. */
+    static int resolveSavedChannel(int count,java.util.function.IntPredicate identity,
+            java.util.function.IntPredicate legacyIdentity,
+            java.util.function.IntPredicate metadata,
+            java.util.function.IntPredicate endpoint) {
+        int found=uniqueMatch(count,identity);
+        if(found>=0)return found;
+        found=uniqueMatch(count,legacyIdentity);
+        if(found>=0)return found;
+        found=uniqueMatch(count,metadata);
+        if(found>=0)return found;
+        return uniqueMatch(count,endpoint);
+    }
+
     /** Positional auto-resume is valid only against the same restored object. */
     public static boolean canResume(boolean alreadySelected, boolean vodOpen,
             Object expected, Object current) {
