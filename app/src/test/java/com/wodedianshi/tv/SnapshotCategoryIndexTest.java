@@ -114,4 +114,22 @@ public class SnapshotCategoryIndexTest {
         assertNull(cache.get(1,20,Arrays.asList("地方","福建","city0")));
         assertEquals(Arrays.asList(12),cache.get(1,20,Arrays.asList("地方","福建","city12")));
     }
+
+    @Test public void geographicPositionCacheIsExactAndInvalidatedOnReplacement(){
+        SnapshotCategoryIndex cache=new SnapshotCategoryIndex();
+        List<String> all=SnapshotCategoryIndex.scopeKey("全部",null,null,null,"");
+        List<String> country=SnapshotCategoryIndex.scopeKey("全部",null,null,"geo:countries:us","us");
+        List<String> city=SnapshotCategoryIndex.scopeKey("全部",null,null,"geo:cities:us-phoenix","");
+        List<String> other=SnapshotCategoryIndex.scopeKey("全部",null,null,"geo:countries:ca","ca");
+        cache.put(7,10,all,Arrays.asList(1,2,3));
+        cache.put(7,10,country,Arrays.asList(1,3));
+        cache.put(7,10,city,Arrays.asList(3));
+        cache.put(7,10,other,java.util.Collections.emptyList());
+        assertEquals(Arrays.asList(1,2,3),cache.get(7,10,all));
+        assertEquals(Arrays.asList(1,3),cache.get(7,10,country));
+        assertEquals(Arrays.asList(3),cache.get(7,10,city));
+        assertTrue(cache.get(7,10,other).isEmpty());
+        assertNull(cache.get(8,10,country));
+        assertNull(cache.get(8,10,city));
+    }
 }
