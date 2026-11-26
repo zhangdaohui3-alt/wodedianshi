@@ -1140,7 +1140,8 @@ public class SourceUpdateWorker extends Worker {
         Entry e=probeCandidates.get(offset);
         // A completed speculative result can still be consumed after the batch
         // deadline, but no fresh request may begin after it.
-        if(checked>=runProbeLimit||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
+        if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
+            checked,runProbeLimit,false)||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
             &&!idleWave.has(SourceSelectionPolicy.endpointKey(e.url))))break;
         if(e.savedSource)savedScanned++;else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
@@ -1154,6 +1155,14 @@ public class SourceUpdateWorker extends Worker {
           boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(
               cached.result.valid,cached.at,clock);
+          // The early idle position window may include cached observations after
+          // its network budget is full. Stop BEFORE the first uncached position,
+          // leaving its exact cursor for the next worker. Never launch more probes.
+          if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
+              checked,runProbeLimit,!reuse)){
+            if(e.savedSource)savedScanned--;else discoveryScanned--;
+            break;
+          }
           long addressDeadline=probeDeadline;
           long measuredAt=clock;
           boolean prefetched=idleWave.has(endpoint);
