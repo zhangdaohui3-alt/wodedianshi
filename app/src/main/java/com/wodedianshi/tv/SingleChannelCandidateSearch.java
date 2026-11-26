@@ -36,6 +36,9 @@ final class SingleChannelCandidateSearch {
         final ArrayList<Candidate> candidates=new ArrayList<>();
         int rowsScanned,feedsExamined,missingFeeds;
         boolean bounded;
+        String cursorKey;
+        org.json.JSONObject nextCursors;
+        int cachedCandidates;
     }
     private static final class CandidateLimit extends RuntimeException {}
 
@@ -134,70 +137,137 @@ final class SingleChannelCandidateSearch {
         }finally{if(connection!=null)connection.disconnect();}
     }
 
-    /** Pure streaming scan shared by cache search and deterministic tests.
-     * The caller owns the reader and verifies the feed body version. */
+    /** Count only rows actually visited. A candidate limit must not skip the
+     * rest of an indexed page or a streaming page. */
+    private static final class ScanPage {
+        final Target target;
+        final String feedScope;
+        final HashSet<String> seen=new HashSet<>();
+        final int candidateLimit;
+        final List<Candidate> result;
+        int scanned;
+        ScanPage(Target target,String feedScope,Collection<String> excluded,int candidateLimit,List<Candidate> result){
+            this.target=target;this.feedScope=feedScope;this.candidateLimit=candidateLimit;this.result=result;
+            for(String url:excluded)seen.add(SourceSelectionPolicy.endpointKey(url));
+        }
+        void accept(PlaylistParser.ChannelSource entry){
+            scanned++;
+            String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
+            if(endpoint.isEmpty()||seen.contains(endpoint))return;
+            if(!SingleChannelRefreshPolicy.matchesStation(target.name,target.group,target.tvgId,target.tvgName,
+                    entry.name,entry.group,entry.tvgId,entry.tvgName))return;
+            if(SingleChannelRefreshPolicy.appendCandidates(
+                    java.util.Collections.emptyList(),java.util.Collections.singletonList(entry.url),1).isEmpty())return;
+            seen.add(endpoint);
+            String scope=RegionCategoryPolicy.catalogueScope(entry.name,entry.group,entry.tvgName,entry.tvgId,feedScope);
+            result.add(new Candidate(entry.url,scope));
+            if(result.size()>=candidateLimit)throw new CandidateLimit();
+        }
+    }
+
     static int scan(Reader reader,Target target,String feedScope,Collection<String> excluded,
-            int rowLimit,int candidateLimit,List<Candidate> result,BooleanSupplier paused)
-            throws IOException {
+            int rowLimit,int candidateLimit,List<Candidate> result,BooleanSupplier paused)throws IOException {
+        return scanFrom(reader,0,target,feedScope,excluded,rowLimit,candidateLimit,result,paused);
+    }
+    static int scanFrom(Reader reader,int start,Target target,String feedScope,Collection<String> excluded,
+            int rowLimit,int candidateLimit,List<Candidate> result,BooleanSupplier paused)throws IOException {
         if(rowLimit<=0||candidateLimit<=0)return 0;
-        HashSet<String> seen=new HashSet<>();
-        for(String url:excluded)seen.add(SourceSelectionPolicy.endpointKey(url));
-        int[] scanned={0};
-        try{
-            PlaylistParser.parseEach(reader,0,rowLimit,entry->{
-                scanned[0]++;
-                String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
-                if(endpoint.isEmpty()||seen.contains(endpoint))return;
-                if(!SingleChannelRefreshPolicy.matchesStation(target.name,target.group,target.tvgId,target.tvgName,
-                        entry.name,entry.group,entry.tvgId,entry.tvgName))return;
-                if(SingleChannelRefreshPolicy.appendCandidates(
-                        java.util.Collections.emptyList(),java.util.Collections.singletonList(entry.url),1).isEmpty())return;
-                seen.add(endpoint);
-                String scope=RegionCategoryPolicy.catalogueScope(entry.name,entry.group,entry.tvgName,
-                        entry.tvgId,feedScope);
-                result.add(new Candidate(entry.url,scope));
-                if(result.size()>=candidateLimit)throw new CandidateLimit();
-            },paused);
-        }catch(CandidateLimit complete){/* enough matches for this feed */}
+        ScanPage page=new ScanPage(target,feedScope,excluded,candidateLimit,result);
+        try{PlaylistParser.parseEach(reader,start,rowLimit,page::accept,paused);}
+        catch(CandidateLimit complete){/* retain exact consumed prefix */}
         SourceProbeTimePolicy.checkPaused(paused);
-        return scanned[0];
+        return page.scanned;
+    }
+    static int scanIndexed(File body,int start,Target target,String feedScope,Collection<String> excluded,
+            int rowLimit,int candidateLimit,List<Candidate> result,BooleanSupplier paused)throws IOException{
+        if(rowLimit<=0||candidateLimit<=0)return 0;
+        ScanPage page=new ScanPage(target,feedScope,excluded,candidateLimit,result);
+        try{
+            while(page.scanned<rowLimit){
+                int count=PlaylistFeedIndex.readExistingPage(body,start+page.scanned,
+                    Math.min(64,rowLimit-page.scanned),page::accept,paused);
+                if(count==0)break;
+            }
+        }catch(CandidateLimit complete){/* next request starts after the last consumed row */}
+        SourceProbeTimePolicy.checkPaused(paused);
+        return page.scanned;
+    }
+
+    static int resumeOffset(String savedVersion,String actualVersion,int savedOffset){
+        return actualVersion!=null&&!actualVersion.isEmpty()&&actualVersion.equals(savedVersion)
+                ?Math.max(0,savedOffset):0;
+    }
+    static int nextOffset(int start,int consumed,int limit,int indexedCount,boolean candidateLimitReached){
+        if(indexedCount>=0&&(long)start+consumed>=indexedCount)return 0;
+        if(!candidateLimitReached&&consumed<limit)return 0;
+        return (int)Math.min(Integer.MAX_VALUE,(long)start+consumed);
+    }
+    static void persistCompletedSearch(Context context,SearchResult result,int checked,boolean conclusive,
+            BooleanSupplier paused)throws IOException{
+        // No untested candidate may be skipped. The worker calls this only
+        // after any verified routes have been committed to Room.
+        if(result.nextCursors==null||!conclusive||checked<result.cachedCandidates)return;
+        SourceProbeTimePolicy.checkPaused(paused);
+        com.wodedianshi.tv.db.AppStateStore.put(context,result.cursorKey,result.nextCursors.toString());
     }
 
     /** Search the existing configured directories in their established priority
      * order. Keep partial results only from a version-checked completed scan.
      * This path performs no network requests or cache writes. */
-    static SearchResult searchCached(Context context,Target target,
-            Collection<String> existing,BooleanSupplier paused)throws IOException {
+    static SearchResult searchCached(Context context,String channelId,Target target,
+            Collection<String> existing,int probeLimit,BooleanSupplier paused)throws IOException,org.json.JSONException {
         SearchResult result=new SearchResult();
+        result.cursorKey="single_channel_scan_v1_"+StableKey.channelIdentity(channelId);
+        org.json.JSONObject cursors;
+        try{cursors=new org.json.JSONObject(com.wodedianshi.tv.db.AppStateStore.get(context,result.cursorKey,"{}"));}
+        catch(org.json.JSONException malformed){cursors=new org.json.JSONObject();}
+        final String[] feeds=SourceDiscoveryFeedCatalog.feeds();
+        final int startFeed=SourceSelectionPolicy.wrapIndex(cursors.optInt("nextFeed",0),feeds.length);
+        final int candidateBudget=Math.max(1,Math.min(MAX_CANDIDATES,probeLimit));
         long started=SystemClock.elapsedRealtime();
         BooleanSupplier bounded=()->(paused!=null&&paused.getAsBoolean())
                 ||SystemClock.elapsedRealtime()-started>=SEARCH_BUDGET_MS;
         ArrayList<String> excluded=new ArrayList<>(existing);
-        for(String feed:SourceDiscoveryFeedCatalog.feeds()){
+        for(int turn=0;turn<feeds.length;turn++){
             SourceProbeTimePolicy.checkPaused(paused);
             if(bounded.getAsBoolean()||result.rowsScanned>=MAX_ROWS
-                    ||result.candidates.size()>=MAX_CANDIDATES){result.bounded=true;break;}
+                    ||result.candidates.size()>=candidateBudget){result.bounded=true;break;}
+            int feedIndex=(startFeed+turn)%feeds.length;
+            String feed=feeds[feedIndex];
+            String feedKey=StableKey.url(feed);
+            cursors.put("nextFeed",(feedIndex+1)%feeds.length);
             File body=PlaylistFeedCache.findCachedForSingleChannel(context,feed);
             if(body==null){result.missingFeeds++;continue;}
             int rowLimit=Math.min(MAX_ROWS_PER_FEED,MAX_ROWS-result.rowsScanned);
-            int candidateLimit=Math.min(MAX_PER_FEED,MAX_CANDIDATES-result.candidates.size());
+            int candidateLimit=Math.min(MAX_PER_FEED,candidateBudget-result.candidates.size());
             ArrayList<Candidate> local=new ArrayList<>();
             try{
                 String version=PlaylistFeedCache.contentVersion(body);
+                org.json.JSONObject prior=cursors.optJSONObject(feedKey);
+                int offset=prior==null?0:resumeOffset(prior.optString("version"),version,prior.optInt("offset"));
+                int indexedCount=PlaylistFeedIndex.indexedEntryCount(body);
+                if(indexedCount>=0&&offset>=indexedCount)offset=0;
                 int scanned;
-                try(BufferedReader reader=new BufferedReader(new InputStreamReader(
-                        new FileInputStream(body),StandardCharsets.UTF_8),8192)){
-                    String header=reader.readLine();
-                    if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
-                        throw new IOException("Invalid cached playlist");
-                    scanned=scan(reader,target,SourceFeedScopePolicy.scopeForFeed(feed),
+                if(indexedCount>=0){
+                    scanned=scanIndexed(body,offset,target,SourceFeedScopePolicy.scopeForFeed(feed),
                             excluded,rowLimit,candidateLimit,local,bounded);
+                }else{
+                    try(BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            new FileInputStream(body),StandardCharsets.UTF_8),8192)){
+                        String header=reader.readLine();
+                        if(header==null||!header.replace("\uFEFF","").trim().startsWith("#EXTM3U"))
+                            throw new IOException("Invalid cached playlist");
+                        scanned=scanFrom(reader,offset,target,SourceFeedScopePolicy.scopeForFeed(feed),
+                                excluded,rowLimit,candidateLimit,local,bounded);
+                    }
                 }
                 result.rowsScanned+=scanned;
                 if(scanned>=rowLimit||local.size()>=candidateLimit)result.bounded=true;
                 if(!version.equals(PlaylistFeedCache.contentVersion(body))){
                     result.missingFeeds++;continue;
                 }
+                cursors.put(feedKey,new org.json.JSONObject().put("version",version)
+                    .put("offset",nextOffset(offset,scanned,rowLimit,indexedCount,local.size()>=candidateLimit)));
                 result.feedsExamined++;
                 for(Candidate candidate:local){
                     result.candidates.add(candidate);excluded.add(candidate.url);
@@ -210,6 +280,8 @@ final class SingleChannelCandidateSearch {
             }
         }
         SourceProbeTimePolicy.checkPaused(paused);
+        result.cachedCandidates=result.candidates.size();
+        result.nextCursors=cursors;
         return result;
     }
 }
