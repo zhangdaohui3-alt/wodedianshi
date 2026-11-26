@@ -192,6 +192,16 @@ final class ChannelNamePolicy {
         {"TV","电视台"},{"TELEVISION","电视台"}
     };
 
+    // A compact EPG identifier may concatenate a known city and service
+    // (ShenzhenNews.cn). Reuse the reviewed service suffixes; never match a
+    // city prefix in an arbitrary longer English word.
+    private static final String COMPACT_LOCAL_SERVICE_PATTERN = compactLocalServicePattern();
+    private static String compactLocalServicePattern() {
+        java.util.ArrayList<String> suffixes = new java.util.ArrayList<>();
+        for (String[] service : LOCAL_SERVICE_LABELS) suffixes.add(Pattern.quote(service[0]));
+        return "(?:" + String.join("|", suffixes) + ")?";
+    }
+
     private static String translatedLocalService(String compact, String prefix, String chinese) {
         // Accept a separated place name or its compact form (e.g. ShenzhenNews).
         String key=prefix;
@@ -318,14 +328,17 @@ final class ChannelNamePolicy {
     private static boolean containsNormalizedAlias(String uppercaseMetadata, String normalizedAlias, String normalizedMetadata) {
         if (normalizedAlias.isEmpty()) return false;
         // Chinese names are naturally contiguous. English city names must be
-        // whole tokens so "Xiangyang" cannot accidentally match "Xian".
+        // whole tokens, optionally followed by an exact reviewed service
+        // suffix, so "Xiangyang" cannot accidentally match "Xian".
         if (hasCjkCharacter(normalizedAlias)) {
             return normalizedMetadata.contains(normalizedAlias);
         }
         Pattern pattern = ENGLISH_LOCAL_PATTERNS.get(normalizedAlias);
         if (pattern == null) {
             Pattern compiled = Pattern.compile("(^|[^A-Z])"
-                    + Pattern.quote(normalizedAlias) + "([^A-Z]|$)");
+                    + Pattern.quote(normalizedAlias)
+                    + (normalizedAlias.length()>=4 ? COMPACT_LOCAL_SERVICE_PATTERN : "")
+                    + "([^A-Z]|$)");
             Pattern previous = ENGLISH_LOCAL_PATTERNS.putIfAbsent(normalizedAlias, compiled);
             pattern = previous == null ? compiled : previous;
         }
