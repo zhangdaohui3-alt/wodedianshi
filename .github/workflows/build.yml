@@ -89,6 +89,10 @@ jobs:
             echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
             echo "$BADGING" | grep -F "sdkVersion:'23'"
             echo "$BADGING" | grep -F "targetSdkVersion:'28'"
+            # Check the packaged branding, not just the source manifest.
+            echo "$BADGING" | grep -E "^application-icon-[0-9]+:'.*mytv_launcher\\.webp'"
+            unzip -p "$APK" res/drawable-nodpi-v4/mytv_launcher.webp | cmp - app/src/main/res/drawable-nodpi/mytv_launcher.webp
+            unzip -p "$APK" res/drawable-nodpi-v4/mytv_banner.webp | cmp - app/src/main/res/drawable-nodpi/mytv_banner.webp
             SIGNATURE="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
             echo "$SIGNATURE"
             echo "$SIGNATURE" | grep -Fx "Verified using v1 scheme (JAR signing): true"
