@@ -43,6 +43,13 @@ public class SourceUpdateWorker extends Worker {
     final ProbeResult result; final long at;
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
+  // All three owner-confined admission paths use exactly the same cache rule.
+  private static RecentProbe reusableInitialProbe(String endpoint,boolean viewing,long now){
+    RecentProbe cached=INITIAL_PROBES.get(endpoint);
+    return cached!=null&&SourceUpdateSchedulePolicy.reusableInitialObservation(
+        cached.result.valid,cached.result.provisional,cached.result.paced,viewing,cached.at,now)
+        ?cached:null;
+  }
   private static void rememberInitialProbe(String key,ProbeResult result,long at){
     INITIAL_PROBES.put(key,new RecentProbe(result,at));
     final long now=android.os.SystemClock.elapsedRealtime();
@@ -1266,12 +1273,10 @@ public class SourceUpdateWorker extends Worker {
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
-          String cacheKey=initialDiscoveryChain?SourceUpdateSchedulePolicy.initialProbeCacheKey(e.url):"";
-          RecentProbe cached=initialDiscoveryChain?INITIAL_PROBES.get(cacheKey):null;
+          String cacheKey=initialDiscoveryChain?endpoint:"";
           long clock=android.os.SystemClock.elapsedRealtime();
-          boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
-              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(
-              cached.result.valid,cached.result.provisional,cached.at,clock);
+          RecentProbe cached=initialDiscoveryChain?reusableInitialProbe(cacheKey,slowPlayback,clock):null;
+          boolean reuse=cached!=null;
           boolean allowOriginDeferral=InitialOriginCooldownPolicy.mayDefer(
               initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
               transientRecheck==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED);
@@ -1419,12 +1424,14 @@ public class SourceUpdateWorker extends Worker {
               visitedUrls.remove(endpoint);
             continue;
           }
-          if(initialDiscoveryChain&&!reuse)
+          // Fresh positive initial results were already retained before the
+          // cancellation gate. Here only cache a definitive negative result.
+          if(initialDiscoveryChain&&!reuse&&!measured.valid)
             rememberInitialProbe(cacheKey,measured,measuredAt);
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
-          storePreflightScore(measuredScores,e.url,measured);
+          if(!indexedQuality)storePreflightScore(measuredScores,e.url,measured);
         }
         if(!manualRefresh){
           if(measured.provisional&&measured.valid)
@@ -2920,10 +2927,8 @@ public class SourceUpdateWorker extends Worker {
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(allowOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))break;
         if(i!=offset){
-          RecentProbe cached=initial?INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url)):null;
-          if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
-              &&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
-              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.result.provisional,cached.at,now)))break;
+          RecentProbe cached=initial?reusableInitialProbe(endpoint,slowPlayback,now):null;
+          if(measured.containsKey(endpoint)||visited.contains(endpoint)||cached!=null)break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
@@ -2998,9 +3003,7 @@ public class SourceUpdateWorker extends Worker {
         if(!active.canAdd(endpoint,host))return;
         now=android.os.SystemClock.elapsedRealtime();
         if(rollingOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))return;
-        RecentProbe cached=INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url));
-        if(cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
-            &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.result.provisional,cached.at,now))return;
+        if(reusableInitialProbe(endpoint,slowPlayback,now)!=null)return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
         if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
         int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
