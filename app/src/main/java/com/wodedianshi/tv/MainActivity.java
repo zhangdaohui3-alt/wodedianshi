@@ -1054,7 +1054,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }
     }
-    synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
+    synchronized(cataloguePersistLock){catalogueMutationGeneration++;catalogueMembershipGeneration++;}
     cachedRemoteChannelOrder=null;
   }
   private void normalizeBroadcasterLabel(Channel channel){
@@ -1267,7 +1267,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Any save request represents a catalogue mutation or a caller that needs
       // the latest catalogue durable. In-flight background reloads must not
       // publish a snapshot captured before this generation.
-      catalogueMutationGeneration++;
+      catalogueMutationGeneration++;catalogueMembershipGeneration++;
       requestedGeneration=++cataloguePersistRequestedGeneration;
       if(!cataloguePersistScheduled){
         cataloguePersistScheduled=true;
@@ -4735,11 +4735,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long started=android.os.SystemClock.elapsedRealtime();
     final long epoch;
     ArrayList<Channel> entries;
-    synchronized(channels){epoch=catalogueMutationGeneration;entries=new ArrayList<>(channels);}
+    synchronized(channels){epoch=catalogueMembershipGeneration;entries=new ArrayList<>(channels);}
     try{
       SnapshotCategoryIndex.LocalMembership membership=buildLocalMembership(entries,
-          ()->isFinishing()||isDestroyed()||epoch!=catalogueMutationGeneration,true);
-      if(epoch==catalogueMutationGeneration)
+          ()->isFinishing()||isDestroyed()||epoch!=catalogueMembershipGeneration,true);
+      if(epoch==catalogueMembershipGeneration)
         preparedLocalSnapshot=new SnapshotCategoryIndex.PreparedLocal(epoch,membership);
       android.util.Log.i("MyTVDirectory","startup_local_index_ms="+
           (android.os.SystemClock.elapsedRealtime()-started)+" rows="+entries.size());
@@ -4757,6 +4757,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       pendingRemoteZapGeneration=generation;
     else clearPendingRemoteZap();
     final long mutation=catalogueMutationGeneration;
+    final long membershipEpoch=catalogueMembershipGeneration;
     java.util.concurrent.Future<?> previousFilter=pendingCatalogueFilter;
     if(previousFilter!=null)previousFilter.cancel(true);
     purgeCancelledTasks(catalogueFilterWorker);
@@ -4810,10 +4811,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final java.util.List<String> scopeKey=java.util.Arrays.asList(categorySnapshot,
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null);
         if(indexEligible&&"地方".equals(categorySnapshot)
-            &&!categorySnapshotIndex.hasLocalIndex(mutation,sources.size())){
+            &&!categorySnapshotIndex.hasLocalIndex(membershipEpoch,sources.size())){
           SnapshotCategoryIndex.PreparedLocal prebuilt=preparedLocalSnapshot;
-          if(prebuilt!=null&&prebuilt.matches(mutation,sources.size())){
-            categorySnapshotIndex.putLocalMembership(mutation,sources.size(),prebuilt.membership);
+          if(prebuilt!=null&&prebuilt.matches(membershipEpoch,sources.size())){
+            categorySnapshotIndex.putLocalMembership(membershipEpoch,sources.size(),prebuilt.membership);
           }else{
             SnapshotCategoryIndex.LocalMembership membership;
             try{
@@ -4821,16 +4822,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }catch(SourceProbeTimePolicy.PublicationPausedException superseded){return;}
             if(generation!=catalogueFilterGeneration)return;
             // A changed epoch must reach the existing publication/retry gate.
-            if(mutation==catalogueMutationGeneration)
-              categorySnapshotIndex.putLocalMembership(mutation,sources.size(),membership);
+            if(membershipEpoch==catalogueMembershipGeneration)
+              categorySnapshotIndex.putLocalMembership(membershipEpoch,sources.size(),membership);
           }
         }
-        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
+        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
         SnapshotCategoryIndex.PreparedLocal preparedFixed=preparedLocalSnapshot;
-        if(exactScope==null&&indexEligible&&!regionOnly&&preparedFixed!=null&&preparedFixed.matches(mutation,sources.size()))
+        if(exactScope==null&&indexEligible&&!regionOnly&&preparedFixed!=null&&preparedFixed.matches(membershipEpoch,sources.size()))
           exactScope=preparedFixed.membership.fixedCategory(categorySnapshot);
         java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
-            ?categorySnapshotIndex.localCandidates(mutation,sources.size(),regionOnly?provinceSnapshot:null):null;
+            ?categorySnapshotIndex.localCandidates(membershipEpoch,sources.size(),regionOnly?provinceSnapshot:null):null;
         final java.util.List<Integer> cachedScope=exactScope!=null?exactScope:
             (citySnapshot==null?localCandidates:null);
         final java.util.List<Integer> scanPositions=cachedScope!=null?cachedScope:localCandidates;
@@ -4886,8 +4887,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           });
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-        if(indexEligible&&cachedScope==null&&query.isEmpty()&&mutation==catalogueMutationGeneration)
-          categorySnapshotIndex.put(mutation,sources.size(),scopeKey,indexes);
+        if(indexEligible&&cachedScope==null&&query.isEmpty()&&membershipEpoch==catalogueMembershipGeneration)
+          categorySnapshotIndex.put(membershipEpoch,sources.size(),scopeKey,indexes);
         ArrayList<Channel> visible=new ArrayList<>(indexes.size());
         for(int index:indexes)visible.add(sources.get(index));
         RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
@@ -5405,7 +5406,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Playlist ingestion runs on a separate worker and can mutate the live
       // catalogue before its final persist() call. Invalidate any background
       // catalogue reload immediately, not only after the import has finished.
-      synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
+      synchronized(cataloguePersistLock){catalogueMutationGeneration++;catalogueMembershipGeneration++;}
     }
     return added;
   }
@@ -5710,6 +5711,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // overwrite the user's latest favorite state.
   private void queueFavoriteMutation(String legacyKey,boolean favorite){
     synchronized(cataloguePersistLock){
+      // Favorites change membership only in their uncached, dynamic directory.
       catalogueMutationGeneration++;
       try{
         cataloguePersistWorker.execute(()->{
@@ -5754,6 +5756,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void queueActiveSourceMutation(String legacyKey,String sourceUrl){
     if(legacyKey==null||legacyKey.isEmpty()||sourceUrl==null||sourceUrl.isEmpty())return;
     synchronized(cataloguePersistLock){
+      // A selected route does not change station category membership.
       catalogueMutationGeneration++;
       try{
         cataloguePersistWorker.execute(()->{
@@ -6380,7 +6383,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               channelsByUrl.putIfAbsent(entry.getKey(),channel);
             }
             channel.activeSource=channel.backups.indexOf(playing);
-            catalogueMutationGeneration++;
+            catalogueMutationGeneration++;catalogueMembershipGeneration++;
           }
         }
       }
@@ -8590,6 +8593,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Incremented for every persistence request; a reload may publish only if no
   // catalogue edit/save was requested while its background parse was running.
   private volatile long catalogueMutationGeneration=0L;
+  private volatile long catalogueMembershipGeneration=0L;
   private org.json.JSONObject readIndexedPlaybackScores(List<Channel> entries,long version,
       java.util.function.BooleanSupplier cancelled)throws org.json.JSONException{
     if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))return null;
@@ -8851,7 +8855,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     for(String url:entry.backups)channelsByUrl.putIfAbsent(url,entry);
                     added++;
                   }
-                  if(added>0)catalogueMutationGeneration++;
+                  if(added>0){catalogueMutationGeneration++;catalogueMembershipGeneration++;}
                   // Do NOT advance loadedRoomCatalogueVersion: existing rows
                   // still belong to the older snapshot. A full save must fail
                   // closed rather than overwrite the newer Room catalogue.
@@ -8912,9 +8916,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               // snapshotChannelRows() batches. Invalidate those mixed copies
               // even if no caller explicitly requested a catalogue save.
               synchronized(cataloguePersistLock){
-                catalogueMutationGeneration++;
+                catalogueMutationGeneration++;catalogueMembershipGeneration++;
                 preparedLocalSnapshot=prepared.localMembership==null?null:
-                    new SnapshotCategoryIndex.PreparedLocal(catalogueMutationGeneration,prepared.localMembership);
+                    new SnapshotCategoryIndex.PreparedLocal(catalogueMembershipGeneration,prepared.localMembership);
               }
               loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
               if(indexedScores!=null){cachedProbeScoreJson=indexedScores;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
