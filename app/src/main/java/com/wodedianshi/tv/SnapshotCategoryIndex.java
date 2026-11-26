@@ -14,37 +14,65 @@ final class SnapshotCategoryIndex {
     private int size=-1;
     private final LinkedHashMap<List<String>,List<Integer>> scopes=new LinkedHashMap<>(16,0.75f,true);
 
-    private java.util.Map<String,List<Integer>> provinces;
-    private List<Integer> allLocal;
+    private LocalMembership localMembership;
+
+    /** Immutable transfer from the snapshot preparation worker to the filter worker. */
+    static final class LocalMembership {
+        final int count;
+        private final java.util.Map<String,List<Integer>> provinces;
+        private final List<Integer> allLocal;
+        LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince){
+            this.count=count;
+            if(byProvince.size()>MAX_PROVINCES)throw new IllegalArgumentException("Province index limit");
+            java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
+            for(java.util.Map.Entry<String,List<Integer>> entry:byProvince.entrySet())
+                copy.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+            allLocal=Collections.unmodifiableList(new ArrayList<>(local));
+            provinces=Collections.unmodifiableMap(copy);
+        }
+        List<Integer> candidates(String province){
+            if(province==null)return allLocal;
+            List<Integer> found=provinces.get(province);
+            return found==null?Collections.emptyList():found;
+        }
+    }
+
+    static final class PreparedLocal {
+        final long mutation;
+        final LocalMembership membership;
+        PreparedLocal(long mutation,LocalMembership membership){
+            this.mutation=mutation;this.membership=membership;
+        }
+        boolean matches(long epoch,int count){
+            return membership!=null&&mutation==epoch&&membership.count==count;
+        }
+    }
 
     private void ensureVersion(long mutation,int count){
         if(epoch!=mutation||size!=count){
-            scopes.clear();provinces=null;allLocal=null;epoch=mutation;size=count;
+            scopes.clear();localMembership=null;epoch=mutation;size=count;
         }
     }
 
     boolean hasLocalIndex(long mutation,int count){
         ensureVersion(mutation,count);
-        return provinces!=null;
+        return localMembership!=null;
     }
 
     void putLocalIndex(long mutation,int count,List<Integer> local,
             java.util.Map<String,List<Integer>> byProvince){
+        putLocalMembership(mutation,count,new LocalMembership(count,local,byProvince));
+    }
+
+    void putLocalMembership(long mutation,int count,LocalMembership membership){
         ensureVersion(mutation,count);
-        if(byProvince.size()>MAX_PROVINCES)throw new IllegalArgumentException("Province index limit");
-        java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
-        for(java.util.Map.Entry<String,List<Integer>> entry:byProvince.entrySet())
-            copy.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
-        allLocal=Collections.unmodifiableList(new ArrayList<>(local));
-        provinces=Collections.unmodifiableMap(copy);
+        if(membership.count!=count)throw new IllegalArgumentException("Local index size mismatch");
+        localMembership=membership;
     }
 
     List<Integer> localCandidates(long mutation,int count,String province){
         ensureVersion(mutation,count);
-        if(provinces==null)return null;
-        if(province==null)return allLocal;
-        List<Integer> found=provinces.get(province);
-        return found==null?Collections.emptyList():found;
+        return localMembership==null?null:localMembership.candidates(province);
     }
 
     List<Integer> get(long mutation,int count,List<String> key){
