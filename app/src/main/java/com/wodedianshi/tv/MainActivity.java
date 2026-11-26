@@ -4755,13 +4755,36 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final boolean indexEligible=!favoriteOnly&&geoKeys==null;
         final java.util.List<String> scopeKey=java.util.Arrays.asList(categorySnapshot,
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null);
-        final java.util.List<Integer> cachedScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
-        final int scanCount=cachedScope==null?sources.size():cachedScope.size();
+        if(indexEligible&&"地方".equals(categorySnapshot)
+            &&!categorySnapshotIndex.hasLocalIndex(mutation,sources.size())){
+          ArrayList<Integer> allLocal=new ArrayList<>();
+          java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
+          for(int i=0;i<sources.size();i++){
+            if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration
+                ||mutation!=catalogueMutationGeneration))return;
+            Channel candidate=sources.get(i);
+            if(candidate==null)continue;
+            LocalDirectoryFacts facts=localDirectoryFacts(candidate);
+            if(facts.local)allLocal.add(i);
+            if(!facts.excluded&&!facts.province.isEmpty())
+              provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
+          }
+          if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration
+              ||mutation!=catalogueMutationGeneration)return;
+          categorySnapshotIndex.putLocalIndex(mutation,sources.size(),allLocal,provinces);
+        }
+        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
+        java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
+            ?categorySnapshotIndex.localCandidates(mutation,sources.size(),regionOnly?provinceSnapshot:null):null;
+        final java.util.List<Integer> cachedScope=exactScope!=null?exactScope:
+            (citySnapshot==null?localCandidates:null);
+        final java.util.List<Integer> scanPositions=cachedScope!=null?cachedScope:localCandidates;
+        final int scanCount=scanPositions==null?sources.size():scanPositions.size();
         final int[] cctvOrders=cachedScope==null&&"央视".equals(categorySnapshot)?new int[sources.size()]:null;
         final String[] cctvNames=cctvOrders==null?null:new String[sources.size()];
         for(int position=0;position<scanCount;position++){
           if((position&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
-          int i=cachedScope==null?position:cachedScope.get(position);
+          int i=scanPositions==null?position:scanPositions.get(position);
           scanned++;
           Channel c=sources.get(i);
           if(c==null){nullRecords++;continue;}
@@ -4783,7 +4806,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
-        if("地方".equals(categorySnapshot) && indexes.isEmpty() && cachedScope==null) {
+        if("地方".equals(categorySnapshot) && indexes.isEmpty() && scanPositions==null) {
           int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
           for(Channel candidate:sources) {
             if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
