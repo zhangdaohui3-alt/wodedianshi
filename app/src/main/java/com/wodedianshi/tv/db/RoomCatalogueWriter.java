@@ -60,22 +60,34 @@ public final class RoomCatalogueWriter {
         public final int addedSources;
         public final long catalogueVersion;
         public final Map<String,java.util.Set<String>> addedRoutes;
+        public final Map<String,String> replacedRoutes;
         ChannelRefreshResult(int addedSources,long catalogueVersion,
-                Map<String,java.util.Set<String>> addedRoutes){
+                Map<String,java.util.Set<String>> addedRoutes,Map<String,String> replacedRoutes){
             this.addedSources=addedSources;this.catalogueVersion=catalogueVersion;
             this.addedRoutes=java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(addedRoutes));
+            this.replacedRoutes=java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(replacedRoutes));
         }
     }
 
     /**
      * Commit a bounded list of independently preflight-validated candidates for
      * one existing channel. Caller must establish station identity before calling.
-     * No network, full-catalogue rewrite, staging mutation or route retirement here.
+     * No network, full-catalogue rewrite or staging mutation. At capacity only
+     * an independently failed, lower-ranked nonprotected backup may be replaced.
      * Exact checkpoint guard prevents stale results from updating a changed row.
      */
     public static ChannelRefreshResult appendVerifiedChannelSources(Context context,
             String channelId,long expectedVersion,
             Map<String,? extends java.util.Set<String>> verifiedBestFirst,
+            BooleanSupplier paused) {
+        return refreshVerifiedChannelSources(context,channelId,expectedVersion,verifiedBestFirst,
+            "",java.util.Collections.emptySet(),null,paused);
+    }
+
+    public static ChannelRefreshResult refreshVerifiedChannelSources(Context context,
+            String channelId,long expectedVersion,
+            Map<String,? extends java.util.Set<String>> verifiedBestFirst,String playing,
+            java.util.Set<String> repeatedlyFailed,java.util.Comparator<String> bestFirst,
             BooleanSupplier paused) {
         if(channelId==null||channelId.isEmpty()||expectedVersion<0L||verifiedBestFirst==null)
             throw new IllegalArgumentException("Missing channel refresh identity/version");
@@ -98,10 +110,29 @@ public final class RoomCatalogueWriter {
             if(existing.isEmpty()||!existing.contains(row.primaryUrl)
                     ||row.activeSource<0||row.activeSource>=existing.size())
                 throw new IllegalStateException("Untrusted current channel source list");
-            List<String> additions=com.wodedianshi.tv.SingleChannelRefreshPolicy.appendCandidates(
-                existing,verifiedBestFirst.keySet(),8);
-            if(additions.isEmpty()){
-                result[0]=new ChannelRefreshResult(0,checkpoint.completedAt,java.util.Collections.emptyMap());return;
+            if(playing!=null&&!playing.isEmpty()&&!existing.contains(playing))
+                throw new StaleCatalogueException();
+            java.util.Set<String> eligible=new java.util.HashSet<>(repeatedlyFailed);
+            // Do not remove explicitly imported or geographic-only membership
+            // from a source whose replacement has no equivalent scope evidence.
+            for(BackupSourceEntity source:old){
+                try{
+                    JSONArray tags=new JSONArray(source.scopesJson);
+                    for(int i=0;i<tags.length();i++){
+                        String tag=tags.getString(i);
+                        if(!"china".equals(tag)&&!"global".equals(tag))
+                            eligible.remove(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url));
+                    }
+                }catch(org.json.JSONException malformed){
+                    throw new IllegalStateException("Invalid source scope",malformed);
+                }
+            }
+            List<String> planned=com.wodedianshi.tv.SingleChannelRefreshPolicy.planRefresh(
+                existing,verifiedBestFirst.keySet(),8,row.primaryUrl,existing.get(row.activeSource),
+                playing,eligible,bestFirst);
+            if(planned.equals(existing)){
+                result[0]=new ChannelRefreshResult(0,checkpoint.completedAt,java.util.Collections.emptyMap(),
+                    java.util.Collections.emptyMap());return;
             }
             java.util.TreeSet<String> scopes=new java.util.TreeSet<>();
             try{
@@ -112,7 +143,10 @@ public final class RoomCatalogueWriter {
             }
             List<BackupSourceEntity> newRows=new ArrayList<>();
             Map<String,java.util.Set<String>> addedRoutes=new java.util.LinkedHashMap<>();
-            for(String url:additions){
+            Map<String,String> replacedRoutes=new java.util.LinkedHashMap<>();
+            for(int slot=0;slot<planned.size();slot++){
+                String url=planned.get(slot);
+                if(slot<existing.size()&&url.equals(existing.get(slot)))continue;
                 checkPause(paused);
                 java.util.TreeSet<String> owned=new java.util.TreeSet<>();
                 java.util.Set<String> incoming=verifiedBestFirst.get(url);
@@ -122,7 +156,12 @@ public final class RoomCatalogueWriter {
                 addedRoutes.put(url,java.util.Collections.unmodifiableSet(new java.util.HashSet<>(owned)));
                 JSONArray sourceScopes=new JSONArray();
                 for(String scope:owned)sourceScopes.put(scope);
-                newRows.add(new BackupSourceEntity(channelId,url,old.size()+newRows.size(),sourceScopes.toString()));
+                if(slot<existing.size()){
+                    String retired=existing.get(slot);
+                    dao.deleteBackupSource(channelId,retired);
+                    replacedRoutes.put(retired,url);
+                }
+                newRows.add(new BackupSourceEntity(channelId,url,slot,sourceScopes.toString()));
             }
             JSONArray channelScopes=new JSONArray();for(String scope:scopes)channelScopes.put(scope);
             dao.updateChannelFields(row.id,row.legacyKey,row.name,row.primaryUrl,row.groupName,
@@ -130,12 +169,12 @@ public final class RoomCatalogueWriter {
             dao.insertBackupSources(newRows);
             long version=Math.max(System.currentTimeMillis(),checkpoint.completedAt+1L);
             dao.insertMigration(new CatalogueMigrationEntity(MasterCatalogueRepository.MIGRATION_KEY,
-                checkpoint.channelsCount,Math.addExact(checkpoint.backupSourcesCount,newRows.size()),
+                checkpoint.channelsCount,Math.addExact(checkpoint.backupSourcesCount,newRows.size()-replacedRoutes.size()),
                 checkpoint.favoritesCount,checkpoint.categoriesCount,version,checkpoint.catalogueFingerprint));
             db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,
                 Long.toString(version),System.currentTimeMillis()));
             checkPause(paused);
-            result[0]=new ChannelRefreshResult(newRows.size(),version,addedRoutes);
+            result[0]=new ChannelRefreshResult(newRows.size(),version,addedRoutes,replacedRoutes);
         });
         return result[0];
     }
