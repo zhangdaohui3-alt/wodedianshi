@@ -1969,9 +1969,9 @@ public class SourceUpdateWorker extends Worker {
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
-        long delay=idleWaveTimedOut&&discoveryScanned==0?30L:
-            SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
-                slowPlayback,feedsOk>0,freshDifferentNextFeed);
+        long delay=SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(
+            slowPlayback,feedsOk>0,freshDifferentNextFeed,feedBatchComplete,
+            discoveryScanned,idleWaveTimedOut);
         // This branch follows the durable Room commit and any preview publish.
         // Each inline slice reconstructs its gates/cursors from current state.
         // No acquisition, delayed retry, or playback slice requests inline work.
