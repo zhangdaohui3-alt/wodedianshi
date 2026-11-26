@@ -41,6 +41,9 @@ public class SourceUpdateWorker extends Worker {
   private static String committedStagingRevision="";
   private static long committedStagingAt;
   private boolean slowPlayback;
+  // Set only when this initial idle slice admits a high-concurrency wave.
+  // Keep it until the slice exits so a late input cannot authorize a stale commit.
+  private volatile long idleWavePressureGeneration=-1L;
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
   private static final int MAX_PROBES_PER_RUN = 24;
   private static final long PROBE_STAGE_DEADLINE_MS = 90_000L;
@@ -135,7 +138,9 @@ public class SourceUpdateWorker extends Worker {
     final boolean publishedAtStart=hasPublishedChannels;
     final boolean deferForeground=SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
         true,manual,initialDiscoveryChain,publishedAtStart);
+    idleWavePressureGeneration=-1L;
     pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
+        ||SourceUpdateActivityPolicy.idleWavePressureChanged(idleWavePressureGeneration)
         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
         ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart,stableGeneration));
@@ -1931,10 +1936,23 @@ public class SourceUpdateWorker extends Worker {
   private Result deferredViewingResult(boolean manual,boolean initialDiscoveryChain){
     if(initialDiscoveryChain){
       // The existing counters and cursors stay unchanged while viewing.
+      boolean playback=SourceUpdateActivityPolicy.isPlaybackActive();
+      boolean inputYield=SourceUpdateActivityPolicy.idleWavePressureChanged(idleWavePressureGeneration);
       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-          "source_initial_progress_phase",SourceUpdateActivityPolicy.isPlaybackActive()
+          "source_initial_progress_phase",playback
                ?"播放资源占用：本批抓源暂停，已保存进度"
+               :inputYield?"频道操作优先：高并发检测已让出，已保存进度"
                :"本批任务已让出或取消，已保存进度，等待续抓");
+      if(inputYield&&!playback&&!isStopped()&&!Thread.currentThread().isInterrupted()){
+        try{
+          enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialPressureDelaySeconds(
+              playback,inputYield));
+          return Result.success();
+        }catch(Exception failure){
+          android.util.Log.w("MyTVSourceDiscovery","Unable to schedule input-yield continuation",failure);
+          return Result.retry();
+        }
+      }
       return continueAfterViewingDelay(false);
     }
     // Do not repeatedly wake the periodic job every few minutes while a user
@@ -2200,6 +2218,7 @@ public class SourceUpdateWorker extends Worker {
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       long now=android.os.SystemClock.elapsedRealtime();
+      long pressureAtAdmission=SourceUpdateActivityPolicy.pressureGeneration();
       int limit=SourceUpdateActivityPolicy.idleProbeConcurrency(now,initial);
       if(limit<2)return false;
       ArrayList<Entry> wave=new ArrayList<>();
@@ -2219,6 +2238,10 @@ public class SourceUpdateWorker extends Worker {
       }
       if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
           ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
+      if(initial&&wave.size()>2&&idleWavePressureGeneration<0L){
+        idleWavePressureGeneration=pressureAtAdmission;
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      }
       if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(initial?IdleProbeWavePolicy.MAX_CONCURRENT:IdleProbeWavePolicy.ORDINARY_CONCURRENT,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
