@@ -4542,7 +4542,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     if(!ChannelNamePolicy.isKnownLocality(province,city))return false;
-    if(ChannelNamePolicy.matchesLocalCity(metadata,province,city))return true;
+    if(ChannelNamePolicy.matchesLocalCityWithProvince(metadata,province,city,explicit))return true;
     // Retain Chinese-only coverage for cities not yet in the alias table, but
     // only with a resolved province, never with ambiguous city-only labels.
     return province.equals(explicit)&&(hasRegionalToken(metadata,city)
