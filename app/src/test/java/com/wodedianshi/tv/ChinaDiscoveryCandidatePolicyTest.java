@@ -8,6 +8,23 @@ import static org.junit.Assert.*;
 public class ChinaDiscoveryCandidatePolicyTest {
     private static final int MIXED = SourceDiscoveryFeedCatalog.MIXED_MAINLAND_FEED_INDEX;
 
+    @Test public void countyFeedPrioritizesLocalBeforeNationalBackupWithoutDroppingRows() {
+        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"china","深圳新闻","广东","",""));
+        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"china","County News","China; Local","","CountyNews.cn"));
+        assertEquals(1,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"china","CCTV-1","央视","",""));
+        assertEquals(1,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"china","湖南卫视","卫视","",""));
+        assertEquals(2,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"china","RTHK","Hong Kong","",""));
+        assertEquals(3,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                MIXED,"global","Local News","US","",""));
+        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                0,"china","CCTV-1","央视","",""));
+    }
+
     @Test public void mixedFeedRanksMainlandBeforeHmtAndForeign() {
         assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
                 MIXED,"china","上虞新闻综合","中国大陆 · 新闻","",""));
