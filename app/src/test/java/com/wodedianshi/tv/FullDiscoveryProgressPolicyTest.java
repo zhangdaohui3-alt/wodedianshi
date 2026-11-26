@@ -5,6 +5,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void boundedPreviewMilestonesExposeUsefulGrowthWithoutRepeatedWrites() {
+        org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,63,20));
+        org.junit.Assert.assertEquals(64, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,87,20));
+        org.junit.Assert.assertEquals(64, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,200,20));
+        org.junit.Assert.assertEquals(256, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,256,20));
+        org.junit.Assert.assertEquals(1024, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,2000,20));
+        org.junit.Assert.assertEquals(1024, FullDiscoveryProgressPolicy.nextPreviewMilestone(1024,20000,20));
+        org.junit.Assert.assertEquals(256, FullDiscoveryProgressPolicy.nextPreviewMilestone(256,40,20));
+        org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1000,0));
+    }
+
     @Test public void subPercentProgressIsVisibleWithoutPrematureCompletion() {
         boolean[] finished={false,false,false,false};
         int[] partial={100,0,0,0};
