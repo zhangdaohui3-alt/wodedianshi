@@ -5,6 +5,15 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void buildDurationDoesNotInventMissingOrFailedStart(){
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(0,0,true,10000).contains("无起始记录"));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(1000,0,false,5000).contains("本轮未完成"));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(1000,0,true,3662000).contains("1小时1分1秒"));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(1000,61000,false,999999).contains("完成历时：0小时1分0秒"));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(1000,0,true,500).contains("设备时间异常"));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.buildDurationStatus(1000,1000,false,2000).contains("0小时0分0秒"));
+    }
+
     @org.junit.Test public void throughputUsesOnlyMeasuredSliceAndSignedNetGrowth(){
         String sample=FullDiscoveryProgressPolicy.throughputStatus(10000,15000,5000,12,4,2,false);
         org.junit.Assert.assertTrue(sample.contains("24.0 条/分钟"));
