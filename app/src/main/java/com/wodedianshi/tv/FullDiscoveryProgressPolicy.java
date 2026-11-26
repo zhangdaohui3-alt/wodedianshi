@@ -69,7 +69,7 @@ public final class FullDiscoveryProgressPolicy {
     // More frequent early publication, then geometric growth to bound
     // database work. Existing watermark values remain valid on upgrade.
     public static final String PREVIEW_MILESTONE_KEY = "source_initial_preview_milestone";
-    private static final int[] PREVIEW_MILESTONES={16,32,64,96,128,192,256,384,512,1024,2048,4096,8192};
+    private static final int[] PREVIEW_MILESTONES={1,4,8,16,32,64,96,128,192,256,384,512,1024,2048,4096,8192};
     static int nextPreviewMilestone(int previous,int stagedChannels,int mainlandValidated) {
         if(mainlandValidated<=0)return previous;
         int reached=previous;
