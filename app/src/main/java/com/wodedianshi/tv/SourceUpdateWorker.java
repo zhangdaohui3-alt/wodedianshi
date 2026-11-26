@@ -374,10 +374,17 @@ public class SourceUpdateWorker extends Worker {
           if(count>0)acquisition.putInt("source_initial_next_feed_index",bootstrapFeed);
           if(!preparedVersion.isEmpty())acquisition.putString(initialAcquiredVersionKey(bootstrapFeed),preparedVersion);
           acquisition.apply();
-          // Persist acquisition before queueing the next slice. An unavailable
-          // directory is retried by the ordinary bounded probe phase.
-          enqueueInitialContinuation();
-          return Result.success();
+          // Persist acquisition before any media probes. A quickly prepared
+          // nonempty first directory may immediately enter the ordinary bounded
+          // page path, which rechecks the exact body marker and playback gate.
+          if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(
+              DiscoveryBatchPolicy.isEarlyFirstWatch(
+                  roomInt("source_initial_progress_staged_channels",0),
+                  roomInt("source_initial_progress_checked_urls",0)),
+              slowPlayback,count,android.os.SystemClock.elapsedRealtime()-sliceStartedAt)){
+            enqueueInitialContinuation();
+            return Result.success();
+          }
         }
         if(slowPlayback&&!bootstrapBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
             roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
@@ -586,7 +593,11 @@ public class SourceUpdateWorker extends Worker {
             PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
-            return continueAfterAcquisition();
+            if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(earlyFirstWatch,slowPlayback,
+                PlaylistFeedIndex.indexedEntryCount(cachedFeed),
+                android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
+              return continueAfterAcquisition();
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           }
           if(cachedFeed==null&&slowPlayback){
             // Acquisition is its own bounded slice: no stream probe in the same
