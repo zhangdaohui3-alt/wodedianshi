@@ -8188,6 +8188,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
+    final int requestedPreviewLevel=displayedInitialPreviewLevel,requestedPreviewMilestone=displayedInitialPreviewMilestone;
     final boolean livePreviewRead=hasPlaybackCatalogueOwner()&&mayAppendInitialLivePreview();
     if(hasPlaybackCatalogueOwner()&&!livePreviewRead){
       catalogueReloadDeferredForPlayback=true;
@@ -8220,7 +8221,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(livePreviewRead&&(checkpoint==null
               ||checkpoint.channelsCount>FullDiscoveryProgressPolicy.MAX_VIEWING_PREVIEW_ROWS))return;
           if(livePreviewRead&&checkpoint.completedAt==appendedInitialPreviewVersion){
-            uiHandler.post(()->{if(!cancelled.getAsBoolean())initialPreviewReloadPending=false;});
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;});
             return;
           }
           if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
@@ -8239,7 +8240,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 }
               });
             }
-            uiHandler.post(()->{if(!cancelled.getAsBoolean())initialPreviewReloadPending=false;});
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;});
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
           }
@@ -8322,7 +8323,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   appendedInitialPreviewVersion=roomSnapshot.catalogueVersion;
                 }
               }
-              initialPreviewReloadPending=false;
+              if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;
               catalogueReloadDeferredForPlayback=true;
               if(added>0){cachedRemoteChannelOrder=null;refresh();}
               android.util.Log.i("MyTVStartup","initial_preview_live_append added="+added+" visible="+channels.size());
@@ -8398,7 +8399,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               favorites.addAll(prepared.favorites);
             }
             cachedRemoteChannelOrder=null;
-            initialPreviewReloadPending=false;appendedInitialPreviewVersion=-1L;
+            if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;appendedInitialPreviewVersion=-1L;
             catalogueReloadDeferredForPlayback=false;
             catalogueSnapshotTrusted=true;
             android.util.Log.i("MyTVStartup","room_reload_ui_publish_ms="
