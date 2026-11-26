@@ -47,6 +47,30 @@ public final class TrackHealthPolicy {
                 &&currentVideo>previousVideo&&currentAudio>previousAudio;
     }
 
+    /** Track a native counter only after it has demonstrated real progression.
+     * Unknown or reset counters invalidate evidence instead of causing failover.
+     * Two full stationary observations at the existing 12s poll cadence are
+     * required after proven output. No inference from startup zero counters. */
+    static final class VlcCounterProgress {
+        private long previous=-1L;
+        private boolean proven;
+        private int stationary;
+        boolean observe(long value) {
+            if(value<0L||previous<0L||value<previous){
+                reset();
+                previous=value;
+                return false;
+            }
+            boolean advanced=value>previous;
+            previous=value;
+            if(advanced){proven=true;stationary=0;}
+            else if(proven)stationary=Math.min(2,stationary+1);
+            return advanced;
+        }
+        boolean stalled(){return proven&&stationary>=2;}
+        void reset(){previous=-1L;proven=false;stationary=0;}
+    }
+
     /** Permission for bounded discovery only, not proof of rendered pixels or audible sound. */
     public static boolean canGrantVlcDiscovery(boolean videoOutput, boolean audioSelected,
             boolean buffering, boolean reportsPlaying, int consecutiveChecks,
