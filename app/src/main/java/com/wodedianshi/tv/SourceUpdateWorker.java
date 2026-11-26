@@ -268,6 +268,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedProgressKey(feed))
                 .remove(initialAcquiredVersionKey(feed))
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
+                .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -456,8 +457,13 @@ public class SourceUpdateWorker extends Worker {
       boolean[] inspectedFeeds=new boolean[feeds.length];
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
       if(initialDiscoveryChain){
-        for(int i=0;i<feeds.length;i++)
+        for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
+          // Deferred pages are ineligible only during viewing; keep their true
+          // completion flags false so priority stages and publication cannot skip them.
+          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferPageForIdle(true,slowPlayback,
+              roomBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(i),false));
+        }
       }
       int routineStart=manualRefresh?Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
           InitialFeedRotationPolicy.normalizeStart(roomInt("source_routine_next_feed_index",0),feeds.length);
@@ -839,6 +845,7 @@ public class SourceUpdateWorker extends Worker {
       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
+      boolean viewingDeferred=false;
       HashSet<String> visitedUrls=new HashSet<>();
       HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
@@ -909,8 +916,16 @@ public class SourceUpdateWorker extends Worker {
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
             // Socket timeouts and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
-            // The candidate had its probe opportunity; later maintenance may retry.
             initialTimeouts++;
+            if(DiscoveryBatchPolicy.holdInconclusiveCandidate(initialDiscoveryChain,slowPlayback,e.savedSource)){
+              if(pageFeed<0)throw new IllegalStateException("Missing initial recheck page");
+              // Undo the loop-entry count; commit marker with unchanged prefix.
+              discoveryScanned--;
+              viewingDeferred=true;
+              update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
+              break;
+            }
+            // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
             // A shared endpoint gets one further opportunity within this slice.
@@ -1124,6 +1139,7 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
+          if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index));
           if(!initialDiscoveryChain && batch.parsed>0
               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
             // A previously unavailable directory has now been fetched and its
@@ -1266,7 +1282,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":stageDescription+"；暂不可用 "+unavailableCount+" 个"))
+                :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":viewingDeferred?"低速检测未确认，已保存原位置，空闲后补检；"+stageDescription:stageDescription+"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
@@ -1353,7 +1369,8 @@ public class SourceUpdateWorker extends Worker {
               .remove(feedCursorKey(feed)+"_version")
               .remove(initialFeedProgressKey(feed))
               .remove(initialAcquiredVersionKey(feed))
-              .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned");
+              .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
+                .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed));
         }
         failedBuildReset.remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
@@ -1453,7 +1470,7 @@ public class SourceUpdateWorker extends Worker {
             +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(saved.length()))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed?indexedPositions.size():-1)
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
-            +" inconclusive_endpoints="+inconclusiveAttempts.size());
+            +" inconclusive_endpoints="+inconclusiveAttempts.size()+" viewing_deferred="+viewingDeferred);
       }
       if(awaitingIdleFinalization)return deferInitialDirectory("线路初筛已完成，等待空闲发布或确认结果");
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
