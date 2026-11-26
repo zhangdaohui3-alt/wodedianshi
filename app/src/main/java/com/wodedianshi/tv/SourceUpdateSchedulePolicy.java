@@ -86,6 +86,13 @@ public final class SourceUpdateSchedulePolicy {
         return !viewing&&freshDifferentNextFeed?0L:30L;
     }
 
+    // Idle slices normally have a 90s probe stage plus bounded acquisition.
+    // Do not apply this guard to the separately paced 300s viewing download.
+    static final long INITIAL_IDLE_SLICE_LIMIT_MS=240000L;
+    static boolean initialIdleSliceExpired(boolean initial,boolean viewing,long started,long now) {
+        return initial&&!viewing&&started>=0L&&now>=started
+                &&now-started>=INITIAL_IDLE_SLICE_LIMIT_MS;
+    }
     static final long INITIAL_STALL_OBSERVATION_MS=180000L;
     /** A missing chain can be restored with KEEP, never by cancelling a live
      * owner. Failed empty-build resets and disabled auto updates stay excluded. */
