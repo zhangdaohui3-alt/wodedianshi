@@ -12,6 +12,43 @@ package com.wodedianshi.tv;
 public final class SourceDiscoveryPriorityPolicy {
     private SourceDiscoveryPriorityPolicy() {}
 
+    // Keep the persisted feed indices unchanged. For the small first-watch
+    // window prefer distinct CCTV, provincial and county directory families,
+    // then the remaining mainland feeds and the two status mirrors.
+    private static final int[] FIRST_WATCH_ORDER={0,2,4,5,6,7,8,9,1,3};
+
+    static int firstWatchBootstrapFeed(int attempt) {
+        return attempt==1?2:0;
+    }
+
+    static int nextAfterFirstWatchTurn(int attempted,int feedCount) {
+        if(feedCount>=FIRST_WATCH_ORDER.length){
+            for(int i=0;i<FIRST_WATCH_ORDER.length;i++)
+                if(FIRST_WATCH_ORDER[i]==attempted)
+                    return FIRST_WATCH_ORDER[(i+1)%FIRST_WATCH_ORDER.length];
+        }
+        return InitialFeedRotationPolicy.nextAfterAttempt(attempted,feedCount,false,false);
+    }
+
+    static int nextFeed(int preferredStart,boolean[] completed,boolean[] attempted,
+            int mainlandEnd,int regionEnd,boolean firstWatch) {
+        if(firstWatch&&completed!=null&&attempted!=null
+                &&completed.length==attempted.length
+                &&completed.length>=FIRST_WATCH_ORDER.length
+                &&mainlandEnd==FIRST_WATCH_ORDER.length
+                &&activeStage(completed,mainlandEnd,regionEnd)==0){
+            int start=0;
+            for(int i=0;i<FIRST_WATCH_ORDER.length;i++)
+                if(FIRST_WATCH_ORDER[i]==preferredStart){start=i;break;}
+            for(int d=0;d<FIRST_WATCH_ORDER.length;d++){
+                int index=FIRST_WATCH_ORDER[(start+d)%FIRST_WATCH_ORDER.length];
+                if(!completed[index]&&!attempted[index])return index;
+            }
+            return -1;
+        }
+        return nextFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd);
+    }
+
     /** 0 mainland, 1 HMT, 2 other regions, 3 all inspected. */
     public static int activeStage(boolean[] completed, int mainlandEnd, int regionEnd) {
         int size = completed == null ? 0 : completed.length;
