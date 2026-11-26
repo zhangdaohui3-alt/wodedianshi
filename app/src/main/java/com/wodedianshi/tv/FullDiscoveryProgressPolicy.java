@@ -112,6 +112,19 @@ public final class FullDiscoveryProgressPolicy {
         return mainlandValidated>0 ? (previous|stagedMask)&ALL_CORE : previous&ALL_CORE;
     }
 
+    static final String THROUGHPUT_STATUS_KEY="source_initial_throughput_status_v1";
+    /** Last committed detection slice only; excludes scheduler waits and commit time. */
+    static String throughputStatus(long preparationMs,long probeMs,long finalizeMs,int checked,int validated,int netChannels,boolean viewing){
+        long prep=Math.max(0L,preparationMs),probe=Math.max(0L,probeMs),finish=Math.max(0L,finalizeMs);
+        long elapsed=prep+probe+finish;
+        int count=Math.max(0,checked);
+        String rate=elapsed>0L?String.format(java.util.Locale.ROOT,"%.1f",count*60000.0/elapsed):"未测得";
+        return "最近已保存检测批次（"+(viewing?"稳定播放低速":"空闲")+"）"
+            +"：准备 "+prep+"ms · 检测/合并 "+probe+"ms · 提交前整理 "+finish+"ms"
+            +"\n处理线路 "+count+" 条 · 预检通过 "+Math.max(0,validated)+" 次 · 暂存频道净增 "+netChannels
+            +"\n本批处理速率 "+rate+" 条/分钟（含复用；不含调度等待、独立目录准备批次及提交耗时）";
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // More frequent early publication, then geometric growth to bound
     // database work. Existing watermark values remain valid on upgrade.
