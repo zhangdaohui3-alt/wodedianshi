@@ -144,6 +144,8 @@ public class HlsWorkerProbeIntegrationTest {
         SourceUpdateWorker.ProbeResult r=runProbe(HIGH,true,true,false,false);
         assertTrue(r.valid);assertFalse(r.socketTimedOut);
         assertEquals(1920,r.width);assertEquals(5000000L,r.bitrate);
+        assertEquals(4L,r.sampleRequests);
+        assertEquals(bytes(MASTER).length+bytes(media("high")).length+2L*transportSample().length,r.sampleBytes);
     }
     @Test public void staleSecondHighSegmentFallsBackToHealthyLow()throws Exception{
         SourceUpdateWorker.ProbeResult r=runProbe(BOTH,false,true,false,false);
@@ -238,6 +240,8 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(result.valid);
             assertTrue(result.transientNetworkFailure);
             assertTrue(result.firstOriginPressure);
+            assertEquals(1L,result.sampleRequests);
+            assertEquals(0L,result.sampleBytes);
             assertFalse(result.firstRequestFailed);
         }finally{serverThread.shutdownNow();}
     }
@@ -278,6 +282,8 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(result.socketTimedOut);
             assertEquals(350,result.score);
             assertTrue(result.provisional);
+            assertEquals(1L,result.sampleRequests);
+            assertEquals(4096L,result.sampleBytes);
         }finally{releaseTail.countDown();serverThread.shutdownNow();}
     }
 }
