@@ -77,6 +77,12 @@ public final class TrackHealthPolicy {
         void reset(){previous=-1L;proven=false;stationary=0;}
     }
 
+    /** A Playing event alone must not dismiss the video startup deadline.
+     * Vout is still only an engine signal, not a rendered-frame guarantee. */
+    static boolean vlcVodStartupConfirmed(boolean playing,boolean videoOutput) {
+        return playing&&videoOutput;
+    }
+
     /** Permission for bounded discovery only, not proof of rendered pixels or audible sound. */
     public static boolean canGrantVlcDiscovery(boolean videoOutput, boolean audioSelected,
             boolean buffering, boolean reportsPlaying, int consecutiveChecks,
