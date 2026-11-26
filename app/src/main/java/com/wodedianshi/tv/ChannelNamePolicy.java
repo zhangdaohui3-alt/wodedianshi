@@ -179,6 +179,79 @@ final class ChannelNamePolicy {
         {"内蒙古","呼和浩特","HOHHOT"},{"西藏","拉萨","LHASA"}
     };
 
+    // Presentation only: never rewrite a persisted channel key or EPG identifier.
+    // Exact, reviewed suffixes avoid translating a brand or guessing a service.
+    private static final String[][] LOCAL_SERVICE_LABELS = {
+        {"NEWS","新闻"},{"NEWSCHANNEL","新闻频道"},{"NEWSTV","新闻"},
+        {"NEWSGENERAL","新闻综合"},{"NEWSCOMPREHENSIVE","新闻综合"},
+        {"GENERAL","综合"},{"GENERALCHANNEL","综合频道"},{"COMPREHENSIVE","综合"},
+        {"COMPREHENSIVECHANNEL","综合频道"},{"PUBLIC","公共"},{"PUBLICCHANNEL","公共频道"},
+        {"CITY","都市"},{"CITYCHANNEL","都市频道"},{"LIFE","生活"},{"LIFECHANNEL","生活频道"},
+        {"ECONOMY","经济"},{"FINANCE","财经"},{"CULTURE","文化"},{"EDUCATION","教育"},
+        {"SPORTS","体育"},{"CHILDREN","少儿"},{"MOVIES","电影"},{"DRAMA","电视剧"},
+        {"TV","电视台"},{"TELEVISION","电视台"}
+    };
+
+    private static String translatedLocalService(String compact, String prefix, String chinese) {
+        // Accept a separated place name or its compact form (e.g. ShenzhenNews).
+        String key=prefix;
+        if(!compact.startsWith(key))return "";
+        String service=compact.substring(key.length());
+        for(String[] pair:LOCAL_SERVICE_LABELS)
+            if(service.equals(pair[0]))return chinese+pair[1];
+        return "";
+    }
+
+    static String canonicalLocalDisplayName(String name,String tvgName,String tvgId,String group) {
+        String raw=name==null?"":name;
+        if(raw.isEmpty()||hasCjkCharacter(raw))return raw;
+        String epg=tvgName==null?"":tvgName.trim();
+        String metadata=raw+" "+epg+" "+(tvgId==null?"":tvgId)+" "+(group==null?"":group);
+        if(RegionCategoryPolicy.isHongKongMacauTaiwan(raw,group))return raw;
+        // Avoid the expensive province classifier for every unrelated international
+        // channel: only consider an explicit translation or a Chinese EPG label.
+        boolean chineseEpg=hasCjkCharacter(epg);
+        String compact=normalize(raw);
+        String translated="", candidateProvince="";
+        for(String[] pair:CITY_FILTER_ALIASES){
+            String label=translatedLocalService(compact,pair[2],pair[1]);
+            if(label.isEmpty())continue;
+            if(candidateProvince.isEmpty()){
+                translated=label;candidateProvince=pair[0];
+            }else if(!candidateProvince.equals(pair[0])){
+                // Shared pinyin needs explicit province evidence, resolved below.
+                candidateProvince="ambiguous";
+                break;
+            }
+        }
+        if(candidateProvince.isEmpty()){
+            for(int i=0;i<PROVINCE_ENGLISH.length;i++){
+                String label=translatedLocalService(compact,PROVINCE_ENGLISH[i].replace(" ",""),LOCAL_CITY_ALIASES[i][0]);
+                if(!label.isEmpty()){translated=label;candidateProvince=LOCAL_CITY_ALIASES[i][0];break;}
+            }
+        }
+        if(!chineseEpg&&candidateProvince.isEmpty())return raw;
+        String province=provinceForLocalChannel(metadata);
+        if(province.isEmpty())return raw;
+        if(chineseEpg&&province.equals(provinceForLocalChannel(epg)))return epg;
+        if("ambiguous".equals(candidateProvince)){
+            for(String[] pair:CITY_FILTER_ALIASES){
+                if(!province.equals(pair[0]))continue;
+                String label=translatedLocalService(compact,pair[2],pair[1]);
+                if(!label.isEmpty())return label;
+            }
+            return raw;
+        }
+        return province.equals(candidateProvince)?translated:raw;
+    }
+
+    static boolean isDomesticLocalLabel(String metadata,boolean chinaScope) {
+        if(!provinceForLocalChannel(metadata).isEmpty())return true;
+        String text=metadata==null?"":metadata.toLowerCase(Locale.ROOT);
+        // Generic "Local" is a worldwide playlist group, not China evidence.
+        return chinaScope&&(text.contains("地方")||text.contains("local"));
+    }
+
     static boolean matchesLocalCity(String metadata, String province, String city) {
         if (metadata == null || province == null || city == null || city.isEmpty()) return false;
         if (!province.equals(provinceForLocalChannel(metadata))) return false;
