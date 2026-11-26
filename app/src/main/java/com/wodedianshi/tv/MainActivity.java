@@ -1409,7 +1409,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         details.setNeutralButton("停止直播，继续抓源",(d,w)->stopLiveForInitialDiscovery());
       details.show();
     });
-    initialDiscoveryProgressPanel.setFocusable(false);
+    // The entire progress card is one remote/touch target; neither the title
+    // nor the progress bar should take focus away from its click action.
+    initialDiscoveryProgressPanel.setId(View.generateViewId());
+    initialDiscoveryProgressPanel.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    initialDiscoveryProgressPanel.setFocusable(true);
+    initialDiscoveryProgressPanel.setClickable(true);
+    initialDiscoveryProgressPanel.setOnFocusChangeListener((v,focused)->{
+      v.setBackground(makeButtonBg(Color.rgb(25,40,64),focused));
+    });
+    // Up from either enabled paging button, or down from search, reaches
+    // progress while visible. Android skips the target once it is GONE.
+    search.setNextFocusDownId(initialDiscoveryProgressPanel.getId());
+    livePreviousPageButton.setNextFocusUpId(initialDiscoveryProgressPanel.getId());
+    liveNextPageButton.setNextFocusUpId(initialDiscoveryProgressPanel.getId());
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
