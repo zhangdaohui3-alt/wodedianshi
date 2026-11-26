@@ -18,7 +18,13 @@ import java.util.List;
  * directly to the next record instead of reparsing the entire prefix.
  */
 public final class PlaylistFeedIndex {
-    private static final int OFFSET_INDEX_MAGIC = 0x4D545649; // MTVI
+    private static final int LEGACY_OFFSET_INDEX_MAGIC = 0x4D545649; // MTVI
+    private static final int OFFSET_INDEX_MAGIC = 0x4D54564A; // MTVJ: length-prefixed UTF-8
+    private static final int MAX_FIELD_BYTES = 1024 * 1024;
+
+    private static boolean supportedMagic(int magic) {
+        return magic == LEGACY_OFFSET_INDEX_MAGIC || magic == OFFSET_INDEX_MAGIC;
+    }
     private static final long OFFSET_HEADER_BYTES = 12L;
 
     private PlaylistFeedIndex() { }
@@ -93,7 +99,7 @@ public final class PlaylistFeedIndex {
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
         if (!isUsableIndex(records, offsets)) return -1;
         try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
-            if (input.readInt() != OFFSET_INDEX_MAGIC) return -1;
+            if (!supportedMagic(input.readInt())) return -1;
             long count = input.readLong();
             return count >= 0L && count <= Integer.MAX_VALUE ? (int)count : -1;
         } catch (IOException ignored) {
@@ -107,7 +113,8 @@ public final class PlaylistFeedIndex {
         List<PlaylistParser.ChannelSource> page = new ArrayList<>();
         try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r");
              RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
-            if (offsetFile.readInt() != OFFSET_INDEX_MAGIC) {
+            int magic = offsetFile.readInt();
+            if (!supportedMagic(magic)) {
                 throw new IOException("Playlist index header is invalid");
             }
             long count = offsetFile.readLong();
@@ -138,7 +145,7 @@ public final class PlaylistFeedIndex {
                 }
                 previousOffset = recordOffset;
                 recordFile.seek(recordOffset);
-                PlaylistParser.ChannelSource source=readRecord(recordFile);
+                PlaylistParser.ChannelSource source=readRecord(recordFile,magic,nextOffset);
                 if(recordFile.getFilePointer()!=nextOffset)
                     throw new IOException("Playlist record does not match indexed boundary");
                 page.add(source);
@@ -154,7 +161,7 @@ public final class PlaylistFeedIndex {
             return false;
         }
         try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
-            if (input.readInt() != OFFSET_INDEX_MAGIC) return false;
+            if (!supportedMagic(input.readInt())) return false;
             long count = input.readLong();
             return count >= 0L && count <= Integer.MAX_VALUE
                     && offsets.length() == OFFSET_HEADER_BYTES + count * 8L
@@ -201,7 +208,7 @@ public final class PlaylistFeedIndex {
                 }
             }, paused);
             SourceProbeTimePolicy.checkPaused(paused);
-             offsetFile.seek(4L);
+            offsetFile.seek(4L);
             offsetFile.writeLong(written[0]);
             if (offsetFile.length() != OFFSET_HEADER_BYTES + written[0] * 8L) {
                 throw new IOException("Playlist index offset count mismatch");
@@ -242,16 +249,37 @@ public final class PlaylistFeedIndex {
 
     private static void writeRecord(RandomAccessFile output,
                                     PlaylistParser.ChannelSource source) throws IOException {
-        output.writeUTF(source.name);
-        output.writeUTF(source.url);
-        output.writeUTF(source.group);
-        output.writeUTF(source.tvgId);
-        output.writeUTF(source.tvgName);
+        writeField(output,source.name);
+        writeField(output,source.url);
+        writeField(output,source.group);
+        writeField(output,source.tvgId);
+        writeField(output,source.tvgName);
     }
 
-    private static PlaylistParser.ChannelSource readRecord(RandomAccessFile input)
+    private static void writeField(RandomAccessFile output,String value)throws IOException {
+        if(value.length()>MAX_FIELD_BYTES)throw new IOException("Playlist index field exceeds size limit");
+        byte[] bytes=value.getBytes(StandardCharsets.UTF_8);
+        if(bytes.length>MAX_FIELD_BYTES)throw new IOException("Playlist index field exceeds size limit");
+        output.writeInt(bytes.length);
+        output.write(bytes);
+    }
+
+    private static String readField(RandomAccessFile input,long boundary)throws IOException {
+        if(boundary-input.getFilePointer()<4L)throw new IOException("Missing playlist field length");
+        int length=input.readInt();
+        if(length<0||length>MAX_FIELD_BYTES||length>boundary-input.getFilePointer())
+            throw new IOException("Invalid playlist field length");
+        byte[] bytes=new byte[length];
+        input.readFully(bytes);
+        return new String(bytes,StandardCharsets.UTF_8);
+    }
+
+    private static PlaylistParser.ChannelSource readRecord(RandomAccessFile input,int magic,long boundary)
             throws IOException {
-        return PlaylistParser.indexedSource(input.readUTF(), input.readUTF(),
-                input.readUTF(), input.readUTF(), input.readUTF());
+        if(magic==LEGACY_OFFSET_INDEX_MAGIC)
+            return PlaylistParser.indexedSource(input.readUTF(), input.readUTF(),
+                    input.readUTF(), input.readUTF(), input.readUTF());
+        return PlaylistParser.indexedSource(readField(input,boundary),readField(input,boundary),
+                readField(input,boundary),readField(input,boundary),readField(input,boundary));
     }
 }
