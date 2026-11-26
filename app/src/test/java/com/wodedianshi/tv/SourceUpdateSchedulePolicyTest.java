@@ -100,6 +100,16 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,true,true));
     }
 
+    @Test public void committedInitialContinuationAvoidsEmptyProgressSpin() {
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,true,false,false,0,true));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,true,false,false,0,false));
+        assertEquals(0L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,true,false,false,5,true));
+        assertEquals(0L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,true,false,true,0,false));
+        assertEquals(0L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,false,true,true,0,false));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(false,false,false,true,0,false));
+        assertEquals(5L,SourceUpdateSchedulePolicy.initialCommittedContinuationDelay(true,true,false,false,0,false));
+    }
+
     @Test public void idleSliceDeadlineIsMonotonicAndDoesNotInterruptPacedViewing() {
         assertFalse(SourceUpdateSchedulePolicy.initialIdleSliceExpired(true,false,1000,240999));
         assertTrue(SourceUpdateSchedulePolicy.initialIdleSliceExpired(true,false,1000,241000));
