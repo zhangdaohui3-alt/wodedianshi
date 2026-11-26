@@ -4621,8 +4621,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return false;
   }
   private int findChannelIndexByKey(String key){
+    return findChannelIndexByKey(key,-1);
+  }
+  private int findChannelIndexByKey(String key,int hint){
     if(key==null)return -1;
     synchronized(channels){
+      // A rendered row already owns a position. Trust it only when the
+      // current catalogue still contains the exact same key at that position.
+      if(hint>=0&&hint<channels.size()){
+        Channel candidate=channels.get(hint);
+        if(candidate!=null&&key.equals(candidate.key()))return hint;
+      }
       for(int i=0;i<channels.size();i++){
         Channel c=channels.get(i);
         if(c!=null&&key.equals(c.key()))return i;
@@ -4672,8 +4681,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
 
-  private void playChannelByKey(String key){
-    int index=findChannelIndexByKey(key);
+  private void playChannelByKey(String key,int hint){
+    int index=findChannelIndexByKey(key,hint);
     if(index>=0)play(index);
   }
   private void playChannelSourceByKey(String key,String sourceUrl){
@@ -5011,9 +5020,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
       b.setContentDescription(channelKey.equals(selectedKey)?"当前正在播放："+title:title);
       b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));
-      b.setOnClickListener(v->playChannelByKey(channelKey));
+      b.setOnClickListener(v->playChannelByKey(channelKey,currentIndex));
       b.setOnLongClickListener(v->{
-        int current=findChannelIndexByKey(channelKey);if(current<0)return true;
+        int current=findChannelIndexByKey(channelKey,currentIndex);if(current<0)return true;
         Channel latest;
         synchronized(channels){latest=current<channels.size()?channels.get(current):null;if(latest==null||!channelKey.equals(latest.key()))return true;}
         ArrayList<String> sourceUrls=latest.backups==null?new ArrayList<>():new ArrayList<>(latest.backups);
