@@ -305,6 +305,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // The directory filter publishes the one order shared by rows and remote zapping.
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
   private String directoryFilterInFlightKey;
+  private final LiveDirectoryTouchGate liveDirectoryTouchGate=new LiveDirectoryTouchGate();
+  private void publishFilteredDirectory(long generation,Runnable publication){
+    if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration)return;
+    if(liveDirectoryTouchGate.defer(()->publishFilteredDirectory(generation,publication)))return;
+    publication.run();
+  }
+  private void finishLiveDirectoryTouch(){
+    Runnable pending=liveDirectoryTouchGate.end();
+    // Let the Button's queued performClick run before replacing its view.
+    if(pending!=null)uiHandler.post(pending);
+  }
   // If a cache rebuild is needed during fullscreen zapping, queue the key off-thread
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
@@ -1452,7 +1463,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
     liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
-    list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this);channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
+    list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this){
+      @Override public boolean dispatchTouchEvent(MotionEvent event){
+        int action=event.getActionMasked();
+        if(action==MotionEvent.ACTION_DOWN)liveDirectoryTouchGate.begin();
+        boolean handled=super.dispatchTouchEvent(event);
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL
+            ||(action==MotionEvent.ACTION_DOWN&&!handled))finishLiveDirectoryTouch();
+        return handled;
+      }
+      @Override protected void onDetachedFromWindow(){
+        finishLiveDirectoryTouch();super.onDetachedFromWindow();
+      }
+    };channelScroll.setFocusable(false);channelScroll.addView(list);channelPane.addView(channelScroll,new LinearLayout.LayoutParams(-1,0,1));
     LinearLayout main=new LinearLayout(this);mainPane=main;main.setOrientation(1);main.setPadding(dp(10),0,0,0);
     info=new TextView(this);playbackInfo=info;info.setText("欢迎使用我的电视\\n请从左侧选择栏目，或在设置中导入你有权使用的直播源。");info.setTextColor(Color.WHITE);info.setTextSize(16);info.setPadding(dp(8),dp(8),dp(8),dp(8));info.setOnClickListener(v->showLiveDiagnostics());info.setContentDescription("点击查看直播诊断信息");main.addView(info,new LinearLayout.LayoutParams(-1,dp(62)));
     liveStage=new FrameLayout(this){
@@ -4636,7 +4659,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
-        runOnUiThread(()->{
+        runOnUiThread(()->publishFilteredDirectory(generation,()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           directoryFilterInFlightKey=null;
           if(!orderKey.equals(currentDirectoryOrderKey())
@@ -4660,7 +4683,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             clearPendingRemoteZap();
             if(canApplyRemoteZap())applyChannelZap(ready,steps);
           }
-        });
+        }));
       }catch(Throwable failure){
         android.util.Log.e("MyTVCatalogue","background catalogue filter failed category="+categorySnapshot+" scanned="+scanned+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt),failure);
         runOnUiThread(()->{
