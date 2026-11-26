@@ -42,11 +42,12 @@ public final class DiscoveryBatchPolicy {
                     &&checkedUrls<144&&stagedChannels<96);
     }
 
-    // Only combine quick acquisition with the bounded six-request first-watch
-    // slice. Slow downloads and stable viewing retain separate work requests.
-    static boolean canProbeAfterQuickAcquisition(boolean early,boolean viewing,
+    // A quickly acquired nonempty directory can enter the ordinary bounded
+    // probe path in the same idle slice, including after first watch. Slow
+    // acquisition and stable viewing retain separate work requests.
+    static boolean canProbeAfterQuickAcquisition(boolean viewing,
             int indexedEntries,long elapsedMs) {
-        return early&&!viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
+        return !viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
     }
 
     /** Stop only at a drained wave boundary after a first useful mainland
