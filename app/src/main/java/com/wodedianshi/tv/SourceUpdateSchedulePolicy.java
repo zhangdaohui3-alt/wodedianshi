@@ -29,6 +29,15 @@ public final class SourceUpdateSchedulePolicy {
 
     static final String PROVISIONAL_RECHECK_KEY="source_probe_provisional_recheck_v1";
     static final int PROVISIONAL_RECHECK_CAP=2048;
+    static final String PROVISIONAL_RECHECK_LAST_KEY="source_probe_provisional_recheck_last_v1";
+    static final int PROVISIONAL_DAILY_LIMIT=6;
+
+    /** Only the existing idle eligibility worker may run this extra small
+     * quality-only batch. Ordinary full maintenance takes precedence. */
+    static boolean provisionalRecheckDue(boolean pending,long last,long now){
+        return pending&&now>0L&&(last<=0L||now<last||now-last>=24L*60L*60L*1000L);
+    }
+
 
     /** Bounded insertion-order evidence list; retry attempts can move a key to
      * the tail without extending the normal saved-source rotation. */
