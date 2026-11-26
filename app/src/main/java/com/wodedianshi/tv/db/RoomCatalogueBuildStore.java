@@ -235,6 +235,94 @@ public final class RoomCatalogueBuildStore {
         return ready[0];
     }
 
+    // The existing index is populated transactionally for every new/touched
+    // initial row. Legacy blank identities can be repaired in bounded batches.
+    public static boolean initialIndexReady(Context context,int count,String revision){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        return db.appStateDao().getValue(MANUAL_OWNER_KEY)==null
+            &&java.util.Objects.equals(revision,db.appStateDao().getValue(STAGING_REVISION_KEY))
+            &&db.channelDao().countCatalogueBuildRows()==count
+            &&db.channelDao().countUnindexedCatalogueBuildRows()==0;
+    }
+
+    public static void backfillInitialIndex(Context context,int count,String revision,
+            BooleanSupplier paused)throws JSONException{
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        java.util.LinkedHashMap<String,String> keys=new java.util.LinkedHashMap<>();
+        for(CatalogueBuildRowEntity row:db.channelDao().getUnindexedCatalogueBuildRows(256)){
+            checkPause(paused);
+            keys.put(row.rowId,mergeIdentity(new JSONObject(row.recordJson)));
+        }
+        if(keys.isEmpty())return;
+        db.runInTransaction(()->{
+            checkPause(paused);
+            if(db.appStateDao().getValue(MANUAL_OWNER_KEY)!=null
+                    ||!java.util.Objects.equals(revision,db.appStateDao().getValue(STAGING_REVISION_KEY))
+                    ||db.channelDao().countCatalogueBuildRows()!=count)
+                throw new IllegalStateException("Initial staging changed during identity backfill");
+            for(java.util.Map.Entry<String,String> key:keys.entrySet()){
+                checkPause(paused);
+                if(db.channelDao().setCatalogueBuildIdentity(key.getKey(),key.getValue())!=1)
+                    throw new IllegalStateException("Missing staging identity row");
+            }
+            checkPause(paused);
+        });
+    }
+
+    public static List<CatalogueBuildRowEntity> readInitialByIdentity(Context context,int count,
+            String revision,java.util.Collection<String> identities,BooleanSupplier paused){
+        if(!initialIndexReady(context,count,revision))throw new IllegalStateException("Initial index not ready");
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        List<CatalogueBuildRowEntity> result=new ArrayList<>();
+        List<String> keys=new ArrayList<>(new java.util.LinkedHashSet<>(identities));
+        for(int i=0;i<keys.size();i+=256){
+            checkPause(paused);
+            result.addAll(db.channelDao().getCatalogueBuildRowsByIdentity(keys.subList(i,Math.min(i+256,keys.size()))));
+        }
+        result.sort(java.util.Comparator.comparingInt((CatalogueBuildRowEntity row)->row.sortOrder).thenComparing(row->row.rowId));
+        checkPause(paused);
+        if(!initialIndexReady(context,count,revision))throw new IllegalStateException("Initial index changed during read");
+        return result;
+    }
+
+    public static int commitInitialIndexed(Context context,int baseCount,String revision,
+            List<Integer> existing,JSONArray working,java.util.Set<Integer> touched,
+            BooleanSupplier paused,AppStateEditor progress)throws JSONException{
+        validateTouchedRows(existing.size(),working.length(),touched);
+        if(baseCount<=0||new java.util.HashSet<>(existing).size()!=existing.size())
+            throw new IllegalArgumentException("Invalid indexed initial staging base");
+        for(int i=0;i<existing.size();i++)indexedRowPosition(baseCount,existing,i);
+        ArrayList<CatalogueBuildRowEntity> changed=new ArrayList<>();
+        for(int local:touched){
+            checkPause(paused);
+            JSONObject record=working.getJSONObject(local);
+            if(record.optString("name","").trim().isEmpty()||record.optString("url","").trim().isEmpty())
+                throw new JSONException("Invalid indexed initial row");
+            int position=indexedRowPosition(baseCount,existing,local);
+            CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(
+                String.format(java.util.Locale.ROOT,"row-%08d",position),position,record.toString());
+            entity.mergeIdentity=mergeIdentity(record);
+            changed.add(entity);
+        }
+        int finalCount=Math.addExact(baseCount,working.length()-existing.size());
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        db.runInTransaction(()->{
+            checkPause(paused);
+            if(!initialIndexReady(context,baseCount,revision))
+                throw new IllegalStateException("Indexed initial staging base changed");
+            for(int i=0;i<changed.size();i+=64){
+                checkPause(paused);
+                db.channelDao().insertCatalogueBuildRows(changed.subList(i,Math.min(i+64,changed.size())));
+            }
+            if(db.channelDao().countCatalogueBuildRows()!=finalCount
+                    ||db.channelDao().countUnindexedCatalogueBuildRows()!=0)
+                throw new IllegalStateException("Indexed initial staging count mismatch");
+            progress.applyInTransaction(db);
+            checkPause(paused);
+        });
+        return finalCount;
+    }
+
     /** Returns matching rows in original order; duplicate identities remain distinct. */
     public static List<CatalogueBuildRowEntity> readManualByIdentity(Context context,String owner,
             java.util.Collection<String> identities,BooleanSupplier paused){
