@@ -149,9 +149,9 @@ public class SourceUpdateWorker extends Worker {
         existing.add(source.url);
       if(existing.size()>=MAX_SOURCES_PER_CHANNEL)
         return new SingleRefreshResult(SingleRefreshResult.Status.FULL,0,0,0,0,expectedVersion,false);
-      SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(
-          context,new SingleChannelCandidateSearch.Target(row.name,row.groupName,row.tvgId,row.tvgName),
-          existing,paused);
+      SingleChannelCandidateSearch.Target target=new SingleChannelCandidateSearch.Target(row.name,row.groupName,row.tvgId,row.tvgName);
+      SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(context,target,existing,paused);
+      SingleChannelCandidateSearch.tryOnlineFallback(found,target,existing,viewing,paused);
       final long stageDeadline=android.os.SystemClock.elapsedRealtime()+(viewing?30000L:60000L);
       final int limit=viewing?2:4;
       int checked=0;
