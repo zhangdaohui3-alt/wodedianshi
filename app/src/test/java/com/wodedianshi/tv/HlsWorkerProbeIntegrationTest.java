@@ -241,4 +241,42 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(result.firstRequestFailed);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void idleDirectTsUsesProvisionalScreeningWithoutWaitingForFullBody()throws Exception{
+        CountDownLatch releaseTail=new CountDownLatch(1);
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    assertTrue(reader.readLine().startsWith("GET /live.ts "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    byte[] sample=new byte[4096];
+                    for(int i=0;i<8;i++){
+                        int at=i*188;
+                        sample[at]=0x47;sample[at+2]=0x20;sample[at+3]=0x10;
+                    }
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n"
+                            +"Content-Length: 32768\r\nConnection: close\r\n\r\n"));
+                    out.write(sample);out.flush();
+                    assertTrue(releaseTail.await(12,TimeUnit.SECONDS));
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result;
+            try{
+                result=SourceUpdateWorker.probe("http://127.0.0.1:"+server.getLocalPort()+"/live.ts",
+                        SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            }finally{releaseTail.countDown();}
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(result.valid);
+            assertFalse(result.socketTimedOut);
+            assertEquals(350,result.score);
+        }finally{releaseTail.countDown();serverThread.shutdownNow();}
+    }
 }
