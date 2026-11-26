@@ -56,6 +56,14 @@ public final class SourceUpdateSchedulePolicy {
                 && now - measuredAt <= (valid ? 300_000L : 15_000L);
     }
 
+    /** A positive completed media preflight can survive owner cancellation,
+     * but never use a timed-out, unfinished or cancelled result as evidence. */
+    static boolean mayRetainCompletedInitialSuccess(boolean valid,boolean socketTimedOut,
+            long finishedAt,long addressDeadline,long batchDeadline) {
+        return valid&&!socketTimedOut&&finishedAt>=0L
+                &&finishedAt<addressDeadline&&finishedAt<batchDeadline;
+    }
+
     /** Do not make a different, unfailed directory inherit the failed one's
      * retry delay. Retain backoff for repeated failure, no eligible successor,
      * and every viewing slice. Called after the durable outcome commits. */
