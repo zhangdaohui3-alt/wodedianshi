@@ -319,10 +319,10 @@ public final class RoomCatalogueBuildStore {
         // A rebuild may span hundreds of WorkManager runs. Compare against the
         // existing staging rows and write only changed JSON records instead of
         // deleting/reinserting the entire growing catalogue after every batch.
-        java.util.HashMap<String, String> existingJson = new java.util.HashMap<>();
+        java.util.HashMap<String, CatalogueBuildRowEntity> existingRows = new java.util.HashMap<>();
         for (CatalogueBuildRowEntity row : dao.getCatalogueBuildRows()) {
             checkPause(paused);
-            existingJson.put(row.rowId, row.recordJson);
+            existingRows.put(row.rowId, row);
         }
         ArrayList<CatalogueBuildRowEntity> changedRows = new ArrayList<>();
         for (int i = 0; i < snapshot.length(); i++) {
@@ -334,9 +334,15 @@ public final class RoomCatalogueBuildStore {
             }
             String rowId = String.format(java.util.Locale.ROOT, "row-%08d", i);
             String recordJson = record.toString();
-            if (!recordJson.equals(existingJson.get(rowId))) {
+            // Initial discovery uses the same durable merge identity as the
+            // manual staging path. Repair missing/stale identities even when
+            // JSON is unchanged; old installations need no schema migration.
+            String identity=mergeIdentity(record);
+            CatalogueBuildRowEntity old=existingRows.get(rowId);
+            if (old==null||!recordJson.equals(old.recordJson)||!identity.equals(old.mergeIdentity)
+                    ||old.sortOrder!=i) {
                 CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(rowId,i,recordJson);
-                if(manualOwner!=null)entity.mergeIdentity=mergeIdentity(record);
+                entity.mergeIdentity=identity;
                 changedRows.add(entity);
             }
         }
@@ -480,7 +486,9 @@ public final class RoomCatalogueBuildStore {
                 throw new JSONException("Invalid incremental build row "+i);
             CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(
                 String.format(java.util.Locale.ROOT,"row-%08d",i),i,record.toString());
-            if(manualOwner!=null)entity.mergeIdentity=mergeIdentity(record);
+            // Keep the initial staging index current in the same transaction
+            // as touched rows and progress; never index an uncommitted candidate.
+            entity.mergeIdentity=mergeIdentity(record);
             changed.add(entity);
         }
         AppDatabase db=RoomDatabaseProvider.get(context);
