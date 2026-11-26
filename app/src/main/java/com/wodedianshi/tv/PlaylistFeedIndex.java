@@ -132,11 +132,13 @@ public final class PlaylistFeedIndex {
                 if(previousOffset<0L||previousOffset>=recordsLength)
                     throw new IOException("Previous playlist offset is invalid");
             }
+            // The offset immediately after one row is the next row's start.
+            // Read it once, then carry it forward; no repeated seek/read per row.
+            offsetFile.seek(OFFSET_HEADER_BYTES+((long)startEntry)*8L);
+            long recordOffset=offsetFile.readLong();
             for (int i = 0; i < emitted; i++) {
                 SourceProbeTimePolicy.checkPaused(paused);
                 long entry=(long)startEntry+i;
-                offsetFile.seek(OFFSET_HEADER_BYTES+entry*8L);
-                long recordOffset = offsetFile.readLong();
                 long nextOffset=entry+1L<count?offsetFile.readLong():recordsLength;
                 if (recordOffset <= previousOffset || recordOffset < 0L
                         || recordOffset >= recordsLength || (entry==0L&&recordOffset!=0L)
@@ -144,11 +146,15 @@ public final class PlaylistFeedIndex {
                     throw new IOException("Playlist index offset is invalid");
                 }
                 previousOffset = recordOffset;
-                recordFile.seek(recordOffset);
+                if(i==0)recordFile.seek(recordOffset);
+                // Prior record's verified end must be the current record's start.
+                if(recordFile.getFilePointer()!=recordOffset)
+                    throw new IOException("Playlist record start does not match indexed boundary");
                 PlaylistParser.ChannelSource source=readRecord(recordFile,magic,nextOffset);
                 if(recordFile.getFilePointer()!=nextOffset)
                     throw new IOException("Playlist record does not match indexed boundary");
                 page.add(source);
+                recordOffset=nextOffset;
             }
         }
         return page;
