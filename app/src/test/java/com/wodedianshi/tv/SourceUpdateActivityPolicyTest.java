@@ -1,0 +1,128 @@
+package com.wodedianshi.tv;
+
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class SourceUpdateActivityPolicyTest {
+    @Test public void recoveryRequiresSeparateHealthSamplesAndExpiredLeaseCannotRevive(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            SourceUpdateActivityPolicy.reportStableLive(1001L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1001L));
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(11000L));
+            long generation=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            SourceUpdateActivityPolicy.reportStableLive(27000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(27000L));
+            assertTrue(SourceUpdateActivityPolicy.stableRevocationGeneration()>generation);
+            SourceUpdateActivityPolicy.reportStableLive(37000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37000L));
+            SourceUpdateActivityPolicy.notePressure(37001L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37001L));
+            SourceUpdateActivityPolicy.reportStableLive(38000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(38000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+    @Test public void confirmedVlcPairGrantsBoundedLeaseButNeverRevivesExpiredOwner(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(1000L,1);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(1000L));
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(13000L,2);
+            long old=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(27999L,old));
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(28000L,2);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28000L,old));
+            long replacement=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28000L,replacement));
+            SourceUpdateActivityPolicy.notePressure(28001L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(28001L,replacement));
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(49000L,2);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(49000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+    @Test public void handoffClearsViewingOnlyWhenNoOwnerOrContinuationRemains(){
+        assertTrue(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(true,false,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,true,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,true,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,true,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,true,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,false));
+    }
+    @Test public void expiredViewingLeaseCannotAuthorizeOldWorkerAfterReplacement(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            long old=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(25999L,old));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(26000L,old));
+            assertTrue(SourceUpdateActivityPolicy.stableRevocationGeneration()>old);
+            SourceUpdateActivityPolicy.reportStableLive(27000L);
+            SourceUpdateActivityPolicy.reportStableLive(37000L);
+            long replacement=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37000L,replacement));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(37000L,old));
+            SourceUpdateActivityPolicy.reportStableLive(47000L);
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(47000L,replacement));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+    @Test public void inputInvalidatesOnlyAdmittedIdleWaveGeneration(){
+        long admitted=SourceUpdateActivityPolicy.pressureGeneration();
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(admitted));
+        SourceUpdateActivityPolicy.notePressure(100000L);
+        assertTrue(SourceUpdateActivityPolicy.idleWavePressureChanged(admitted));
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(-1L));
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(SourceUpdateActivityPolicy.pressureGeneration()));
+    }
+    @Test public void idleConcurrencyRecoversInSteps(){
+        try{
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.notePressure(100000L);
+            assertEquals(1,SourceUpdateActivityPolicy.idleProbeConcurrency(150000L));
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.notePressure(150000L);
+            assertEquals(1,SourceUpdateActivityPolicy.idleProbeConcurrency(154999L));
+            assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(155000L));
+            assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(169999L));
+            assertEquals(4,SourceUpdateActivityPolicy.idleProbeConcurrency(170000L));
+            assertEquals(6,SourceUpdateActivityPolicy.idleProbeConcurrency(170000L,true));
+            assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(169999L,true));
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            assertEquals(1,SourceUpdateActivityPolicy.idleProbeConcurrency(180000L,true));
+        }finally{SourceUpdateActivityPolicy.setPlaybackActive(false);SourceUpdateActivityPolicy.setActivityActive(false);}
+    }
+    @Test public void viewingFlagsAreIndependentAndCanBeCleared() {
+        try {
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            assertTrue(SourceUpdateActivityPolicy.isActivityActive());
+            assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+            assertFalse(SourceUpdateActivityPolicy.isActivityActive());
+            assertTrue(SourceUpdateActivityPolicy.isPlaybackActive());
+        } finally {
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+        assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
+        assertFalse(SourceUpdateActivityPolicy.isActivityActive());
+    }
+}
