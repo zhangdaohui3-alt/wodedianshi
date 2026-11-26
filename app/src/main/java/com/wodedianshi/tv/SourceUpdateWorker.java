@@ -1217,10 +1217,8 @@ public class SourceUpdateWorker extends Worker {
         nextBatchScanned=transientRecheck;
         transientRecheck=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
         // Recheck only in idle; never loop on an unavailable server during playback.
-        if(slowPlayback){
-          viewingDeferred=true;
-          update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
-        }
+        update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
+        if(slowPlayback)viewingDeferred=true;
         android.util.Log.i("MyTVSourceDiscovery","transient_page_recheck feed="+pageFeed
             +" resume_position="+nextBatchScanned);
       }
