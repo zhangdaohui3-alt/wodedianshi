@@ -21,6 +21,10 @@ final class IdleProbeWavePolicy {
         // the first-build 15s address cap). Avoid speculative waves near its end.
         return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
     }
+    /** Only rows that provably cannot start a fresh probe may be bridged. */
+    static boolean canBridgeKnownRow(boolean http,boolean measured) {
+        return !http||measured;
+    }
     private final int maxConcurrent;
     IdleProbeWavePolicy(){this(ORDINARY_CONCURRENT);}
     IdleProbeWavePolicy(int limit){maxConcurrent=Math.max(1,Math.min(MAX_CONCURRENT,limit));}
