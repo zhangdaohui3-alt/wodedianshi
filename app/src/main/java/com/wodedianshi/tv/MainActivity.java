@@ -6840,6 +6840,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           &&player.isPlaying()&&canGrantStableDiscoveryUi()){
         boolean alreadyPermitted=SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now);
         SourceUpdateActivityPolicy.reportStableLive(now);
+        SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(now,player.getTotalBufferedDuration());
         if(!alreadyPermitted&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now))
           android.util.Log.i("MyTVSourceDiscovery","MEDIA3_DISCOVERY_PERMITTED bounded low-priority discovery");
       }else SourceUpdateActivityPolicy.revokeStableLive();
