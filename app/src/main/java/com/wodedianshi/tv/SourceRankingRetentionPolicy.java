@@ -36,6 +36,19 @@ public final class SourceRankingRetentionPolicy {
         return new ArrayList<>(retained);
     }
 
+    /** Select only surplus keys after the caller chooses its protected/recent
+     * and fallback set. Do not copy or rewrite values which will be retained. */
+    static List<String> surplusScoreKeys(java.util.Iterator<String> keys,
+            java.util.Set<String> keep,java.util.function.BooleanSupplier paused) {
+        List<String> surplus=new ArrayList<>();
+        while(keys.hasNext()){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            String key=keys.next();
+            if(!keep.contains(key))surplus.add(key);
+        }
+        return surplus;
+    }
+
     /** A list merge can shift or deduplicate the selected URL; never reuse its old index. */
     static int restoreSelectedIndex(List<String> urls,String selected){
         if(urls==null||selected==null||selected.isEmpty())return 0;
