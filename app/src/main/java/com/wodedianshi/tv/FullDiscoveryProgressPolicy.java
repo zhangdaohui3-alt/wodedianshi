@@ -112,6 +112,18 @@ public final class FullDiscoveryProgressPolicy {
         return mainlandValidated>0 ? (previous|stagedMask)&ALL_CORE : previous&ALL_CORE;
     }
 
+    static final String INITIAL_BUILD_STARTED_AT_KEY="source_initial_build_started_at_v1";
+    /** Calendar elapsed time, not CPU or network time. Older builds have no
+     * trustworthy start timestamp; never invent one at upgrade. */
+    static String buildDurationStatus(long started,long completed,boolean active,long now){
+        if(started<=0L)return "首次建库总历时：无起始记录（旧版或尚未开始）";
+        if(completed<=0L&&!active)return "首次建库总历时：本轮未完成，暂无完整记录";
+        long end=completed>0L?completed:now;
+        if(end<started)return "首次建库总历时：设备时间异常，无法计算";
+        long seconds=(end-started)/1000L;
+        return "首次建库"+(completed>0L?"完成历时":"已历时")+"："+(seconds/3600L)+"小时"
+            +((seconds/60L)%60L)+"分"+(seconds%60L)+"秒（含暂停、调度、退出期间；受系统时间调整影响）";
+    }
     static final String THROUGHPUT_STATUS_KEY="source_initial_throughput_status_v1";
     /** Last committed detection slice only; excludes scheduler waits and commit time. */
     static String throughputStatus(long preparationMs,long probeMs,long finalizeMs,int checked,int validated,int netChannels,boolean viewing){
