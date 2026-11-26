@@ -100,6 +100,18 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,true,true));
     }
 
+    @Test public void missingInitialChainRecoveryOnlyForStaleActiveIdleBuild() {
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(179999,true,false,false,false,true,true,false));
+        assertTrue(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,false,false,true,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,false,false,false,false,true,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,true,false,false,true,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,true,false,true,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,false,true,true,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,false,false,false,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,false,false,true,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(180000,true,false,false,false,true,true,true));
+    }
+
     @Test public void inlineInitialWorkRequiresCommittedProgressAndIdleBudget() {
         assertTrue(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,false,true,0));
         assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(2,1000,false,false,false,true,0));
