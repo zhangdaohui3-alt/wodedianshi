@@ -150,6 +150,18 @@ public final class DiscoveryBatchPolicy {
         }
         return (earliest+999L)/1000L;
     }
+    /** When no region has eligible work, wake at the first cooling feed
+     * anywhere. Selection will still prefer mainland when it is eligible.
+     * A missing/inconsistent cooldown retains the conservative retry delay. */
+    static long earliestEligibleCooldownSeconds(boolean[] completed,long[] remaining) {
+        if(completed==null||remaining==null||completed.length!=remaining.length)return 30L;
+        long earliest=TRANSIENT_RECHECK_COOLDOWN_MS;
+        for(int i=0;i<completed.length;i++)if(!completed[i]){
+            if(remaining[i]<=0L)return 30L;
+            earliest=Math.min(earliest,remaining[i]);
+        }
+        return (earliest+999L)/1000L;
+    }
     static int resumeTransientRecheck(boolean sameFingerprint,int marker,int scanned) {
         if(!sameFingerprint)return NO_TRANSIENT_RECHECK;
         if(marker==TRANSIENT_RECHECK_USED)return marker;
