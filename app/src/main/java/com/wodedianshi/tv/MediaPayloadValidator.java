@@ -12,6 +12,13 @@ public final class MediaPayloadValidator {
         return hasTransportStreamPackets(data) || hasIsoBmffMediaFragment(data);
     }
 
+    /** Confirmation-only reads may stop at positive TS evidence or a fragment
+     * with a complete moof and an mdat header plus at least one payload byte.
+     * Header-only fMP4 is not sufficient to shorten the HTTP sample. */
+    static boolean hasConfirmedHlsPrefix(byte[] data) {
+        return hasTransportStreamPackets(data) || hasIsoBmffMediaFragment(data,true);
+    }
+
     /** Positive TS packet evidence remains valid when more bytes are appended. */
     static boolean hasTransportStreamPackets(byte[] data) {
         if (data == null || data.length < 376) return false;
@@ -73,6 +80,10 @@ public final class MediaPayloadValidator {
      * but its complete box header must be present and structurally valid.
      */
     public static boolean hasIsoBmffMediaFragment(byte[] data) {
+        return hasIsoBmffMediaFragment(data,false);
+    }
+
+    private static boolean hasIsoBmffMediaFragment(byte[] data,boolean requirePayloadByte) {
         if (data == null || data.length < 16) return false;
         int offset = 0;
         boolean hasMovieFragment = false;
@@ -93,7 +104,8 @@ public final class MediaPayloadValidator {
                 if (size > data.length - offset) return false;
                 hasMovieFragment = true;
             } else if ("mdat".equals(type)) {
-                return hasMovieFragment;
+                return hasMovieFragment && (!requirePayloadByte
+                        || (size > headerSize && data.length - offset > headerSize));
             }
             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
             offset += (int) size;
