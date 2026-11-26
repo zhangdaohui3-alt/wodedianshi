@@ -65,8 +65,18 @@ public final class HlsVariantPolicy {
                 break;
             }
             if (!child.isEmpty()) {
-                variants.add(new Variant(new URL(new URL(finalManifestUrl), child).toString(),
-                        bandwidth, width, height));
+                // One malformed/unsupported child must not reject healthy
+                // siblings. Resolve relative to the actual redirected master.
+                try {
+                    URL resolved = new URL(new URL(finalManifestUrl), child);
+                    if (("http".equalsIgnoreCase(resolved.getProtocol())
+                            || "https".equalsIgnoreCase(resolved.getProtocol()))
+                            && !resolved.getHost().isEmpty()) {
+                        variants.add(new Variant(resolved.toString(), bandwidth, width, height));
+                    }
+                } catch (java.net.MalformedURLException ignored) {
+                    // This child cannot be probed; retain the other renditions.
+                }
             }
         }
         Collections.sort(variants, new Comparator<Variant>() {
@@ -74,9 +84,14 @@ public final class HlsVariantPolicy {
                 return Long.compare(b.bandwidth, a.bandwidth);
             }
         });
-        if (variants.size() > MAX_VARIANTS) {
-            return new ArrayList<>(variants.subList(0, MAX_VARIANTS));
+        // Apply the attempt cap to distinct resolved endpoints, not repeated
+        // manifest declarations. Keep the existing highest-bandwidth order.
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        ArrayList<Variant> distinct = new ArrayList<>();
+        for (Variant variant : variants) {
+            if (seen.add(variant.url)) distinct.add(variant);
+            if (distinct.size() >= MAX_VARIANTS) break;
         }
-        return variants;
+        return distinct;
     }
 }
