@@ -1278,10 +1278,16 @@ public class SourceUpdateWorker extends Worker {
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
-            // A shared endpoint gets one further opportunity within this slice.
-            // After that keep it visited, without a measured/cache result. Later
-            // slices are free to retry; no duplicate identity is promoted.
-            if(SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts))visitedUrls.remove(endpoint);
+            // Ordinary idle first-pass duplicates do not immediately repeat a
+            // socket timeout. Keep the extra retry for core coverage, transient
+            // transport failures, paced viewing, and the designated idle replay.
+            // Later slices may retry; do not cache or penalize this observation.
+            boolean ordinaryInitialIdleTimeout=initialDiscoveryChain&&!slowPlayback
+                &&!e.savedSource&&!preferCoreCoverage
+                &&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED
+                &&measured.socketTimedOut&&!measured.transientNetworkFailure;
+            if(SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts,ordinaryInitialIdleTimeout))
+              visitedUrls.remove(endpoint);
             continue;
           }
           if(initialDiscoveryChain&&!reuse)
