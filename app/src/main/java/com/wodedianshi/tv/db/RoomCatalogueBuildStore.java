@@ -160,6 +160,81 @@ public final class RoomCatalogueBuildStore {
         });
     }
 
+    public static boolean canRunManualIndexed(Context context,String owner){
+        AppStateDao state=RoomDatabaseProvider.get(context).appStateDao();
+        return owner!=null&&!owner.isEmpty()&&owner.equals(state.getValue(MANUAL_OWNER_KEY))
+            &&owner.equals(state.getValue(MANUAL_QUEUE_KEY))
+            &&owner.equals(state.getValue(ManualProbeQualityStore.READY_KEY))
+            &&!"true".equals(state.getValue(MANUAL_READY_KEY));
+    }
+
+    public static int manualStagingCount(Context context,String owner){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_OWNER_KEY));
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_IDENTITY_KEY));
+        int count=db.channelDao().countCatalogueBuildRows();
+        if(count<=0)throw new IllegalStateException("Empty manual staging");
+        return count;
+    }
+
+    /** Map local working-set positions back to durable staging positions.
+     * Existing rows retain their positions; new rows append after the full staging count. */
+    static int indexedRowPosition(int baseCount,List<Integer> existing,int local){
+        if(baseCount<=0||local<0)throw new IllegalArgumentException("Invalid indexed staging position");
+        if(local<existing.size()){
+            int position=existing.get(local);
+            if(position<0||position>=baseCount)throw new IllegalArgumentException("Existing row outside staging");
+            return position;
+        }
+        return Math.addExact(baseCount,local-existing.size());
+    }
+
+    public static boolean commitManualIndexed(Context context,String owner,int baseCount,
+            List<Integer> existing,JSONArray working,java.util.Set<Integer> touched,
+            BooleanSupplier paused,AppStateEditor progress,List<String> processed,
+            int nextFeed,int feedCount,int failedFeeds,List<ManualProbeQualityEntity> quality)throws JSONException{
+        validateTouchedRows(existing.size(),working.length(),touched);
+        if(baseCount<=0||new java.util.HashSet<>(existing).size()!=existing.size())
+            throw new IllegalArgumentException("Invalid indexed staging base");
+        for(int i=0;i<existing.size();i++)indexedRowPosition(baseCount,existing,i);
+        ArrayList<CatalogueBuildRowEntity> changed=new ArrayList<>();
+        ArrayList<JSONObject> changedRecords=new ArrayList<>();
+        for(int local:touched){
+            checkPause(paused);
+            JSONObject record=working.getJSONObject(local);
+            if(record.optString("name","").trim().isEmpty()||record.optString("url","").trim().isEmpty())
+                throw new JSONException("Invalid indexed staging row");
+            int position=indexedRowPosition(baseCount,existing,local);
+            CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(
+                String.format(java.util.Locale.ROOT,"row-%08d",position),position,record.toString());
+            entity.mergeIdentity=mergeIdentity(record);
+            changed.add(entity);changedRecords.add(record);
+        }
+        int finalCount=Math.addExact(baseCount,working.length()-existing.size());
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        boolean[] ready={false};
+        db.runInTransaction(()->{
+            checkPause(paused);
+            requireManualOwner(db,owner);
+            requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_IDENTITY_KEY));
+            if(!canRunManualIndexed(context,owner)||db.channelDao().countCatalogueBuildRows()!=baseCount)
+                throw new IllegalStateException("Indexed staging base changed");
+            for(int i=0;i<changed.size();i+=64){
+                checkPause(paused);
+                db.channelDao().insertCatalogueBuildRows(changed.subList(i,Math.min(i+64,changed.size())));
+            }
+            if(db.channelDao().countCatalogueBuildRows()!=finalCount)
+                throw new IllegalStateException("Indexed staging count mismatch");
+            for(int i=0;i<changed.size();i++)enqueueRow(db,owner,changedRecords.get(i),changed.get(i).sortOrder,paused);
+            // Directory discovery slices must never certify the saved-only tail complete.
+            commitManualProbeProgress(db,owner,processed,false,nextFeed,feedCount,
+                new ManualCommit(ready,failedFeeds,quality),paused,progress);
+            progress.applyInTransaction(db);
+            checkPause(paused);
+        });
+        return ready[0];
+    }
+
     /** Returns matching rows in original order; duplicate identities remain distinct. */
     public static List<CatalogueBuildRowEntity> readManualByIdentity(Context context,String owner,
             java.util.Collection<String> identities,BooleanSupplier paused){

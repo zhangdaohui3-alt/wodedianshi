@@ -155,7 +155,7 @@ public class SourceUpdateWorker extends Worker {
     try{
       final String manualOwnerKey=com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_OWNER_KEY;
       JSONArray manualWorkingRows=null;
-      boolean manualQueueOnly=false;
+      boolean manualQueueOnly=false,manualIndexed=false;
       if(manualRefresh){
         String config=discoveryFeedsFingerprint(feeds);
         String owner=roomString(manualOwnerKey,"");
@@ -201,9 +201,14 @@ public class SourceUpdateWorker extends Worker {
           // Structural edits are reconciled at the final publication, not by
           // throwing away already committed network work at every slice.
           manualQueueOnly=com.wodedianshi.tv.db.RoomCatalogueBuildStore.canRunManualQueueOnly(getApplicationContext(),manualId,feeds.length);
-          if(!manualQueueOnly)manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
+          if(!manualQueueOnly){
+            manualIndexed=com.wodedianshi.tv.db.RoomCatalogueBuildStore.canRunManualIndexed(getApplicationContext(),manualId)
+                &&roomInt("source_manual_next_feed",0)<feeds.length;
+            if(manualIndexed)com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualIdentityIndex(getApplicationContext(),manualId,pauseRequested);
+            else manualWorkingRows=com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested);
+          }
         }
-        if(!manualQueueOnly){
+        if(!manualQueueOnly&&!manualIndexed){
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.ensureManualQueue(getApplicationContext(),manualId,manualWorkingRows,pauseRequested);
           com.wodedianshi.tv.db.ManualProbeQualityStore.ensure(getApplicationContext(),manualId,pauseRequested);
           if(roomBoolean(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY,false))
@@ -382,10 +387,12 @@ public class SourceUpdateWorker extends Worker {
       }else{
         // Manual work never mutates the published directory before completion.
         // Queue-only slices must not mutate or serialize a staging catalogue.
-        saved=manualQueueOnly?new JSONArray():manualRefresh?manualWorkingRows:publishedWorkingRows;
+        saved=manualQueueOnly||manualIndexed?new JSONArray():manualRefresh?manualWorkingRows:publishedWorkingRows;
 
       }
       final int previousStagedSize=saved.length();
+      final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
+      final ArrayList<Integer> indexedPositions=new ArrayList<>();
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
       HashSet<Integer> touchedStagedRows=new HashSet<>();
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
@@ -783,6 +790,22 @@ public class SourceUpdateWorker extends Worker {
         if(savedIndex<savedWindow){
           Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
           probeCandidates.add(e);savedIndex++;
+        }
+      }
+      if(manualIndexed){
+        if(manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
+        LinkedHashSet<String> identities=new LinkedHashSet<>();
+        for(Entry entry:probeCandidates)if(!entry.savedSource)
+          identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+        for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
+            com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(getApplicationContext(),manualId,identities,pauseRequested)){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          JSONObject row=new JSONObject(entity.recordJson);
+          String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
+          if(!entity.mergeIdentity.equals(key)||!identities.contains(key))
+            throw new IllegalStateException("Stale staging identity index");
+          stagedPositions.put(row,saved.length());indexedPositions.add(entity.sortOrder);
+          saved.put(row);byIdentity.put(key,row);
         }
       }
       if(indexedQuality){
@@ -1400,13 +1423,19 @@ public class SourceUpdateWorker extends Worker {
               new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),
               com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks),
               pauseRequested,update);
+        }else if(manualIndexed){
+          manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.commitManualIndexed(
+              getApplicationContext(),manualId,indexedBaseCount,indexedPositions,saved,touchedStagedRows,
+              pauseRequested,update,new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),
+              manualNextFeed,feeds.length,manualFailedFeeds,
+              com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks));
         }else manualComplete=com.wodedianshi.tv.db.RoomCatalogueBuildStore.updateManualTouchedWithQuality(
             getApplicationContext(),saved,previousStagedSize,touchedStagedRows,pauseRequested,update,manualId,
             new ArrayList<>(manualSavedKeys.subList(0,savedScanned)),manualSavedOnly,manualNextFeed,feeds.length,manualFailedFeeds,
             com.wodedianshi.tv.db.ManualProbeQualityStore.changes(manualId,manualQualityDirty,measuredScores,probeFailureStreaks));
         // Commit completion of detection first. A preference conflict or process
         // death during final publication retries only publication, not probes.
-        if(manualComplete)return publishReadyManual(manualId,manualQueueOnly?
+        if(manualComplete)return publishReadyManual(manualId,manualQueueOnly||manualIndexed?
             com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManual(getApplicationContext(),manualId,pauseRequested):saved);
       }else{
         int written=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
@@ -1422,7 +1451,7 @@ public class SourceUpdateWorker extends Worker {
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":Integer.toString(saved.length()))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly
+            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(saved.length()))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed?indexedPositions.size():-1)
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
             +" inconclusive_endpoints="+inconclusiveAttempts.size());
