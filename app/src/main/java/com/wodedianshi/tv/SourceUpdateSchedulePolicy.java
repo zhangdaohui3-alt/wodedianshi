@@ -56,6 +56,19 @@ public final class SourceUpdateSchedulePolicy {
                 && now - measuredAt <= (valid ? 300_000L : 15_000L);
     }
 
+    /** At capacity discard expired observations before evicting a still reusable
+     * least-recently-used result. The owner retains the original hard cap. */
+    static <K,V> void trimInitialProbeCache(java.util.LinkedHashMap<K,V> cache,int capacity,
+            java.util.function.Predicate<V> reusable) {
+        int limit=Math.max(0,capacity);
+        if(cache.size()<=limit)return;
+        java.util.Iterator<V> values=cache.values().iterator();
+        while(values.hasNext()&&cache.size()>limit){
+            if(!reusable.test(values.next()))values.remove();
+        }
+        while(cache.size()>limit)cache.remove(cache.keySet().iterator().next());
+    }
+
     /** A positive completed media preflight can survive owner cancellation,
      * but never use a timed-out, unfinished or cancelled result as evidence. */
     static boolean mayRetainCompletedInitialSuccess(boolean valid,boolean socketTimedOut,
