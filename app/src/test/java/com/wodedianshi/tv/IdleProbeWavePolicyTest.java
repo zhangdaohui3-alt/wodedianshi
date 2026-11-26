@@ -7,6 +7,24 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void initialPageInterleavesHostsWithoutCrossingPriorityOrDroppingDuplicates(){
+        java.util.List<String> input=Arrays.asList("0a1","0a2","0a3","0b1","0b2","0c1","1z1","1z1","1y1");
+        java.util.List<String> expected=Arrays.asList("0a1","0b1","0c1","0a2","0b2","0a3","1z1","1y1","1z1");
+        assertEquals(expected,IdleProbeWavePolicy.interleaveHosts(input,
+                v->v.substring(1,2),v->v.charAt(0)-'0'));
+        assertEquals(expected,IdleProbeWavePolicy.interleaveHosts(expected,
+                v->v.substring(1,2),v->v.charAt(0)-'0'));
+        assertEquals(9,input.size());
+    }
+    @Test public void sixInitialSlotsKeepPerHostLimit(){
+        IdleProbeWavePolicy wave=new IdleProbeWavePolicy(6);
+        wave.add("a1","a");wave.add("a2","a");
+        assertFalse(wave.canAdd("a3","a"));
+        wave.add("b1","b");wave.add("b2","b");
+        wave.add("c1","c");wave.add("c2","c");
+        assertFalse(wave.canAdd("d1","d"));
+    }
+
     @Test public void recoveryWaveCannotExceedItsAdmissionBudget(){
         IdleProbeWavePolicy wave=new IdleProbeWavePolicy(2);
         wave.add("a","one");wave.add("b","two");
