@@ -1502,7 +1502,23 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
         // Empty pages and recorded failures are durable progress too; rotate
         // rather than repeatedly back off the same WorkRequest.
-        enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?DiscoveryBatchPolicy.VIEWING_SUCCESS_DELAY_SECONDS:0L);
+        boolean freshDifferentNextFeed=false;
+        if(feedsOk==0&&!slowPlayback){
+          // Read completion/failure flags after the staging transaction.
+          // Determine the actual next eligible feed within the active region,
+          // not simply the numerical successor of the failed feed.
+          boolean[] completedNow=new boolean[feeds.length];
+          for(int i=0;i<feeds.length;i++)
+            completedNow[i]=roomBoolean(initialFeedDoneKey(i),false);
+          int next=SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,completedNow,
+              new boolean[feeds.length],SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT);
+          int attempted=feedBatches.get(feedBatches.size()-1).index;
+          freshDifferentNextFeed=next>=0&&next!=attempted
+              &&roomInt(initialFeedFailureCountKey(next),0)==0;
+        }
+        enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
+            slowPlayback,feedsOk>0,freshDifferentNextFeed));
         return Result.success();
       }
       if(manualRefresh&&!manualComplete){
