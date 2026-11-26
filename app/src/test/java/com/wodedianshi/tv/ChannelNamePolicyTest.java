@@ -173,6 +173,21 @@ public class ChannelNamePolicyTest {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yichun TV"));
     }
 
+    @Test public void taizhouChineseAliasAndSharedPinyinRequireConsistentProvince() {
+        assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("泰州新闻综合"));
+        assertEquals("泰州", ChannelNamePolicy.localCityForChannel("泰州新闻综合"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("泰州新闻综合", "江苏", "泰州"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou News"));
+        assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("Jiangsu Taizhou News"));
+        assertEquals("浙江", ChannelNamePolicy.provinceForLocalChannel("Zhejiang Taizhou News"));
+        assertEquals("泰州新闻", ChannelNamePolicy.canonicalLocalDisplayName("Taizhou News","","","江苏"));
+        assertEquals("台州新闻", ChannelNamePolicy.canonicalLocalDisplayName("Taizhou News","","","浙江"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("河北 Fuzhou News"));
+        assertEquals("", ChannelNamePolicy.provinceForLocalChannel("江苏台州新闻"));
+        assertEquals("江西", ChannelNamePolicy.provinceForLocalChannel("Jiangxi Fuzhou News"));
+        assertEquals("福建", ChannelNamePolicy.provinceForLocalChannel("Fujian Fuzhou News"));
+    }
+
     @Test public void explicitProvinceIsResolvedBeforeAmbiguousCityAliases() {
         assertEquals("江西", ChannelNamePolicy.provinceForLocalChannel("Jiangxi Fuzhou TV"));
         assertEquals("江苏", ChannelNamePolicy.provinceForLocalChannel("Jiangsu Suzhou TV"));
