@@ -47,7 +47,7 @@ public class SourceUpdateWorker extends Worker {
     INITIAL_PROBES.put(key,new RecentProbe(result,at));
     final long now=android.os.SystemClock.elapsedRealtime();
     SourceUpdateSchedulePolicy.trimInitialProbeCache(INITIAL_PROBES,INITIAL_PROBE_CACHE_CAP,
-        entry->SourceUpdateSchedulePolicy.canReuseInitialProbe(entry.result.valid,entry.at,now));
+        entry->SourceUpdateSchedulePolicy.canReuseInitialProbe(entry.result.valid,entry.result.provisional,entry.at,now));
   }
   private static void retainCompletedInitialSuccess(String key,ProbeResult result,
       long finishedAt,long addressDeadline,long batchDeadline){
@@ -1195,7 +1195,7 @@ public class SourceUpdateWorker extends Worker {
       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
-      int originDeferred=0;
+      int originDeferred=0,provisionalAccepted=0;
       boolean idleWaveTimedOut=false;
       boolean viewingDeferred=false;
       final int priorChinaValidated=initialDiscoveryChain
@@ -1239,7 +1239,7 @@ public class SourceUpdateWorker extends Worker {
           long clock=android.os.SystemClock.elapsedRealtime();
           boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(
-              cached.result.valid,cached.at,clock);
+              cached.result.valid,cached.result.provisional,cached.at,clock);
           boolean allowOriginDeferral=InitialOriginCooldownPolicy.mayDefer(
               initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
               transientRecheck==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED);
@@ -1404,6 +1404,7 @@ public class SourceUpdateWorker extends Worker {
         if(manualRefresh&&e.savedSource)continue;
         if(measured.valid&&(!e.savedSource||initialDiscoveryChain)){
           discoveryProbesValid++;
+          if(measured.provisional)provisionalAccepted++;
           if(initialDiscoveryChain&&ChinaDiscoveryCandidatePolicy.isClearlyMainland(
               e.scope,e.name,e.group,e.tvgName,e.tvgId))chinaPreflightsValid++;
         }
@@ -1508,7 +1509,7 @@ public class SourceUpdateWorker extends Worker {
       }
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1934,7 +1935,8 @@ public class SourceUpdateWorker extends Worker {
               probesFinishedAt-probeStartedAt,commitStartedAt-probesFinishedAt,checked+reusedPreflights,
               discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback)
               +"\n并发任务提交 "+idleWave.launched+" 条 · 并发任务实测峰值 "+idleWave.peakProbes.get()
-              +" · 独立串行检测 "+idleWave.serialProbes+" 条（任务数，非同时网络连接数）");
+              +" · 独立串行检测 "+idleWave.serialProbes+" 条（任务数，非同时网络连接数）"
+              +"\n本批初步媒体筛查通过 "+provisionalAccepted+" 条（尚未证明真实播放质量）");
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
@@ -2801,7 +2803,7 @@ public class SourceUpdateWorker extends Worker {
           RecentProbe cached=initial?INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
               &&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
-              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
+              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.result.provisional,cached.at,now)))break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
@@ -2878,7 +2880,7 @@ public class SourceUpdateWorker extends Worker {
         if(rollingOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))return;
         RecentProbe cached=INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url));
         if(cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
-            &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now))return;
+            &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.result.provisional,cached.at,now))return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
         if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
         int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
@@ -2954,7 +2956,7 @@ public class SourceUpdateWorker extends Worker {
     boolean valid;
     boolean socketTimedOut;
     boolean transientNetworkFailure;
-    boolean paced;
+    boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
     int score;
     int width,height;
@@ -2996,7 +2998,7 @@ public class SourceUpdateWorker extends Worker {
   private void storePreflightScore(JSONObject scores,String url,ProbeResult result)throws JSONException{
     String key=scoreKey(url),legacyKey=legacyScoreKey(url);
     double prior=scores.has(key)?scores.optDouble(key,0.0):scores.optDouble(legacyKey,0.0);
-    scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,prior,result.score):-500.0);
+    scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,result.provisional,prior,result.score):-500.0);
     scores.remove(legacyKey);
   }
   private String scoreKey(String url){return StableKey.url(url);}
@@ -3075,6 +3077,7 @@ public class SourceUpdateWorker extends Worker {
         result.valid=true;
         result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
         result.score=350;
+        result.provisional=true;
         return result;
       }
       String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
