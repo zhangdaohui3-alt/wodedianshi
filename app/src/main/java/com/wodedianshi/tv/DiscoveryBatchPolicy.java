@@ -18,8 +18,10 @@ public final class DiscoveryBatchPolicy {
     static boolean manualRevalidateDirectory(int cursor,String partialFingerprint) {
         return cursor<=0&&(partialFingerprint==null||partialFingerprint.isEmpty());
     }
+    static final int VIEWING_PROBES_PER_SLICE=2;
+    static final long VIEWING_SUCCESS_DELAY_SECONDS=5L;
     static int probeLimit(boolean initial,boolean viewing,int ordinaryLimit) {
-        return initial?(viewing?1:INITIAL_PAGE_SIZE):ordinaryLimit;
+        return initial?(viewing?VIEWING_PROBES_PER_SLICE:INITIAL_PAGE_SIZE):ordinaryLimit;
     }
 
     /** Independent partial page checkpoints enable fair rotation. */
