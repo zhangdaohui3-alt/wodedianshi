@@ -391,6 +391,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
+    volatile LocalDirectoryFacts localDirectoryFacts;
     // Catalogue filter snapshots never use playback/source ownership. Keep these
     // collections lazy for those short-lived copies to avoid three extra objects
     // per channel while filtering a large directory.
@@ -1072,7 +1073,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // In the local directory show the resolved Chinese province, not an
     // aggregator's English genre/group label. Preserve raw metadata in Room.
     if("地方".equals(activeCategory)||localRegionFilterActive){
-      String province=ChannelNamePolicy.provinceForLocalChannel(regionalMetadata(c));
+      LocalDirectoryFacts facts=localDirectoryFacts(c);
+      String province=facts.excluded?ChannelNamePolicy.provinceForLocalChannel(facts.metadata):facts.province;
       if(!province.isEmpty())group=province;
       else if(ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china"))group="地方台";
     }
@@ -4485,18 +4487,49 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return ChannelNamePolicy.isSatellite(metadata,rawGroup)
         ||metadata.contains("卫视")||group.equals("卫视")||group.contains("satellite");
   }
+  /** Derived from exact broadcaster fields, never a playback URL or source score.
+   * Replaced snapshot rows start empty. Same-object edits invalidate by field
+   * equality and China-scope evidence, not by potentially stale array index. */
+  private static final class LocalDirectoryFacts {
+    final String name,group,tvgName,tvgId,metadata,province;
+    final boolean chinaScope,excluded,local;
+    LocalDirectoryFacts(String name,String group,String tvgName,String tvgId,
+        boolean chinaScope,String metadata,String province,boolean excluded,boolean local){
+      this.name=name;this.group=group;this.tvgName=tvgName;this.tvgId=tvgId;
+      this.chinaScope=chinaScope;this.metadata=metadata;this.province=province;
+      this.excluded=excluded;this.local=local;
+    }
+    boolean matches(Channel c,boolean china){
+      return chinaScope==china&&java.util.Objects.equals(name,c.name)
+          &&java.util.Objects.equals(group,c.group)&&java.util.Objects.equals(tvgName,c.tvgName)
+          &&java.util.Objects.equals(tvgId,c.tvgId);
+    }
+  }
+  private LocalDirectoryFacts localDirectoryFacts(Channel c){
+    boolean china=ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china");
+    LocalDirectoryFacts cached=c.localDirectoryFacts;
+    if(cached!=null&&cached.matches(c,china))return cached;
+    String name=c.name,group=c.group,tvgName=c.tvgName,tvgId=c.tvgId;
+    String metadata=regionalMetadata(c);
+    boolean excluded=isSatelliteChannel(c,metadata)||isCctvChannel(c)
+        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
+    String province=excluded?"":explicitProvinceIn(metadata);
+    boolean local=!excluded&&(!province.isEmpty()
+        ||(china&&(metadata.contains("地方")||metadata.contains("local"))));
+    if(!excluded&&!local){
+      for(String token:localRegionTokens())if(metadata.contains(token)){local=true;break;}
+    }
+    LocalDirectoryFacts result=new LocalDirectoryFacts(name,group,tvgName,tvgId,
+        china,metadata,province,excluded,local);
+    if(result.matches(c,ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")))
+      c.localDirectoryFacts=result;
+    return result;
+  }
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null)return false;
-    String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
-        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
-    String explicit=explicitProvinceIn(metadata);
-    if(!explicit.isEmpty()&&!explicit.equals(province))return false;
-    // The shared classifier also recognizes county stations (e.g. 上虞、固镇、
-    // 旺苍) which are not in the UI's prefecture-level city array.
-    // Only a resolved province belongs in a province-specific directory.
-    // Ambiguous channels remain available under 全部地方台.
-    return province.equals(explicit);
+    LocalDirectoryFacts facts=localDirectoryFacts(c);
+    // Ambiguous local labels remain available only under all local channels.
+    return !facts.excluded&&province.equals(facts.province);
   }
   // Build the province/city token index once. The former implementation
   // recreated every province's city array for every channel; filtering 10k+
@@ -4523,24 +4556,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return cached;
   }
   private boolean isLocalChannel(Channel c){
-    if(c==null)return false;
-    String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
-        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
-    boolean chinaScope=ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china");
-    if(ChannelNamePolicy.isDomesticLocalLabel(metadata,chinaScope))return true;
-    // Preserve ambiguous Chinese city labels for legacy domestic records, but
-    // do not classify worldwide generic Local/News groups as Chinese stations.
-    for(String token:localRegionTokens())if(metadata.contains(token))return true;
-    return false;
+    return c!=null&&localDirectoryFacts(c).local;
   }
   private boolean matchesProvinceCity(Channel c,String province,String city){
     if(c==null||province==null||city==null)return false;
-    String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
-        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
-    String explicit=explicitProvinceIn(metadata);
-    if(!explicit.isEmpty()&&!explicit.equals(province))return false;
+    LocalDirectoryFacts facts=localDirectoryFacts(c);
+    if(facts.excluded||!province.equals(facts.province))return false;
+    String metadata=facts.metadata,explicit=facts.province;
     if(!ChannelNamePolicy.isKnownLocality(province,city))return false;
     if(ChannelNamePolicy.matchesLocalCityWithProvince(metadata,province,city,explicit))return true;
     // Retain Chinese-only coverage for cities not yet in the alias table, but
