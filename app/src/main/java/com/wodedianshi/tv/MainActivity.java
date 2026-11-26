@@ -1832,6 +1832,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     VodItem(String t,String id,String u,String l){this(t,id,u,l,"");}
     VodItem(String t,String id,String u,String l,String poster){title=t;identifier=id;url=u;license=l;posterUrl=poster==null?"":poster;}
   }
+  private static org.json.JSONObject vodItemJson(VodItem item)throws org.json.JSONException{
+    return new org.json.JSONObject().put("title",item.title).put("id",item.identifier)
+        .put("url",item.url).put("license",item.license).put("poster",item.posterUrl);
+  }
+  private static VodItem vodItemFromJson(org.json.JSONObject row){
+    return new VodItem(row.optString("title",""),row.optString("id",""),
+        row.optString("url",""),row.optString("license",""),row.optString("poster",""));
+  }
   private Dialog vodPlayerDialog;
   private Dialog vodCatalogueDialog;
   // Keep explicit references to the active VOD view model; never infer controls by child index.
@@ -2146,8 +2154,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       org.json.JSONArray a=new org.json.JSONArray(raw);
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
-        String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license",""),poster=o.optString("poster","");
-        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))snapshot.items.add(new VodItem(title,id,url,license,poster));
+        VodItem item=vodItemFromJson(o);
+        if(!item.title.isEmpty()&&!item.identifier.isEmpty()&&(item.url.startsWith("https://")||item.identifier.startsWith("meta:")))snapshot.items.add(item);
       }
     }catch(Exception ignored){snapshot.savedAt=0L;}
     return snapshot;
@@ -2191,7 +2199,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
-        org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);o.put("poster",item.posterUrl);a.put(o);
+        a.put(vodItemJson(item));
       }
       // Cache rows and freshness metadata commit together in Room.
       long savedAt=complete?System.currentTimeMillis():0L;
@@ -2551,7 +2559,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });
         return true;
       });
-      card.setOnLongClickListener(v->{if(item.identifier.startsWith("meta:")){toast("这是影片资料结果，暂不能作为播放收藏");return true;}toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");return true;});
+      card.setOnLongClickListener(v->{if(item.identifier.startsWith("meta:")){toast("这是影片资料结果，暂不能作为播放收藏");return true;}toggleVodFavorite(item);boolean nowFavorite=isVodFavorite(item);if(nowFavorite)favoriteIds.add(item.identifier);else favoriteIds.remove(item.identifier);holder.title.setText((nowFavorite?"★ ":"☆ ")+item.title);toast(nowFavorite?"已加入我的收藏":"已取消收藏");
+        if(!nowFavorite&&"我的收藏".equals(activeVodCategory)&&activeVodQuery.isEmpty()
+            &&parent instanceof GridView&&((GridView)parent).getAdapter()==this
+            &&currentVodPanel!=null)loadVodFavorites(currentVodPanel);
+        return true;});
       return card;
     }
   }
@@ -2616,7 +2628,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<VodItem> items=new ArrayList<>();
     try{
       org.json.JSONArray a=new org.json.JSONArray(roomVodFavoritesJson);
-      for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");if(!id.isEmpty()&&url.startsWith("https://"))items.add(new VodItem(title,id,url,license));}
+      for(int i=0;i<a.length();i++){
+        org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
+        VodItem item=vodItemFromJson(o);
+        if(!item.identifier.isEmpty()&&!item.identifier.startsWith("meta:")&&item.url.startsWith("https://"))items.add(item);
+      }
     }catch(Exception ignored){}
     return items;
   }
@@ -2630,8 +2646,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<VodItem> items=readVodFavorites();boolean removed=false;
     org.json.JSONArray out=new org.json.JSONArray();
     try{
-      for(VodItem saved:items){if(item.identifier.equals(saved.identifier)){removed=true;continue;}org.json.JSONObject o=new org.json.JSONObject();o.put("title",saved.title);o.put("id",saved.identifier);o.put("url",saved.url);o.put("license",saved.license);out.put(o);}
-      if(!removed){org.json.JSONObject o=new org.json.JSONObject();o.put("title",item.title);o.put("id",item.identifier);o.put("url",item.url);o.put("license",item.license);out.put(o);}
+      for(VodItem saved:items){
+        if(item.identifier.equals(saved.identifier)){removed=true;continue;}
+        out.put(vodItemJson(saved));
+      }
+      if(!removed&&!item.identifier.startsWith("meta:")&&item.url.startsWith("https://"))out.put(vodItemJson(item));
       saveRoomVodFavorites(out.toString());
     }catch(Exception ignored){}
   }
@@ -2672,7 +2691,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(item==null)return;
     try{
       ArrayList<org.json.JSONObject> old=readVodHistory();org.json.JSONArray out=new org.json.JSONArray();
-      org.json.JSONObject entry=new org.json.JSONObject();entry.put("title",item.title);entry.put("id",item.identifier);entry.put("url",item.url);entry.put("license",item.license);entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
+      org.json.JSONObject entry=vodItemJson(item);
+      if(item.posterUrl.isEmpty())for(org.json.JSONObject previous:old){
+        if(item.identifier.equals(previous.optString("id",""))&&!previous.optString("poster","").isEmpty()){
+          entry.put("poster",previous.optString("poster",""));break;
+        }
+      }
+      entry.put("position",Math.max(0,position));entry.put("duration",Math.max(0,duration));entry.put("watchedAt",System.currentTimeMillis());out.put(entry);
       for(org.json.JSONObject o:old){if(!item.identifier.equals(o.optString("id","")))out.put(o);if(out.length()>=100)break;}
       saveRoomVodHistory(out.toString());
     }catch(Exception ignored){}
@@ -2689,7 +2714,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     public long getItemId(int position){return position;}
     public View getView(int position,View convertView,android.view.ViewGroup parent){
       org.json.JSONObject o=history.get(position);
-      String title=o.optString("title","未命名影片"),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license","");
+      String title=o.optString("title","未命名影片"),id=o.optString("id","");
+      VodItem historyItem=vodItemFromJson(o);
       long pos=o.optLong("position",0),duration=o.optLong("duration",0);
       LinearLayout row;TextView name,detail;
       if(convertView instanceof LinearLayout&&((LinearLayout)convertView).getChildCount()>=2){row=(LinearLayout)convertView;name=(TextView)row.getChildAt(0);detail=(TextView)row.getChildAt(1);}
@@ -2700,7 +2726,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         row.setOnFocusChangeListener((v,focused)->{row.setBackground(makeButtonBg(Color.rgb(25,39,59),focused));row.setScaleX(focused?1.025f:1f);row.setScaleY(focused?1.025f:1f);row.setElevation(focused?dp(7):0);name.setTextColor(focused?Color.rgb(255,235,170):Color.WHITE);detail.setTextColor(focused?Color.WHITE:Color.rgb(154,190,220));});
       }
       name.setText(title);detail.setText(pos>0?"上次看到 "+formatVodTime(pos)+(duration>0?" / "+formatVodTime(duration):"")+" · 点击续播":"已观看 · 点击播放");
-      row.setOnClickListener(v->playVodInside(new VodItem(title,id,url,license)));
+      row.setOnClickListener(v->playVodInside(historyItem));
       row.setOnLongClickListener(v->{new AlertDialog.Builder(MainActivity.this).setTitle("删除播放记录").setMessage(title).setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->{ArrayList<org.json.JSONObject> keep=readVodHistory();org.json.JSONArray a=new org.json.JSONArray();for(org.json.JSONObject x:keep)if(!id.equals(x.optString("id","")))a.put(x);saveRoomVodHistory(a.toString());loadVodHistory(status,results);}).show();return true;});
       return row;
     }
