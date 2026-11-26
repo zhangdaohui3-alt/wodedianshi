@@ -16,6 +16,25 @@ public final class SourceQualityScorer {
         return probeScore <= -500.0d;
     }
 
+    // Pacing controls the reader, not the origin. A successful paced sample
+    // proves media structure but cannot measure available throughput or latency.
+    static int preflightSpeedBonus(boolean paced,int bytes,long elapsedMs) {
+        if(paced)return 150; // provisional midpoint, not measured throughput
+        return (int)Math.min(300L,Math.max(0,bytes)*1000L/Math.max(1L,elapsedMs)/2048L);
+    }
+    static int preflightLatencyPenalty(boolean paced,long elapsedMs) {
+        return paced?125:(int)Math.min(250L,Math.max(0L,elapsedMs)/20L);
+    }
+    static double successfulPreflightScore(boolean paced,double previous,int candidate) {
+        return paced&&Double.isFinite(previous)&&previous>0.0?previous:candidate;
+    }
+    static boolean reusableProbeMode(boolean cachedPaced,boolean viewing) {
+        return viewing||!cachedPaced;
+    }
+    static boolean inconclusivePacedProbe(boolean paced,boolean valid) {
+        return paced&&!valid;
+    }
+
     public static int labelScore(String source) {
         if (source == null) return 0;
         String u = source.toLowerCase(Locale.ROOT);
