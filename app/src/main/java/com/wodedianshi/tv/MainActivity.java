@@ -146,6 +146,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Consecutive healthy checks permit low-priority discovery, not source promotion.
   private int libVlcStableChecks=0;
   private long libVlcLastHealthClockMs;
+  // UI-thread epoch; a queued native observation must not cross a health reset.
+  private long libVlcHealthEpoch;
   private final TrackHealthPolicy.VlcCounterProgress libVlcVideoProgress=new TrackHealthPolicy.VlcCounterProgress();
   private final TrackHealthPolicy.VlcCounterProgress libVlcAudioProgress=new TrackHealthPolicy.VlcCounterProgress();
   private boolean libVlcStableRecorded=false;
@@ -6887,8 +6889,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(libVlcVideoOutputReady)return;
             libVlcVideoOutputReady=true;
             pauseStableDiscovery();
-            libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();
+            resetLibVlcHealthEvidence();
             libVlcStableRecorded=false;
             cancelLibVlcStartTimeout();
             usingLibVlc=true;
@@ -6910,8 +6911,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
-            libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();
+            resetLibVlcHealthEvidence();
             pauseStableDiscovery();
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
           }
@@ -6921,8 +6921,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           saveLiveDiagnostic("VLC_AUDIO_TRACK_CHECK","tracks="+trackCount+" selected="+selectedTrackId);
           libVlcAudioTrackReady=trackCount>0&&selectedTrackId>=0;
           if(!libVlcAudioTrackReady){
-            libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();
+            resetLibVlcHealthEvidence();
             pauseStableDiscovery();
             if(libVlcAudioTrackCheckAttempts<2){
               // Track metadata can arrive after the first video-output event.
@@ -6955,8 +6954,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             cancelLibVlcBufferingTimeout();
             saveLiveDiagnostic("VLC_BUFFER_RECOVERED","buffering_percent=100");
           }else{
-            libVlcStableChecks=0;
-            libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();
+            resetLibVlcHealthEvidence();
             pauseStableDiscovery();
             if(usingLibVlc)info.setText("VLC 正在缓冲："+Math.round(percent)+"%");
             scheduleLibVlcBufferingTimeout(expectedMediaId,expectedChannel,engine);
@@ -7044,12 +7042,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return false;
     }
   }
+  private void resetLibVlcHealthEvidence(){
+    ++libVlcHealthEpoch;
+    libVlcStableChecks=0;
+    libVlcLastHealthClockMs=0L;
+    libVlcVideoProgress.reset();
+    libVlcAudioProgress.reset();
+  }
   private void scheduleLibVlcWatchdog(String expectedMediaId,int expectedChannel){
     cancelLibVlcWatchdog();
     libVlcWatchdog=()->{
       libVlcWatchdog=null;
       if(!usingLibVlc||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId)||libVlcEngine==null)return;
       final LibVlcPlaybackEngine expectedEngine=libVlcEngine;
+      final long sampleEpoch=libVlcHealthEpoch;
       // Native health queries may block behind a vendor decoder. Run one
       // outstanding check on the serial lifecycle worker, with a UI deadline.
       final Runnable timeout=()->{
@@ -7086,6 +7092,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(libVlcWatchdog!=timeout||libVlcEngine!=expectedEngine
               ||!currentMediaId.equals(expectedMediaId)||selected!=expectedChannel)return;
           cancelLibVlcWatchdog();
+          if(sampleEpoch!=libVlcHealthEpoch){
+            // Buffering/Vout/audio changed while this native query was in flight.
+            // Preserve the bounded native timeout, but never consume stale evidence.
+            scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
+            return;
+          }
           finishLibVlcHealthCheck(expectedMediaId,expectedChannel,reportsPlaying,playbackClock,currentAudioSelected,displayed,playedAudio);
         });
       });
@@ -7095,8 +7107,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void finishLibVlcHealthCheck(String expectedMediaId,int expectedChannel,boolean reportsPlaying,long playbackClock,boolean currentAudioSelected,long displayed,long playedAudio){
       if(libVlcVideoOutputReady&&libVlcRebuffering){
         // Rebuffering follows the user's timeout setting, not this health poll.
-        libVlcStableChecks=0;
-        libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();
+        resetLibVlcHealthEvidence();
         pauseStableDiscovery();
         scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
         return;
@@ -7220,7 +7231,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;
     if(old!=null||usingLibVlc)pauseStableDiscovery();
-    libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcAudioTrackReady=false;libVlcStableChecks=0;libVlcLastHealthClockMs=0L;libVlcVideoProgress.reset();libVlcAudioProgress.reset();libVlcStableRecorded=false;
+    libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcAudioTrackReady=false;resetLibVlcHealthEvidence();libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
     if(afterRelease!=null&&!decoderReleaseUnconfirmed){
       if(libVlcReleaseInProgress)libVlcReleaseCallbacks.add(afterRelease);
