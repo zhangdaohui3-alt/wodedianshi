@@ -104,6 +104,24 @@ public final class DiscoveryBatchPolicy {
         return "source_initial_page_"+feedIndex+"_";
     }
 
+    // A single durable replay of the suffix of an unchanged initial page.
+    // -1 means no transient failure; -2 means the replay has been admitted.
+    static final int NO_TRANSIENT_RECHECK=-1, TRANSIENT_RECHECK_USED=-2;
+    static String initialTransientRecheckKey(int feedIndex) {
+        return initialBatchPrefix(feedIndex)+"transient_recheck";
+    }
+    static int resumeTransientRecheck(boolean sameFingerprint,int marker,int scanned) {
+        if(!sameFingerprint)return NO_TRANSIENT_RECHECK;
+        if(marker==TRANSIENT_RECHECK_USED)return marker;
+        return marker>=0&&marker<scanned?marker:NO_TRANSIENT_RECHECK;
+    }
+    static int noteTransientRecheck(int marker,int position) {
+        return marker==NO_TRANSIENT_RECHECK&&position>=0?position:marker;
+    }
+    static boolean shouldReplayTransientSuffix(int marker,int scanned,int count) {
+        return count>0&&scanned>=count&&marker>=0&&marker<count;
+    }
+
     /** Persist with the exact partial-page checkpoint; never treat it as EOF. */
     static String initialIdleRecheckKey(int feedIndex) {
         return initialBatchPrefix(feedIndex)+"idle_recheck";
