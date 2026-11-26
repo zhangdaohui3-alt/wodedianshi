@@ -32,6 +32,16 @@ public final class DiscoveryBatchPolicy {
         return stagedChannels<16&&checkedUrls<48;
     }
 
+    // Preserve the domestic family rotation a little longer when a core
+    // category is still missing. This is separate from the six-request
+    // first-watch limit: later slices retain full throughput.
+    static boolean preferCoreCoverage(int stagedChannels,int checkedUrls,int stagedCoreMask) {
+        return isEarlyFirstWatch(stagedChannels,checkedUrls)
+                ||(stagedCoreMask>=0
+                    &&(stagedCoreMask&FullDiscoveryProgressPolicy.ALL_CORE)!=FullDiscoveryProgressPolicy.ALL_CORE
+                    &&checkedUrls<144&&stagedChannels<96);
+    }
+
     // Only combine quick acquisition with the bounded six-request first-watch
     // slice. Slow downloads and stable viewing retain separate work requests.
     static boolean canProbeAfterQuickAcquisition(boolean early,boolean viewing,
