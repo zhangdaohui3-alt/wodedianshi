@@ -64,6 +64,13 @@ public final class SourceDiscoveryFeedCatalog {
         return index == MIXED_MAINLAND_FEED_INDEX;
     }
 
+    /** The dedicated CCTV and provincial feeds occupy 0..3. The remaining
+     * mainland feeds are broad directories, where local coverage gets a turn
+     * before more national backups. Keep persisted feed indices unchanged. */
+    static boolean isBroadMainlandFeed(int index) {
+        return index>=MIXED_MAINLAND_FEED_INDEX&&index<MAINLAND_FEED_COUNT;
+    }
+
     public static String[] feeds() {
         return Arrays.copyOf(FEEDS, FEEDS.length);
     }
