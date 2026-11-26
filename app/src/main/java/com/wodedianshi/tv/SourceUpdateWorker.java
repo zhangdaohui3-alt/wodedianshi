@@ -620,6 +620,7 @@ public class SourceUpdateWorker extends Worker {
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
       if(initialDiscoveryChain){
         final long recheckClock=System.currentTimeMillis();
+        final long[] recheckRemaining=new long[feeds.length];
         for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
           // Deferred pages are ineligible only during viewing; keep their true
@@ -633,7 +634,8 @@ public class SourceUpdateWorker extends Worker {
             try{admittedAt=Long.parseLong(roomString(
                 DiscoveryBatchPolicy.initialTransientRecheckAtKey(i),"0"));}
             catch(NumberFormatException ignored){}
-            attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.transientRecheckCooling(admittedAt,recheckClock);
+            recheckRemaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,recheckClock);
+            attemptedFeedsThisRun[i]=recheckRemaining[i]>0L;
           }
         }
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
@@ -644,7 +646,9 @@ public class SourceUpdateWorker extends Worker {
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)<0){
           // All remaining feeds in the current priority stage are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
-          enqueueInitialContinuation(DiscoveryBatchPolicy.TRANSIENT_RECHECK_COOLDOWN_MS/1000L);
+          enqueueInitialContinuation(DiscoveryBatchPolicy.earliestStageCooldownSeconds(inspectedFeeds,
+              recheckRemaining,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT));
           return Result.success();
         }
       }
