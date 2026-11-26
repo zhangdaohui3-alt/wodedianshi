@@ -52,8 +52,14 @@ public final class SourceUpdateSchedulePolicy {
     /** Reuse only a completed probe from this process, never a historical score.
      * Failures expire quickly so temporary outages are not held for long. */
     public static boolean canReuseInitialProbe(boolean valid, long measuredAt, long now) {
+        return canReuseInitialProbe(valid,false,measuredAt,now);
+    }
+
+    /** A provisional direct-stream screen may deduplicate nearby candidates,
+     * but never inherit the longer lifetime of a full preflight. */
+    static boolean canReuseInitialProbe(boolean valid,boolean provisional,long measuredAt,long now) {
         return measuredAt >= 0L && now >= measuredAt
-                && now - measuredAt <= (valid ? 300_000L : 15_000L);
+                && now - measuredAt <= (valid ? (provisional ? 60_000L : 300_000L) : 15_000L);
     }
 
     /** At capacity discard expired observations before evicting a still reusable
