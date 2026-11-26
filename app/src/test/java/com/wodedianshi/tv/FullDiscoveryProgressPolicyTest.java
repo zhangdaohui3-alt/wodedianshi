@@ -5,6 +5,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @Test public void unfinishedBuildDoesNotResumeAnIdleOrFailedSelectedChannel() {
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(0L,true,false));
+        assertTrue(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(0L,true,true));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(0L,false,true));
+        assertTrue(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(1L,true,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(1L,false,true));
+    }
+
     @org.junit.Test public void domesticUnresolvedLocalTriggersPreviewWithoutInventingProvince() {
         org.junit.Assert.assertEquals(FullDiscoveryProgressPolicy.CORE_LOCAL,
             FullDiscoveryProgressPolicy.coreCategoryMask("County News","Local","","",true));
