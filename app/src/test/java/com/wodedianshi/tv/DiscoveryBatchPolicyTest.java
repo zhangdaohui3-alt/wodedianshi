@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void transientReplayCooldownIsBoundedAndClockRollbackSafe() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.transientRecheckCooling(100000L,100000L));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.transientRecheckCooling(100000L,129999L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.transientRecheckCooling(100000L,130000L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.transientRecheckCooling(100000L,99999L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.transientRecheckCooling(0L,100000L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.transientRecheckCooling(-1L,100000L));
+    }
+
     @org.junit.Test public void temporaryNetworkFailureAllowsOnlyOneExactPageSuffixReplay() {
         int marker=DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
         marker=DiscoveryBatchPolicy.noteTransientRecheck(marker,3);
