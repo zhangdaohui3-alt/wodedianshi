@@ -172,6 +172,99 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void manualRefreshPublishesReadyQueueAndIndexedQualityAtomically()throws Exception {
+        isolated(context->{
+            final String owner="manual-integration";
+            final String oldUrl="https://example.invalid/old";
+            final String newUrl="https://example.invalid/new";
+            final String oldKey=com.wodedianshi.tv.StableKey.url(oldUrl);
+            final String newKey=com.wodedianshi.tv.StableKey.url(newUrl);
+            final String completed="source_manual_completed_id";
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long empty=RoomCatalogueReader.read(context).catalogueVersion;
+            JSONArray oldRows=new JSONArray().put(channel("CCTV-1",oldUrl));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,oldRows,empty,true,
+                    ()->false,new AppStateEditor(context).putInt(PERCENT,100));
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            RoomCatalogueBuildStore.seedManual(context,oldRows,base,owner,()->false,
+                    new AppStateEditor(context).putInt("source_manual_next_feed",0)
+                            .putString(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,
+                                    new JSONObject().put(oldKey,600).toString()));
+            ManualProbeQualityStore.ensure(context,owner,()->false);
+            AppDatabase db=RoomDatabaseProvider.get(context);
+            assertEquals(Integer.valueOf(600),db.manualProbeQualityDao().find(owner,oldKey).score);
+            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            JSONArray newRows=new JSONArray().put(channel("CCTV-2",newUrl));
+            assertFalse(RoomCatalogueBuildStore.commitManualIndexed(context,owner,1,
+                    java.util.Collections.emptyList(),newRows,java.util.Collections.singleton(0),
+                    ()->false,new AppStateEditor(context).putInt("source_manual_next_feed",1),
+                    java.util.Collections.emptyList(),1,1,0,java.util.Collections.emptyList()));
+            assertEquals(2,db.channelDao().countCatalogueBuildRows());
+            assertEquals(2,db.manualProbeQueueDao().countPending(owner));
+            assertEquals(1,RoomCatalogueReader.read(context).channelCount);
+            JSONArray staged=RoomCatalogueBuildStore.readManual(context,owner,()->false);
+            try {
+                RoomCatalogueWriter.publishManualSnapshot(context,staged,base,owner,()->false,
+                        new AppStateEditor(context).putString(completed,owner));
+                fail("unfinished queue must block publication");
+            }catch(IllegalStateException expected){
+                assertEquals("Manual queue has unfinished work",expected.getMessage());
+            }
+            assertTrue(RoomCatalogueBuildStore.canRunManualQueueOnly(context,owner,1));
+            List<String> pending=endpoints(db.manualProbeQueueDao().pending(owner,48));
+            assertEquals(2,pending.size());
+            List<ManualProbeQualityEntity> quality=java.util.Arrays.asList(
+                    new ManualProbeQualityEntity(owner,oldKey,650,null),
+                    new ManualProbeQualityEntity(owner,newKey,900,null));
+            assertTrue(RoomCatalogueBuildStore.commitManualQueueOnly(context,owner,1,0,
+                    pending,quality,()->false,new AppStateEditor(context)));
+            closeProvider();
+            AppDatabase ready=RoomDatabaseProvider.get(context);
+            assertEquals("true",ready.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_READY_KEY));
+            assertEquals(0,ready.manualProbeQueueDao().countPending(owner));
+            assertEquals(Integer.valueOf(900),ready.manualProbeQualityDao().find(owner,newKey).score);
+            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            assertEquals(base,RoomCatalogueReader.read(context).catalogueVersion);
+            assertEquals(1,RoomCatalogueReader.read(context).channelCount);
+            try{
+                RoomCatalogueWriter.publishManualSnapshot(context,staged,base,owner,
+                        ()->ready.inTransaction()&&owner.equals(ready.appStateDao().getValue(completed))
+                                &&ready.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)==null
+                                &&ManualProbeQualityStore.hasPublished(context),
+                        new AppStateEditor(context).putString(completed,owner));
+                fail("expected late publication rollback");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+            closeProvider();
+            AppDatabase restored=RoomDatabaseProvider.get(context);
+            assertEquals(base,RoomCatalogueReader.read(context).catalogueVersion);
+            assertEquals(1,RoomCatalogueReader.read(context).channelCount);
+            assertEquals(owner,restored.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY));
+            assertEquals("true",restored.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_READY_KEY));
+            assertNull(restored.appStateDao().getValue(completed));
+            assertEquals(2,restored.channelDao().countCatalogueBuildRows());
+            assertEquals(2,restored.manualProbeQueueDao().count(owner));
+            assertEquals(0,restored.manualProbeQueueDao().countPending(owner));
+            assertEquals(Integer.valueOf(900),restored.manualProbeQualityDao().find(owner,newKey).score);
+            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            assertEquals(2,RoomCatalogueWriter.publishManualSnapshot(context,staged,base,owner,()->false,
+                    new AppStateEditor(context).putString(completed,owner)));
+            closeProvider();
+            AppDatabase published=RoomDatabaseProvider.get(context);
+            RoomCatalogueReader.Snapshot snapshot=RoomCatalogueReader.read(context);
+            assertEquals(2,snapshot.channelCount);
+            assertTrue(snapshot.catalogueVersion>base);
+            assertEquals(owner,published.appStateDao().getValue(completed));
+            assertNull(published.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY));
+            assertEquals(0,published.channelDao().countCatalogueBuildRows());
+            assertEquals(0,published.manualProbeQueueDao().count(owner));
+            assertNull(published.manualProbeQualityDao().find(owner,newKey));
+            JSONObject scores=ManualProbeQualityStore.readPlaybackScores(context,
+                    java.util.Arrays.asList(oldUrl,newUrl),snapshot.catalogueVersion,()->false);
+            assertEquals(650,scores.getInt(oldKey));
+            assertEquals(900,scores.getInt(newKey));
+        });
+    }
+
     private static List<String> endpoints(List<ManualProbeQueueEntity> rows){
         List<String> result=new ArrayList<>();
         for(ManualProbeQueueEntity row:rows)result.add(row.endpoint);
