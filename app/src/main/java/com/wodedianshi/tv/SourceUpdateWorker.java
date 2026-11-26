@@ -34,6 +34,17 @@ public class SourceUpdateWorker extends Worker {
     final ProbeResult result; final long at;
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
+  private static void rememberInitialProbe(String key,ProbeResult result,long at){
+    INITIAL_PROBES.put(key,new RecentProbe(result,at));
+    while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
+      INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
+  }
+  private static void retainCompletedInitialSuccess(String key,ProbeResult result,
+      long finishedAt,long addressDeadline,long batchDeadline){
+    if(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(result.valid,
+        result.socketTimedOut,finishedAt,addressDeadline,batchDeadline))
+      rememberInitialProbe(key,result,finishedAt);
+  }
   private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
   // Reuse only committed staging owned by the sole source worker. A borrowed
   // mutable snapshot is removed from the cache BEFORE any mutation.
@@ -1006,6 +1017,11 @@ public class SourceUpdateWorker extends Worker {
               measuredAt=android.os.SystemClock.elapsedRealtime();
             }
           }
+          // A completed positive observation can be reused on the next slice
+          // even if a new user action prevents this slice from committing.
+          // Never renew the timestamp of a reused result.
+          if(initialDiscoveryChain&&!reuse)
+            retainCompletedInitialSuccess(cacheKey,measured,measuredAt,addressDeadline,probeDeadline);
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             idleWave.close();
             saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
@@ -1038,11 +1054,8 @@ public class SourceUpdateWorker extends Worker {
             if(SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts))visitedUrls.remove(endpoint);
             continue;
           }
-          if(initialDiscoveryChain&&!reuse){
-            INITIAL_PROBES.put(cacheKey,new RecentProbe(measured,measuredAt));
-            while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
-              INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
-          }
+          if(initialDiscoveryChain&&!reuse)
+            rememberInitialProbe(cacheKey,measured,measuredAt);
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
@@ -2322,6 +2335,8 @@ public class SourceUpdateWorker extends Worker {
     private java.util.concurrent.ExecutorService executor;
     private final Map<String,java.util.concurrent.Future<TimedProbe>> pending=new HashMap<>();
     int launched;
+    boolean initialWave;
+    long waveBatchDeadline;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
     boolean hasPending(){return !pending.isEmpty();}
     
@@ -2361,6 +2376,8 @@ public class SourceUpdateWorker extends Worker {
           r.run();
         },"mytv-idle-probe");
       });
+      initialWave=initial;
+      waveBatchDeadline=batchDeadline;
       for(Entry entry:wave){
         if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
         final String url=entry.url;
@@ -2387,12 +2404,31 @@ public class SourceUpdateWorker extends Worker {
         catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new SourceProbeTimePolicy.PublicationPausedException();}
       }
     }
+    // Owner-only: harvest already completed positive observations before
+    // cancelling unfinished work. No cursor, quality score or channel is
+    // committed here; the next owner must consume the exact candidate again.
+    private void retainCompletedSuccesses(){
+      if(!initialWave)return;
+      for(Map.Entry<String,java.util.concurrent.Future<TimedProbe>> entry:pending.entrySet()){
+        java.util.concurrent.Future<TimedProbe> task=entry.getValue();
+        if(!task.isDone()||task.isCancelled())continue;
+        try{
+          TimedProbe outcome=task.get(0L,java.util.concurrent.TimeUnit.MILLISECONDS);
+          retainCompletedInitialSuccess(entry.getKey(),outcome.result,outcome.finishedAt,
+              outcome.deadline,waveBatchDeadline);
+        }catch(InterruptedException interrupted){
+          Thread.currentThread().interrupt();break;
+        }catch(java.util.concurrent.ExecutionException|java.util.concurrent.CancellationException
+            |java.util.concurrent.TimeoutException ignored){}
+      }
+    }
     void finishBeforeCommit()throws java.util.concurrent.TimeoutException{
       // The owner has consumed only a contiguous prefix. A completed but
       // unconsumed suffix can be discarded safely; its cursor is not advanced.
       // Never write while a speculative request is still running.
       if(!IdleProbeWavePolicy.allFinished(pending.values()))
         throw new java.util.concurrent.TimeoutException("Unconsumed probe wave still running");
+      retainCompletedSuccesses();
       pending.clear();
       if(executor!=null)executor.shutdown();
     }
@@ -2404,6 +2440,7 @@ public class SourceUpdateWorker extends Worker {
       if(pending.isEmpty())owned.shutdown();
       else{
         int outstanding=pending.size();
+        retainCompletedSuccesses();
         for(java.util.concurrent.Future<TimedProbe> task:pending.values())task.cancel(true);
         owned.shutdownNow();
         android.util.Log.i("MyTVSourceDiscovery","probe_cancel_signalled pending="+outstanding
