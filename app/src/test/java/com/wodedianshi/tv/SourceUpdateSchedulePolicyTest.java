@@ -343,4 +343,12 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day));
         assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(now,0L,now+day));
     }
+
+    @Test public void qualityRevisionInvalidatesScoreCacheWithoutCatalogueChange(){
+        assertFalse(SourceUpdateSchedulePolicy.needsIndexedQualityReload(42L,42L,"a","a"));
+        assertTrue(SourceUpdateSchedulePolicy.needsIndexedQualityReload(42L,42L,"a","b"));
+        assertTrue(SourceUpdateSchedulePolicy.needsIndexedQualityReload(42L,43L,"a","a"));
+        assertTrue(SourceUpdateSchedulePolicy.needsIndexedQualityReload(-1L,42L,"",""));
+        assertFalse(SourceUpdateSchedulePolicy.needsIndexedQualityReload(42L,42L,"",""));
+    }
 }
