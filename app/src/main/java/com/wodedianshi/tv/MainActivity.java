@@ -4837,8 +4837,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final boolean indexEligible=!favoriteOnly;
         final java.util.List<String> scopeKey=SnapshotCategoryIndex.scopeKey(categorySnapshot,
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null,geoScopeSnapshot,geoCountrySnapshot);
-        final boolean reusePage=pageOrder!=null&&mutation==catalogueMutationGeneration
-            &&expectedCount==sources.size();
+        final boolean reusePage=pageOrder!=null&&pageOrder.key.equals(remoteChannelOrderKey(
+            categorySnapshot,query,favoriteOnly,oldGeneration,mutation,expectedCount,favoriteHash))
+            &&mutation==catalogueMutationGeneration&&expectedCount==sources.size();
         java.util.List<Integer> exactScope=reusePage?pageOrder.indexes:
             indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
         // A cached geographic position list already proves exact membership.
