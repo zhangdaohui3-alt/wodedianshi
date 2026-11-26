@@ -494,14 +494,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       } catch (Throwable warmFailure) {
         android.util.Log.e("MyTVStartup","background preferences warm-up failed",warmFailure);
       }
-      worker.execute(() -> {
+      // Continue on the same serial worker. Re-enqueueing here can put restore
+      // behind unrelated queued work or race shutdown during Activity teardown.
+      if(Thread.currentThread().isInterrupted()||isFinishing()||isDestroyed())return;
       long restoreStarted=android.os.SystemClock.elapsedRealtime();
       Throwable restoreFailure=null;
       try{restore();}
       catch(Throwable failure){
         restoreFailure=failure;
-        // OutOfMemoryError is not an Exception. Earlier 128-row batches may
-        // already be visible; rebuild their indexes before opening the UI.
+        // Preserve fail-closed restore behavior. The complete Room read uses
+        // private pages; rebuild only if recovery left any in-memory rows.
         try{if(!channels.isEmpty())rebuildChannelIndexes();}
         catch(Throwable indexFailure){android.util.Log.e("MyTVStartup","restore recovery index rebuild failed",indexFailure);}
         android.util.Log.e("MyTVStartup","saved catalogue restore failed; retained_channels="+channels.size(),failure);
@@ -526,11 +528,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // by an in-memory fallback that cannot be persisted consistently.
       long restoreElapsed=android.os.SystemClock.elapsedRealtime()-restoreStarted;
       runOnUiThread(()->{
-        if(isFinishing())return;
+        if(isFinishing()||isDestroyed())return;
         startupDataReady=true;
-        // Preserve the latest category choice made during a slow catalogue restore.
-        final String queuedCategory=pendingStartupCategory;
-        pendingStartupCategory=null;
         getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if(search!=null)search.setEnabled(true);
         if(categoryMenuItems!=null)for(int i=0;i<categoryMenuItems.getChildCount();i++)categoryMenuItems.getChildAt(i).setEnabled(true);
@@ -539,19 +538,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(info!=null)info.setText(!restoreSucceeded
               ?"频道目录初始化失败，请稍后重试"
               :channels.isEmpty()?"首次频道目录初始化中：正在完整抓取、分类和整理频道，请保持网络连接":"已载入 "+channels.size()+" 个频道 · 选择频道开始播放");
-          if(queuedCategory!=null&&categoryMenuItems!=null){
-            categoryMenuItems.post(()->{
-              if(isFinishing()||categoryMenuItems==null)return;
-              for(int i=0;i<categoryMenuItems.getChildCount();i++){
-                View child=categoryMenuItems.getChildAt(i);
-                if(child instanceof Button&&queuedCategory.equals(((Button)child).getText().toString())){
-                  child.performClick();
-                  android.util.Log.i("MyTVStartup","replayed_category_after_restore="+queuedCategory);
-                  break;
-                }
-              }
-            });
-          }
+          replayPendingStartupCategory();
         }catch(Throwable renderFailure){
           android.util.Log.e("MyTVStartup","restored channel list render failed",renderFailure);
           if(info!=null)info.setText("频道列表刷新遇到问题；主界面仍可使用，请稍后重试。");
@@ -582,9 +569,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         android.util.Log.i("MyTVStartup","restore_ms="+restoreElapsed+" channels="+channels.size());
       });
-
-        });
     });
+  }
+  // Replay only while foreground and unlocked, without posting a second
+  // click that could override a newer explicit user action.
+  private void replayPendingStartupCategory(){
+    if(!startupDataReady||!activityStarted||isFinishing()||isDestroyed()||categoryMenuItems==null)return;
+    final String queued=pendingStartupCategory;
+    pendingStartupCategory=null;
+    if(queued==null||isAnyPlaybackLockActive())return;
+    for(int i=0;i<categoryMenuItems.getChildCount();i++){
+      View child=categoryMenuItems.getChildAt(i);
+      if(child instanceof Button&&queued.equals(((Button)child).getText().toString())){
+        child.performClick();
+        android.util.Log.i("MyTVStartup","replayed_category_after_restore="+queued);
+        break;
+      }
+    }
   }
   private int sourceQualityScore(String source){
     return SourceQualityScorer.labelScore(source);
@@ -1361,7 +1362,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // available as focused subcategories, while HK/Macau/Taiwan and global stay separate.
     String[] names={"中国","收藏","点播","央视","卫视","地方","港澳台","全部","全球频道","国家地区","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
     LinearLayout catItems=new LinearLayout(this);categoryMenuItems=catItems;catItems.setOrientation(1);
-    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(name.equals("点播")){vodDialog();return;}if(!startupDataReady){pendingStartupCategory=name;return;}geoDirectoryRequestGeneration++;activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){
+    for(String name:names){Button x=new Button(this);x.setText(name);x.setTextColor(Color.WHITE);x.setTextSize(15);x.setMinHeight(dp(0));x.setMinimumHeight(0);x.setPadding(dp(4),0,dp(4),0);styleTvButton(x,name.equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40));x.setOnClickListener(v->{android.util.Log.i("MyTVDirectory","category_click name="+name+" startupReady="+startupDataReady+" channels="+channels.size());if(!startupDataReady){pendingStartupCategory=name;return;}pendingStartupCategory=null;if(name.equals("点播")){vodDialog();return;}geoDirectoryRequestGeneration++;activeGeoChannelKeys=null;localRegionFilterActive=false;activeLocalProvince=null;activeLocalCity=null;livePageIndex=0;activeCategory=name;favoriteMode=name.equals("收藏");for(int i=0;i<catItems.getChildCount();i++){View z=catItems.getChildAt(i);if(z instanceof Button)((Button)z).setBackground(makeButtonBg(((Button)z).getText().toString().equals(activeCategory)?Color.rgb(26,112,190):Color.rgb(16,24,40),z.hasFocus()));}if(name.equals("国家地区")){
       // "国家地区" opens a picker rather than being a channel category; showing
       // the unmatched label as a filter made the entire saved list appear empty.
       activeCategory="全球频道";refresh();
@@ -1858,6 +1859,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean resumeLiveAfterVod=false;
   private View vodCategoryFocusTarget;
   private void vodDialog(){
+    if(!startupDataReady||!activityStarted||isFinishing()||isDestroyed())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
@@ -7827,6 +7829,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     childLockTicker=()->{if(isFinishing())return;updateChildUsage();refreshChildLockState();uiHandler.postDelayed(childLockTicker,30000L);};
     uiHandler.postDelayed(childLockTicker,30000L);
     refreshChildLockState();
+    replayPendingStartupCategory();
     updateNetworkSpeedMonitor();
     if(resumePlaybackOnStart&&currentVodPanel==null&&!resumeLiveAfterVod
         &&selected>=0&&selected<channels.size()&&!isChildLockCurrentlyActive()){
