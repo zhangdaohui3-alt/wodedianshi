@@ -389,9 +389,6 @@ public class SourceUpdateWorker extends Worker {
           // nonempty first directory may immediately enter the ordinary bounded
           // page path, which rechecks the exact body marker and playback gate.
           if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(
-              DiscoveryBatchPolicy.isEarlyFirstWatch(
-                  roomInt("source_initial_progress_staged_channels",0),
-                  roomInt("source_initial_progress_checked_urls",0)),
               slowPlayback,count,android.os.SystemClock.elapsedRealtime()-sliceStartedAt)){
             enqueueInitialContinuation();
             return Result.success();
@@ -594,7 +591,7 @@ public class SourceUpdateWorker extends Worker {
             PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
-            if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(earlyFirstWatch,slowPlayback,
+            if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
               return continueAfterAcquisition();
