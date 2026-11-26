@@ -100,7 +100,9 @@ public class DiscoveryBatchPolicyTest {
     @Test public void largerInitialPageKeepsOrdinaryAndViewingProbeLimits() {
         assertEquals(48,DiscoveryBatchPolicy.INITIAL_PAGE_SIZE);
         assertEquals(48,DiscoveryBatchPolicy.probeLimit(true,false,24));
-        assertEquals(1,DiscoveryBatchPolicy.probeLimit(true,true,24));
+        assertEquals(2,DiscoveryBatchPolicy.probeLimit(true,true,24));
+        assertEquals(5L,DiscoveryBatchPolicy.VIEWING_SUCCESS_DELAY_SECONDS);
+        org.junit.Assert.assertFalse(IdleProbeWavePolicy.permitsParallel(true,false,true));
         assertEquals(24,DiscoveryBatchPolicy.probeLimit(false,false,24));
         assertEquals(24,DiscoveryBatchPolicy.probeLimit(false,true,24));
     }
