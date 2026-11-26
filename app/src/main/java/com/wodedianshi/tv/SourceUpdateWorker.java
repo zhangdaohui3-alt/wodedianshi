@@ -3051,8 +3051,11 @@ public class SourceUpdateWorker extends Worker {
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return result;
       SampleResponse initialResponse;
+      String lower=address.toLowerCase(Locale.ROOT);
+      boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       try{
-        initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested);
+        initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested,
+            false,initialIdle&&!slowPlayback&&!playlistUrl);
         result.firstRequestReached=initialResponse!=null;
       }catch(TransientProbeHttpException failure){
         // A redirect may have reached a different origin. Do not penalize the
@@ -3066,9 +3069,15 @@ public class SourceUpdateWorker extends Worker {
       }
       byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
       if(initialBytes==null||initialBytes.length<7)return result;
+      if(initialResponse.earlyDirectTs){
+        // Preliminary structural evidence only; do not extrapolate short-prefix
+        // throughput into a full-sample quality score.
+        result.valid=true;
+        result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
+        result.score=350;
+        return result;
+      }
       String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
-      String lower=address.toLowerCase(Locale.ROOT);
-      boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
       if(playlistUrl||hlsPlaylist){
         if(!hlsPlaylist)return result;
@@ -3213,8 +3222,11 @@ public class SourceUpdateWorker extends Worker {
     final String finalUrl;
     // True only when the bounded read observed at least one byte beyond its cap.
     // Reaching the cap alone does not prove that the HTTP resource ended there.
-    final boolean truncated;
-    SampleResponse(byte[] data,String url,boolean wasTruncated){bytes=data;finalUrl=url;truncated=wasTruncated;}
+    final boolean truncated,earlyDirectTs;
+    SampleResponse(byte[] data,String url,boolean wasTruncated){this(data,url,wasTruncated,false);}
+    SampleResponse(byte[] data,String url,boolean wasTruncated,boolean earlyDirectTs){
+      bytes=data;finalUrl=url;truncated=wasTruncated;this.earlyDirectTs=earlyDirectTs;
+    }
   }
   private boolean probeDeadlineReached(long deadline){
     return probeDeadlineReached(deadline,pauseRequested);
@@ -3256,6 +3268,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
       java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia)throws Exception{
+    return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,stopOnConfirmedMedia,false);
+  }
+  private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
+      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs)throws Exception{
     HttpURLConnection c=null;
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return null;
@@ -3297,6 +3313,16 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
+          // Inspect at most once after a small prefix is available. If not TS,
+          // retain the normal full read (including extensionless HLS manifests).
+          if(stopOnDirectTs&&total>=4096){
+            stopOnDirectTs=false;
+            byte[] prefix=out.toByteArray();
+            if(MediaPayloadValidator.hasDirectTsScreeningPrefix(prefix)){
+              if(probeDeadlineReached(deadline,pauseRequested))return null;
+              return new SampleResponse(prefix,finalUrl,true,true);
+            }
+          }
           if(stopOnConfirmedMedia&&total>=16&&total<=maxBytes){
             byte[] prefix=out.toByteArray();
             if(MediaPayloadValidator.hasConfirmedHlsPrefix(prefix)){
