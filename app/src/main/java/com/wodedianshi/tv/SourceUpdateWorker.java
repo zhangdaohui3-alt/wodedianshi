@@ -655,51 +655,13 @@ public class SourceUpdateWorker extends Worker {
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
       boolean[] visitedForCoverage=new boolean[feeds.length];
       if(initialDiscoveryChain){
-        final long recheckClock=System.currentTimeMillis();
-        final long[] recheckRemaining=new long[feeds.length];
-        // One small, consistent Room read instead of 2–4 individual SELECTs
-        // per directory. This snapshot is local to admission of this slice.
-        ArrayList<String> feedStateKeys=new ArrayList<>(feeds.length*(preferCoreCoverage?7:4));
-        for(int i=0;i<feeds.length;i++){
-          feedStateKeys.add(initialFeedDoneKey(i));
-          feedStateKeys.add(DiscoveryBatchPolicy.initialIdleRecheckKey(i));
-          feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
-          feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
-          if(preferCoreCoverage){
-            feedStateKeys.add(feedCursorKey(i));
-            feedStateKeys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
-            feedStateKeys.add(initialFeedFailureCountKey(i));
-          }
-        }
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        Map<String,String> feedState=readRoomValues(feedStateKeys);
+        InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,slowPlayback,preferCoreCoverage);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        for(int i=0;i<feeds.length;i++){
-          inspectedFeeds[i]=Boolean.parseBoolean(feedState.get(initialFeedDoneKey(i)));
-          if(preferCoreCoverage){
-            // Count only persisted inspection evidence, not successful acquisition
-            // alone. A newly prepared feed still deserves its first probe turn.
-            visitedForCoverage[i]=positiveFeedState(feedState,feedCursorKey(i))
-                ||positiveFeedState(feedState,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned")
-                ||positiveFeedState(feedState,initialFeedFailureCountKey(i));
-          }
-          int transientState=-1;
-          try{transientState=Integer.parseInt(feedState.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
-          catch(NumberFormatException ignored){}
-          // Forward scanning may continue while playing; an admitted replay
-          // remains idle-only. Legacy holds resume at the saved prefix.
-          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(slowPlayback,transientState)
-              ||(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(i,0L));
-          if(!inspectedFeeds[i]&&!attemptedFeedsThisRun[i]
-              &&transientState==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
-            long admittedAt=0L;
-            try{admittedAt=Long.parseLong(feedState.get(
-                DiscoveryBatchPolicy.initialTransientRecheckAtKey(i)));}
-            catch(NumberFormatException ignored){}
-            recheckRemaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,recheckClock);
-            attemptedFeedsThisRun[i]=recheckRemaining[i]>0L;
-          }
-        }
+        System.arraycopy(admission.completed,0,inspectedFeeds,0,feeds.length);
+        System.arraycopy(admission.deferred,0,attemptedFeedsThisRun,0,feeds.length);
+        System.arraycopy(admission.visited,0,visitedForCoverage,0,feeds.length);
+        final long[] recheckRemaining=admission.remaining;
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
@@ -1972,22 +1934,20 @@ public class SourceUpdateWorker extends Worker {
         // rather than repeatedly back off the same WorkRequest.
         boolean freshDifferentNextFeed=false;
         if(feedsOk==0&&!slowPlayback){
-          // Read completion/failure flags after the staging transaction.
-          // Determine the actual next eligible feed within the active region,
-          // not simply the numerical successor of the failed feed.
-          boolean[] completedNow=new boolean[feeds.length];
-          for(int i=0;i<feeds.length;i++)
-            completedNow[i]=roomBoolean(initialFeedDoneKey(i),false);
-          int next=SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,completedNow,
-              new boolean[feeds.length],SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,
-              DiscoveryBatchPolicy.preferCoreCoverage(
-                  roomInt("source_initial_progress_staged_channels",0),
-                  roomInt("source_initial_progress_checked_urls",0),
-                  roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1)));
+          // Use exactly the same admission policy as the next slice. A
+          // cooling feed or an already visited family must not impose its
+          // retry delay on a different eligible, unfailed directory.
+          boolean preferCoreNow=DiscoveryBatchPolicy.preferCoreCoverage(
+              roomInt("source_initial_progress_staged_channels",0),
+              roomInt("source_initial_progress_checked_urls",0),
+              roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
+          InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,false,preferCoreNow);
+          int next=SourceDiscoveryPriorityPolicy.nextCoverageFeed(initialNextFeedIndex,
+              admission.completed,admission.deferred,admission.visited,
+              SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow);
           int attempted=feedBatches.get(feedBatches.size()-1).index;
-          freshDifferentNextFeed=next>=0&&next!=attempted
-              &&roomInt(initialFeedFailureCountKey(next),0)==0;
+          freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
         long delay=SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
             slowPlayback,feedsOk>0,freshDifferentNextFeed);
@@ -3178,6 +3138,53 @@ public class SourceUpdateWorker extends Worker {
     return SourceDiscoveryIdentityPolicy.identity(name,group,url,tvgId,tvgName);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
+  private static final class InitialFeedAdmission {
+    final boolean[] completed,deferred,visited,failed;
+    final long[] remaining;
+    InitialFeedAdmission(int count){
+      completed=new boolean[count];deferred=new boolean[count];
+      visited=new boolean[count];failed=new boolean[count];remaining=new long[count];
+    }
+  }
+  /** One consistent Room read for both admission and the post-commit delay
+   * decision. Masks are scheduling hints only; they never mark a feed done. */
+  private InitialFeedAdmission readInitialFeedAdmission(int count,boolean viewing,boolean preferCore){
+    InitialFeedAdmission admission=new InitialFeedAdmission(count);
+    ArrayList<String> keys=new ArrayList<>(count*(preferCore?6:4));
+    for(int i=0;i<count;i++){
+      keys.add(initialFeedDoneKey(i));
+      keys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
+      keys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
+      keys.add(initialFeedFailureCountKey(i));
+      if(preferCore){
+        keys.add(feedCursorKey(i));
+        keys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
+      }
+    }
+    Map<String,String> state=readRoomValues(keys);
+    long wall=System.currentTimeMillis(),elapsed=android.os.SystemClock.elapsedRealtime();
+    for(int i=0;i<count;i++){
+      admission.completed[i]=Boolean.parseBoolean(state.get(initialFeedDoneKey(i)));
+      admission.failed[i]=positiveFeedState(state,initialFeedFailureCountKey(i));
+      admission.visited[i]=preferCore&&(admission.failed[i]
+          ||positiveFeedState(state,feedCursorKey(i))
+          ||positiveFeedState(state,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned"));
+      int marker=DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
+      try{marker=Integer.parseInt(state.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
+      catch(NumberFormatException ignored){}
+      admission.deferred[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(viewing,marker)
+          ||(viewing&&elapsed<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(i,0L));
+      if(!admission.completed[i]&&!admission.deferred[i]
+          &&marker==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
+        long admittedAt=0L;
+        try{admittedAt=Long.parseLong(state.get(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i)));}
+        catch(NumberFormatException ignored){}
+        admission.remaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,wall);
+        admission.deferred[i]=admission.remaining[i]>0L;
+      }
+    }
+    return admission;
+  }
   private static boolean positiveFeedState(Map<String,String> values,String key){
     try{return Long.parseLong(values.get(key))>0L;}
     catch(NumberFormatException invalid){return false;}
