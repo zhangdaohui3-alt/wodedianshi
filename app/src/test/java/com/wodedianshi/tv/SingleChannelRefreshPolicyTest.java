@@ -45,6 +45,18 @@ public class SingleChannelRefreshPolicyTest {
             "Example Music","台湾","example.music",""));
     }
 
+    @Test public void contradictoryGeographyNeverFallsBackToSharedEpgId(){
+        assertNull(ChannelNamePolicy.localProvinceEvidence("河北 Fuzhou News"));
+        assertNull(ChannelNamePolicy.localProvinceEvidence("江西 福州新闻"));
+        assertEquals("",ChannelNamePolicy.localProvinceEvidence("Fuzhou News"));
+        assertEquals("福建",ChannelNamePolicy.localProvinceEvidence("福建 Fuzhou News"));
+        assertFalse(match("Fuzhou News","河北","news.fuzhou","",
+            "Fuzhou News","河北","news.fuzhou",""));
+        assertFalse(match("Fuzhou News","福建","news.fuzhou","",
+            "Fuzhou News","河北","news.fuzhou",""));
+        assertTrue(match("泰州新闻","江苏","","","泰州新闻","江苏","",""));
+    }
+
     @Test public void appendOnlyUsesFreeSlotsInVerifiedQualityOrder(){
         java.util.List<String> old=Arrays.asList("https://a.example/live","https://b.example/live");
         assertEquals(Arrays.asList("https://c.example/live","https://d.example/live"),
