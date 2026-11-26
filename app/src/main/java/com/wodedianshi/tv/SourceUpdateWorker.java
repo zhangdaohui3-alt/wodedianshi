@@ -31,6 +31,7 @@ public class SourceUpdateWorker extends Worker {
   private static final LinkedHashMap<String,RecentProbe> INITIAL_PROBES=
       new LinkedHashMap<>(64,0.75f,true);
   private static final int INITIAL_PROBE_CACHE_CAP=1024;
+  private static final InitialOriginCooldownPolicy INITIAL_ORIGINS=new InitialOriginCooldownPolicy();
   private static final class RecentProbe {
     final ProbeResult result; final long at;
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
@@ -401,7 +402,7 @@ public class SourceUpdateWorker extends Worker {
             return deferInitialDirectory("已有暂存目录，等待空闲重建，保留观看");
           // Empty staging initialization is only a small state transaction.
           // It must not block first discovery forever on a playing seed channel.
-          INITIAL_PROBES.clear();
+          INITIAL_PROBES.clear();INITIAL_ORIGINS.clear();
           LIVE_DIRECTORY_RETRY_AFTER.clear();
           discardStagingReuse();
           // Start from an empty isolated Room staging set. The live catalogue is
@@ -1154,6 +1155,7 @@ public class SourceUpdateWorker extends Worker {
       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
+      int originDeferred=0;
       boolean viewingDeferred=false;
       final int priorChinaValidated=initialDiscoveryChain
           ?roomInt("source_initial_progress_china_validated_urls",0):0;
@@ -1197,6 +1199,21 @@ public class SourceUpdateWorker extends Worker {
           boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(
               cached.result.valid,cached.at,clock);
+          boolean allowOriginDeferral=InitialOriginCooldownPolicy.mayDefer(
+              initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
+              transientRecheck==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED);
+          String origin=initialDiscoveryChain&&!slowPlayback
+              ?InitialOriginCooldownPolicy.origin(e.url):"";
+          // Do not abandon a launched probe or discard a recent validation.
+          // A deferred position must get its ordinary idle replay before EOF.
+          if(allowOriginDeferral&&!reuse&&!idleWave.has(endpoint)
+              &&INITIAL_ORIGINS.cooling(origin,clock)){
+            if(pageFeed<0)throw new IllegalStateException("Missing origin recheck page");
+            transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
+                initialDiscoveryScanned+discoveryScanned-1);
+            originDeferred++;
+            continue;
+          }
           // The early idle position window may include cached observations after
           // its network budget is full. Stop BEFORE the first uncached position,
           // leaving its exact cursor for the next worker. Never launch more probes.
@@ -1226,7 +1243,7 @@ public class SourceUpdateWorker extends Worker {
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
-                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked)))){
+                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral))){
               TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
@@ -1250,6 +1267,9 @@ public class SourceUpdateWorker extends Worker {
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
           }
+          if(initialDiscoveryChain&&!slowPlayback&&!reuse)
+            INITIAL_ORIGINS.observe(origin,endpoint,measuredAt,
+                measured.firstRequestFailed,measured.firstRequestReached);
           if(!reuse&&(measured.socketTimedOut||measured.transientNetworkFailure||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
             // Timeouts, transient network failures and unsuccessful paced validations are inconclusive: do not promote,
@@ -1421,7 +1441,7 @@ public class SourceUpdateWorker extends Worker {
       idleWave.finishBeforeCommit();
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1954,7 +1974,7 @@ public class SourceUpdateWorker extends Worker {
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
       if(!initialDiscoveryChain)return Result.success();
-      if(initialDiscoveryComplete){INITIAL_PROBES.clear();discardStagingReuse();}
+      if(initialDiscoveryComplete){INITIAL_PROBES.clear();INITIAL_ORIGINS.clear();discardStagingReuse();}
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
@@ -2642,7 +2662,8 @@ public class SourceUpdateWorker extends Worker {
     boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
-        Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests){
+        Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests,
+        boolean allowOriginDeferral){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       long now=android.os.SystemClock.elapsedRealtime();
@@ -2656,6 +2677,7 @@ public class SourceUpdateWorker extends Worker {
         if((initial&&entry.savedSource)||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
         String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=probeHost(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
+        if(allowOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))break;
         if(i!=offset){
           RecentProbe cached=initial?INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
@@ -2755,6 +2777,7 @@ public class SourceUpdateWorker extends Worker {
     boolean socketTimedOut;
     boolean transientNetworkFailure;
     boolean paced;
+    boolean firstRequestFailed,firstRequestReached;
     int score;
     int width,height;
     long latencyMs;
@@ -2849,7 +2872,14 @@ public class SourceUpdateWorker extends Worker {
     long started=android.os.SystemClock.elapsedRealtime();
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return result;
-      SampleResponse initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested);
+      SampleResponse initialResponse;
+      try{
+        initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested);
+        result.firstRequestReached=initialResponse!=null;
+      }catch(java.net.SocketTimeoutException|java.net.ConnectException|java.net.UnknownHostException failure){
+        result.firstRequestFailed=true;
+        throw failure;
+      }
       byte[] initialBytes=initialResponse==null?null:initialResponse.bytes;
       if(initialBytes==null||initialBytes.length<7)return result;
       String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
