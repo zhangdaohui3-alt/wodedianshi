@@ -8,6 +8,12 @@ import java.util.List;
 /** Conservative append-only plan for an explicit single-station refresh. */
 public final class SingleChannelRefreshPolicy {
     private SingleChannelRefreshPolicy(){}
+    /** The same request deadline applies to queue wait, search, probe and commit. */
+    static boolean requestExpired(long now,long deadline){return now>=deadline;}
+    static boolean shouldCancelRequest(boolean cancelled,long admittedPressure,long currentPressure,
+            long now,long deadline){
+        return cancelled||admittedPressure!=currentPressure||requestExpired(now,deadline);
+    }
     /** Match only a strong shared station identity, never the host/name
      * fallback used by the broad discovery catalogue. Conflicting metadata
      * rejects a candidate rather than resolving it by guesswork. */
