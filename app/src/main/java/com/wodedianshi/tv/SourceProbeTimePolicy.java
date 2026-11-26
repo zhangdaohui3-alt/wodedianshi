@@ -113,6 +113,18 @@ public final class SourceProbeTimePolicy {
         return Math.max(0,Math.min(received,maxBytes));
     }
 
+    /** Temporary server responses are not evidence of invalid media.
+     * Authentication, missing resources and unsupported formats stay distinct. */
+    static boolean transientProbeHttpStatus(int code) {
+        return code==408||code==429||code==500||code==502||code==503||code==504;
+    }
+
+    static boolean transientProbeNetworkException(java.io.IOException error) {
+        return error instanceof java.net.ConnectException
+                ||error instanceof java.net.UnknownHostException
+                ||error instanceof java.net.NoRouteToHostException;
+    }
+
     /** A socket timeout is not proof that a stream is invalid, even before the total budget. */
     public static boolean initialProbeInconclusive(boolean socketTimedOut,long finishedAt,long addressDeadline) {
         return socketTimedOut || finishedAt>=addressDeadline;
