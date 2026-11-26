@@ -32,6 +32,20 @@ public final class ChinaDiscoveryCandidatePolicy {
         return 2;
     }
 
+    /** Keep the immutable page complete. Prioritize local coverage in the
+     * county/mixed directory rather than repeating national backup stations. */
+    static int initialCoveragePriority(int feedIndex,String scope,String name,
+            String group,String tvgName,String tvgId) {
+        int rank=initialProbePriority(feedIndex,scope,name,group,tvgName,tvgId);
+        if(!SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex))return rank;
+        if(rank!=0)return rank+1;
+        int category=FullDiscoveryProgressPolicy.coreCategoryMask(name,group,tvgName,tvgId);
+        if(category==FullDiscoveryProgressPolicy.CORE_LOCAL)return 0;
+        if(category==0&&ChannelNamePolicy.isDomesticLocalLabel(
+                safe(name)+" "+safe(group)+" "+safe(tvgName)+" "+safe(tvgId),true))return 0;
+        return 1;
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value;
     }
