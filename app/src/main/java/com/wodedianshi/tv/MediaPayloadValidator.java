@@ -19,6 +19,27 @@ public final class MediaPayloadValidator {
         return hasTransportStreamPackets(data) || hasIsoBmffMediaFragment(data,true);
     }
 
+    // Initial direct TS screening requires substantially more evidence than
+    // two sync packets: eight contiguous structurally valid packets and
+    // at least one payload-bearing non-null, non-error packet.
+    static boolean hasDirectTsScreeningPrefix(byte[] data) {
+        if(data==null||data.length<8*188)return false;
+        for(int offset=0;offset<188&&offset+8*188<=data.length;offset++){
+            boolean valid=true,mediaPayload=false;
+            for(int i=0;i<8;i++){
+                int at=offset+i*188;
+                if(!isValidTransportStreamPacket(data,at)||(data[at+1]&0x80)!=0){
+                    valid=false;break;
+                }
+                int pid=((data[at+1]&0x1f)<<8)|(data[at+2]&0xff);
+                int control=(data[at+3]>>>4)&3;
+                if(pid>0&&pid<0x1fff&&(control==1||control==3))mediaPayload=true;
+            }
+            if(valid&&mediaPayload)return true;
+        }
+        return false;
+    }
+
     /** Positive TS packet evidence remains valid when more bytes are appended. */
     static boolean hasTransportStreamPackets(byte[] data) {
         if (data == null || data.length < 376) return false;
