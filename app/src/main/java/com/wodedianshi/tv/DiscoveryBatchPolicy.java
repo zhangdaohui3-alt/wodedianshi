@@ -125,8 +125,30 @@ public final class DiscoveryBatchPolicy {
     // Persist wall time across process restarts. A clock rollback cannot
     // indefinitely block the page; invalid/missing timestamps are eligible.
     static boolean transientRecheckCooling(long admittedAt,long now) {
-        return admittedAt>0L&&now>=admittedAt
-                &&now-admittedAt<TRANSIENT_RECHECK_COOLDOWN_MS;
+        return transientRecheckRemainingMs(admittedAt,now)>0L;
+    }
+    static long transientRecheckRemainingMs(long admittedAt,long now) {
+        if(admittedAt<=0L||now<admittedAt)return 0L;
+        return Math.max(0L,TRANSIENT_RECHECK_COOLDOWN_MS-(now-admittedAt));
+    }
+    /** Only call when all unfinished feeds in the active stage are cooling.
+     * Round up to avoid scheduling before the first eligible replay. */
+    static long earliestStageCooldownSeconds(boolean[] completed,long[] remaining,
+            int mainlandEnd,int regionEnd) {
+        if(completed==null||remaining==null||completed.length!=remaining.length)return 30L;
+        int size=completed.length;
+        int mainland=Math.max(0,Math.min(mainlandEnd,size));
+        int regions=Math.max(mainland,Math.min(regionEnd,size));
+        int stage=SourceDiscoveryPriorityPolicy.activeStage(completed,mainland,regions);
+        if(stage==3)return 30L;
+        int from=stage==0?0:stage==1?mainland:regions;
+        int to=stage==0?mainland:stage==1?regions:size;
+        long earliest=TRANSIENT_RECHECK_COOLDOWN_MS;
+        for(int i=from;i<to;i++)if(!completed[i]){
+            if(remaining[i]<=0L)return 30L;
+            earliest=Math.min(earliest,remaining[i]);
+        }
+        return (earliest+999L)/1000L;
     }
     static int resumeTransientRecheck(boolean sameFingerprint,int marker,int scanned) {
         if(!sameFingerprint)return NO_TRANSIENT_RECHECK;
