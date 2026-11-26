@@ -48,6 +48,7 @@ public final class FullscreenMenuConfig {
         Category live = new Category("live", "直播操作");
         live.items.add(new Item("favorite", "收藏当前频道"));
         live.items.add(new Item("sources", "选择备用播放源"));
+        live.items.add(new Item("refresh_channel", "刷新当前频道"));
         live.items.add(new Item("channel_list", "打开频道列表"));
         Category picture = new Category("picture", "画面与声音");
         picture.items.add(new Item("aspect", "画面比例"));
@@ -63,6 +64,18 @@ public final class FullscreenMenuConfig {
         config.categories.add(manage);
         config.categories.add(vod);
         return config;
+    }
+
+    /** One-time upgrade for previously saved custom menus; never reset their
+     * order or put a live operation into a VOD-only category. */
+    public boolean addSingleChannelRefreshForUpgrade(){
+        if(findItem("refresh_channel")!=null)return false;
+        if(addItem("live","refresh_channel","刷新当前频道"))return true;
+        if(addItem("manage","refresh_channel","刷新当前频道"))return true;
+        for(Category category:categories)
+            if(!"vod".equals(category.id)&&addItem(category.id,"refresh_channel","刷新当前频道"))return true;
+        if(addCategory("live","直播操作"))return addItem("live","refresh_channel","刷新当前频道");
+        return false;
     }
 
     public List<Category> getCategories() {
