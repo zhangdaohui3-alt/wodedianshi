@@ -71,11 +71,15 @@ public class SourceProbeTimePolicyTest {
             SourceUpdateActivityPolicy.reportStableLive(9000L);
             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(9000L));
             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(23999L));
+            long admittedGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(24000L));
-
             long expiredGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            assertEquals(admittedGeneration+1,expiredGeneration);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(24001L,admittedGeneration));
+            assertEquals(expiredGeneration,SourceUpdateActivityPolicy.stableRevocationGeneration());
+
             SourceUpdateActivityPolicy.reportStableLive(25000L);
-            assertEquals(expiredGeneration+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
+            assertEquals(expiredGeneration,SourceUpdateActivityPolicy.stableRevocationGeneration());
             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(25000L));
             SourceUpdateActivityPolicy.reportStableLive(33000L);
             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33000L));
