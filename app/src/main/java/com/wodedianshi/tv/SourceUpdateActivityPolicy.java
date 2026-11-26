@@ -48,6 +48,20 @@ public final class SourceUpdateActivityPolicy {
             firstHealthyAt=0L;
         }
     }
+    /** VLC's caller already checks two consecutive independent clock and
+     * output-counter advances. Do not impose a third healthy poll solely to
+     * obtain a discovery lease. Expiry still invalidates the old epoch. */
+    static synchronized void reportConfirmedVlcStableLive(long now,int consecutiveChecks) {
+        if(consecutiveChecks<2||!activityActive||!playbackActive
+                ||now<=0L||now>=Long.MAX_VALUE-LEASE_MS){
+            revokeStableLive();return;
+        }
+        if(stableUntil!=0L&&(stableUntil<=now||stableUntil-now>LEASE_MS))
+            revokeStableLive();
+        firstHealthyAt=0L;
+        stableUntil=now+LEASE_MS;
+    }
+
     public static synchronized void revokeStableLive() {
         firstHealthyAt=0L;
         if(stableUntil!=0L){stableUntil=0L;stableRevocations.incrementAndGet();}
