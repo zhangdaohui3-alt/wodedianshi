@@ -28,6 +28,11 @@ public final class SourceQualityScorer {
     static double successfulPreflightScore(boolean paced,double previous,int candidate) {
         return paced&&Double.isFinite(previous)&&previous>0.0?previous:candidate;
     }
+    // A short structural screen, like paced sampling, must not replace a
+    // previously measured positive quality score with a synthetic estimate.
+    static double successfulPreflightScore(boolean paced,boolean provisional,double previous,int candidate) {
+        return successfulPreflightScore(paced||provisional,previous,candidate);
+    }
     static boolean reusableProbeMode(boolean cachedPaced,boolean viewing) {
         return viewing||!cachedPaced;
     }
