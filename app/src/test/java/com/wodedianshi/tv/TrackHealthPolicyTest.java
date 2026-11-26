@@ -21,6 +21,16 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
     }
 
+    @Test public void vlcClockRequiresMeaningfulForwardProgressFromKnownBaseline() {
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(0L,12000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,0L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,12000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,1000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,12249L));
+        assertTrue(TrackHealthPolicy.vlcClockAdvanced(12000L,12250L));
+        assertTrue(TrackHealthPolicy.vlcClockAdvanced(12000L,24000L));
+    }
+
     @Test public void vlcDiscoveryRequiresTwoHealthyChecksAndQuietViewer() {
         assertTrue(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,2,1000L,22000L));
         assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(false,true,false,true,2,1000L,22000L));
