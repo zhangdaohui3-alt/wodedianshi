@@ -617,6 +617,12 @@ public class SourceUpdateWorker extends Worker {
                 ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
                     bEntry.scope,bEntry.name,bEntry.group,bEntry.tvgName,bEntry.tvgId)));
           }
+          if(initialDiscoveryChain){
+            ArrayList<Entry> ordered=IdleProbeWavePolicy.interleaveHosts(feedCandidates,
+                entry->probeHost(entry.url),entry->ChinaDiscoveryCandidatePolicy.initialProbePriority(
+                    feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
+            feedCandidates.clear();feedCandidates.addAll(ordered);
+          }
           indexedEntries=PlaylistFeedIndex.indexedEntryCount(cachedFeed);
           // Parsing a cached large playlist can overlap a newly started player.
           // Do not enqueue its candidates for probing or advance any cursor.
@@ -2133,28 +2139,29 @@ public class SourceUpdateWorker extends Worker {
       this.result=r;this.deadline=deadline;this.finishedAt=finishedAt;
     }
   }
+  private static String probeHost(String url){
+    try{return new URL(url).getHost().toLowerCase(Locale.ROOT);}
+    catch(Exception invalid){return "";}
+  }
   private final class IdleProbeWave {
     private java.util.concurrent.ExecutorService executor;
     private final Map<String,java.util.concurrent.Future<TimedProbe>> pending=new HashMap<>();
     int launched;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
-    private String host(String url){
-      try{return new URL(url).getHost().toLowerCase(Locale.ROOT);}
-      catch(Exception invalid){return "";}
-    }
+    
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
         Set<String> visited,long deadline,long batchDeadline,boolean initial){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       long now=android.os.SystemClock.elapsedRealtime();
-      int limit=SourceUpdateActivityPolicy.idleProbeConcurrency(now);
+      int limit=SourceUpdateActivityPolicy.idleProbeConcurrency(now,initial);
       if(limit<2)return false;
       ArrayList<Entry> wave=new ArrayList<>();
       IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy(limit);
       for(int i=offset;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
         if((initial&&entry.savedSource)||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
-        String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=host(entry.url);
+        String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=probeHost(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(i!=offset){
           RecentProbe cached=initial?INITIAL_PROBES.get(StableKey.url(entry.url)):null;
@@ -2165,8 +2172,8 @@ public class SourceUpdateWorker extends Worker {
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
       if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
-          ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime()))return false;
-      if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(IdleProbeWavePolicy.MAX_CONCURRENT,r->{
+          ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
+      if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(initial?IdleProbeWavePolicy.MAX_CONCURRENT:IdleProbeWavePolicy.ORDINARY_CONCURRENT,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
           catch(RuntimeException ignored){}
