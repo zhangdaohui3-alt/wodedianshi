@@ -4,6 +4,21 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void exactPageDedupPreservesDistinctStationMetadataAndAddresses() {
+        java.util.List<String> first=java.util.Arrays.asList("CCTV-1","https://example.invalid/a","CCTV","","","china");
+        java.util.List<String> duplicate=new java.util.ArrayList<>(first);
+        java.util.List<String> otherStation=java.util.Arrays.asList("CCTV-2","https://example.invalid/a","CCTV","","","china");
+        java.util.List<String> otherUrl=java.util.Arrays.asList("CCTV-1","https://example.invalid/a?token=b","CCTV","","","china");
+        java.util.List<String> otherScope=java.util.Arrays.asList("CCTV-1","https://example.invalid/a","CCTV","","","global");
+        java.util.List<String> otherMetadata=java.util.Arrays.asList("CCTV-1","https://example.invalid/a","CCTV","cctv1.cn","","china");
+        java.util.List<java.util.List<String>> raw=java.util.Arrays.asList(first,duplicate,otherStation,otherUrl,otherScope,otherMetadata);
+        java.util.List<java.util.List<String>> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(raw,row->row);
+        org.junit.Assert.assertEquals(java.util.Arrays.asList(first,otherStation,otherUrl,otherScope,otherMetadata),distinct);
+        org.junit.Assert.assertEquals(6,raw.size());
+        org.junit.Assert.assertSame(first,distinct.get(0));
+        org.junit.Assert.assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new","old",3,distinct.size()));
+    }
+
     @org.junit.Test public void earlyIdlePositionWindowDoesNotIncreaseNetworkBudget() {
         org.junit.Assert.assertEquals(24,DiscoveryBatchPolicy.discoveryPositionWindow(true,false,48,6));
         org.junit.Assert.assertEquals(5,DiscoveryBatchPolicy.discoveryPositionWindow(true,false,5,6));
