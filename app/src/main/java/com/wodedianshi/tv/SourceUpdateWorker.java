@@ -22,6 +22,7 @@ public class SourceUpdateWorker extends Worker {
   // source owner starts while the previous scoped probe executor is draining.
   private static volatile java.util.concurrent.ExecutorService retiringProbeExecutor;
   public static String currentInitialLiveStage(){return initialLiveStage;}
+  static boolean isSourceWorkActive(){return SOURCE_WORK_ACTIVE.get();}
   private void noteInitialStage(String stage){
     if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
   }
