@@ -216,6 +216,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Runnable initialDiscoveryProgressTicker;
   private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone,displayedInitialPreviewCoreMask;
   private boolean initialPreviewReloadPending;
+  private boolean initialFinalCataloguePending;
+  private long initialFinalCatalogueVersion=-1L,initialFinalReloadRequestedAt;
   private long initialPreviewReloadRequestedAt;
   private volatile long appendedInitialPreviewVersion=-1L;
   private String initialDiscoveryTerminalStatus="";
@@ -563,7 +565,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             && FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(roomFullRebuildCompletedAt);
         scheduleStartupAutoResume();
         // Do not show the first-run progress box on later completed launches.
-        if(roomFullRebuildCompletedAt>0L&&initialDiscoveryProgressPanel!=null){
+        if(roomFullRebuildCompletedAt>0L&&!initialFinalCataloguePending&&initialDiscoveryProgressPanel!=null){
           stopInitialDiscoveryProgressTicker();
           initialDiscoveryProgressPanel.setVisibility(View.GONE);
         }
@@ -1575,7 +1577,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void startInitialDiscoveryProgressTicker(){
     stopInitialDiscoveryProgressTicker();
     if(initialDiscoveryProgressPanel==null)return;
-    if(roomFullRebuildCompletedAt>0L){
+    if(roomFullRebuildCompletedAt>0L&&!initialFinalCataloguePending){
       initialDiscoveryProgressPanel.setVisibility(View.GONE);
       return;
     }
@@ -1584,7 +1586,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       @Override public void run(){
         if(!activityStarted||isFinishing()||isDestroyed()||initialDiscoveryProgressPanel==null)return;
         requestInitialDiscoveryProgress();
-        if(roomFullRebuildCompletedAt<=0L)
+        if(roomFullRebuildCompletedAt<=0L||initialFinalCataloguePending)
           uiHandler.postDelayed(this,4000L);
       }
     };
@@ -1622,6 +1624,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               "percent","basis_points","phase"})keys.add(prefix+suffix);
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+          final com.wodedianshi.tv.db.CatalogueMigrationEntity finalCheckpoint=completed>0L
+              ?com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).channelDao()
+                  .getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY):null;
+          final long observedFinalVersion=finalCheckpoint==null?-1L:finalCheckpoint.completedAt;
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
           final int previewMilestone=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0L);
           final int previewCoreMask=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0L);
@@ -1668,10 +1674,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
               boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
               roomFullRebuildCompletedAt=completed;
-              if(newlyPublished||!catalogueSnapshotTrusted)reloadChannelsAfterBackgroundUpdateIfNeeded();
+              // Capture the first observed post-publication checkpoint once. Do not
+              // chase every later routine commit or claim an append-only preview is final.
+              if(initialFinalCatalogueVersion<=0L&&observedFinalVersion>0L)
+                initialFinalCatalogueVersion=observedFinalVersion;
+              initialFinalCataloguePending=!startupDataReady||!RoomCatalogueReloadPolicy.hasLoadedFinalCatalogue(
+                  catalogueSnapshotTrusted,loadedRoomCatalogueVersion,initialFinalCatalogueVersion);
+              if(initialFinalCataloguePending){
+                catalogueReloadDeferredForPlayback=true;
+                if(startupDataReady&&!hasPlaybackCatalogueOwner()
+                    &&(initialFinalReloadRequestedAt==0L||previewNow-initialFinalReloadRequestedAt>=15000L)){
+                  initialFinalReloadRequestedAt=previewNow;
+                  reloadChannelsAfterBackgroundUpdateIfNeeded();
+                }
+              }
               if(newlyPublished)scheduleAutomaticSourceUpdates();
               initialDiscoveryProgressBar.setProgress(10000);
-              initialDiscoveryProgressTitle.setText("目录处理完成 · 100%");
+              initialDiscoveryProgressTitle.setText(initialFinalCataloguePending
+                  ?"目录已保存 · 等待载入频道":"目录处理完成 · 100%");
               // The panel is limited to four lines. Put the fresh core counts
               // and coverage warning ahead of supplementary probe statistics.
               String[] coverageLines=freshCoverage.split("\\n");
@@ -1683,6 +1703,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   +"\n"+coreCounts
                   +"\n"+coverageWarning+" · 暂不可用目录 "+Math.max(0,unavailable)+" 个"
                   +"\n100%仅指目录处理完成；详见设置→查看更新状态";
+              if(initialFinalCataloguePending){
+                initialDiscoveryProgressDetail+="\n"+(hasPlaybackCatalogueOwner()
+                    ?"保留当前播放，空闲后载入完整目录":"正在等待完整目录载入；当前显示 "+channels.size()+" 个频道");
+                return;
+              }
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
               uiHandler.postDelayed(()->{
