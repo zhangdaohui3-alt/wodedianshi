@@ -7921,12 +7921,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return (name==null?"":name)+"\u001f"+(group==null?"":group);
   }
   private PreparedRoomCatalogue prepareRoomCatalogue(ArrayList<Channel> restored,
-      Set<String> savedFavorites){
+      Set<String> savedFavorites,java.util.function.BooleanSupplier cancelled){
     PreparedRoomCatalogue prepared=new PreparedRoomCatalogue();
     if(savedFavorites!=null)prepared.favorites.addAll(savedFavorites);
     HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,restored.size()*2));
     HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>();
     for(Channel channel:restored){
+      SourceProbeTimePolicy.checkPublicationPaused(cancelled);
       if(channel==null)continue;
       normalizeBroadcasterLabel(channel);
       if(channel.backups==null)channel.backups=new ArrayList<>();
@@ -7952,6 +7953,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
     for(int i=0;i<prepared.entries.size();i++){
+      SourceProbeTimePolicy.checkPublicationPaused(cancelled);
       Channel channel=prepared.entries.get(i);
       for(String url:channel.backups)prepared.byUrl.put(url,channel);
       String identityKey=identity(channel);
@@ -8016,9 +8018,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     final long generation=++backgroundCatalogueReloadGeneration;
     final long expectedMutationGeneration=catalogueMutationGeneration;
+    final java.util.function.BooleanSupplier cancelled=()->
+        generation!=backgroundCatalogueReloadGeneration||isFinishing()||isDestroyed();
     try{
       worker.execute(()->{
         try{
+          SourceProbeTimePolicy.checkPublicationPaused(cancelled);
           reloadRoomSourceMetrics();
           if(generation!=backgroundCatalogueReloadGeneration)return;
           // The already trusted directory is keyed by the committed Room checkpoint.
@@ -8030,13 +8035,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
             if(indexedPlaybackScoreVersion!=loadedRoomCatalogueVersion&&
                 com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext())){
+              final long scoreVersion=loadedRoomCatalogueVersion;
               ArrayList<Channel> retained;
               synchronized(channels){retained=new ArrayList<>(channels);}
-              org.json.JSONObject indexed=readIndexedPlaybackScores(retained,loadedRoomCatalogueVersion,
-                  ()->generation!=backgroundCatalogueReloadGeneration||isFinishing()||isDestroyed());
-              if(indexed!=null&&generation==backgroundCatalogueReloadGeneration&&expectedMutationGeneration==catalogueMutationGeneration){
-                cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=loadedRoomCatalogueVersion;
-              }
+              org.json.JSONObject indexed=readIndexedPlaybackScores(retained,scoreVersion,cancelled);
+              if(indexed!=null)uiHandler.post(()->{
+                if(!cancelled.getAsBoolean()&&activityStarted
+                    &&expectedMutationGeneration==catalogueMutationGeneration
+                    &&scoreVersion==loadedRoomCatalogueVersion){
+                  cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=scoreVersion;
+                }
+              });
             }
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
@@ -8057,7 +8066,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
                   refreshed.add(channel);
                 }
-              });
+              },cancelled);
           if(roomSnapshot==null){
             // A concurrent Room commit can transiently make separate
             // readiness-count queries disagree. Do not show partial data.
@@ -8068,9 +8077,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           if(generation!=backgroundCatalogueReloadGeneration)return;
           long preparationStarted=android.os.SystemClock.elapsedRealtime();
-          final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites);
-          final org.json.JSONObject indexedScores=readIndexedPlaybackScores(prepared.entries,roomSnapshot.catalogueVersion,
-              ()->generation!=backgroundCatalogueReloadGeneration||isFinishing()||isDestroyed());
+          final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites,cancelled);
+          final org.json.JSONObject indexedScores=readIndexedPlaybackScores(prepared.entries,roomSnapshot.catalogueVersion,cancelled);
           android.util.Log.i("MyTVStartup","room_reload_prepare_ms="
               +(android.os.SystemClock.elapsedRealtime()-preparationStarted)
               +" entries="+prepared.entries.size()+" sources="+prepared.byUrl.size());
@@ -8177,6 +8185,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             android.util.Log.i("MyTVStartup","reloaded Room catalogue channels="
                 +roomSnapshot.channelCount+" favorites="+prepared.favorites.size());
           });
+        }catch(SourceProbeTimePolicy.PublicationPausedException superseded){
+          // A newer request or stopped Activity already owns the next read.
+          // Keep the visible complete catalogue and do not log a false DB failure.
+          android.util.Log.d("MyTVStartup","room_reload_superseded");
         }catch(com.wodedianshi.tv.db.RoomCatalogueReader.StaleSnapshotException concurrentWrite){
           // SourceUpdateWorker can commit while a large directory is being
           // read, without changing the Activity's mutation generation. This
