@@ -1324,7 +1324,8 @@ public class SourceUpdateWorker extends Worker {
             break;
           }
           if(initialDiscoveryChain&&!slowPlayback&&!reuse){
-            INITIAL_ORIGINS.observe(origin,endpoint,measuredAt,
+            if(measured.firstOriginPressure)INITIAL_ORIGINS.observePressure(origin,measuredAt);
+            else INITIAL_ORIGINS.observe(origin,endpoint,measuredAt,
                 measured.firstRequestFailed,measured.firstRequestReached);
             INITIAL_NETWORK.observe(origin,measuredAt,
                 measured.firstRequestFailed,measured.firstRequestReached);
@@ -2954,7 +2955,7 @@ public class SourceUpdateWorker extends Worker {
     boolean socketTimedOut;
     boolean transientNetworkFailure;
     boolean paced;
-    boolean firstRequestFailed,firstRequestReached;
+    boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
     int score;
     int width,height;
     long latencyMs;
@@ -3053,6 +3054,12 @@ public class SourceUpdateWorker extends Worker {
       try{
         initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested);
         result.firstRequestReached=initialResponse!=null;
+      }catch(TransientProbeHttpException failure){
+        // A redirect may have reached a different origin. Do not penalize the
+        // requested origin for a different server's explicit pressure.
+        result.firstOriginPressure=(failure.code==429||failure.code==503)
+            &&!failure.origin.isEmpty()&&failure.origin.equals(InitialOriginCooldownPolicy.origin(address));
+        throw failure;
       }catch(java.net.SocketTimeoutException|java.net.ConnectException|java.net.UnknownHostException failure){
         result.firstRequestFailed=true;
         throw failure;
@@ -3237,7 +3244,12 @@ public class SourceUpdateWorker extends Worker {
     return response==null?null:response.bytes;
   }
   private static final class TransientProbeHttpException extends IOException {
-    TransientProbeHttpException(int code){super("Temporary media HTTP "+code);}
+    final int code;
+    final String origin;
+    TransientProbeHttpException(int code,String responseUrl){
+      super("Temporary media HTTP "+code);
+      this.code=code;this.origin=InitialOriginCooldownPolicy.origin(responseUrl);
+    }
   }
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,java.util.function.BooleanSupplier pauseRequested)throws Exception{
     return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,false);
@@ -3266,7 +3278,7 @@ public class SourceUpdateWorker extends Worker {
       c.setRequestProperty("Range","bytes=0-"+maxBytes);
       int code=c.getResponseCode();
       if(probeDeadlineReached(deadline,pauseRequested))return null;
-      if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code);
+      if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
       if(code<200||code>=400)return null;
       boolean rangeIncomplete=code==HttpURLConnection.HTTP_PARTIAL
           &&HlsProbeValidationPolicy.isIncompleteContentRange(c.getHeaderField("Content-Range"),maxBytes);
