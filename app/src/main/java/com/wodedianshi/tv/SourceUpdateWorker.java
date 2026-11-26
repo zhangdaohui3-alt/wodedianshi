@@ -57,6 +57,7 @@ public class SourceUpdateWorker extends Worker {
   private static long committedStagingAt;
   private boolean slowPlayback;
   private boolean inlineInitialRequested;
+  private final java.util.concurrent.atomic.AtomicBoolean initialSliceExpired=new java.util.concurrent.atomic.AtomicBoolean();
   private int ownedSlices;
   private long ownedStartedAt;
   // Set only when this initial idle slice admits a high-concurrency wave.
@@ -263,6 +264,7 @@ public class SourceUpdateWorker extends Worker {
   }
   private Result runOwnedWork(){
     final long sliceStartedAt=android.os.SystemClock.elapsedRealtime();
+    initialSliceExpired.set(false);
     SharedPreferences prefs=getApplicationContext().getSharedPreferences("mytv",0);
     final boolean manual=getInputData().getBoolean("manual",false);
     final boolean initialDiscoveryChain=getInputData().getBoolean("initial_discovery_chain",false);
@@ -310,6 +312,7 @@ public class SourceUpdateWorker extends Worker {
         true,manual,initialDiscoveryChain,publishedAtStart);
     idleWavePressureGeneration=-1L;
     pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
+        ||observeInitialSliceExpiry(initialDiscoveryChain,sliceStartedAt)
         ||SourceUpdateActivityPolicy.idleWavePressureChanged(idleWavePressureGeneration)
         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
@@ -2388,6 +2391,15 @@ public class SourceUpdateWorker extends Worker {
     }
   }
 
+  private boolean observeInitialSliceExpiry(boolean initial,long started){
+    if(initialSliceExpired.get())return true;
+    if(!SourceUpdateSchedulePolicy.initialIdleSliceExpired(initial,slowPlayback,started,
+        android.os.SystemClock.elapsedRealtime()))return false;
+    if(initialSliceExpired.compareAndSet(false,true))
+      android.util.Log.w("MyTVSourceDiscovery","initial_idle_slice_expired; retain committed checkpoint");
+    return true;
+  }
+
   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
       boolean initialDiscoveryChain, boolean hasPublishedChannels,long stableGeneration){
     return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime(),stableGeneration):SourceUpdateActivityPolicy.isPlaybackActive())
@@ -2417,7 +2429,8 @@ public class SourceUpdateWorker extends Worker {
       boolean playback=SourceUpdateActivityPolicy.isPlaybackActive();
       boolean inputYield=SourceUpdateActivityPolicy.idleWavePressureChanged(idleWavePressureGeneration);
       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-          "source_initial_progress_phase",playback
+          "source_initial_progress_phase",initialSliceExpired.get()
+               ?"本批空闲抓源超过安全时限，保留已保存断点，自动续抓":playback
                ?"播放资源占用：本批抓源暂停，已保存进度"
                :inputYield?"频道操作优先：高并发检测已让出，已保存进度"
                :"本批任务已让出或取消，已保存进度，等待续抓");
