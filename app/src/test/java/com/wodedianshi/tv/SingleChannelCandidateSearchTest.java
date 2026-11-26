@@ -65,6 +65,34 @@ public class SingleChannelCandidateSearchTest {
         assertEquals(0,SingleChannelCandidateSearch.nextOffset(4098,1,10,-1,false));
     }
 
+    @Test public void indexedResumeDoesNotSkipUnconsumedRecords()throws Exception{
+        java.io.File file=java.io.File.createTempFile("single-channel-index",".m3u");
+        try{
+            StringBuilder body=new StringBuilder("#EXTM3U\n");
+            for(int i=0;i<4097;i++)body.append(entry("CCTV-3","https://wrong.example/"+i));
+            body.append(entry("CCTV-2","https://right.example/1"));
+            body.append(entry("CCTV-2","https://right.example/2"));
+            try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){
+                output.write(body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            PlaylistFeedIndex.readPage(file,0,1,ignored->{});
+            assertEquals(4099,PlaylistFeedIndex.indexedEntryCount(file));
+            SingleChannelCandidateSearch.Target target=new SingleChannelCandidateSearch.Target("CCTV-2","央视","","");
+            ArrayList<SingleChannelCandidateSearch.Candidate> found=new ArrayList<>();
+            assertEquals(2,SingleChannelCandidateSearch.scanIndexed(file,4096,target,"china",
+                Collections.emptyList(),64,1,found,()->false));
+            assertEquals("https://right.example/1",found.get(0).url);
+            found.clear();
+            assertEquals(1,SingleChannelCandidateSearch.scanIndexed(file,4098,target,"china",
+                Collections.emptyList(),64,1,found,()->false));
+            assertEquals("https://right.example/2",found.get(0).url);
+        }finally{
+            new java.io.File(file.getAbsolutePath()+".index-data").delete();
+            new java.io.File(file.getAbsolutePath()+".index-offsets").delete();
+            file.delete();
+        }
+    }
+
     @Test public void rowBudgetAndCancellationAreIndependent()throws Exception{
         String body=entry("CCTV-3","https://wrong.example/live")
             +entry("CCTV-2","https://right.example/live");
