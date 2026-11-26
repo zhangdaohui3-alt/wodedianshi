@@ -30,6 +30,12 @@ public final class SourceUpdateSchedulePolicy {
     static final String PROVISIONAL_RECHECK_KEY="source_probe_provisional_recheck_v1";
     static final int PROVISIONAL_RECHECK_CAP=2048;
     static final String PROVISIONAL_RECHECK_LAST_KEY="source_probe_provisional_recheck_last_v1";
+    static final String QUALITY_ONLY_REVISION_KEY="source_probe_quality_only_revision_v1";
+    static boolean needsIndexedQualityReload(long cachedCatalogue,long currentCatalogue,
+            String cachedQualityRevision,String currentQualityRevision){
+        return cachedCatalogue!=currentCatalogue
+                ||!java.util.Objects.equals(cachedQualityRevision,currentQualityRevision);
+    }
     static final int PROVISIONAL_DAILY_LIMIT=6;
 
     /** Only the existing idle eligibility worker may run this extra small
