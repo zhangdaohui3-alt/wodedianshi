@@ -301,6 +301,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int pendingRemoteZapSteps=0;
   private long pendingRemoteZapGeneration=-1L;
   private Runnable pendingRemoteZapDispatch;
+  private Runnable pendingRemoteSourceDispatch;
+  private Channel pendingRemoteSourceChannel;
+  private String pendingRemoteSourceUrl;
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
   private volatile long indexedPlaybackScoreVersion=-1L;
@@ -5558,7 +5561,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(currentDirectoryOrderKey().equals(directoryFilterInFlightKey))return;
     refresh(true);
   }
+  private void clearPendingRemoteSource(){
+    if(pendingRemoteSourceDispatch!=null)uiHandler.removeCallbacks(pendingRemoteSourceDispatch);
+    pendingRemoteSourceDispatch=null;pendingRemoteSourceChannel=null;pendingRemoteSourceUrl=null;
+  }
   private void clearPendingRemoteZap(){
+    clearPendingRemoteSource();clearPendingRemoteChannel();
+  }
+  private void clearPendingRemoteChannel(){
     if(pendingRemoteZapDispatch!=null){uiHandler.removeCallbacks(pendingRemoteZapDispatch);pendingRemoteZapDispatch=null;}
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
@@ -5595,6 +5605,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void stepChannel(int delta){
     if(!canApplyRemoteZap())return;
+    clearPendingRemoteSource();
     long started=android.os.SystemClock.elapsedRealtime();
     long generation=catalogueFilterGeneration;
     // Keep accepted steps within the same user-selected filter. A catalogue
@@ -5729,14 +5740,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
   }
   private void stepSource(int delta){
-    clearPendingRemoteZap();
-    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
+    clearPendingRemoteChannel();
+    if(!canApplyRemoteZap()){clearPendingRemoteSource();return;}
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){toast("当前频道没有可用播放源");return;}
     if(c.backups.size()<2){toast("当前频道只有 1 个播放源");return;}
-    int next=findNextUnblockedSource(c,c.activeSource,delta>=0?1:-1);
+    if(pendingRemoteSourceChannel!=c)clearPendingRemoteSource();
+    int from=pendingRemoteSourceUrl==null?c.activeSource:c.backups.indexOf(pendingRemoteSourceUrl);
+    if(from<0){clearPendingRemoteSource();from=c.activeSource;}
+    int next=findNextUnblockedSource(c,from,delta>=0?1:-1);
     if(next<0){toast("本频道备用源都已被屏蔽，请在换源菜单中恢复");return;}
+    pendingRemoteSourceChannel=c;
+    pendingRemoteSourceUrl=c.backups.get(next);
+    if(pendingRemoteSourceDispatch!=null)return;
+    final long expectedSerial=liveTuneRequestSerial;
+    final String expectedActive=currentSourceUrl();
+    pendingRemoteSourceDispatch=()->{
+      String target=pendingRemoteSourceUrl;
+      clearPendingRemoteSource();
+      if(!canApplyRemoteZap()||selected<0||selected>=channels.size())return;
+      int resolved=SourceSelectionPolicy.resolveQueuedManualSelection(c,channels.get(selected),
+          expectedSerial,liveTuneRequestSerial,c.backups,expectedActive,currentSourceUrl(),target,
+          getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet()));
+      if(resolved>=0)applyRemoteSource(c,resolved);
+    };
+    uiHandler.postDelayed(pendingRemoteSourceDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
+  }
+  private void applyRemoteSource(Channel c,int next){
     c.activeSource=next;
     automaticSwitchCount=0;
     failedEndpointsThisPass.clear();
@@ -6332,6 +6363,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void stopFailedLiveSession(String reason){
+    clearPendingRemoteZap();
     ++liveTuneRequestSerial;
     if(liveVlcReleaseContinuation!=null){
       libVlcReleaseCallbacks.remove(liveVlcReleaseContinuation);
@@ -6433,6 +6465,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void startCurrentSource(){
+    clearPendingRemoteSource();
     pauseStableDiscovery();
     if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
     if(decoderReleaseUnconfirmed){toast("播放器资源未确认释放，请强制停止应用后重开");return;}
@@ -7446,8 +7479,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     libVlcReleaseCallbacks.clear();
     revokePendingVodStart();
-    pendingRemoteZapSteps=0;
-    pendingRemoteZapGeneration=-1L;
+    clearPendingRemoteZap();
     cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
