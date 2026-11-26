@@ -54,6 +54,35 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void frequentHeadroomSamplesDoNotResetSustainedWindow(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            for(long now=11000L;now<=19000L;now+=1000L){
+                SourceUpdateActivityPolicy.reportStableLive(now);
+                SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(now,12000L);
+                assertEquals(now<19000L?32768L:49152L,
+                    SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(now));
+            }
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(20000L,500L);
+            assertEquals(16384L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(20000L));
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(21000L,12000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(28000L,12000L);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(28000L));
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(29000L,12000L);
+            assertEquals(49152L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(29000L));
+            // A fresh lease alone is not evidence of uninterrupted ample samples.
+            SourceUpdateActivityPolicy.reportStableLive(30000L);
+            SourceUpdateActivityPolicy.reportStableLive(40000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(45000L,12000L);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(45000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
     @Test public void headroomPacingBoundsAndFallback(){
         assertEquals(250L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,16384L));
         assertEquals(84L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,49152L));
