@@ -284,6 +284,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialAcquiredVersionKey(feed))
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
+                .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -888,6 +889,11 @@ public class SourceUpdateWorker extends Worker {
       }
       int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
           discoveryFingerprint,previousDiscoveryFingerprint,previousScanned,candidates.size());
+      int transientRecheck=initialDiscoveryChain&&pageFeed>=0
+          ?DiscoveryBatchPolicy.resumeTransientRecheck(discoveryFingerprint.equals(previousDiscoveryFingerprint),
+              roomInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK),
+              initialDiscoveryScanned)
+          :DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
       // Resume by exact position inside an unchanged batch. URL-based cursors are
       // unsafe because distinct channel identities can share one endpoint; choosing
       // the last duplicate URL can skip entries that were not yet scanned.
@@ -1062,6 +1068,12 @@ public class SourceUpdateWorker extends Worker {
               update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
               break;
             }
+            // Remember the first temporarily failed position for one later
+            // replay of this exact page. No URL or duplicate identity is dropped.
+            if(initialDiscoveryChain&&pageFeed>=0&&!slowPlayback&&!e.savedSource
+                &&measured.transientNetworkFailure)
+              transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
+                  initialDiscoveryScanned+discoveryScanned-1);
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
@@ -1199,7 +1211,20 @@ public class SourceUpdateWorker extends Worker {
       // CCTV and satellite channels merge across source hosts.
       // Initial staging is append-only and touched rows alone need sorting.
       // A final idle pass re-ranks the complete snapshot before publication.
-      boolean finalRanking=initialDiscoveryChain&&initialDiscoveryScanned+discoveryScanned>=candidates.size()
+      int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
+      if(initialDiscoveryChain&&pageFeed>=0&&DiscoveryBatchPolicy.shouldReplayTransientSuffix(
+          transientRecheck,nextBatchScanned,candidates.size())){
+        nextBatchScanned=transientRecheck;
+        transientRecheck=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
+        // Recheck only in idle; never loop on an unavailable server during playback.
+        if(slowPlayback){
+          viewingDeferred=true;
+          update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
+        }
+        android.util.Log.i("MyTVSourceDiscovery","transient_page_recheck feed="+pageFeed
+            +" resume_position="+nextBatchScanned);
+      }
+      boolean finalRanking=initialDiscoveryChain&&nextBatchScanned>=candidates.size()
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
       if(initialIndexed&&finalRanking)throw new IllegalStateException("Sparse staging cannot finalize a full snapshot");
       final int stagedSizeAfterProbe=initialIndexed
@@ -1230,7 +1255,6 @@ public class SourceUpdateWorker extends Worker {
         return deferredViewingResult(manual,initialDiscoveryChain);
       }
       if(isStopped())return Result.retry();
-      int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
       if(initialDiscoveryChain&&!feedBatches.isEmpty()){
         // Rotate even after a time-limited partial page. Its per-feed fingerprint
@@ -1283,7 +1307,8 @@ public class SourceUpdateWorker extends Worker {
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
-          if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index));
+          if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index))
+              .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(batch.index));
           if(!initialDiscoveryChain && recoveredDirectoryScanned(batch)
               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
             // The same indexed directory has reached EOF after processing its
@@ -1325,6 +1350,8 @@ public class SourceUpdateWorker extends Worker {
       }else if(candidates.size()>0){
         update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
             .putInt(batchPrefix+"scanned",nextBatchScanned);
+        if(initialDiscoveryChain&&pageFeed>=0)
+          update.putInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),transientRecheck);
       }
       if(!initialDiscoveryChain&&feedBatchComplete){
         int stillUnavailable=0;
@@ -1539,7 +1566,8 @@ public class SourceUpdateWorker extends Worker {
               .remove(initialFeedProgressKey(feed))
               .remove(initialAcquiredVersionKey(feed))
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
-                .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed));
+                .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
+                .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed));
         }
         failedBuildReset.remove(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY)
             .remove(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY)
