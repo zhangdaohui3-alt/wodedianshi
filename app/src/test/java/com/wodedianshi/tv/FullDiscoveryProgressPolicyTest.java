@@ -5,6 +5,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void earlyIdlePreviewCanRefreshOnNextTicker() {
+        org.junit.Assert.assertEquals(4000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,1));
+        org.junit.Assert.assertEquals(4000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,16));
+        org.junit.Assert.assertEquals(15000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,32));
+        org.junit.Assert.assertEquals(15000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(true,1));
+        org.junit.Assert.assertEquals(15000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,0));
+    }
+
     @org.junit.Test public void earlyMilestonesExposeFirstUsefulGroupsWithoutResettingOldWatermark(){
         org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,0,20));
         org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1,0));
