@@ -59,6 +59,16 @@ public final class DiscoveryBatchPolicy {
                 &&newlyValidated>0&&stagedRows>0&&!wavePending;
     }
 
+    /** Publish the first newly covered core category at a drained wave
+     * boundary instead of waiting for the ordinary 48-request slice.
+     * Keep the full-size staging and stable-viewing paths unchanged. */
+    static boolean yieldForNewCorePreview(boolean viewing,int stagedRows,int priorMask,
+            int observedMask,int mainlandValidated,boolean wavePending) {
+        return !viewing&&!wavePending&&stagedRows>0&&stagedRows<=512
+                &&priorMask>=0&&mainlandValidated>0
+                &&(observedMask&~priorMask&FullDiscoveryProgressPolicy.ALL_CORE)!=0;
+    }
+
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
         return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
