@@ -33,13 +33,13 @@ public final class ChinaDiscoveryCandidatePolicy {
     }
 
     /** Keep the immutable page complete. Prioritize local coverage in the
-     * county/mixed directory rather than repeating national backup stations. */
+     * broad mainland directories rather than repeating national backup stations. */
     static int initialCoveragePriority(int feedIndex,String scope,String name,
             String group,String tvgName,String tvgId) {
         int rank=initialProbePriority(feedIndex,scope,name,group,tvgName,tvgId);
-        if(!SourceDiscoveryFeedCatalog.isMixedMainlandFeed(feedIndex))return rank;
+        if(!SourceDiscoveryFeedCatalog.isBroadMainlandFeed(feedIndex))return rank;
         if(rank!=0)return rank+1;
-        int category=FullDiscoveryProgressPolicy.coreCategoryMask(name,group,tvgName,tvgId);
+        int category=FullDiscoveryProgressPolicy.coreCategoryMask(name,group,tvgName,tvgId,"china".equals(scope));
         if(category==FullDiscoveryProgressPolicy.CORE_LOCAL)return 0;
         if(category==0&&ChannelNamePolicy.isDomesticLocalLabel(
                 safe(name)+" "+safe(group)+" "+safe(tvgName)+" "+safe(tvgId),true))return 0;
