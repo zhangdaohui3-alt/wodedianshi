@@ -57,6 +57,14 @@ public final class FullDiscoveryProgressPolicy {
         return !stableViewing&&isMainlandIndexPhase(attempted,mainlandCount,checked,indexedEntries,complete);
     }
 
+    // Small early snapshots may be published under an existing healthy viewing
+    // lease. Larger/full publications retain the idle-only barrier.
+    static final int MAX_VIEWING_PREVIEW_ROWS=512;
+    static boolean canPublishPreview(boolean viewing,int stagedRows,int existingRows) {
+        return !viewing||(stagedRows>=0&&existingRows>=0
+                &&(long)stagedRows+existingRows<=MAX_VIEWING_PREVIEW_ROWS);
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // Independent watermark preserves the original mainland-complete level
     // and limits additional initial publications to three geometric milestones.
