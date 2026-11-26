@@ -58,6 +58,14 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(true,true,false));
     }
 
+    @Test public void initialCacheReusesOnlyEquivalentEndpoints() {
+        String base=SourceUpdateSchedulePolicy.initialProbeCacheKey("https://EXAMPLE.test:443/live?a=1");
+        assertEquals(base,SourceUpdateSchedulePolicy.initialProbeCacheKey("https://example.test/live?a=1"));
+        assertNotEquals(base,SourceUpdateSchedulePolicy.initialProbeCacheKey("https://example.test/live?a=2"));
+        assertNotEquals(base,SourceUpdateSchedulePolicy.initialProbeCacheKey("https://example.test:8443/live?a=1"));
+        assertNotEquals(base,SourceUpdateSchedulePolicy.initialProbeCacheKey("https://example.test/Live?a=1"));
+    }
+
     @Test public void idleFailureDoesNotDelayDifferentUnfailedDirectory() {
         assertEquals(0L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(false,false,true));
         assertEquals(30L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(false,false,false));
