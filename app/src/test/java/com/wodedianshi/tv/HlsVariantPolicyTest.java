@@ -21,6 +21,22 @@ public class HlsVariantPolicyTest {
         assertEquals("https://cdn.example/root/low.m3u8", variants.get(1).url);
     }
 
+    @Test public void equivalentHostAndDefaultPortDoNotConsumeRenditionSlots() throws Exception {
+        String master = "#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=900000\nhttps://CDN.example:443/live.m3u8?token=a\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=800000\nhttps://cdn.example/live.m3u8?token=a\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=700000\nhttps://cdn.example/live.m3u8?token=b\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=600000\nhttps://cdn.example:8443/live.m3u8?token=a\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=500000\nhttps://cdn.example/Live.m3u8?token=a\n";
+        ArrayList<HlsVariantPolicy.Variant> variants = HlsVariantPolicy.parse(master,"https://cdn.example/master.m3u8");
+        assertEquals(4,variants.size());
+        assertEquals("https://CDN.example:443/live.m3u8?token=a",variants.get(0).url);
+        assertEquals(900000L,variants.get(0).bandwidth);
+        assertEquals("https://cdn.example/live.m3u8?token=b",variants.get(1).url);
+        assertEquals("https://cdn.example:8443/live.m3u8?token=a",variants.get(2).url);
+        assertEquals("https://cdn.example/Live.m3u8?token=a",variants.get(3).url);
+    }
+
     @Test public void invalidChildUrlsDoNotDiscardHealthySiblingOrDistinctQueries() throws Exception {
         String master = "#EXTM3U\n"
                 + "#EXT-X-STREAM-INF:BANDWIDTH=900000\nhttp://[broken\n"
