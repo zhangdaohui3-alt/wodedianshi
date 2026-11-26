@@ -84,6 +84,23 @@ public final class SourceProbeTimePolicy {
         }catch(NumberFormatException invalid){return null;}
     }
 
+    // Only stable-viewing initial discovery uses tighter socket inactivity limits.
+    // They are not a hard bound on DNS, redirects, or the total request duration.
+    static int sampleConnectTimeoutCap(boolean viewing) { return viewing ? 1500 : 2500; }
+    static int sampleReadTimeoutCap(boolean viewing) { return viewing ? 1000 : 3000; }
+
+    /** Read at most the retained sample plus one sentinel, never a full extra buffer. */
+    static int sampleReadLength(int maxBytes,int received,int bufferLength) {
+        if(maxBytes<=0||received<0||bufferLength<=0)return 0;
+        long remaining=(long)maxBytes+1L-received;
+        return remaining<=0L?0:(int)Math.min(remaining,(long)bufferLength);
+    }
+
+    /** Incomplete HTTP ranges can be shorter than the cap; never synthesize zero bytes. */
+    static int sampleRetainedLength(int received,int maxBytes) {
+        return Math.max(0,Math.min(received,maxBytes));
+    }
+
     /** A socket timeout is not proof that a stream is invalid, even before the total budget. */
     public static boolean initialProbeInconclusive(boolean socketTimedOut,long finishedAt,long addressDeadline) {
         return socketTimedOut || finishedAt>=addressDeadline;
