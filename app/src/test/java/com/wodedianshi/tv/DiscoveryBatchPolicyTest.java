@@ -4,6 +4,21 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @Test public void coolingStageResumesAtEarliestEligibleFeedWithoutSkippingPriority() {
+        assertEquals(30000L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,100000L));
+        assertEquals(1L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,129999L));
+        assertEquals(0L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,130000L));
+        assertEquals(0L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,99999L));
+        assertEquals(3L,DiscoveryBatchPolicy.earliestStageCooldownSeconds(
+            new boolean[]{false,false,false,false},new long[]{2101,12000,1,1},2,3));
+        assertEquals(12L,DiscoveryBatchPolicy.earliestStageCooldownSeconds(
+            new boolean[]{true,false,false,false},new long[]{1,12000,1,1},2,3));
+        assertEquals(1L,DiscoveryBatchPolicy.earliestStageCooldownSeconds(
+            new boolean[]{true,true,false,false},new long[]{0,0,1,0},2,3));
+        assertEquals(30L,DiscoveryBatchPolicy.earliestStageCooldownSeconds(
+            new boolean[]{false,false,false,false},new long[]{0,12000,1,1},2,3));
+    }
+
     @Test public void idleInitialNetworkCapDoesNotDiscardReusablePrefix() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,false));
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,true));
