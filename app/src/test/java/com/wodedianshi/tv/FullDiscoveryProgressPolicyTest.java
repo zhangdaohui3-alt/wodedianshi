@@ -5,6 +5,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void earlyMilestonesExposeFirstUsefulGroupsWithoutResettingOldWatermark(){
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,15,20));
+        org.junit.Assert.assertEquals(16,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,16,20));
+        org.junit.Assert.assertEquals(128,FullDiscoveryProgressPolicy.nextPreviewMilestone(64,163,20));
+        org.junit.Assert.assertEquals(192,FullDiscoveryProgressPolicy.nextPreviewMilestone(128,246,20));
+        org.junit.Assert.assertEquals(192,FullDiscoveryProgressPolicy.nextPreviewMilestone(192,160,20));
+    }
+
     @org.junit.Test public void smallPreviewCanPublishWhileHealthyViewingButFinalSnapshotCannot(){
         org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishPreview(true,246,13));
         org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.canPublishPreview(true,256,256));
@@ -17,12 +25,12 @@ public class FullDiscoveryProgressPolicyTest {
     }
 
     @org.junit.Test public void boundedPreviewMilestonesExposeUsefulGrowthWithoutRepeatedWrites() {
-        org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,63,20));
+        org.junit.Assert.assertEquals(32, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,63,20));
         org.junit.Assert.assertEquals(64, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,87,20));
-        org.junit.Assert.assertEquals(64, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,200,20));
+        org.junit.Assert.assertEquals(192, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,200,20));
         org.junit.Assert.assertEquals(256, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,256,20));
         org.junit.Assert.assertEquals(1024, FullDiscoveryProgressPolicy.nextPreviewMilestone(64,2000,20));
-        org.junit.Assert.assertEquals(1024, FullDiscoveryProgressPolicy.nextPreviewMilestone(1024,20000,20));
+        org.junit.Assert.assertEquals(8192, FullDiscoveryProgressPolicy.nextPreviewMilestone(1024,20000,20));
         org.junit.Assert.assertEquals(256, FullDiscoveryProgressPolicy.nextPreviewMilestone(256,40,20));
         org.junit.Assert.assertEquals(0, FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1000,0));
     }
