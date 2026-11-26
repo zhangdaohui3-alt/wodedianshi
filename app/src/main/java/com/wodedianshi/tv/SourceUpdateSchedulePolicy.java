@@ -86,6 +86,14 @@ public final class SourceUpdateSchedulePolicy {
         return !viewing&&freshDifferentNextFeed?0L:30L;
     }
 
+    // Admit at most one extra committed idle slice, and only early enough in
+    // the owner lifetime. Existing per-slice network budgets still apply.
+    static boolean canContinueInitialInline(int completedSlices,long elapsedMs,
+            boolean viewing,boolean playbackActive,boolean paused,boolean progressed,long delaySeconds) {
+        return completedSlices==1&&elapsedMs>=0L&&elapsedMs<60000L
+                &&!viewing&&!playbackActive&&!paused&&progressed&&delaySeconds==0L;
+    }
+
     /** Continue immediately only after a successful committed discovery advance.
      * Keep the existing delay for failed/empty-progress slices to avoid retry churn. */
     static long manualContinuationDelaySeconds(boolean feedRead,int discoveryScanned,boolean pageComplete) {
