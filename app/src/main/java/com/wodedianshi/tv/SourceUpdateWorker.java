@@ -786,7 +786,7 @@ public class SourceUpdateWorker extends Worker {
           DiscoveryBatchPolicy.probeLimit(initialDiscoveryChain,slowPlayback,MAX_PROBES_PER_RUN);
       int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
           initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
-      if(slowPlayback)discoveryWindow=Math.min(1,discoveryWindow);
+      if(slowPlayback)discoveryWindow=Math.min(DiscoveryBatchPolicy.VIEWING_PROBES_PER_SLICE,discoveryWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -1484,7 +1484,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&!initialDiscoveryComplete&&!feedBatches.isEmpty()){
         // Empty pages and recorded failures are durable progress too; rotate
         // rather than repeatedly back off the same WorkRequest.
-        enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?20L:0L);
+        enqueueInitialContinuation(feedsOk==0?30L:slowPlayback?DiscoveryBatchPolicy.VIEWING_SUCCESS_DELAY_SECONDS:0L);
         return Result.success();
       }
       if(manualRefresh&&!manualComplete){
@@ -1718,7 +1718,7 @@ public class SourceUpdateWorker extends Worker {
     }
   }
   private void enqueueInitialContinuation() throws Exception {
-    enqueueInitialContinuation(slowPlayback?20L:0L);
+    enqueueInitialContinuation(slowPlayback?DiscoveryBatchPolicy.VIEWING_SUCCESS_DELAY_SECONDS:0L);
   }
   private void enqueueInitialContinuation(long delaySeconds) throws Exception {
     if(isStopped()||Thread.currentThread().isInterrupted())throw new InterruptedException("Initial source work cancelled");
