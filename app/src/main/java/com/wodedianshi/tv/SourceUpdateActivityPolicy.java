@@ -69,9 +69,18 @@ public final class SourceUpdateActivityPolicy {
         if(now-last<20000L)return 2;
         return 4;
     }
-    public static boolean permitsInitialPlaybackWork(long now) {
+    public static synchronized boolean permitsInitialPlaybackWork(long now) {
         long until=stableUntil;
+        if(until!=0L&&now>0L&&until<=now) {
+            revokeStableLive();
+            return false;
+        }
         return activityActive&&playbackActive&&now>0L&&until>now&&until-now<=LEASE_MS;
+    }
+    /** Test permission and the worker's original admission epoch under one
+     * lock; a revoked worker may not borrow a replacement viewing lease. */
+    static synchronized boolean permitsInitialPlaybackWork(long now,long admittedGeneration) {
+        return permitsInitialPlaybackWork(now)&&stableRevocations.get()==admittedGeneration;
     }
     public static long stableRevocationGeneration(){return stableRevocations.get();}
     public static long activityStartGeneration() { return activityStarts.get(); }
