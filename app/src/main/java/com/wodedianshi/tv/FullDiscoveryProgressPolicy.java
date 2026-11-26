@@ -91,12 +91,16 @@ public final class FullDiscoveryProgressPolicy {
     static final int CORE_CCTV=1,CORE_SATELLITE=2,CORE_LOCAL=4,ALL_CORE=7;
 
     static int coreCategoryMask(String name,String group,String tvgName,String tvgId) {
+        return coreCategoryMask(name,group,tvgName,tvgId,false);
+    }
+
+    static int coreCategoryMask(String name,String group,String tvgName,String tvgId,boolean chinaScope) {
         String metadata=safe(name)+" "+safe(tvgName)+" "+safe(tvgId);
         if(RegionCategoryPolicy.isHongKongMacauTaiwan(metadata,group))return 0;
         if(ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group).startsWith("CCTV-"))
             return CORE_CCTV;
         if(ChannelNamePolicy.isSatellite(metadata,group))return CORE_SATELLITE;
-        return ChannelNamePolicy.provinceForLocalChannel(metadata+" "+safe(group)).isEmpty()?0:CORE_LOCAL;
+        return ChannelNamePolicy.isDomesticLocalLabel(metadata+" "+safe(group),chinaScope)?CORE_LOCAL:0;
     }
 
     static int nextPreviewCoreMask(int previous,int stagedMask,int mainlandValidated) {
@@ -140,6 +144,10 @@ public final class FullDiscoveryProgressPolicy {
         private final java.util.Set<String> provinces = new java.util.HashSet<>();
 
         public void add(String name, String group, String tvgName, String tvgId) {
+            add(name,group,tvgName,tvgId,false);
+        }
+
+        public void add(String name, String group, String tvgName, String tvgId, boolean chinaScope) {
             total++;
             String metadata = safe(name) + " " + safe(tvgName) + " " + safe(tvgId);
             if (RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group)) return;
@@ -153,7 +161,7 @@ public final class FullDiscoveryProgressPolicy {
                 provinces.add(province);
             } else if (all.contains("地方") || all.contains("local")) {
                 // A generic foreign "Local" group is not evidence of China.
-                if (all.contains("地方") || all.contains("中国") || all.contains("china")
+                if (chinaScope || all.contains("地方") || all.contains("中国") || all.contains("china")
                         || all.contains(".cn")) {
                     local++;
                     unresolvedLocal++;
