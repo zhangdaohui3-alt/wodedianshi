@@ -5,6 +5,24 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void indexedInitialBatchesExcludeSmallUnknownAndFinalSnapshots() {
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1024,7,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1025,-1,false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1025,7,true));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1025,0,false));
+        org.junit.Assert.assertTrue(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(20000,7,false));
+    }
+    @org.junit.Test public void indexedWorkingSetCountsOnlyNewRowsNotExistingMatches() {
+        org.junit.Assert.assertEquals(20000,FullDiscoveryProgressPolicy.indexedInitialRowCount(20000,48,48));
+        org.junit.Assert.assertEquals(20003,FullDiscoveryProgressPolicy.indexedInitialRowCount(20000,48,51));
+        org.junit.Assert.assertEquals(20004,FullDiscoveryProgressPolicy.indexedInitialRowCount(20000,0,4));
+        int[][] invalid={{0,0,1},{3,4,4},{3,2,1},{3,-1,1}};
+        for(int[] args:invalid)try{
+            FullDiscoveryProgressPolicy.indexedInitialRowCount(args[0],args[1],args[2]);
+            org.junit.Assert.fail("Invalid sparse row counts");
+        }catch(IllegalArgumentException expected){}
+    }
+
     @org.junit.Test public void firstCoreCategoriesIndependentlyTriggerPreview() {
         int c=FullDiscoveryProgressPolicy.coreCategoryMask("CCTV-1","央视","","");
         int s=FullDiscoveryProgressPolicy.coreCategoryMask("湖南卫视","卫视","","");
