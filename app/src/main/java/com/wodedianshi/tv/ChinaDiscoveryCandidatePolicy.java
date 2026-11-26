@@ -46,6 +46,18 @@ public final class ChinaDiscoveryCandidatePolicy {
         return 1;
     }
 
+    /** A real province label is a scheduling hint only. Ambiguous and foreign
+     * metadata stays unknown rather than inventing regional membership. */
+    static String initialCoverageRegion(int feedIndex,String scope,String name,
+            String group,String tvgName,String tvgId) {
+        if(!SourceDiscoveryFeedCatalog.isBroadMainlandFeed(feedIndex)
+                ||!isClearlyMainland(scope,name,group,tvgName,tvgId)
+                ||FullDiscoveryProgressPolicy.coreCategoryMask(name,group,tvgName,tvgId,true)
+                    !=FullDiscoveryProgressPolicy.CORE_LOCAL)return "";
+        return ChannelNamePolicy.provinceForLocalChannel(
+            safe(name)+" "+safe(group)+" "+safe(tvgName)+" "+safe(tvgId));
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value;
     }
