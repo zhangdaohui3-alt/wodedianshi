@@ -50,4 +50,11 @@ public class SourceQualityScorerTest {
         assertFalse(SourceQualityScorer.isFailedProbeScore(0.0d));
         assertFalse(SourceQualityScorer.isFailedProbeScore(900.0d));
     }
+
+    @Test public void provisionalSuccessDoesNotEraseMeasuredQuality(){
+        assertEquals(1900.0,SourceQualityScorer.successfulPreflightScore(false,true,1900.0,350),0.0);
+        assertEquals(350.0,SourceQualityScorer.successfulPreflightScore(false,true,-500.0,350),0.0);
+        assertEquals(350.0,SourceQualityScorer.successfulPreflightScore(false,true,0.0,350),0.0);
+        assertEquals(700.0,SourceQualityScorer.successfulPreflightScore(false,false,1900.0,700),0.0);
+    }
 }
