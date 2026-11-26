@@ -30,8 +30,10 @@ public final class SingleChannelRefreshPolicy {
             return region.isEmpty()&&!first.isEmpty()&&first.equals(second);
         String firstMeta=metadata(name,tvgName,tvgId)+" "+safe(group);
         String secondMeta=metadata(candidateName,candidateGuide,candidateId)+" "+safe(candidateGroup);
-        String province=ChannelNamePolicy.provinceForLocalChannel(firstMeta);
-        String otherProvince=ChannelNamePolicy.provinceForLocalChannel(secondMeta);
+        String province=ChannelNamePolicy.localProvinceEvidence(firstMeta);
+        String otherProvince=ChannelNamePolicy.localProvinceEvidence(secondMeta);
+        // A contradictory location cannot fall back to matching EPG IDs.
+        if(province==null||otherProvince==null)return false;
         if(!province.isEmpty()&&!otherProvince.isEmpty()&&!province.equals(otherProvince))return false;
         String city=ChannelNamePolicy.localCityForChannel(firstMeta);
         String otherCity=ChannelNamePolicy.localCityForChannel(secondMeta);
