@@ -903,6 +903,8 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       boolean viewingDeferred=false;
+      final int firstWatchPriorChina=earlyFirstWatch
+          ?roomInt("source_initial_progress_china_validated_urls",0):0;
       HashSet<String> visitedUrls=new HashSet<>();
       HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
@@ -913,6 +915,11 @@ public class SourceUpdateWorker extends Worker {
           saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
+        // Once the first mainland candidate has been merged, do not start
+        // another wave solely to fill the six-position budget. Finish all
+        // already admitted requests before committing the exact prefix.
+        if(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(earlyFirstWatch,slowPlayback,
+            firstWatchPriorChina,chinaPreflightsValid,saved.length(),idleWave.hasPending()))break;
         Entry e=probeCandidates.get(offset);
         // A completed speculative result can still be consumed after the batch
         // deadline, but no fresh request may begin after it.
@@ -2259,6 +2266,7 @@ public class SourceUpdateWorker extends Worker {
     private final Map<String,java.util.concurrent.Future<TimedProbe>> pending=new HashMap<>();
     int launched;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
+    boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
         Set<String> visited,long deadline,long batchDeadline,boolean initial){
