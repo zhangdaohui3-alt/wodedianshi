@@ -12,6 +12,32 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 
 public class PlaylistFeedIndexTest {
+    @Test public void sequentialPageRejectsCorruptionAfterValidPrefixWithoutPartialEmission() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
+                +"#EXTINF:-1,乙\nhttps://b.example/live\n"
+                +"#EXTINF:-1,丙\nhttps://c.example/live\n"
+                +"#EXTINF:-1,丁\nhttps://d.example/live\n");
+        assertEquals(4,PlaylistFeedIndex.readPage(feed,0,4,ignored->{}));
+        File offsets=new File(feed.getAbsolutePath()+".index-offsets");
+        try(RandomAccessFile index=new RandomAccessFile(offsets,"rw")){
+            index.seek(36L);long fourth=index.readLong();
+            index.seek(28L);index.writeLong(fourth);
+        }
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        try{
+            PlaylistFeedIndex.readExistingPage(feed,0,4,page::add,()->false);
+            org.junit.Assert.fail("Expected corrupt page rejection");
+        }catch(java.io.IOException expected){}
+        assertEquals(0,page.size());
+        assertEquals(3,PlaylistFeedIndex.readPage(feed,1,3,page::add));
+        assertEquals("乙",page.get(0).name);
+        assertEquals("丙",page.get(1).name);
+        assertEquals("丁",page.get(2).name);
+        page.clear();
+        assertEquals(1,PlaylistFeedIndex.readExistingPage(feed,3,48,page::add,()->false));
+        assertEquals("丁",page.get(0).name);
+    }
+
     @Test public void bufferedIndexPreservesOffsetsAcrossBufferBoundaries() throws Exception {
         StringBuilder body=new StringBuilder("#EXTM3U\n");
         for(int i=0;i<2000;i++)
