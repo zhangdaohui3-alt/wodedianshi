@@ -7,6 +7,11 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void recoveryWaveCannotExceedItsAdmissionBudget(){
+        IdleProbeWavePolicy wave=new IdleProbeWavePolicy(2);
+        wave.add("a","one");wave.add("b","two");
+        assertFalse(wave.canAdd("c","three"));
+    }
     @Test public void manualAndInitialIdleUseSameParallelPolicy() {
         assertTrue(IdleProbeWavePolicy.permitsParallel(true,false,false));
         assertTrue(IdleProbeWavePolicy.permitsParallel(false,true,false));

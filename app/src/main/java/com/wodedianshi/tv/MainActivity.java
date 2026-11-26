@@ -6066,11 +6066,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     playbackWatchdog=()->{
       playbackWatchdog=null;
       if(player==null||selected!=expectedChannel||!currentMediaId.equals(expectedMediaId))return;
-      if(!player.getPlayWhenReady())return;
+      if(!player.getPlayWhenReady()){pauseStableDiscovery();return;}
       int state=player.getPlaybackState();
       // 缓冲由独立计时器处理；READY 但没有真正推进时间轴也必须继续监测。
-      if(state==Player.STATE_BUFFERING){if(bufferingFallback==null)scheduleBufferingFallback();return;}
-      if(state!=Player.STATE_READY)return;
+      if(state==Player.STATE_BUFFERING){pauseStableDiscovery();if(bufferingFallback==null)scheduleBufferingFallback();return;}
+      if(state!=Player.STATE_READY){pauseStableDiscovery();return;}
       long now=android.os.SystemClock.elapsedRealtime();
       long position=player.getCurrentPosition();
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
@@ -7999,13 +7999,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long lastStableDiscoveryInteraction;
   private void pauseStableDiscovery(){
     lastStableDiscoveryInteraction=android.os.SystemClock.elapsedRealtime();
-    SourceUpdateActivityPolicy.revokeStableLive();
+    SourceUpdateActivityPolicy.notePressure(lastStableDiscoveryInteraction);
   }
   @Override public void onWindowFocusChanged(boolean focused){
     super.onWindowFocusChanged(focused);
     if(!focused)pauseStableDiscovery();
   }
   private void setSourceUpdatePlaybackActive(boolean active){
+    SourceUpdateActivityPolicy.notePressure(android.os.SystemClock.elapsedRealtime());
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
   }
   protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}

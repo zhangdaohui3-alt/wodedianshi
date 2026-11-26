@@ -6,6 +6,10 @@ public final class SourceUpdateActivityPolicy {
     private static volatile boolean activityActive;
     private static volatile boolean playbackActive;
     private static volatile long stableUntil;
+    private static long firstHealthyAt;
+    private static volatile long lastPressureAt;
+    private static final long LEASE_MS=15000L;
+    private static final long MIN_HEALTHY_INTERVAL_MS=8000L;
     private static final java.util.concurrent.atomic.AtomicLong stableRevocations=new java.util.concurrent.atomic.AtomicLong();
     private SourceUpdateActivityPolicy() {}
     private static final java.util.concurrent.atomic.AtomicLong activityStarts = new java.util.concurrent.atomic.AtomicLong();
@@ -20,17 +24,46 @@ public final class SourceUpdateActivityPolicy {
         if (active && !playbackActive) playbackStarts.incrementAndGet();
         playbackActive = active;
     }
-    /** A fresh, short-lived confirmation from the existing live watchdog only. */
+    /** A healthy watchdog observation is not permission until another
+     * independent observation arrives after a recovery interval. Expired
+     * leases cannot silently revive an already admitted worker generation. */
     public static synchronized void reportStableLive(long now) {
-        if (activityActive && playbackActive && now > 0L && now < Long.MAX_VALUE-15000L)
-            stableUntil=now+15000L;
+        if(!activityActive||!playbackActive||now<=0L||now>=Long.MAX_VALUE-LEASE_MS){
+            revokeStableLive();return;
+        }
+        if(stableUntil!=0L){
+            if(stableUntil>now&&stableUntil-now<=LEASE_MS){stableUntil=now+LEASE_MS;return;}
+            revokeStableLive();
+        }
+        if(firstHealthyAt==0L||now<firstHealthyAt||now-firstHealthyAt>LEASE_MS){
+            firstHealthyAt=now;return;
+        }
+        if(now-firstHealthyAt>=MIN_HEALTHY_INTERVAL_MS){
+            stableUntil=now+LEASE_MS;
+            firstHealthyAt=0L;
+        }
     }
     public static synchronized void revokeStableLive() {
+        firstHealthyAt=0L;
         if(stableUntil!=0L){stableUntil=0L;stableRevocations.incrementAndGet();}
+    }
+    /** Called on playback transitions and user input, never from a network thread.
+     * This does not wait for an in-flight connection to close. */
+    public static synchronized void notePressure(long now){
+        if(now>0L)lastPressureAt=now;
+        revokeStableLive();
+    }
+    public static int idleProbeConcurrency(long now){
+        if(playbackActive)return 1;
+        long last=lastPressureAt;
+        if(last==0L)return 4;
+        if(now<last||now-last<5000L)return 1;
+        if(now-last<20000L)return 2;
+        return 4;
     }
     public static boolean permitsInitialPlaybackWork(long now) {
         long until=stableUntil;
-        return activityActive&&playbackActive&&now>0L&&until>now&&until-now<=15000L;
+        return activityActive&&playbackActive&&now>0L&&until>now&&until-now<=LEASE_MS;
     }
     public static long stableRevocationGeneration(){return stableRevocations.get();}
     public static long activityStartGeneration() { return activityStarts.get(); }

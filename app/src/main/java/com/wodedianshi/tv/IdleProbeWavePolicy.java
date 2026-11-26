@@ -20,11 +20,14 @@ final class IdleProbeWavePolicy {
         // the first-build 15s address cap). Avoid speculative waves near its end.
         return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
     }
+    private final int maxConcurrent;
+    IdleProbeWavePolicy(){this(MAX_CONCURRENT);}
+    IdleProbeWavePolicy(int limit){maxConcurrent=Math.max(1,Math.min(MAX_CONCURRENT,limit));}
     private final HashSet<String> endpoints=new HashSet<>();
     private final HashMap<String,Integer> hosts=new HashMap<>();
     boolean canAdd(String endpoint,String host) {
         return endpoint!=null&&!endpoint.isEmpty()&&host!=null&&!host.isEmpty()
-                &&endpoints.size()<MAX_CONCURRENT&&!endpoints.contains(endpoint)
+                &&endpoints.size()<maxConcurrent&&!endpoints.contains(endpoint)
                 &&hosts.getOrDefault(host,0)<MAX_PER_HOST;
     }
     void add(String endpoint,String host) {

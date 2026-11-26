@@ -2118,10 +2118,12 @@ public class SourceUpdateWorker extends Worker {
         Set<String> visited,long deadline,long batchDeadline,boolean initial){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
-      ArrayList<Entry> wave=new ArrayList<>();
-      IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy();
       long now=android.os.SystemClock.elapsedRealtime();
-      for(int i=offset;i<entries.size()&&wave.size()<IdleProbeWavePolicy.MAX_CONCURRENT;i++){
+      int limit=SourceUpdateActivityPolicy.idleProbeConcurrency(now);
+      if(limit<2)return false;
+      ArrayList<Entry> wave=new ArrayList<>();
+      IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy(limit);
+      for(int i=offset;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
         if((initial&&entry.savedSource)||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
         String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=host(entry.url);
@@ -2133,7 +2135,8 @@ public class SourceUpdateWorker extends Worker {
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
-      if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline))return false;
+      if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
+          ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime()))return false;
       if(executor==null)executor=java.util.concurrent.Executors.newFixedThreadPool(IdleProbeWavePolicy.MAX_CONCURRENT,r->{
         return new Thread(()->{
           try{android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);}
