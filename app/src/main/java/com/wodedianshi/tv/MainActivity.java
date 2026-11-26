@@ -4760,8 +4760,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           ArrayList<Integer> allLocal=new ArrayList<>();
           java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
           for(int i=0;i<sources.size();i++){
-            if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration
-                ||mutation!=catalogueMutationGeneration))return;
+            if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
             Channel candidate=sources.get(i);
             if(candidate==null)continue;
             LocalDirectoryFacts facts=localDirectoryFacts(candidate);
@@ -4769,9 +4768,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(!facts.excluded&&!facts.province.isEmpty())
               provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
           }
-          if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration
-              ||mutation!=catalogueMutationGeneration)return;
-          categorySnapshotIndex.putLocalIndex(mutation,sources.size(),allLocal,provinces);
+          if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
+          // A changed epoch must reach the existing publication/retry gate.
+          if(mutation==catalogueMutationGeneration)
+            categorySnapshotIndex.putLocalIndex(mutation,sources.size(),allLocal,provinces);
         }
         java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
         java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
