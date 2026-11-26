@@ -67,6 +67,98 @@ public class SourceUpdateWorker extends Worker {
   private static final int MAX_DISCOVERY_CANDIDATES_PER_RUN = 24000;
   private static final int MAX_DISCOVERY_PER_FEED = 4;
   private static final int MAX_INITIAL_DISCOVERY_PER_FEED = DiscoveryBatchPolicy.INITIAL_PAGE_SIZE;
+  /** Backend for an explicit single-channel refresh. Caller runs off the UI
+   * thread and owns lifecycle cancellation. All source network work shares
+   * the existing process gate; a busy request never waits on that thread. */
+  static final class SingleRefreshResult {
+    enum Status { BUSY, DEFERRED, FULL, NO_NEW_SOURCE, SAVED }
+    final Status status;
+    final int candidates,checked,validated,added;
+    final long catalogueVersion;
+    final boolean bounded;
+    SingleRefreshResult(Status status,int candidates,int checked,int validated,int added,
+        long catalogueVersion,boolean bounded){
+      this.status=status;this.candidates=candidates;this.checked=checked;
+      this.validated=validated;this.added=added;this.catalogueVersion=catalogueVersion;this.bounded=bounded;
+    }
+  }
+  static SingleRefreshResult refreshSingleChannel(Context context,String channelId,long expectedVersion,
+      java.util.function.BooleanSupplier cancelled)throws Exception{
+    if(channelId==null||channelId.isEmpty()||expectedVersion<0L||cancelled==null)
+      throw new IllegalArgumentException("Missing single channel refresh request");
+    if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true))
+      return new SingleRefreshResult(SingleRefreshResult.Status.BUSY,0,0,0,0,expectedVersion,false);
+    try{
+      java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
+      if(retiring!=null){
+        if(!retiring.isTerminated())
+          return new SingleRefreshResult(SingleRefreshResult.Status.BUSY,0,0,0,0,expectedVersion,false);
+        retiringProbeExecutor=null;
+      }
+      final boolean viewing=SourceUpdateActivityPolicy.isPlaybackActive();
+      final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
+      final long pressure=SourceUpdateActivityPolicy.pressureGeneration();
+      final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
+      java.util.function.BooleanSupplier paused=SourceProbeTimePolicy.latchPause(()->cancelled.getAsBoolean()
+          ||SourceUpdateActivityPolicy.pressureGeneration()!=pressure
+          ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
+          ||(viewing?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(
+              android.os.SystemClock.elapsedRealtime(),stableGeneration):SourceUpdateActivityPolicy.isPlaybackActive()));
+      if(paused.getAsBoolean())
+        return new SingleRefreshResult(SingleRefreshResult.Status.DEFERRED,0,0,0,0,expectedVersion,false);
+      com.wodedianshi.tv.db.ChannelDao dao=com.wodedianshi.tv.db.RoomDatabaseProvider
+          .get(context.getApplicationContext()).channelDao();
+      com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=dao.getValidatedCheckpoint(
+          com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+      com.wodedianshi.tv.db.ChannelEntity row=dao.getChannelById(channelId);
+      if(checkpoint==null||checkpoint.completedAt!=expectedVersion||row==null)
+        throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
+      ArrayList<String> existing=new ArrayList<>();
+      for(com.wodedianshi.tv.db.BackupSourceEntity source:dao.getBackupSourcesForChannel(channelId))
+        existing.add(source.url);
+      if(existing.size()>=MAX_SOURCES_PER_CHANNEL)
+        return new SingleRefreshResult(SingleRefreshResult.Status.FULL,0,0,0,0,expectedVersion,false);
+      SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(
+          context,new SingleChannelCandidateSearch.Target(row.name,row.groupName,row.tvgId,row.tvgName),
+          existing,paused);
+      final long stageDeadline=android.os.SystemClock.elapsedRealtime()+(viewing?30000L:60000L);
+      final int limit=viewing?2:4;
+      int checked=0;
+      ArrayList<SingleChannelCandidateSearch.Candidate> passed=new ArrayList<>();
+      HashMap<String,Integer> scores=new HashMap<>();
+      for(SingleChannelCandidateSearch.Candidate candidate:found.candidates){
+        SourceProbeTimePolicy.checkPaused(paused);
+        if(checked>=limit)break;
+        long addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(
+            stageDeadline,android.os.SystemClock.elapsedRealtime());
+        if(addressDeadline==0L)break;
+        checked++;
+        ProbeResult observation=probe(candidate.url,addressDeadline,viewing,paused,!viewing);
+        SourceProbeTimePolicy.checkPaused(paused);
+        if(!observation.valid||observation.socketTimedOut||observation.transientNetworkFailure
+            ||android.os.SystemClock.elapsedRealtime()>=addressDeadline)continue;
+        passed.add(candidate);scores.put(candidate.url,observation.score);
+      }
+      boolean bounded=found.bounded||found.missingFeeds>0||checked<found.candidates.size();
+      passed.sort((x,y)->Integer.compare(scores.get(y.url),scores.get(x.url)));
+      LinkedHashMap<String,Set<String>> verified=new LinkedHashMap<>();
+      for(SingleChannelCandidateSearch.Candidate candidate:passed)
+        verified.put(candidate.url,Collections.singleton(candidate.scope));
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
+      if(verified.isEmpty())
+        return new SingleRefreshResult(SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),
+            checked,0,0,expectedVersion,bounded);
+      com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelRefreshResult commit=
+          com.wodedianshi.tv.db.RoomCatalogueWriter.appendVerifiedChannelSources(
+              context,channelId,expectedVersion,verified,paused);
+      return new SingleRefreshResult(commit.addedSources>0?SingleRefreshResult.Status.SAVED:
+          SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),checked,passed.size(),
+          commit.addedSources,commit.catalogueVersion,bounded);
+    }finally{
+      SOURCE_WORK_ACTIVE.set(false);
+    }
+  }
+
   public SourceUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params){super(context,params);}
   @NonNull @Override public Result doWork(){
     if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true)){
