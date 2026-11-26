@@ -130,6 +130,16 @@ public final class SourceProbeTimePolicy {
                 && batchDeadline-addressDeadline>=2000L;
     }
 
+    /** Give the best rendition a substantial window, but reserve five seconds
+     * for a distinct sibling when the remaining first-build idle budget allows.
+     * Never shorten the only/last rendition or the ordinary/viewing probe. */
+    static long initialRenditionDeadline(boolean initialIdle,boolean hasSibling,
+            long now,long addressDeadline) {
+        if(!initialIdle||!hasSibling||now<0L||addressDeadline<now
+                ||addressDeadline-now<11000L)return addressDeadline;
+        return addressDeadline-5000L;
+    }
+
     // First build prioritizes breadth. Keep one difficult HLS address from
     // monopolizing an entire slice. A timed-out probe is inconclusive.
     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
