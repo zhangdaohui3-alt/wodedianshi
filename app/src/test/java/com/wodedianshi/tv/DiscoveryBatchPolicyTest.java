@@ -4,6 +4,23 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void temporaryNetworkFailureAllowsOnlyOneExactPageSuffixReplay() {
+        int marker=DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
+        marker=DiscoveryBatchPolicy.noteTransientRecheck(marker,3);
+        marker=DiscoveryBatchPolicy.noteTransientRecheck(marker,7);
+        org.junit.Assert.assertEquals(3,marker);
+        org.junit.Assert.assertEquals(3,DiscoveryBatchPolicy.resumeTransientRecheck(true,marker,8));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldReplayTransientSuffix(marker,8,48));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldReplayTransientSuffix(marker,48,48));
+        int used=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
+        org.junit.Assert.assertEquals(used,DiscoveryBatchPolicy.resumeTransientRecheck(true,used,3));
+        org.junit.Assert.assertEquals(used,DiscoveryBatchPolicy.noteTransientRecheck(used,3));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldReplayTransientSuffix(used,48,48));
+        org.junit.Assert.assertEquals(-1,DiscoveryBatchPolicy.resumeTransientRecheck(false,marker,8));
+        org.junit.Assert.assertEquals(-1,DiscoveryBatchPolicy.resumeTransientRecheck(false,used,8));
+        org.junit.Assert.assertEquals(-1,DiscoveryBatchPolicy.resumeTransientRecheck(true,8,8));
+    }
+
     @org.junit.Test public void newCoreCategoryYieldsOnlyAtDrainedSmallIdlePreviewBoundary() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,3,7,1,false));
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForNewCorePreview(false,512,1,3,1,false));
