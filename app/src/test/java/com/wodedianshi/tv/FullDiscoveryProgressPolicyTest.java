@@ -5,6 +5,18 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void throughputUsesOnlyMeasuredSliceAndSignedNetGrowth(){
+        String sample=FullDiscoveryProgressPolicy.throughputStatus(10000,15000,5000,12,4,2,false);
+        org.junit.Assert.assertTrue(sample.contains("24.0 条/分钟"));
+        org.junit.Assert.assertTrue(sample.contains("暂存频道净增 2"));
+        org.junit.Assert.assertTrue(sample.contains("空闲"));
+        org.junit.Assert.assertTrue(sample.contains("不含调度等待"));
+        String zero=FullDiscoveryProgressPolicy.throughputStatus(0,-1,0,-1,-1,-2,true);
+        org.junit.Assert.assertTrue(zero.contains("未测得"));
+        org.junit.Assert.assertTrue(zero.contains("暂存频道净增 -2"));
+        org.junit.Assert.assertTrue(zero.contains("稳定播放低速"));
+    }
+
     @Test public void unfinishedBuildDoesNotResumeAnIdleOrFailedSelectedChannel() {
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(0L,true,false));
         assertTrue(FullDiscoveryProgressPolicy.shouldResumeAfterBackground(0L,true,true));
