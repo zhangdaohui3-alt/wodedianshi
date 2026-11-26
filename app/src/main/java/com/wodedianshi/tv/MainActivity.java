@@ -1448,8 +1448,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       AlertDialog dialog=details.create();
       initialDiscoveryDetailsDialog=dialog;
-      dialog.setOnDismissListener(d->{if(initialDiscoveryDetailsDialog==dialog)initialDiscoveryDetailsDialog=null;});
+      dialog.setOnKeyListener((d,key,event)->{
+        if(event.getAction()==KeyEvent.ACTION_DOWN)pauseStableDiscovery();
+        return false;
+      });
+      dialog.setOnDismissListener(d->{if(initialDiscoveryDetailsDialog==dialog){
+        initialDiscoveryDetailsDialog=null;pauseStableDiscovery();
+      }});
       dialog.show();
+      View messageView=dialog.findViewById(android.R.id.message);
+      if(messageView!=null)messageView.setOnTouchListener((v,event)->{
+        if(event.getActionMasked()==MotionEvent.ACTION_DOWN)pauseStableDiscovery();
+        return false;
+      });
     });
     // The entire progress card is one remote/touch target; neither the title
     // nor the progress bar should take focus away from its click action.
@@ -1658,6 +1669,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     });}catch(RuntimeException rejected){initialResumeRequestPending=false;toast("暂时无法读取抓源任务状态");}
   }
+  // Reading discovery progress must not itself permanently block a healthy
+  // playing channel from granting its bounded low-priority discovery lease.
+  // Require the exact tracked dialog to own focus, not just to be visible.
+  private boolean hasStableDiscoveryWindowFocus(){
+    if(hasWindowFocus())return true;
+    AlertDialog dialog=initialDiscoveryDetailsDialog;
+    Window window=dialog==null?null:dialog.getWindow();
+    return dialog!=null&&dialog.isShowing()&&window!=null
+        &&window.getDecorView().hasWindowFocus();
+  }
   private void refreshInitialDiscoveryDetailsDialog(){
     AlertDialog dialog=initialDiscoveryDetailsDialog;
     if(dialog!=null&&dialog.isShowing()){
@@ -1826,7 +1847,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               if(!liveStage.isEmpty())taskStatus=liveStage;
               else if(initialDiscoveryWorkRunning)taskStatus="抓源任务运行中，正在准备或保存本批进度";
               else if(initialDiscoveryWorkUnfinished)taskStatus=SourceUpdateActivityPolicy.isPlaybackActive()
-                  ?"播放资源占用，等待下一批抓源调度"
+                  ?(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime())
+                      ?"稳定播放低速抓源已获准，等待下一批调度":"播放资源占用，等待稳定播放许可或下一批调度")
                   :"当前没有播放资源占用，等待下一批抓源调度";
               else taskStatus=initialDiscoveryWorkObserved?"当前无运行或排队的抓源任务，可在设置中继续":"正在读取抓源任务状态";
             }
@@ -6766,7 +6788,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
            &&TrackHealthPolicy.audioWarningQuiet(lastLiveAudioWarningAt,now);
       if(TrackHealthPolicy.canGrantStableDiscovery(confirmedOutput,sourceReadyAt,
           lastStableDiscoveryInteraction,watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)
-          &&player.isPlaying()&&activityStarted&&hasWindowFocus()
+          &&player.isPlaying()&&activityStarted&&hasStableDiscoveryWindowFocus()
           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
           &&currentVodPanel==null&&!isAnyPlaybackLockActive()
@@ -7704,7 +7726,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long now=android.os.SystemClock.elapsedRealtime();
       if(TrackHealthPolicy.canGrantVlcDiscovery(libVlcVideoOutputReady,libVlcAudioTrackReady,
           libVlcRebuffering,reportsPlaying,libVlcStableChecks,lastStableDiscoveryInteraction,now)
-          &&activityStarted&&hasWindowFocus()&&currentVodPanel==null
+          &&activityStarted&&hasStableDiscoveryWindowFocus()&&currentVodPanel==null
           &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
           &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
           &&!isAnyPlaybackLockActive()&&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
