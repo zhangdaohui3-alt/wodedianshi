@@ -446,8 +446,13 @@ public class SourceUpdateWorker extends Worker {
           ?com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
               .channelDao().countCatalogueBuildRows()
           :saved.length();
+      final int initialCheckedAtStart=initialDiscoveryChain
+          ?roomInt("source_initial_progress_checked_urls",0):0;
       final boolean earlyFirstWatch=initialDiscoveryChain&&DiscoveryBatchPolicy.isEarlyFirstWatch(
-          previousStagedSize,roomInt("source_initial_progress_checked_urls",0));
+          previousStagedSize,initialCheckedAtStart);
+      final boolean preferCoreCoverage=initialDiscoveryChain&&DiscoveryBatchPolicy.preferCoreCoverage(
+          previousStagedSize,initialCheckedAtStart,
+          roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
       final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
       final ArrayList<Integer> indexedPositions=new ArrayList<>();
       ArrayList<Entry> candidates=new ArrayList<>();
@@ -513,7 +518,7 @@ public class SourceUpdateWorker extends Worker {
             ?SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,earlyFirstWatch)
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Full rebuild: inspect China mainland feeds first (CCTV, provincial,
@@ -580,7 +585,7 @@ public class SourceUpdateWorker extends Worker {
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
                   .putInt("source_initial_next_feed_index",
-                      earlyFirstWatch?SourceDiscoveryPriorityPolicy.nextAfterFirstWatchTurn(feedIndex,feeds.length)
+                      preferCoreCoverage?SourceDiscoveryPriorityPolicy.nextAfterFirstWatchTurn(feedIndex,feeds.length)
                           :InitialFeedRotationPolicy.nextAfterPartialAcquisition(feedIndex,feeds.length,false))
                   .putString("source_initial_progress_phase","空闲时已保存目录分段，轮换其他目录")
                   .apply();
@@ -1222,7 +1227,7 @@ public class SourceUpdateWorker extends Worker {
         // and scanned position are committed with staging below, while the raw
         // feed cursor only advances when the page is complete.
         int attemptedFeed=feedBatches.get(feedBatches.size()-1).index;
-        initialNextFeedIndex=earlyFirstWatch
+        initialNextFeedIndex=preferCoreCoverage
             ?SourceDiscoveryPriorityPolicy.nextAfterFirstWatchTurn(attemptedFeed,feeds.length)
             :InitialFeedRotationPolicy.nextAfterProbeBatch(
                 attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
@@ -1646,9 +1651,10 @@ public class SourceUpdateWorker extends Worker {
           int next=SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,completedNow,
               new boolean[feeds.length],SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
               SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,
-              DiscoveryBatchPolicy.isEarlyFirstWatch(
+              DiscoveryBatchPolicy.preferCoreCoverage(
                   roomInt("source_initial_progress_staged_channels",0),
-                  roomInt("source_initial_progress_checked_urls",0)));
+                  roomInt("source_initial_progress_checked_urls",0),
+                  roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1)));
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted
               &&roomInt(initialFeedFailureCountKey(next),0)==0;
