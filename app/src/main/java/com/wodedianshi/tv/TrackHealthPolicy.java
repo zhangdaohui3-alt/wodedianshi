@@ -22,6 +22,12 @@ public final class TrackHealthPolicy {
                 && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 5000L;
     }
 
+    /** An advancing engine clock strengthens the discovery gate, but is not
+     * proof of physical output. Unknown, reset or stationary clocks yield. */
+    static boolean vlcClockAdvanced(long previousMs,long currentMs) {
+        return previousMs>0L&&currentMs>previousMs&&currentMs-previousMs>=250L;
+    }
+
     /** Permission for bounded discovery only, not proof of rendered pixels or audible sound. */
     public static boolean canGrantVlcDiscovery(boolean videoOutput, boolean audioSelected,
             boolean buffering, boolean reportsPlaying, int consecutiveChecks,
