@@ -15,6 +15,7 @@ final class InitialOriginCooldownPolicy {
         final long started;
         final HashSet<String> distinct=new HashSet<>();
         long until;
+        boolean explicitPressure;
         Health(long now){started=now;}
     }
     static String origin(String address){
@@ -38,12 +39,26 @@ final class InitialOriginCooldownPolicy {
     }
     void observe(String origin,String endpoint,long now,boolean firstRequestFailed,boolean firstRequestReached){
         if(origin==null||origin.isEmpty()||endpoint==null||endpoint.isEmpty()||now<0L)return;
-        if(firstRequestReached){origins.remove(origin);return;}
+        if(firstRequestReached){
+            Health current=origins.get(origin);
+            // A successful concurrent request must not cancel a recent explicit
+            // rate-limit response before its bounded cooling interval expires.
+            if(current==null||!current.explicitPressure||!cooling(origin,now))origins.remove(origin);
+            return;
+        }
         if(!firstRequestFailed||cooling(origin,now))return;
         Health h=origins.get(origin);
         if(h==null){h=new Health(now);origins.put(origin,h);}
         if(h.distinct.add(endpoint)&&h.distinct.size()>=THRESHOLD)
             h.until=now>Long.MAX_VALUE-WINDOW_MS?Long.MAX_VALUE:now+WINDOW_MS;
+        while(origins.size()>CAP)origins.remove(origins.keySet().iterator().next());
+    }
+    /** Explicit server throttling is scheduling evidence, not a dead route. */
+    void observePressure(String origin,long now){
+        if(origin==null||origin.isEmpty()||now<0L)return;
+        Health h=new Health(now);h.explicitPressure=true;
+        h.until=now>Long.MAX_VALUE-WINDOW_MS?Long.MAX_VALUE:now+WINDOW_MS;
+        origins.put(origin,h);
         while(origins.size()>CAP)origins.remove(origins.keySet().iterator().next());
     }
     void clear(){origins.clear();}
