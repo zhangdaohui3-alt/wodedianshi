@@ -4903,7 +4903,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void addDialog(){LinearLayout f=new LinearLayout(this);f.setOrientation(1);EditText n=new EditText(this);n.setHint("频道名称");EditText u=new EditText(this);u.setHint("播放网址（http/https，m3u8 等）");f.addView(n);f.addView(u);new AlertDialog.Builder(this).setTitle("添加自建频道").setView(f).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String name=n.getText().toString().trim(),url=u.getText().toString().trim();if(!name.isEmpty()&&(url.startsWith("http://")||url.startsWith("https://"))){Channel c=new Channel(name,url,"自建频道");c.addBackupSource(url,"custom");int newIndex;synchronized(channels){channels.add(c);newIndex=channels.size()-1;}rebuildChannelIndexes();persist();activeCategory="自建频道";favoriteMode=false;refresh();play(newIndex);}else toast("请填写频道名称和有效网址");}).show();}
   private void showFullscreenChannelMenu(){
     pauseStableDiscovery();
-    if(!fullScreenPlayback||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
+    if(!activityStarted||isFinishing()||isDestroyed()||!fullScreenPlayback
+        ||fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())return;
     clearPendingRemoteZap();
     if(fullscreenAspectMenuItem==null){fullscreenAspectMenuItem=new Button(this);fullscreenAspectMenuItem.setText("画面比例");fullscreenAspectMenuItem.setAllCaps(false);fullscreenAspectMenuItem.setFocusable(true);fullscreenAspectMenuItem.setFocusableInTouchMode(true);styleTvButton(fullscreenAspectMenuItem,Color.rgb(35,55,78));fullscreenAspectMenuItem.setOnClickListener(v->{closeFullscreenChannelMenu();showAspectRatioDialog(video,"live_aspect_mode");});}
     if(fullscreenAspectMenuItem.getParent()==null&&categoryPane!=null)categoryPane.addView(fullscreenAspectMenuItem,1,new LinearLayout.LayoutParams(-1,dp(48)));
@@ -4938,7 +4939,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       fullscreenMenuPopup=null;
       menuSelectedFocusGeneration=-1L;
       if(fullscreenAspectMenuItem!=null&&fullscreenAspectMenuItem.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)fullscreenAspectMenuItem.getParent()).removeView(fullscreenAspectMenuItem);
-      if(fullScreenPlayback&&isTouchDevice())showFullscreenControls();else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
+      if(activityStarted&&!isFinishing()&&!isDestroyed()&&fullScreenPlayback&&isTouchDevice())showFullscreenControls();
+      else if(fullscreenMenuButton!=null)fullscreenMenuButton.setVisibility(View.GONE);
       if(!isTouchDevice())restoreFullscreenInputFocus();
     });
     fullscreenMenuPopup.showAtLocation(rootLayout,Gravity.LEFT|Gravity.TOP,0,0);
@@ -5095,11 +5097,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     clearPendingRemoteZap();
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     if(video!=null)video.setKeepScreenOn(false);
-    if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
-    fullscreenControlsVisible=false;fullscreenControlGesture=false;
-    fullscreenMenuButton.setVisibility(View.GONE);
-    fullscreenSourceButton.setVisibility(View.GONE);
-    fullscreenFavoriteButton.setVisibility(View.GONE);
+    clearLiveOverlayCallbacks();
     if(categoryPane.getParent()!=rootLayout)rootLayout.addView(categoryPane,0,new LinearLayout.LayoutParams(dp(104),-1));
     if(channelPane.getParent()!=rootLayout)rootLayout.addView(channelPane,1,new LinearLayout.LayoutParams(dp(250),-1));
     categoryPane.setVisibility(View.VISIBLE);
@@ -5123,13 +5121,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(restoreFocus!=null){
       final View target=restoreFocus;
       channelScroll.post(()->{
+        if(!activityStarted||fullScreenPlayback||isFinishing()||isDestroyed()
+            ||!target.isAttachedToWindow()||target.getParent()!=list)return;
         channelScroll.scrollTo(0,Math.max(0,target.getTop()-dp(72)));
         target.requestFocus();
       });
     }
   }
+  private void clearLiveOverlayCallbacks(){
+    if(hideFullscreenControls!=null){uiHandler.removeCallbacks(hideFullscreenControls);hideFullscreenControls=null;}
+    if(hideChannelZapOverlay!=null){uiHandler.removeCallbacks(hideChannelZapOverlay);hideChannelZapOverlay=null;}
+    fullscreenControlsVisible=false;fullscreenControlGesture=false;
+    for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton}){
+      if(control==null)continue;
+      control.animate().cancel();control.setAlpha(1f);control.setVisibility(View.GONE);
+    }
+    if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);
+  }
   private void showFullscreenControls(){
-    if(!fullScreenPlayback)return;
+    if(!activityStarted||isFinishing()||isDestroyed()||!fullScreenPlayback)return;
     fullscreenControlsVisible=true;
     TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton};
     // Make visible controls hit-testable immediately rather than losing a fast
@@ -5675,7 +5685,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     showChannelZapMessage(channels.get(selected).name);
   }
   private void showChannelZapMessage(String message){
-    if(channelZapOverlay==null)return;
+    if(!activityStarted||isFinishing()||isDestroyed()||channelZapOverlay==null)return;
     if(hideChannelZapOverlay!=null)uiHandler.removeCallbacks(hideChannelZapOverlay);
     channelZapOverlay.setText(message);
     channelZapOverlay.setGravity(Gravity.CENTER);
@@ -8217,12 +8227,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   @Override public void onWindowFocusChanged(boolean focused){
     super.onWindowFocusChanged(focused);
-    if(!focused)pauseStableDiscovery();
+    if(!focused){
+      pauseStableDiscovery();
+      clearPendingRemoteZap();
+      fullscreenControlGesture=false;
+      if(fullscreenControlsVisible)scheduleFullscreenControlsHide();
+    }
   }
   private void setSourceUpdatePlaybackActive(boolean active){
     SourceUpdateActivityPolicy.notePressure(android.os.SystemClock.elapsedRealtime());
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
   }
-  protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){++vodPosterSessionGeneration;revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();++vodPosterSessionGeneration;revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
