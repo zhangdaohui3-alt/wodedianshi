@@ -76,11 +76,41 @@ public class SourceUpdateWorker extends Worker {
     final int candidates,checked,validated,added;
     final long catalogueVersion;
     final boolean bounded;
+    final Map<String,Set<String>> addedRoutes;
     SingleRefreshResult(Status status,int candidates,int checked,int validated,int added,
         long catalogueVersion,boolean bounded){
-      this.status=status;this.candidates=candidates;this.checked=checked;
-      this.validated=validated;this.added=added;this.catalogueVersion=catalogueVersion;this.bounded=bounded;
+      this(status,candidates,checked,validated,added,catalogueVersion,bounded,Collections.emptyMap());
     }
+    SingleRefreshResult(Status status,int candidates,int checked,int validated,int added,
+        long catalogueVersion,boolean bounded,Map<String,Set<String>> addedRoutes){
+      this.status=status;this.candidates=candidates;this.checked=checked;
+      this.validated=validated;this.added=added;this.catalogueVersion=catalogueVersion;
+      this.bounded=bounded;this.addedRoutes=addedRoutes;
+    }
+  }
+  /** Resolve the visible channel against the newest committed Room row, not
+   * the Activity's potentially older full-snapshot version. Ambiguity fails
+   * closed; the existing backend rechecks the captured version under its gate. */
+  static SingleRefreshResult refreshSingleChannelForVisibleChannel(Context context,String legacyKey,
+      String group,String tvgId,String tvgName,String activeUrl,
+      java.util.function.BooleanSupplier cancelled)throws Exception{
+    SourceProbeTimePolicy.checkPaused(cancelled);
+    com.wodedianshi.tv.db.ChannelDao dao=com.wodedianshi.tv.db.RoomDatabaseProvider
+        .get(context.getApplicationContext()).channelDao();
+    com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=dao.getValidatedCheckpoint(
+        com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+    List<String> ids=dao.getChannelIdsByLegacyKey(legacyKey);
+    if(checkpoint==null||ids.size()!=1)
+      throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
+    com.wodedianshi.tv.db.ChannelEntity row=dao.getChannelById(ids.get(0));
+    if(row==null||!legacyKey.equals(row.legacyKey)||!group.equals(row.groupName)
+        ||!tvgId.equals(row.tvgId)||!tvgName.equals(row.tvgName))
+      throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
+    boolean hasActive=false;
+    for(com.wodedianshi.tv.db.BackupSourceEntity source:dao.getBackupSourcesForChannel(row.id))
+      if(activeUrl.equals(source.url)){hasActive=true;break;}
+    if(!hasActive)throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
+    return refreshSingleChannel(context,row.id,checkpoint.completedAt,cancelled);
   }
   static SingleRefreshResult refreshSingleChannel(Context context,String channelId,long expectedVersion,
       java.util.function.BooleanSupplier cancelled)throws Exception{
@@ -153,7 +183,7 @@ public class SourceUpdateWorker extends Worker {
               context,channelId,expectedVersion,verified,paused);
       return new SingleRefreshResult(commit.addedSources>0?SingleRefreshResult.Status.SAVED:
           SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),checked,passed.size(),
-          commit.addedSources,commit.catalogueVersion,bounded);
+          commit.addedSources,commit.catalogueVersion,bounded,commit.addedRoutes);
     }finally{
       SOURCE_WORK_ACTIVE.set(false);
     }
