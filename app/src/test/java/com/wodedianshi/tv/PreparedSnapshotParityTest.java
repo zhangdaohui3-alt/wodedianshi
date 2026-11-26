@@ -187,4 +187,26 @@ public class PreparedSnapshotParityTest {
         assertNotEquals(published,order.invoke(activity,"全部","news",false,8L,11L,100,0));
         assertNotEquals(published,order.invoke(activity,"央视","news",false,7L,11L,100,0));
     }
+
+    @Test public void pageResultRekeysWithoutRebuildingPublishedCollections() throws Exception {
+        Class<?> order=Class.forName("com.wodedianshi.tv.MainActivity$RemoteChannelOrder");
+        Constructor<?> constructor=order.getDeclaredConstructor(String.class,ArrayList.class,
+            ArrayList.class,java.util.HashMap.class);
+        constructor.setAccessible(true);
+        ArrayList<Integer> indexes=new ArrayList<>(Arrays.asList(5,2));
+        ArrayList<Object> visible=new ArrayList<>(Arrays.asList(new Object(),new Object()));
+        java.util.HashMap<String,Integer> byKey=new java.util.HashMap<>();
+        byKey.put("first",5);byKey.put("second",2);
+        Object first=constructor.newInstance("old",indexes,visible,byKey);
+        Method withKey=order.getDeclaredMethod("withKey",String.class);
+        withKey.setAccessible(true);
+        Object second=withKey.invoke(first,"new");
+        assertNotSame(first,second);
+        assertEquals("old",field(order,"key").get(first));
+        assertEquals("new",field(order,"key").get(second));
+        for(String collection:new String[]{"indexes","positions","visible","sourceIndexByKey"})
+            assertSame(collection,field(order,collection).get(first),field(order,collection).get(second));
+        assertEquals(Integer.valueOf(0),((java.util.Map<?,?>)field(order,"positions").get(second)).get(5));
+        assertEquals(Integer.valueOf(2),((java.util.Map<?,?>)field(order,"sourceIndexByKey").get(second)).get("second"));
+    }
 }
