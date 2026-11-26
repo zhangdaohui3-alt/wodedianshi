@@ -120,7 +120,12 @@ public final class RoomCatalogueWriter {
                     JSONArray tags=new JSONArray(source.scopesJson);
                     for(int i=0;i<tags.length();i++){
                         String tag=tags.getString(i);
-                        if(!"china".equals(tag)&&!"global".equals(tag))
+                        // Conservative: every potential replacement must carry
+                        // the original scope, otherwise keep the saved route.
+                        boolean protectedScope=!"china".equals(tag)&&!"global".equals(tag);
+                        for(java.util.Set<String> incoming:verifiedBestFirst.values())
+                            if(incoming==null||!incoming.contains(tag))protectedScope=true;
+                        if(protectedScope)
                             eligible.remove(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url));
                     }
                 }catch(org.json.JSONException malformed){
