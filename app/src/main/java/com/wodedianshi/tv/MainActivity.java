@@ -4703,6 +4703,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<Integer> allLocal=new ArrayList<>();
     java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
     java.util.Map<String,java.util.List<Integer>> fixed=new HashMap<>();
+    java.util.Map<String,java.util.Set<String>> geo=prepareFixed?new HashMap<>():null;
     if(prepareFixed)for(String category:PREPARED_FIXED_CATEGORIES)fixed.put(category,new ArrayList<>());
     for(int i=0;i<entries.size();i++){
       if((i&127)==0)SourceProbeTimePolicy.checkPublicationPaused(cancelled);
@@ -4712,8 +4713,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(facts.local)allLocal.add(i);
       if(!facts.excluded&&!facts.province.isEmpty())
         provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
-      if(prepareFixed)for(String category:PREPARED_FIXED_CATEGORIES)
-        if("全部".equals(category)||categoryMatch(candidate,category))fixed.get(category).add(i);
+      if(prepareFixed){
+        for(String category:PREPARED_FIXED_CATEGORIES)
+          if("全部".equals(category)||categoryMatch(candidate,category))fixed.get(category).add(i);
+        String key=candidate.key();
+        if(candidate.sourceScopes!=null)for(String scope:candidate.sourceScopes)
+          if(scope!=null&&scope.startsWith("geo:")&&ChannelCatalogueScopePolicy.isRetainableScope(scope))
+            geo.computeIfAbsent(scope,k->new HashSet<>()).add(key);
+        String countryScope=GeoPlaylistCachePolicy.countryScopeForTvgId(candidate.tvgId);
+        if(!countryScope.isEmpty())geo.computeIfAbsent(countryScope,k->new HashSet<>()).add(key);
+      }
     }
     if(prepareFixed){
       java.util.List<Integer> cctv=fixed.get("央视");
@@ -4729,7 +4738,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       });
     }
     SourceProbeTimePolicy.checkPublicationPaused(cancelled);
-    return new SnapshotCategoryIndex.LocalMembership(entries.size(),allLocal,provinces,fixed);
+    return new SnapshotCategoryIndex.LocalMembership(entries.size(),allLocal,provinces,fixed,geo);
   }
   private void prepareStartupLocalSnapshot(){
     long started=android.os.SystemClock.elapsedRealtime();
@@ -5233,7 +5242,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // A country click can scan thousands of TVG identifiers. Do not hold the
     // same channel monitor that the playback/remote UI needs while scanning.
     final ArrayList<Channel> snapshot;
-    synchronized(channels){snapshot=new ArrayList<>(channels);}
+    synchronized(channels){
+      SnapshotCategoryIndex.PreparedLocal prepared=preparedLocalSnapshot;
+      if(prepared!=null&&prepared.matches(catalogueMembershipGeneration,channels.size())){
+        Set<String> indexed=prepared.membership.geoKeys(scope);
+        if(indexed!=null)return new HashSet<>(indexed);
+      }
+      snapshot=new ArrayList<>(channels);
+    }
     for(Channel channel:snapshot){
       if(Thread.currentThread().isInterrupted())break;
       if(channel==null)continue;
