@@ -21,6 +21,14 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
     }
 
+    @Test public void renderedStallNeedsPriorProgressTwoSamplesAndElapsedThreshold() {
+        assertFalse(TrackHealthPolicy.renderedCounterStalled(0L,30000L,2));
+        assertFalse(TrackHealthPolicy.renderedCounterStalled(1000L,30000L,1));
+        assertFalse(TrackHealthPolicy.renderedCounterStalled(1000L,20999L,2));
+        assertFalse(TrackHealthPolicy.renderedCounterStalled(30000L,1000L,2));
+        assertTrue(TrackHealthPolicy.renderedCounterStalled(1000L,21000L,2));
+    }
+
     @Test public void renderedCounterNeedsSameLiveBaselineAndRecentAdvance() {
         assertFalse(TrackHealthPolicy.renderedCounterAdvanced(false,10,20));
         assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,-1,20));
