@@ -93,7 +93,9 @@ jobs:
             echo "$SIGNATURE"
             echo "$SIGNATURE" | grep -Fx "Verified using v1 scheme (JAR signing): true"
             echo "$SIGNATURE" | grep -Fx "Verified using v2 scheme (APK Signature Scheme v2): true"
-            ACTUAL_CERT="$(echo "$SIGNATURE" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+            echo "$SIGNATURE" | grep -Fx "Number of signers: 1"
+            # Build-tools versions use either the numbered or scheme-specific signer label.
+            ACTUAL_CERT="$(echo "$SIGNATURE" | sed -nE 's/^(Signer #1|V[12] Signer):? certificate SHA-256 digest: ([[:xdigit:]]{64})$/\2/p' | tr '[:upper:]' '[:lower:]' | sort -u)"
             test "$ACTUAL_CERT" = "$EXPECTED_CERT"
             echo "$(basename "$APK") size_bytes=$(stat -c%s "$APK")"
             sha256sum "$APK"
