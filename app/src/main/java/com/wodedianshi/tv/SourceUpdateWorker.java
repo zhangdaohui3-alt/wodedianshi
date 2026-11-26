@@ -1280,11 +1280,11 @@ public class SourceUpdateWorker extends Worker {
             reusedPreflights++;
           }else{
             checked++;
-            noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
                     DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral))){
+              noteInitialStage("空闲并发检测 · 本组待合并 "+idleWave.pending.size()+" 条 · 本批第 "+checked+" 条（尚未提交）");
               TimedProbe outcome;
               try{outcome=idleWave.take(endpoint,probeDeadline);}
               catch(java.util.concurrent.TimeoutException timeout){
@@ -1301,6 +1301,8 @@ public class SourceUpdateWorker extends Worker {
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
             }else{
+              idleWave.serialProbes++;
+              noteInitialStage((slowPlayback?"稳定直播低速串行":"空闲串行检测")+" · 本批第 "+checked+" 条（尚未提交）");
               measured=probe(e.url,addressDeadline);
               measuredAt=android.os.SystemClock.elapsedRealtime();
             }
@@ -1928,7 +1930,9 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain)update.putString(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,
           FullDiscoveryProgressPolicy.throughputStatus(probeStartedAt-sliceStartedAt,
               probesFinishedAt-probeStartedAt,commitStartedAt-probesFinishedAt,checked+reusedPreflights,
-              discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback));
+              discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback)
+              +"\n并发任务提交 "+idleWave.launched+" 条 · 并发任务实测峰值 "+idleWave.peakProbes.get()
+              +" · 独立串行检测 "+idleWave.serialProbes+" 条（任务数，非同时网络连接数）");
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
@@ -2749,7 +2753,9 @@ public class SourceUpdateWorker extends Worker {
   private final class IdleProbeWave {
     private java.util.concurrent.ExecutorService executor;
     private final Map<String,java.util.concurrent.Future<TimedProbe>> pending=new HashMap<>();
-    int launched;
+    int launched,serialProbes;
+    final java.util.concurrent.atomic.AtomicInteger activeProbes=new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger peakProbes=new java.util.concurrent.atomic.AtomicInteger();
     boolean initialWave;
     long waveBatchDeadline;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
@@ -2802,8 +2808,12 @@ public class SourceUpdateWorker extends Worker {
         final String url=entry.url;
         final String endpoint=SourceSelectionPolicy.endpointKey(url);
         pending.put(endpoint,executor.submit(()->{
-          ProbeResult result=probe(url,deadline);
-          return new TimedProbe(result,deadline,android.os.SystemClock.elapsedRealtime());
+          int active=activeProbes.incrementAndGet();
+          peakProbes.accumulateAndGet(active,Math::max);
+          try{
+            ProbeResult result=probe(url,deadline);
+            return new TimedProbe(result,deadline,android.os.SystemClock.elapsedRealtime());
+          }finally{activeProbes.decrementAndGet();}
         }));
         launched++;
       }
