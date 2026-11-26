@@ -80,12 +80,23 @@ jobs:
           done
           AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
           test -x "$AAPT"
+          APKSIGNER="$(dirname "$AAPT")/apksigner"
+          test -x "$APKSIGNER"
+          EXPECTED_CERT="$(keytool -exportcert -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')"
+          test "${#EXPECTED_CERT}" -eq 64
           for APK in "$UNIVERSAL" "$ARM64" "$ARMV7"; do
             BADGING="$("$AAPT" dump badging "$APK")"
             echo "$BADGING" | grep -F "package: name='com.wodedianshi.tv'"
             echo "$BADGING" | grep -F "sdkVersion:'23'"
             echo "$BADGING" | grep -F "targetSdkVersion:'28'"
+            SIGNATURE="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+            echo "$SIGNATURE"
+            echo "$SIGNATURE" | grep -Fx "Verified using v1 scheme (JAR signing): true"
+            echo "$SIGNATURE" | grep -Fx "Verified using v2 scheme (APK Signature Scheme v2): true"
+            ACTUAL_CERT="$(echo "$SIGNATURE" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+            test "$ACTUAL_CERT" = "$EXPECTED_CERT"
             echo "$(basename "$APK") size_bytes=$(stat -c%s "$APK")"
+            sha256sum "$APK"
           done
           echo "Universal and both ARM APK archives passed package checks."
 
