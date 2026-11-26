@@ -74,6 +74,12 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,true,true));
     }
 
+    @Test public void idleInputYieldUsesShortDelayWithoutRelaxingPlaybackGate() {
+        assertEquals(5L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,true));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(true,true));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,false));
+    }
+
     @Test public void normalInitialViewingDeferralUsesFixedDelay() {
         assertEquals(30L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(false));
         assertEquals(60L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(true));
