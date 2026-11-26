@@ -4,6 +4,17 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void recoveryWarningRequiresSuccessfulNonemptyIndexedEof() {
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,0,4,20000));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,true,19996,4,20000));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(false,false,19996,4,20000));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,0,0,0));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,0,3,-1));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,20001,0,20000));
+        assertTrue(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,19996,4,20000));
+        assertTrue(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,20000,0,20000));
+    }
+
     @Test public void retriedPredecessorReusesExistingUnfinishedSuccessor() {
         java.util.UUID current=java.util.UUID.randomUUID(),next=java.util.UUID.randomUUID();
         assertFalse(SourceUpdateSchedulePolicy.hasOtherUnfinishedWork(current,java.util.Collections.emptyList()));
