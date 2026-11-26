@@ -128,20 +128,20 @@ public final class PlaylistParser {
             if (line.startsWith("#EXTINF")) {
                 lastEntry = null;
                 int comma = firstCommaOutsideQuotes(line);
+                // The display name starts at the first unquoted comma. It is
+                // not an attribute list and cannot supply EPG or group metadata.
+                int attributeEnd = comma >= 0 ? comma : line.length();
                 name = comma >= 0 ? line.substring(comma + 1).trim() : "";
-                if (name.isEmpty()) {
-                    Matcher matcher = TVG_NAME.matcher(line);
-                    if (matcher.find()) name = attributeValue(matcher).trim();
-                }
-                if (name.isEmpty()) name = "未命名频道";
-                Matcher idMatcher = TVG_ID.matcher(line);
-                tvgId = idMatcher.find() ? attributeValue(idMatcher).trim() : "";
-                Matcher tvgNameMatcher = TVG_NAME.matcher(line);
+                Matcher tvgNameMatcher = TVG_NAME.matcher(line).region(0,attributeEnd);
                 tvgName = tvgNameMatcher.find() ? attributeValue(tvgNameMatcher).trim() : "";
+                if (name.isEmpty()) name = tvgName;
+                if (name.isEmpty()) name = "未命名频道";
+                Matcher idMatcher = TVG_ID.matcher(line).region(0,attributeEnd);
+                tvgId = idMatcher.find() ? attributeValue(idMatcher).trim() : "";
                 group = pendingGroup;
                 pendingGroup = "";
                 groupTitlePresent = false;
-                Matcher groupMatcher = GROUP_TITLE.matcher(line);
+                Matcher groupMatcher = GROUP_TITLE.matcher(line).region(0,attributeEnd);
                 if (groupMatcher.find() && !attributeValue(groupMatcher).trim().isEmpty()) {
                     group = attributeValue(groupMatcher).trim();
                     groupTitlePresent = true;
