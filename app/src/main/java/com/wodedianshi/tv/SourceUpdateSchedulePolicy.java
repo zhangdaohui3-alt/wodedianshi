@@ -74,6 +74,13 @@ public final class SourceUpdateSchedulePolicy {
                 &&(long)cursor+parsed==indexedEntries;
     }
 
+    /** First-build inspection can finish with an explicit unavailable outcome,
+     * but only a successfully read page may supply EOF evidence. */
+    static boolean initialFeedInspected(boolean acceptedOutcome,boolean unavailable,
+            int cursor,int parsed,int indexedEntries,int pageSize) {
+        return acceptedOutcome&&(unavailable||manualFeedFinished(cursor,parsed,indexedEntries,pageSize));
+    }
+
     /** Manual refresh advances only at EOF, never just because a page was processed. */
     public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
             int pageSize) {
