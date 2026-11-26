@@ -1156,43 +1156,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String savedIdentity=resume.identity;
     if(savedIdentity.isEmpty())return -1;
     String savedUrl=resume.url;
-    int found=-1;
-    for(int i=0;i<channels.size();i++){
-      Channel c=channels.get(i);
-      if((identity(c).equals(savedIdentity)||identity(c.name,c.group,c.url).equals(savedIdentity))
-          &&(savedUrl.isEmpty()||c.url.equals(savedUrl))){found=i;break;}
-    }
-    if(found<0){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(identity(c.name,c.group,c.url).equals(savedIdentity)){found=i;break;}
-      }
-    }
-    // Older builds stored the pre-normalized identity; use the saved primary URL
-    // as a migration fallback after duplicate channels have been consolidated.
-    if(found<0&&!savedUrl.isEmpty()){
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(c.url.equals(savedUrl)||c.backups.contains(savedUrl)){found=i;break;}
-      }
-    }
-    // If a generic station's primary host changed and it has no trustworthy TVG id,
-    // restore only when its saved display name + category identifies exactly one
-    // channel. Ambiguous same-name stations are deliberately not guessed.
-    if(found<0&&!resume.name.isEmpty()){
-      int unique=-1;
-      for(int i=0;i<channels.size();i++){
-        Channel c=channels.get(i);
-        if(!canonicalChannelName(c.name).equals(canonicalChannelName(resume.name)))continue;
-        if(!normalizeResumeGroup(c.group).equals(normalizeResumeGroup(resume.group)))continue;
-        if(!resume.tvgId.isEmpty()
-            &&!normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)))continue;
-        if(unique>=0){unique=-2;break;}
-        unique=i;
-      }
-      if(unique>=0)found=unique;
-    }
-    return found;
+    return RemoteChannelOrderPolicy.resolveSavedChannel(channels.size(),
+        i->identity(channels.get(i)).equals(savedIdentity),
+        i->{Channel c=channels.get(i);return identity(c.name,c.group,c.url).equals(savedIdentity);},
+        i->{
+          Channel c=channels.get(i);
+          return !resume.name.isEmpty()
+              &&canonicalChannelName(c.name).equals(canonicalChannelName(resume.name))
+              &&normalizeResumeGroup(c.group).equals(normalizeResumeGroup(resume.group))
+              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)));
+        },
+        i->{
+          Channel c=channels.get(i);
+          // A reused endpoint must not override contradictory station metadata.
+          return !savedUrl.isEmpty()&&(c.url.equals(savedUrl)||c.backups.contains(savedUrl))
+              &&(resume.name.isEmpty()||canonicalChannelName(c.name).equals(canonicalChannelName(resume.name)))
+              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)));
+        });
   }
   private String normalizeResumeGroup(String value){
     return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
@@ -8077,6 +8057,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       String nameGroup=roomChannelNameGroupKey(channel.name,channel.group);
       if(!prepared.positionByNameGroup.containsKey(nameGroup))
         prepared.positionByNameGroup.put(nameGroup,i);
+      else prepared.positionByNameGroup.put(nameGroup,-1); // ambiguous label, never guess
     }
     return prepared;
   }
