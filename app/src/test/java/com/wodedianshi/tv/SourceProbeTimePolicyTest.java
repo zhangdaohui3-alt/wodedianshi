@@ -167,6 +167,16 @@ public class SourceProbeTimePolicyTest {
                 SourceProbeTimePolicy.sampleReadTimeoutCap(true)));
     }
 
+    @Test public void viewingSamplePacingCountsOnlyCurrentChunkReadTime() {
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L));
+        assertEquals(85L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,40L));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,125L));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,900L));
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L));
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,-1L));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(0,40L));
+    }
+
     @Test public void viewingSamplePacesEveryChunkWithoutUnusedCredit() {
         assertEquals(32768L,SourceProbeTimePolicy.VIEWING_SAMPLE_BYTES_PER_SECOND);
         assertEquals(4096,SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES);
