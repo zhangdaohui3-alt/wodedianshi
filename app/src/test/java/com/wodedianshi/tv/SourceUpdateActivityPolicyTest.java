@@ -71,6 +71,10 @@ public class SourceUpdateActivityPolicyTest {
             assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(155000L));
             assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(169999L));
             assertEquals(4,SourceUpdateActivityPolicy.idleProbeConcurrency(170000L));
+            assertEquals(6,SourceUpdateActivityPolicy.idleProbeConcurrency(170000L,true));
+            assertEquals(2,SourceUpdateActivityPolicy.idleProbeConcurrency(169999L,true));
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            assertEquals(1,SourceUpdateActivityPolicy.idleProbeConcurrency(180000L,true));
         }finally{SourceUpdateActivityPolicy.setPlaybackActive(false);SourceUpdateActivityPolicy.setActivityActive(false);}
     }
     @Test public void viewingFlagsAreIndependentAndCanBeCleared() {
