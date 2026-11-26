@@ -142,7 +142,8 @@ public final class RoomCatalogueWriter {
             FullDiscoveryProgressPolicy.Coverage coverage = new FullDiscoveryProgressPolicy.Coverage();
             for (ChannelSnapshot item : snapshot) {
                 checkPause(paused);
-                if (item != null) coverage.add(item.name,item.group,item.tvgName,item.tvgId);
+                if (item != null) coverage.add(item.name,item.group,item.tvgName,item.tvgId,
+                         item.sourceScopes.contains("china"));
             }
             coverageText = coverage.summary();
         }
