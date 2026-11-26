@@ -22,7 +22,13 @@ public class SourceUpdateWorker extends Worker {
   // source owner starts while the previous scoped probe executor is draining.
   private static volatile java.util.concurrent.ExecutorService retiringProbeExecutor;
   public static String currentInitialLiveStage(){return initialLiveStage;}
-  static boolean isSourceWorkActive(){return SOURCE_WORK_ACTIVE.get();}
+  static boolean isRetiringProbePoolActive(){
+    java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
+    return retiring!=null&&!retiring.isTerminated();
+  }
+  static boolean isSourceWorkActive(){
+    return SOURCE_WORK_ACTIVE.get()||isRetiringProbePoolActive();
+  }
   private void noteInitialStage(String stage){
     if(getInputData().getBoolean("initial_discovery_chain",false))initialLiveStage=stage;
   }
@@ -127,12 +133,9 @@ public class SourceUpdateWorker extends Worker {
     if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true))
       return new SingleRefreshResult(SingleRefreshResult.Status.BUSY,0,0,0,0,expectedVersion,false);
     try{
-      java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
-      if(retiring!=null){
-        if(!retiring.isTerminated())
-          return new SingleRefreshResult(SingleRefreshResult.Status.BUSY,0,0,0,0,expectedVersion,false);
-        retiringProbeExecutor=null;
-      }
+      if(!awaitRetiringProbePool(cancelled))
+        return new SingleRefreshResult(cancelled.getAsBoolean()?SingleRefreshResult.Status.DEFERRED:
+            SingleRefreshResult.Status.BUSY,0,0,0,0,expectedVersion,false);
       final boolean viewing=SourceUpdateActivityPolicy.isPlaybackActive();
       final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
       final long pressure=SourceUpdateActivityPolicy.pressureGeneration();
@@ -242,6 +245,10 @@ public class SourceUpdateWorker extends Worker {
   /** The exclusive Worker owner uses the same pool-drain gate for the first
    * slice and every inline continuation. Never bypass a live retired pool. */
   private boolean awaitRetiringProbePool(){
+    return awaitRetiringProbePool(()->isStopped());
+  }
+  private static boolean awaitRetiringProbePool(java.util.function.BooleanSupplier cancelled){
+    if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())return false;
     java.util.concurrent.ExecutorService previous=retiringProbeExecutor;
     if(previous!=null){
       try{
@@ -250,10 +257,10 @@ public class SourceUpdateWorker extends Worker {
       }catch(InterruptedException interrupted){
         Thread.currentThread().interrupt();return false;
       }
-      if(isStopped()||Thread.currentThread().isInterrupted())return false;
+      if(cancelled.getAsBoolean()||Thread.currentThread().isInterrupted())return false;
       retiringProbeExecutor=null;
     }
-    return !isStopped()&&!Thread.currentThread().isInterrupted();
+    return !cancelled.getAsBoolean()&&!Thread.currentThread().isInterrupted();
   }
   private Result runOwnedWork(){
     final long sliceStartedAt=android.os.SystemClock.elapsedRealtime();
