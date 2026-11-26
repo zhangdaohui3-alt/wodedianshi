@@ -8,6 +8,21 @@ import java.util.Collections;
 import static org.junit.Assert.*;
 
 public class SingleChannelCandidateSearchTest {
+    @Test public void onlineFallbackUsesOnlyKnownStationFamilyAndCompleteSmallBody(){
+        assertEquals(0,SingleChannelCandidateSearch.preferredOnlineFeedIndex(new SingleChannelCandidateSearch.Target("CCTV-2","央视","","")));
+        assertEquals(2,SingleChannelCandidateSearch.preferredOnlineFeedIndex(new SingleChannelCandidateSearch.Target("湖南卫视","卫视","","")));
+        assertEquals(5,SingleChannelCandidateSearch.preferredOnlineFeedIndex(new SingleChannelCandidateSearch.Target("福州新闻综合","福建地方台","","")));
+        assertEquals(10,SingleChannelCandidateSearch.preferredOnlineFeedIndex(new SingleChannelCandidateSearch.Target("香港新闻","香港","","")));
+        assertEquals(-1,SingleChannelCandidateSearch.preferredOnlineFeedIndex(new SingleChannelCandidateSearch.Target("Unknown","","","")));
+        assertTrue(SingleChannelCandidateSearch.onlineResponseAllowed(200,null,"identity",-1));
+        assertFalse(SingleChannelCandidateSearch.onlineResponseAllowed(206,"bytes 0-9/20","identity",10));
+        assertFalse(SingleChannelCandidateSearch.onlineResponseAllowed(200,null,"gzip",10));
+        assertFalse(SingleChannelCandidateSearch.onlineResponseAllowed(200,null,null,262145));
+        assertTrue(SingleChannelCandidateSearch.completeOnlineBody(10,10));
+        assertTrue(SingleChannelCandidateSearch.completeOnlineBody(-1,10));
+        assertFalse(SingleChannelCandidateSearch.completeOnlineBody(10,9));
+        assertFalse(SingleChannelCandidateSearch.completeOnlineBody(-1,262145));
+    }
     private String entry(String name,String url){
         return "#EXTINF:-1 group-title=\"央视\","+name+"\n"+url+"\n";
     }
