@@ -4,6 +4,25 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ChannelNamePolicyTest {
+    @Test public void localDisplayPrefersKnownChineseLabelsWithoutGuessingUnknownServices() {
+        assertEquals("深圳新闻",ChannelNamePolicy.canonicalLocalDisplayName("Shenzhen News","","","China"));
+        assertEquals("成都综合",ChannelNamePolicy.canonicalLocalDisplayName("Chengdu Comprehensive","","","China"));
+        assertEquals("福州新闻",ChannelNamePolicy.canonicalLocalDisplayName("Fuzhou News","","","福建"));
+        assertEquals("抚州新闻",ChannelNamePolicy.canonicalLocalDisplayName("Fuzhou News","","","江西"));
+        assertEquals("Fuzhou News",ChannelNamePolicy.canonicalLocalDisplayName("Fuzhou News","","","China"));
+        assertEquals("深圳新闻综合",ChannelNamePolicy.canonicalLocalDisplayName("Shenzhen News","深圳新闻综合","","China"));
+        assertEquals("Shenzhen Mystery",ChannelNamePolicy.canonicalLocalDisplayName("Shenzhen Mystery","","","China"));
+        assertEquals("厦门新闻",ChannelNamePolicy.canonicalLocalDisplayName("厦门新闻","","","China"));
+        assertEquals("Local News",ChannelNamePolicy.canonicalLocalDisplayName("Local News","","","US"));
+    }
+
+    @Test public void genericForeignLocalGroupIsNotDomesticEvidence() {
+        assertFalse(ChannelNamePolicy.isDomesticLocalLabel("Local News US",false));
+        assertFalse(ChannelNamePolicy.isDomesticLocalLabel("Local News",false));
+        assertTrue(ChannelNamePolicy.isDomesticLocalLabel("Local News",true));
+        assertTrue(ChannelNamePolicy.isDomesticLocalLabel("Shenzhen News",false));
+    }
+
     @Test public void mapsCommonEnglishSatelliteNamesToChinese() {
         assertEquals("湖南卫视", ChannelNamePolicy.canonicalSatelliteName("Hunan TV"));
         assertEquals("浙江卫视", ChannelNamePolicy.canonicalSatelliteName("Zhejiang Satellite TV"));
