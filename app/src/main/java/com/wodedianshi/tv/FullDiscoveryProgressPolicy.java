@@ -26,6 +26,11 @@ public final class FullDiscoveryProgressPolicy {
         return completedAt>0L;
     }
 
+    /** During first build, a selected but stopped station must not restart discovery-blocking playback. */
+    static boolean shouldResumeAfterBackground(long completedAt,boolean selectedLive,boolean liveSessionOwned) {
+        return selectedLive&&(hasPublishedInitialSnapshot(completedAt)||liveSessionOwned);
+    }
+
     /** Finishing discovery is independent of permission to replace live rows. */
     public static boolean awaitingIdleFinalization(boolean allFeedsInspected, boolean viewing) {
         return allFeedsInspected && viewing;
