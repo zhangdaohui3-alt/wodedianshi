@@ -1457,7 +1457,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }});
       dialog.show();
       View messageView=dialog.findViewById(android.R.id.message);
-      if(messageView!=null)messageView.setOnTouchListener((v,event)->{
+      if(messageView!=null)messageView.setOnTouchListener((messageTarget,event)->{
         if(event.getActionMasked()==MotionEvent.ACTION_DOWN)pauseStableDiscovery();
         return false;
       });
