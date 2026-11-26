@@ -652,7 +652,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!channel.key().equals(button.getTag(R.id.tag_channel_key)))return;
     String channelName=channel.name==null?"":channel.name;
     boolean broadcast=isCctvChannel(channel)||isSatelliteChannel(channel);
-    String title=broadcast?displayChannelName(channel):channelName;
+    String title=displayChannelName(channel);
     String channelGroup=channel.group==null?"":channel.group;
     String group=broadcast?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
     button.setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
@@ -1044,7 +1044,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(channel==null)return "";
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
-    return displayChannelName(broadcaster.isEmpty()?channel.name:broadcaster);
+    if(!broadcaster.isEmpty())return displayChannelName(broadcaster);
+    return ChannelNamePolicy.canonicalLocalDisplayName(
+        channel.name,channel.tvgName,channel.tvgId,channel.group);
   }
   private String canonicalChannelName(String name){
     String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
@@ -4323,9 +4325,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean isLocalChannel(Channel c){
     if(c==null)return false;
     String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata))return false;
-    if(metadata.contains("地方")||metadata.contains("local"))return true;
-    if(!explicitProvinceIn(metadata).isEmpty())return true;
+    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
+        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
+    boolean chinaScope=ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china");
+    if(ChannelNamePolicy.isDomesticLocalLabel(metadata,chinaScope))return true;
+    // Preserve ambiguous Chinese city labels for legacy domestic records, but
+    // do not classify worldwide generic Local/News groups as Chinese stations.
     for(String token:localRegionTokens())if(metadata.contains(token))return true;
     return false;
   }
@@ -4663,7 +4668,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // must NEVER mutate their fields; use null-safe display locals instead.
       final String channelKey=c.key();
       final String channelName=c.name==null?"":c.name;
-      final String title=(isCctvChannel(c)||isSatelliteChannel(c))?displayChannelName(c):channelName;
+      final String title=displayChannelName(c);
       String channelGroup=c.group==null?"":c.group;
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":((channelGroup==null||channelGroup.isEmpty())?"":" · "+channelGroup);
       Integer mappedIndex=sourceIndexByKey==null?null:sourceIndexByKey.get(channelKey);
@@ -5875,7 +5880,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void showChannelZapOverlay(){
     if(selected<0||selected>=channels.size())return;
-    showChannelZapMessage(channels.get(selected).name);
+    showChannelZapMessage(displayChannelName(channels.get(selected)));
   }
   private void showChannelZapMessage(String message){
     if(!activityStarted||isFinishing()||isDestroyed()||channelZapOverlay==null)return;
@@ -6007,7 +6012,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     manualSourceSwitch=true;
     queueActiveSourceMutation(c.key(),c.backups.get(next));
     startCurrentSource();
-    showChannelZapMessage(c.name+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
+    showChannelZapMessage(displayChannelName(c)+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
   @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent event){
     // Android TV may route USB/Bluetooth mouse-wheel events to the Activity,
