@@ -22,6 +22,17 @@ public final class TrackHealthPolicy {
                 && lastVideoAt > 0L && now >= lastVideoAt && now - lastVideoAt < 5000L;
     }
 
+    /** A new or reset counter is a baseline, not evidence for the current tune. */
+    static boolean renderedCounterAdvanced(boolean sameCounter,int previous,int current) {
+        return sameCounter&&previous>=0&&current>previous;
+    }
+    static boolean recentRenderedCounter(long lastAdvanceAt,long now) {
+        return lastAdvanceAt>0L&&now>=lastAdvanceAt&&now-lastAdvanceAt<15000L;
+    }
+    static boolean audioWarningQuiet(long warningAt,long now) {
+        return warningAt==0L||(warningAt>0L&&now>=warningAt&&now-warningAt>=30000L);
+    }
+
     /** An advancing engine clock strengthens the discovery gate, but is not
      * proof of physical output. Unknown, reset or stationary clocks yield. */
     static boolean vlcClockAdvanced(long previousMs,long currentMs) {
