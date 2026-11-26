@@ -100,6 +100,17 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,true,true));
     }
 
+    @Test public void inlineInitialWorkRequiresCommittedProgressAndIdleBudget() {
+        assertTrue(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(2,1000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,60000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,true,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,true,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,true,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,false,false,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,false,true,5));
+    }
+
     @Test public void idleInputYieldUsesShortDelayWithoutRelaxingPlaybackGate() {
         assertEquals(5L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(false,true));
         assertEquals(30L,SourceUpdateSchedulePolicy.initialPressureDelaySeconds(true,true));
