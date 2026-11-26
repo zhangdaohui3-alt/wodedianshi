@@ -5,6 +5,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class RemoteChannelOrderPolicyTest {
+    @Test public void burstDispatchWaitsForFixedWindowAndCurrentFilter() {
+        org.junit.Assert.assertEquals(80L,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
+        assertFalse(RemoteChannelOrderPolicy.canDispatchQueuedZap(true,7L,7L,3));
+        assertFalse(RemoteChannelOrderPolicy.canDispatchQueuedZap(false,7L,8L,3));
+        assertFalse(RemoteChannelOrderPolicy.canDispatchQueuedZap(false,7L,7L,0));
+        assertTrue(RemoteChannelOrderPolicy.canDispatchQueuedZap(false,7L,7L,3));
+        assertTrue(RemoteChannelOrderPolicy.canDispatchQueuedZap(false,7L,7L,-2));
+    }
+
     @Test public void pendingKeyStepsAreMergedAndBounded() {
         org.junit.Assert.assertEquals(4, RemoteChannelOrderPolicy.mergeZapSteps(3, 1));
         org.junit.Assert.assertEquals(0, RemoteChannelOrderPolicy.mergeZapSteps(1, -1));
