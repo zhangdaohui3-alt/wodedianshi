@@ -113,6 +113,12 @@ public final class SourceProbeTimePolicy {
                 /VIEWING_SAMPLE_BYTES_PER_SECOND;
     }
 
+    /** Count actual read time against this chunk's pacing interval only.
+     * No unused time carries to a later read, resource or HLS rendition. */
+    static long viewingSampleRemainingDelayMillis(int bytes,long readElapsedMs) {
+        return Math.max(0L,viewingSampleDelayMillis(bytes)-Math.max(0L,readElapsedMs));
+    }
+
     /** Read at most the retained sample plus one sentinel, never a full extra buffer. */
     static int sampleReadLength(int maxBytes,int received,int bufferLength) {
         if(maxBytes<=0||received<0||bufferLength<=0)return 0;
