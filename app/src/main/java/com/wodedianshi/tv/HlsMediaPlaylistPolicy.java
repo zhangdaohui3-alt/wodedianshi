@@ -25,24 +25,27 @@ public final class HlsMediaPlaylistPolicy {
         public final long firstMediaSequenceNumber;
         public final boolean unsupportedEncryption;
         public final ArrayList<String> mediaUrls;
+        public final ArrayList<Long> mediaSequenceNumbers;
         Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
-                  String iv, long firstSequence, boolean encryptionUnsupported, ArrayList<String> media) {
+                  String iv, long firstSequence, boolean encryptionUnsupported, ArrayList<String> media, ArrayList<Long> sequences) {
             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
             unsupportedInitializationMap=mapUnsupported;
             aes128Encrypted=aes128; encryptionKeyUrl=keyUrl; encryptionIv=iv;
             firstMediaSequenceNumber=firstSequence;
-            unsupportedEncryption=encryptionUnsupported; mediaUrls=media;
+            unsupportedEncryption=encryptionUnsupported; mediaUrls=media; mediaSequenceNumbers=sequences;
         }
     }
 
     public static Resources parse(String playlist, String finalPlaylistUrl) throws Exception {
         ArrayList<String> media = new ArrayList<>();
+        ArrayList<Long> sequences = new ArrayList<>();
         String initialization = null, activeKeyUrl = null, aesKeyUrl = null, activeIv = null, aesIv = null;
         boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
         boolean activeKeyHasExplicitIv = false, hasFirstSequence = false;
+        boolean awaitingSegment=false, segmentGap=false, segmentRange=false, clearMediaSeen=false;
         long mediaSequence = 0L, nextSequence = 0L, firstSequence = 0L;
         if (playlist == null || finalPlaylistUrl == null)
-            return new Resources(null,false,false,false,null,null,0L,false,media);
+            return new Resources(null,false,false,false,null,null,0L,false,media,sequences);
         String[] lines = playlist.replace("\\r", "").split("\\n");
         // Continue scanning the bounded playlist after the media URL cap is reached: key
         // rotation or METHOD=NONE may appear later and must not be missed.
@@ -64,6 +67,7 @@ public final class HlsMediaPlaylistPolicy {
                     if(aes128) unsupportedEncryption=true;
                     activeKeyUrl=null; activeIv=null; activeKeyHasExplicitIv=false;
                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
+                    if(clearMediaSeen)unsupportedEncryption=true;
                     String uri=uriAttribute(attrs);
                     String resolved=resolve(uri,finalPlaylistUrl);
                     if(resolved==null) unsupportedEncryption=true;
@@ -102,26 +106,34 @@ public final class HlsMediaPlaylistPolicy {
                 if(activeKeyUrl!=null) {
                     // This bounded probe does not map LL-HLS parts to media sequence IVs.
                     unsupportedEncryption=true;
-                } else if(!attrs.contains("BYTERANGE=")) {
+                } else if(!attrs.contains("BYTERANGE=")&&!attrs.matches(".*(?:^|,)\\s*GAP=YES(?:,.*|$)")) {
                     String uri=uriAttribute(attrs);
-                    if(uri!=null)addUnique(media,resolve(uri,finalPlaylistUrl));
+                    if(uri!=null){
+                        clearMediaSeen=true;
+                        if(addUnique(media,resolve(uri,finalPlaylistUrl)))sequences.add(-1L);
+                    }
                 }
             } else if(line.startsWith("#EXTINF:")) {
-                for(int j=i+1;j<lines.length;j++) {
-                    String candidate=lines[j].trim();
-                    if(candidate.isEmpty())continue;
-                    if(candidate.startsWith("#"))break;
-                    if(!hasFirstSequence) { firstSequence=nextSequence; hasFirstSequence=true; }
-                    addUnique(media,resolve(candidate,finalPlaylistUrl));
-                    if(nextSequence==Long.MAX_VALUE)unsupportedEncryption=true;
-                    else nextSequence++;
-                    i=j; break;
+                awaitingSegment=true;
+            } else if(line.equals("#EXT-X-GAP")) {
+                segmentGap=true;
+            } else if(line.startsWith("#EXT-X-BYTERANGE:")) {
+                segmentRange=true;
+            } else if(awaitingSegment&&!line.isEmpty()&&!line.startsWith("#")) {
+                // Skipped resources still consume a sequence; comments do not.
+                if(activeKeyUrl==null)clearMediaSeen=true;
+                if(!segmentGap&&!segmentRange&&addUnique(media,resolve(line,finalPlaylistUrl))){
+                    sequences.add(nextSequence);
+                    if(!hasFirstSequence){firstSequence=nextSequence;hasFirstSequence=true;}
                 }
+                if(nextSequence==Long.MAX_VALUE)unsupportedEncryption=true;
+                else nextSequence++;
+                awaitingSegment=false;segmentGap=false;segmentRange=false;
             }
         }
         if(aes128&&!hasFirstSequence)unsupportedEncryption=true;
         return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,
-                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,media);
+                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,media,sequences);
     }
 
     private static String attribute(Pattern pattern,String attributes) {
@@ -136,7 +148,8 @@ public final class HlsMediaPlaylistPolicy {
     private static String resolve(String uri,String base)throws Exception {
         return uri==null||uri.isEmpty()?null:new URL(new URL(base),uri).toString();
     }
-    private static void addUnique(ArrayList<String> values,String value) {
-        if(value!=null&&!values.contains(value)&&values.size()<MAX_MEDIA_SEGMENTS)values.add(value);
+    private static boolean addUnique(ArrayList<String> values,String value) {
+        if(value==null||values.contains(value)||values.size()>=MAX_MEDIA_SEGMENTS)return false;
+        values.add(value);return true;
     }
 }
