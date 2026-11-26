@@ -30,6 +30,20 @@ final class GeoPlaylistCachePolicy {
         return scope.startsWith("geo:countries:") ? scope.substring("geo:countries:".length()) : "";
     }
 
+    /** Exact inverse for the existing two-character country suffix predicate. */
+    static String countryScopeForTvgId(String tvgId) {
+        if(tvgId==null)return "";
+        String id=tvgId.trim().toLowerCase(Locale.ROOT);
+        int dot=id.lastIndexOf('.');
+        if(dot<0||id.length()-dot!=3)return "";
+        String code=id.substring(dot+1);
+        for(int i=0;i<code.length();i++){
+            char ch=code.charAt(i);
+            if(!((ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')||ch=='-'))return "";
+        }
+        return "geo:countries:"+code;
+    }
+
     static boolean matchesCountryTvgId(String tvgId, String countryCode) {
         if (tvgId == null || countryCode == null || countryCode.length() != 2) return false;
         // iptv-org guide identifiers commonly end in a country code: ExampleTV.us.
