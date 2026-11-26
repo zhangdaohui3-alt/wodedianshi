@@ -3236,7 +3236,7 @@ public class SourceUpdateWorker extends Worker {
     return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,false);
   }
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
-      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedTs)throws Exception{
+      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia)throws Exception{
     HttpURLConnection c=null;
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return null;
@@ -3267,7 +3267,7 @@ public class SourceUpdateWorker extends Worker {
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-        byte[] buffer=new byte[stopOnConfirmedTs?1024:SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
+        byte[] buffer=new byte[stopOnConfirmedMedia?1024:SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
         while(total<=maxBytes){
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
@@ -3278,12 +3278,12 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
-          if(stopOnConfirmedTs&&total>=376){
+          if(stopOnConfirmedMedia&&total>=16&&total<=maxBytes){
             byte[] prefix=out.toByteArray();
-            if(MediaPayloadValidator.hasTransportStreamPackets(prefix)){
+            if(MediaPayloadValidator.hasConfirmedHlsPrefix(prefix)){
               if(probeDeadlineReached(deadline,pauseRequested))return null;
               // Confirmation only: no byte-rate score or completeness claim.
-              // The existing two-packet predicate remains unchanged.
+              // This path is restricted to unencrypted idle second segments.
               return new SampleResponse(prefix,finalUrl,true);
             }
           }
