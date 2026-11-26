@@ -7,6 +7,9 @@ public final class SourceUpdateActivityPolicy {
     private static volatile boolean playbackActive;
     private static volatile long stableUntil;
     private static long firstHealthyAt;
+    private static long bufferSampleAt;
+    private static int ampleBufferSamples;
+    private static long viewingSampleRate=32768L;
     private static volatile long lastPressureAt;
     private static final java.util.concurrent.atomic.AtomicLong pressureGeneration=new java.util.concurrent.atomic.AtomicLong();
     static long pressureGeneration(){return pressureGeneration.get();}
@@ -59,11 +62,40 @@ public final class SourceUpdateActivityPolicy {
         if(stableUntil!=0L&&(stableUntil<=now||stableUntil-now>LEASE_MS))
             revokeStableLive();
         firstHealthyAt=0L;
+        clearDiscoveryBuffer();
         stableUntil=now+LEASE_MS;
     }
 
+    private static void clearDiscoveryBuffer(){
+        bufferSampleAt=0L;ampleBufferSamples=0;viewingSampleRate=32768L;
+    }
+    /** Playback buffer is a headroom proxy, not a link bandwidth measurement.
+     * Only the Media3 healthy watchdog may supply these observations. */
+    static synchronized void reportMedia3DiscoveryBuffer(long now,long bufferedMs){
+        if(!permitsInitialPlaybackWork(now)||bufferedMs<0L){
+            clearDiscoveryBuffer();return;
+        }
+        if(bufferSampleAt!=0L&&(now<bufferSampleAt||now-bufferSampleAt>=LEASE_MS))
+            clearDiscoveryBuffer();
+        if(bufferedMs<1000L){
+            ampleBufferSamples=0;viewingSampleRate=16384L;
+        }else if(bufferedMs>=10000L){
+            if(bufferSampleAt==0L||now-bufferSampleAt>=MIN_HEALTHY_INTERVAL_MS)
+                ampleBufferSamples=Math.min(2,ampleBufferSamples+1);
+            viewingSampleRate=ampleBufferSamples>=2?49152L:32768L;
+        }else{
+            ampleBufferSamples=0;viewingSampleRate=32768L;
+        }
+        bufferSampleAt=now;
+    }
+    static synchronized long viewingSampleBytesPerSecond(long now){
+        if(!permitsInitialPlaybackWork(now)||bufferSampleAt<=0L
+                ||now<bufferSampleAt||now-bufferSampleAt>=LEASE_MS)return 32768L;
+        return viewingSampleRate;
+    }
     public static synchronized void revokeStableLive() {
         firstHealthyAt=0L;
+        clearDiscoveryBuffer();
         if(stableUntil!=0L){stableUntil=0L;stableRevocations.incrementAndGet();}
     }
     /** Called on playback transitions and user input, never from a network thread.
