@@ -4323,6 +4323,43 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     return -1;
   }
+  private void deleteLiveChannel(String key){
+    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
+    int removed=findChannelIndexByKey(key);
+    if(removed<0)return;
+    if(channels.size()<=1){toast("至少保留一个频道");return;}
+    final Channel oldSelected=selected>=0&&selected<channels.size()?channels.get(selected):null;
+    final Channel target=channels.get(removed);
+    final boolean restart=oldSelected!=null&&oldSelected!=target
+        &&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null);
+    // Native callbacks hold the old positional channel index. Revoke the live
+    // session before a user-requested structural deletion, even when the
+    // selected station survives. Do not restart under a different identity.
+    if(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null){
+      stopFailedLiveSession("正在更新频道目录");
+      ++playbackGeneration;currentMediaId="";
+    }
+    clearPendingRemoteZap();
+    synchronized(channels){
+      if(!channels.remove(target))return;
+      selected=oldSelected==null||oldSelected==target?-1:channels.indexOf(oldSelected);
+    }
+    synchronized(favorites){favorites.remove(key);}
+    rebuildChannelIndexes();
+    if(startupAutoResumePending){
+      startupResumeIndex=channels.indexOf(startupResumeChannel);
+      if(startupResumeIndex<0){startupResumeChannel=null;startupAutoResumePending=false;}
+    }
+    persist();refresh();
+    if(restart&&selected>=0&&selected<channels.size()&&channels.get(selected)==oldSelected)
+      startCurrentSource();
+    else if(oldSelected==target){
+      resumePlaybackOnStart=false;
+      if(info!=null)info.setText("当前频道已删除，请选择其他频道");
+      if(fullScreenPlayback)exitFullScreenPlayback();
+    }
+  }
+
   private void playChannelByKey(String key){
     int index=findChannelIndexByKey(key);
     if(index>=0)play(index);
@@ -4581,9 +4618,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             for(int j=0;j<opts.length;j++)opts[j]="播放源 "+(j+1)+(j==0?"（主源）":"（备用）");
             new AlertDialog.Builder(this).setTitle(title+" · 播放源").setItems(opts,(dd,j)->{if(j>=0&&j<sourceUrls.size())playChannelSourceByKey(channelKey,sourceUrls.get(j));}).setNegativeButton("关闭",null).show();
           }else{
-            synchronized(channels){for(int k=0;k<channels.size();k++){Channel item=channels.get(k);if(item!=null&&channelKey.equals(item.key())){channels.remove(k);break;}}}
-            synchronized(favorites){favorites.remove(channelKey);}
-            rebuildChannelIndexes();persist();refresh();
+            new AlertDialog.Builder(this).setTitle("删除频道？")
+                .setMessage(title+"。删除时若正在直播，将先安全停止播放器；保留的当前频道会重新播放。")
+                .setNegativeButton("取消",null).setPositiveButton("删除",(confirm,which)->deleteLiveChannel(channelKey)).show();
           }
         }).show();return true;
       });
