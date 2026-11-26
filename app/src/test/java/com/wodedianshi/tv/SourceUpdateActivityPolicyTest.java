@@ -29,6 +29,15 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void handoffClearsViewingOnlyWhenNoOwnerOrContinuationRemains(){
+        assertTrue(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(true,false,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,true,false,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,true,false,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,true,false,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,true,true));
+        assertFalse(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(false,false,false,false,false,false));
+    }
     @Test public void idleConcurrencyRecoversInSteps(){
         try{
             SourceUpdateActivityPolicy.setPlaybackActive(true);
