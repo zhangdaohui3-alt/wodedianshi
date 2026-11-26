@@ -7,7 +7,8 @@ import java.util.concurrent.Future;
 
 /** Owner-confined admission for a contiguous idle discovery wave. */
 final class IdleProbeWavePolicy {
-    static final int MAX_CONCURRENT=4;
+    static final int MAX_CONCURRENT=6;
+    static final int ORDINARY_CONCURRENT=4;
     static final int MAX_PER_HOST=2;
     // Viewing work stays serial or paused under the existing playback gate.
     // Explicit manual refresh may use the same bounded executor as first build.
@@ -21,7 +22,7 @@ final class IdleProbeWavePolicy {
         return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
     }
     private final int maxConcurrent;
-    IdleProbeWavePolicy(){this(MAX_CONCURRENT);}
+    IdleProbeWavePolicy(){this(ORDINARY_CONCURRENT);}
     IdleProbeWavePolicy(int limit){maxConcurrent=Math.max(1,Math.min(MAX_CONCURRENT,limit));}
     private final HashSet<String> endpoints=new HashSet<>();
     private final HashMap<String,Integer> hosts=new HashMap<>();
@@ -35,6 +36,33 @@ final class IdleProbeWavePolicy {
         endpoints.add(endpoint);
         hosts.put(host,hosts.getOrDefault(host,0)+1);
     }
+    /** Deterministic host round-robin within equal priority, never dropping a row.
+     * Applied to an entire fixed initial page, independent of playback state. */
+    static <T> java.util.ArrayList<T> interleaveHosts(java.util.List<T> entries,
+            java.util.function.Function<T,String> hostOf,
+            java.util.function.ToIntFunction<T> priorityOf) {
+        java.util.TreeMap<Integer,java.util.LinkedHashMap<String,java.util.ArrayDeque<T>>> groups=
+                new java.util.TreeMap<>();
+        for(T entry:entries){
+            java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> hosts=
+                    groups.computeIfAbsent(priorityOf.applyAsInt(entry),k->new java.util.LinkedHashMap<>());
+            String host=hostOf.apply(entry);
+            hosts.computeIfAbsent(host==null?"":host,k->new java.util.ArrayDeque<>()).add(entry);
+        }
+        java.util.ArrayList<T> ordered=new java.util.ArrayList<>(entries.size());
+        for(java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> hosts:groups.values()){
+            while(!hosts.isEmpty()){
+                java.util.Iterator<java.util.ArrayDeque<T>> iterator=hosts.values().iterator();
+                while(iterator.hasNext()){
+                    java.util.ArrayDeque<T> queue=iterator.next();
+                    ordered.add(queue.removeFirst());
+                    if(queue.isEmpty())iterator.remove();
+                }
+            }
+        }
+        return ordered;
+    }
+
     /** Never treat cancellation as proof the underlying network call exited. */
     static boolean allFinished(Collection<? extends Future<?>> futures) {
         for(Future<?> future:futures)
