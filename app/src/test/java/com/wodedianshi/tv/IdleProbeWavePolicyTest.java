@@ -7,6 +7,18 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void localRegionRotationPreservesHostStationAndPriority(){
+        java.util.List<String> input=Arrays.asList("0AaF1","0BaF1","0CaG1","0DbF1","0EbG1","0AaF2","1ZaG1");
+        java.util.List<String> expected=Arrays.asList("0AaF1","0DbF1","0CaG1","0EbG1","0BaF1","0AaF2","1ZaG1");
+        java.util.List<String> actual=IdleProbeWavePolicy.coverageFirst(input,
+            v->v.substring(1,2),v->v.substring(2,3),v->v.charAt(0)-'0',v->v.substring(3,4));
+        assertEquals(expected,actual);
+        assertEquals(input.size(),actual.size());
+        assertEquals(new java.util.HashSet<>(input),new java.util.HashSet<>(actual));
+        assertEquals(actual,IdleProbeWavePolicy.coverageFirst(input,
+            v->v.substring(1,2),v->v.substring(2,3),v->v.charAt(0)-'0',v->v.substring(3,4)));
+    }
+
     @Test public void coverageBeforeBackupsKeepsEveryRouteAndPriority(){
         java.util.List<String> input=Arrays.asList("0Aa1","0Ab2","0Aa3","0Ba1","0Cc1","0Cb2","1Za1","1Za1");
         java.util.List<String> expected=Arrays.asList("0Aa1","0Cc1","0Ba1","0Ab2","0Cb2","0Aa3","1Za1","1Za1");
