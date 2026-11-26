@@ -834,6 +834,11 @@ public class SourceUpdateWorker extends Worker {
             saveStatus(prefs,"频道操作开始，本轮目录整理已暂停且未发布部分结果",0);
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
+          // Idle indexed reads bypass obtain(), which normally refreshes cache
+          // recency. Keep an actively scanned directory out of the oldest-cache
+          // eviction slot without modifying its body identity or freshness age.
+          if(initialDiscoveryChain&&!slowPlayback&&indexedEntries>=0)
+            PlaylistFeedCache.noteIndexedInitialAccess(cachedFeed,System.currentTimeMillis());
           // Keep per-feed discovery counts for diagnosing missing regional stations.
           // Log metadata only; never expose individual stream URLs or credentials.
           int localMetadataCandidates=0;
