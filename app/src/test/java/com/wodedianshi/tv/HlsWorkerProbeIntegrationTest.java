@@ -85,6 +85,61 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    /** The second segment has valid TS packets at its head, but the server
+     * stalls before the rest. The ordinary strict probe must remain unchanged.
+     * Use a latch rather than timing assertions to establish the slow tail. */
+    private SourceUpdateWorker.ProbeResult probeWithHeldSecondTail(boolean initialIdle)throws Exception{
+        CountDownLatch releaseTail=new CountDownLatch(1);
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(12000);
+            Future<?> served=serverThread.submit(()->{
+                for(String path:new String[]{"/live.m3u8","/live1.ts","/live2.ts"}){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(
+                                socket.getInputStream(),StandardCharsets.US_ASCII));
+                        String start=reader.readLine();
+                        assertNotNull(start);
+                        assertTrue(start,start.startsWith("GET "+path+" "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        boolean held="/live2.ts".equals(path);
+                        byte[] body="/live.m3u8".equals(path)?bytes(media("live")):
+                                held?Arrays.copyOf(transportSample(),8192):transportSample();
+                        OutputStream out=socket.getOutputStream();
+                        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n")
+                                .getBytes(StandardCharsets.US_ASCII));
+                        if(held){
+                            out.write(body,0,1024);out.flush();
+                            assertTrue("probe must return before tail is released",
+                                    releaseTail.await(12,TimeUnit.SECONDS));
+                        }else{out.write(body);out.flush();}
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result;
+            try{
+                result=SourceUpdateWorker.probe("http://127.0.0.1:"+server.getLocalPort()+"/live.m3u8",
+                        SystemClock.elapsedRealtime()+15000L,false,()->false,initialIdle);
+            }finally{releaseTail.countDown();}
+            served.get(15,TimeUnit.SECONDS);
+            return result;
+        }finally{releaseTail.countDown();serverThread.shutdownNow();}
+    }
+
+    @Test public void initialIdleAcceptsConfirmedTsWithoutWaitingForStalledTail()throws Exception{
+        SourceUpdateWorker.ProbeResult r=probeWithHeldSecondTail(true);
+        assertTrue(r.valid);assertFalse(r.socketTimedOut);
+    }
+
+    @Test public void ordinaryProbeRetainsFullSecondSampleRequirement()throws Exception{
+        SourceUpdateWorker.ProbeResult r=probeWithHeldSecondTail(false);
+        assertFalse(r.valid);assertTrue(r.socketTimedOut);
+    }
+
     @Test public void healthyHighRenditionWinsWithoutProbingLow()throws Exception{
         SourceUpdateWorker.ProbeResult r=runProbe(HIGH,true,true,false,false);
         assertTrue(r.valid);assertFalse(r.socketTimedOut);
