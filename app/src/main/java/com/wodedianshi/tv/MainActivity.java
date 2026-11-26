@@ -1489,8 +1489,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     liveNextPageButton.setNextFocusLeftId(livePageStatus.getId());
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
-    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refreshPage();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refreshPage();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this){
       @Override public boolean dispatchTouchEvent(MotionEvent event){
@@ -4776,8 +4776,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void refresh(){refresh(false);}
-  private void refresh(boolean preserveQueuedZap){
+  private void refreshPage(){refresh(false,true);}
+  private void refresh(boolean preserveQueuedZap){refresh(preserveQueuedZap,false);}
+  private void refresh(boolean preserveQueuedZap,boolean pageOnly){
     if(list==null||search==null||isFinishing()||isDestroyed())return;
+    // Only explicit paging can reuse the already published filtered order.
+    // Favorite membership can change independently; keep its full filter path.
+    final RemoteChannelOrder pageOrder=pageOnly&&!favoriteMode&&directoryFilterInFlightKey==null
+        ?currentRemoteChannelOrder():null;
     final long oldGeneration=catalogueFilterGeneration;
     final long generation=++catalogueFilterGeneration;
     if(preserveQueuedZap&&pendingRemoteZapGeneration==oldGeneration)
@@ -4831,7 +4837,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final boolean indexEligible=!favoriteOnly;
         final java.util.List<String> scopeKey=SnapshotCategoryIndex.scopeKey(categorySnapshot,
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null,geoScopeSnapshot,geoCountrySnapshot);
-        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
+        final boolean reusePage=pageOrder!=null&&mutation==catalogueMutationGeneration
+            &&expectedCount==sources.size();
+        java.util.List<Integer> exactScope=reusePage?pageOrder.indexes:
+            indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
         // A cached geographic position list already proves exact membership.
         // On a miss retain the existing provenance-based membership resolution.
         final Set<String> geoKeys=geographic&&exactScope==null?
@@ -4843,7 +4852,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // resolve by stable key, so these references are read-only in this pass.
         HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Integer> indexes=new ArrayList<>();
-        if(indexEligible&&!geographic&&"地方".equals(categorySnapshot)
+        if(!reusePage&&indexEligible&&!geographic&&"地方".equals(categorySnapshot)
             &&!categorySnapshotIndex.hasLocalIndex(membershipEpoch,sources.size())){
           SnapshotCategoryIndex.PreparedLocal prebuilt=preparedLocalSnapshot;
           if(prebuilt!=null&&prebuilt.matches(membershipEpoch,sources.size())){
@@ -4884,8 +4893,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(cachedScope==null&&!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
               geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
-          String display=query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
-          if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
+          String display=reusePage||query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
+          if(!reusePage&&!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
           queryMatches++;
           indexes.add(i);
           if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
@@ -4925,7 +4934,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         for(int index:indexes)visible.add(sources.get(index));
         RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
-        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" scope_index_hit="+(cachedScope!=null)+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
+        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" scope_index_hit="+(cachedScope!=null)+" page_order_reuse="+reusePage+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->publishFilteredDirectory(generation,()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           directoryFilterInFlightKey=null;
@@ -5115,7 +5124,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(which==livePageIndex)return;
       livePageIndex=which;
       preserveRequestedLivePageOnce=true;
-      refresh();
+      refreshPage();
     });
   }
   private int getCurrentLiveMatchCount(){
