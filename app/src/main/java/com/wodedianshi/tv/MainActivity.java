@@ -279,7 +279,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private volatile int roomChinaCachedCount=0;
   private volatile boolean roomChinaDirectoryCommitted=false;
   private volatile long roomGlobalSupplementLastSuccess=0L;
-  private final Map<String,Long> roomVodCacheTimes=Collections.synchronizedMap(new HashMap<String,Long>());
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
@@ -2123,38 +2122,35 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
     loadVodCatalogue(category,panel,currentVodStatus,currentVodResults);
   }
-  private String vodCacheKey(String category){
-    // These two catalogue categories had an incorrect CCTV documentary mapping.
-    // Use a fresh cache namespace so an older, duplicated result list is not reused.
-    String revision=("多源精选".equals(category)||"精选电影".equals(category))?"9":"8";
-    String regionKey=category.startsWith("搜索：")?"_"+activeVodRegion:"";
-    return "vod_cache_v"+revision+"_"+Integer.toHexString(category.hashCode())+regionKey;
+  private static final class VodCacheSnapshot {
+    final ArrayList<VodItem> items=new ArrayList<>();
+    long savedAt;
   }
-  private String vodCacheTimeKey(String category){return vodCacheKey(category)+"_saved_at";}
-  private boolean isVodCacheFresh(String category){
-    Long saved=roomVodCacheTimes.get(vodCacheKey(category));
-    return VodCachePolicy.isFresh(saved==null?0L:saved,System.currentTimeMillis(),6L*60L*60L*1000L);
+  private void invalidateVodCacheFreshness(String cacheKey){
+    queueRoomAppStateWrite(cacheKey+"_saved_at","0");
   }
-  private void invalidateVodCacheFreshness(String category){
-    roomVodCacheTimes.put(vodCacheKey(category),0L);
-    queueRoomAppStateWrite(vodCacheTimeKey(category),"0");
-  }
-  private ArrayList<VodItem> readVodCache(String category){
-    ArrayList<VodItem> items=new ArrayList<>();
+  private VodCacheSnapshot readVodCache(String cacheKey){
+    VodCacheSnapshot snapshot=new VodCacheSnapshot();
     try{
-      String raw=com.wodedianshi.tv.db.AppStateStore.get(
-          getApplicationContext(),vodCacheKey(category),"");
-      long savedAt=parseRoomLong(vodCacheTimeKey(category),0L);
-      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
-      if(raw.isEmpty())return items;
+      String raw="";
+      String timeKey=cacheKey+"_saved_at";
+      // One SELECT observes the rows from the same committed Room snapshot.
+      for(com.wodedianshi.tv.db.AppStateEntity row:com.wodedianshi.tv.db.RoomDatabaseProvider
+          .get(getApplicationContext()).appStateDao().getValues(java.util.Arrays.asList(cacheKey,timeKey))){
+        if(cacheKey.equals(row.key))raw=row.stateValue;
+        else if(timeKey.equals(row.key)){
+          try{snapshot.savedAt=Long.parseLong(row.stateValue);}catch(NumberFormatException ignored){}
+        }
+      }
+      if(raw.isEmpty())return snapshot;
       org.json.JSONArray a=new org.json.JSONArray(raw);
       for(int i=0;i<a.length();i++){
         org.json.JSONObject o=a.optJSONObject(i);if(o==null)continue;
         String title=o.optString("title",""),id=o.optString("id",""),url=o.optString("url",""),license=o.optString("license",""),poster=o.optString("poster","");
-        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))items.add(new VodItem(title,id,url,license,poster));
+        if(!title.isEmpty()&&!id.isEmpty()&&(url.startsWith("https://")||id.startsWith("meta:")))snapshot.items.add(new VodItem(title,id,url,license,poster));
       }
-    }catch(Exception ignored){}
-    return items;
+    }catch(Exception ignored){snapshot.savedAt=0L;}
+    return snapshot;
   }
   private String vodTitleIdentity(String title){
     if(title==null)return "";
@@ -2191,7 +2187,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(titleKey.length()<6)titles.add(item.identifier);
     return true;
   }
-  private void writeVodCache(String category,ArrayList<VodItem> items,boolean complete){
+  private void writeVodCache(String cacheKey,ArrayList<VodItem> items,boolean complete){
     try{
       org.json.JSONArray a=new org.json.JSONArray();
       for(VodItem item:items){
@@ -2199,20 +2195,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       // Cache rows and freshness metadata commit together in Room.
       long savedAt=complete?System.currentTimeMillis():0L;
-      roomVodCacheTimes.put(vodCacheKey(category),savedAt);
       try{
         cataloguePersistWorker.execute(()->{
           try{
             new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                .putString(vodCacheKey(category),a.toString())
-                .putLong(vodCacheTimeKey(category),savedAt)
+                .putString(cacheKey,a.toString())
+                .putLong(cacheKey+"_saved_at",savedAt)
                 .apply();
           }catch(Throwable failure){
-            android.util.Log.e("MyTVVodCache","Room cache write failed for "+category,failure);
+            android.util.Log.e("MyTVVodCache","Room cache write failed for "+cacheKey,failure);
           }
         });
       }catch(RuntimeException rejected){
-        android.util.Log.e("MyTVVodCache","Room cache write queue rejected for "+category,rejected);
+        android.util.Log.e("MyTVVodCache","Room cache write queue rejected for "+cacheKey,rejected);
       }
     }catch(Exception ignored){}
   }
@@ -3135,10 +3130,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     purgeCancelledTasks(vodWorker);
     final int request=++vodRequestId;
     final String requestRegion=activeVodRegion;
+    final String cacheKey=VodCachePolicy.cacheKey(category,requestRegion);
     // Room may contain a large VOD cache. Read and parse it
     // away from the UI thread; only publish the resulting list on the main thread.
     activeVodCatalogueTask=vodWorker.submit(()->{
-      ArrayList<VodItem> cached=readVodCache(category);
+      VodCacheSnapshot cache=readVodCache(cacheKey);
+      ArrayList<VodItem> cached=cache.items;
       uiHandler.post(()->{
         if(isFinishing()||request!=vodRequestId||panel!=currentVodPanel)return;
         if(!cached.isEmpty())renderVodItems(category,cached,status,results,true);
@@ -3147,16 +3144,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           GridView grid=resetVodGrid(results,4);
           grid.setAdapter(new VodGridAdapter(new ArrayList<>()));
         }
-        if(!forceRefresh&&!cached.isEmpty()&&isVodCacheFresh(category)){
+        if(!forceRefresh&&!cached.isEmpty()&&VodCachePolicy.isFresh(cache.savedAt,System.currentTimeMillis(),6L*60L*60L*1000L)){
           status.setText("「"+category+"」 · 已缓存 "+cached.size()+" 部，6小时内自动复用");
           return;
         }
-        if(forceRefresh)invalidateVodCacheFreshness(category);
-        startVodCatalogueSearch(category,panel,status,results,forceRefresh,request,requestRegion,cached);
+        if(forceRefresh)invalidateVodCacheFreshness(cacheKey);
+        startVodCatalogueSearch(category,panel,status,results,forceRefresh,request,requestRegion,cacheKey,cached);
       });
     });
   }
-  private void startVodCatalogueSearch(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh,int request,String requestRegion,ArrayList<VodItem> cached){
+  private void startVodCatalogueSearch(String category,LinearLayout panel,TextView status,LinearLayout results,boolean forceRefresh,int request,String requestRegion,String cacheKey,ArrayList<VodItem> cached){
     activeVodCatalogueTask=vodWorker.submit(()->{
       ArrayList<VodItem> found=new ArrayList<>();String error=null;
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
@@ -3311,7 +3308,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               ArrayList<VodItem> partialBatch=new ArrayList<>(found);
               uiHandler.post(()->{
                 if(!isFinishing()&&request==vodRequestId){
-                  writeVodCache(category,partialBatch,false);
+                  writeVodCache(cacheKey,partialBatch,false);
                   renderVodItems(category,partialBatch,status,results,false);
                   status.setText("「"+category+"」 · 已找到 "+partialBatch.size()+" 部，继续搜索其他结果…");
                 }
@@ -3325,7 +3322,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           ArrayList<VodItem> firstBatch=new ArrayList<>(found);
           uiHandler.post(()->{
             if(!isFinishing()&&request==vodRequestId){
-              writeVodCache(category,firstBatch,false);
+              writeVodCache(cacheKey,firstBatch,false);
               renderVodItems(category,firstBatch,status,results,false);
               status.setText("「"+category+"」 · 已先显示 "+firstBatch.size()+" 部，其他片库继续检索…");
             }
@@ -3412,7 +3409,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       uiHandler.post(()->{
         if(isFinishing()||request!=vodRequestId)return;
         if(!result.isEmpty()){
-          writeVodCache(category,result,true);
+          writeVodCache(cacheKey,result,true);
           renderVodItems(category,result,status,results,false);
           status.setText("「"+category+"」 · 多目录聚合 "+result.size()+" 部（含公开馆藏；首次播放会验证链接）");
         }else if(cached.isEmpty()){
