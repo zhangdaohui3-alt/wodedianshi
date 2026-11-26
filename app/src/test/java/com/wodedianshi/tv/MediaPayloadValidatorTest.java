@@ -174,4 +174,18 @@ public class MediaPayloadValidatorTest {
         assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(ts));
         assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(new byte[8192]));
     }
+
+    @Test public void directTsScreenRequiresEightPacketsAndNonNullPayload(){
+        byte[] sample=new byte[4096];
+        for(int i=0;i<8;i++){
+            int at=i*188;
+            sample[at]=0x47;sample[at+1]=0x1f;sample[at+2]=(byte)0xff;sample[at+3]=0x10;
+        }
+        assertFalse(MediaPayloadValidator.hasDirectTsScreeningPrefix(sample));
+        sample[1]=0;sample[2]=0x20;
+        assertTrue(MediaPayloadValidator.hasDirectTsScreeningPrefix(sample));
+        assertFalse(MediaPayloadValidator.hasDirectTsScreeningPrefix(java.util.Arrays.copyOf(sample,7*188)));
+        sample[7*188+1]=(byte)0x9f;
+        assertFalse(MediaPayloadValidator.hasDirectTsScreeningPrefix(sample));
+    }
 }
