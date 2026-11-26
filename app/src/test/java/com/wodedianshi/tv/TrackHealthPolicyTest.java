@@ -40,6 +40,16 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.audioWarningQuiet(1000L,31000L));
     }
 
+    @Test public void vlcOutputHealthNeedsBothIndependentCountersToAdvance() {
+        assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(-1L,-1L,100L,100L));
+        assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,100L,120L));
+        assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,120L,100L));
+        assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,1L,120L));
+        assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,120L,-1L));
+        assertTrue(TrackHealthPolicy.vlcOutputsAdvanced(0L,0L,1L,1L));
+        assertTrue(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,120L,121L));
+    }
+
     @Test public void vlcClockRequiresMeaningfulForwardProgressFromKnownBaseline() {
         assertFalse(TrackHealthPolicy.vlcClockAdvanced(0L,12000L));
         assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,0L));
