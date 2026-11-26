@@ -261,6 +261,19 @@ public final class LibVlcPlaybackEngine {
         if (!released && callback != null) callback.onAudioTrackState(trackCount, selectedTrackId);
     }
 
+    /** Read-only health sample on the existing serialized native worker.
+     * Track selection and timeline movement are not proof of audible PCM or
+     * rendered pixels. Unknown native values must not authorize discovery. */
+    boolean hasSelectedAudioTrack() {
+        MediaPlayer current=mediaPlayer;
+        if(released||current==null)return false;
+        try {
+            return current.getAudioTracksCount()>0&&current.getAudioTrack()>=0;
+        } catch(RuntimeException|LinkageError failure) {
+            return false;
+        }
+    }
+
     public boolean isPlaying() {
         return isInitialized() && mediaPlayer.isPlaying();
     }
