@@ -98,10 +98,18 @@ public final class PlaylistFeedCache {
                 return obtainInitialRange(context,feedUrl,preserveExistingSnapshot,paused,false);
             }catch(SourceProbeTimePolicy.PausedException deferred){throw deferred;}
             catch(IOException failure){
-                // A server that no longer honors Range must not prevent a
-                // normal idle full download. Retain any valid old checkpoint
-                // until that download actually succeeds.
                 SourceProbeTimePolicy.checkPaused(paused);
+                // A temporary transport failure is not evidence that Range is
+                // unsupported. Keep the durable prefix and let normal feed
+                // rotation retry it instead of immediately downloading twice.
+                Properties retained=readProperties(checkpoint);
+                boolean checkpointRetained=partial.isFile()&&SourceProbeTimePolicy.validDirectoryCheckpoint(
+                    parseLong(retained.getProperty("length"),0L),
+                    parseLong(retained.getProperty("total"),-1L),partial.length(),
+                    retained.getProperty("etag",""),retained.getProperty("location",""));
+                if(SourceProbeTimePolicy.deferRangeFallback(failure,checkpointRetained))throw failure;
+                // Other failures retain the existing full-download fallback,
+                // including servers that no longer honor Range.
             }
         }
         File result=obtain(context,feedUrl,true,preserveExistingSnapshot,paused);
