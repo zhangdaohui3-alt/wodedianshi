@@ -4,6 +4,19 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void earlyIdlePositionWindowDoesNotIncreaseNetworkBudget() {
+        org.junit.Assert.assertEquals(24,DiscoveryBatchPolicy.discoveryPositionWindow(true,false,48,6));
+        org.junit.Assert.assertEquals(5,DiscoveryBatchPolicy.discoveryPositionWindow(true,false,5,6));
+        org.junit.Assert.assertEquals(2,DiscoveryBatchPolicy.discoveryPositionWindow(true,true,48,2));
+        org.junit.Assert.assertEquals(1,DiscoveryBatchPolicy.discoveryPositionWindow(false,true,1,2));
+        org.junit.Assert.assertEquals(12,DiscoveryBatchPolicy.discoveryPositionWindow(false,false,48,12));
+        org.junit.Assert.assertEquals(0,DiscoveryBatchPolicy.discoveryPositionWindow(true,false,0,6));
+        org.junit.Assert.assertEquals(6,DiscoveryBatchPolicy.waveRequestAllowance(6,1));
+        org.junit.Assert.assertEquals(2,DiscoveryBatchPolicy.waveRequestAllowance(6,5));
+        org.junit.Assert.assertEquals(1,DiscoveryBatchPolicy.waveRequestAllowance(6,6));
+        org.junit.Assert.assertEquals(0,DiscoveryBatchPolicy.waveRequestAllowance(6,7));
+    }
+
     @org.junit.Test public void firstMainlandPreviewYieldsOnlyAtDrainedEarlyIdleBoundary() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,1,1,false));
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,1,1,true));
