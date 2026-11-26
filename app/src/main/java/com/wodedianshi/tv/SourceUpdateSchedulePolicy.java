@@ -43,6 +43,12 @@ public final class SourceUpdateSchedulePolicy {
         return batchComplete ? routineSliceEnd(safe, feedCount) % feedCount : safe;
     }
 
+    /** Match the same endpoint equivalence used for within-slice deduplication.
+     * Keep path, query, credentials and nondefault ports exact. */
+    static String initialProbeCacheKey(String url) {
+        return SourceSelectionPolicy.endpointKey(url);
+    }
+
     /** Reuse only a completed probe from this process, never a historical score.
      * Failures expire quickly so temporary outages are not held for long. */
     public static boolean canReuseInitialProbe(boolean valid, long measuredAt, long now) {
