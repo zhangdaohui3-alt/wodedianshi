@@ -120,7 +120,7 @@ public class SourceUpdateWorker extends Worker {
     final long playbackStart=SourceUpdateActivityPolicy.playbackStartGeneration();
     final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
     final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
-    slowPlayback=initialDiscoveryChain&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime());
+    slowPlayback=initialDiscoveryChain&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime(),stableGeneration);
     final boolean foregroundAtStart=isActivityActive(prefs);
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
     // Defer that work while the TV app is active so it cannot compete with playback,
@@ -137,9 +137,8 @@ public class SourceUpdateWorker extends Worker {
         true,manual,initialDiscoveryChain,publishedAtStart);
     pauseRequested=SourceProbeTimePolicy.latchPause(()->isStopped()
         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
-        ||(slowPlayback&&SourceUpdateActivityPolicy.stableRevocationGeneration()!=stableGeneration)
         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
-        ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart));
+        ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart,stableGeneration));
     if(pauseRequested.getAsBoolean()){
       saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
           ?"节目或频道界面正在使用，首次/手动更新已推迟"
@@ -1847,8 +1846,8 @@ public class SourceUpdateWorker extends Worker {
   }
 
   private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
-      boolean initialDiscoveryChain, boolean hasPublishedChannels){
-    return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime()):SourceUpdateActivityPolicy.isPlaybackActive())
+      boolean initialDiscoveryChain, boolean hasPublishedChannels,long stableGeneration){
+    return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime(),stableGeneration):SourceUpdateActivityPolicy.isPlaybackActive())
         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
             isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
   }
