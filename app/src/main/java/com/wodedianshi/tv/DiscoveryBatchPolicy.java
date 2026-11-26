@@ -27,6 +27,20 @@ public final class DiscoveryBatchPolicy {
         return "source_initial_page_"+feedIndex+"_";
     }
 
+    /** Persist with the exact partial-page checkpoint; never treat it as EOF. */
+    static String initialIdleRecheckKey(int feedIndex) {
+        return initialBatchPrefix(feedIndex)+"idle_recheck";
+    }
+
+    static boolean deferPageForIdle(boolean initial,boolean viewing,boolean pending) {
+        return initial&&viewing&&pending;
+    }
+
+    /** A paced inconclusive candidate has not had its unrestricted probe turn. */
+    static boolean holdInconclusiveCandidate(boolean initial,boolean viewing,boolean savedSource) {
+        return initial&&viewing&&!savedSource;
+    }
+
     /** A prepared index belongs to one exact body, not simply its URL. */
     public static boolean isPreparedInitialFeed(String preparedVersion,String currentVersion) {
         return currentVersion!=null&&!currentVersion.isEmpty()&&currentVersion.equals(preparedVersion);
