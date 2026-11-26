@@ -214,7 +214,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private String initialDiscoveryProgressDetail="正在准备读取来源目录…";
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
-  private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone;
+  private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone,displayedInitialPreviewCoreMask;
   private boolean initialPreviewReloadPending;
   private long initialPreviewReloadRequestedAt;
   private volatile long appendedInitialPreviewVersion=-1L;
@@ -1610,6 +1610,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           keys.add("source_full_rebuild_completed_at");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY);
+          keys.add(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY);
           keys.add(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY);
           keys.add("source_initial_index_attempted");
           keys.add("source_initial_index_bypassed");
@@ -1623,6 +1624,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
           final int previewMilestone=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0L);
+          final int previewCoreMask=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0L);
           final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
           final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
@@ -1647,10 +1649,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
-            if(completed<=0L&&startupDataReady&&(previewLevel!=displayedInitialPreviewLevel||previewMilestone!=displayedInitialPreviewMilestone)){
+            if(completed<=0L&&startupDataReady&&(previewLevel!=displayedInitialPreviewLevel||previewMilestone!=displayedInitialPreviewMilestone
+                ||previewCoreMask!=displayedInitialPreviewCoreMask)){
               displayedInitialPreviewLevel=previewLevel;
               displayedInitialPreviewMilestone=previewMilestone;
-              if(previewLevel>0||previewMilestone>0)initialPreviewReloadPending=true;
+              displayedInitialPreviewCoreMask=previewCoreMask;
+              if(previewLevel>0||previewMilestone>0||previewCoreMask>0)initialPreviewReloadPending=true;
             }
             long previewNow=android.os.SystemClock.elapsedRealtime();
             if(completed<=0L&&startupDataReady&&initialPreviewReloadPending
@@ -8273,7 +8277,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void reloadChannelsAfterBackgroundUpdateIfNeeded(int retriesRemaining){
     if(!startupDataReady||isFinishing()||isDestroyed())return;
-    final int requestedPreviewLevel=displayedInitialPreviewLevel,requestedPreviewMilestone=displayedInitialPreviewMilestone;
+    final int requestedPreviewLevel=displayedInitialPreviewLevel,requestedPreviewMilestone=displayedInitialPreviewMilestone,
+        requestedPreviewCoreMask=displayedInitialPreviewCoreMask;
     final boolean livePreviewRead=hasPlaybackCatalogueOwner()&&mayAppendInitialLivePreview();
     if(hasPlaybackCatalogueOwner()&&!livePreviewRead){
       catalogueReloadDeferredForPlayback=true;
@@ -8306,7 +8311,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(livePreviewRead&&(checkpoint==null
               ||checkpoint.channelsCount>FullDiscoveryProgressPolicy.MAX_VIEWING_PREVIEW_ROWS))return;
           if(livePreviewRead&&checkpoint.completedAt==appendedInitialPreviewVersion){
-            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;});
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone&&requestedPreviewCoreMask==displayedInitialPreviewCoreMask)initialPreviewReloadPending=false;});
             return;
           }
           if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
@@ -8325,7 +8330,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 }
               });
             }
-            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;});
+            uiHandler.post(()->{if(!cancelled.getAsBoolean())if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone&&requestedPreviewCoreMask==displayedInitialPreviewCoreMask)initialPreviewReloadPending=false;});
             android.util.Log.d("MyTVStartup","room_reload_unchanged_checkpoint_skip");
             return;
           }
@@ -8408,7 +8413,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   appendedInitialPreviewVersion=roomSnapshot.catalogueVersion;
                 }
               }
-              if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;
+              if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone&&requestedPreviewCoreMask==displayedInitialPreviewCoreMask)initialPreviewReloadPending=false;
               catalogueReloadDeferredForPlayback=true;
               if(added>0){cachedRemoteChannelOrder=null;refresh();}
               android.util.Log.i("MyTVStartup","initial_preview_live_append added="+added+" visible="+channels.size());
@@ -8484,7 +8489,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               favorites.addAll(prepared.favorites);
             }
             cachedRemoteChannelOrder=null;
-            if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone)initialPreviewReloadPending=false;appendedInitialPreviewVersion=-1L;
+            if(requestedPreviewLevel==displayedInitialPreviewLevel&&requestedPreviewMilestone==displayedInitialPreviewMilestone&&requestedPreviewCoreMask==displayedInitialPreviewCoreMask)initialPreviewReloadPending=false;appendedInitialPreviewVersion=-1L;
             catalogueReloadDeferredForPlayback=false;
             catalogueSnapshotTrusted=true;
             android.util.Log.i("MyTVStartup","room_reload_ui_publish_ms="
