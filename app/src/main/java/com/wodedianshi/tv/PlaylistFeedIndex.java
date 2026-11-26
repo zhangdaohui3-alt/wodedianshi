@@ -185,13 +185,18 @@ public final class PlaylistFeedIndex {
         File recordsTemporary = new File(records.getAbsolutePath() + ".tmp");
         File offsetsTemporary = new File(offsets.getAbsolutePath() + ".tmp");
         final long[] written = new long[1];
+        final long[] recordPosition = new long[1];
 
+        // Sequential construction needs no random seeks until the final count.
+        // Bound buffering to two 32 KiB streams, not the whole playlist.
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                      new FileInputStream(playlist), StandardCharsets.UTF_8), 8192);
-             RandomAccessFile recordFile = new RandomAccessFile(recordsTemporary, "rw");
-             RandomAccessFile offsetFile = new RandomAccessFile(offsetsTemporary, "rw")) {
-            recordFile.setLength(0L);
-            offsetFile.setLength(0L);
+             java.io.FileOutputStream recordRaw = new java.io.FileOutputStream(recordsTemporary);
+             java.io.FileOutputStream offsetRaw = new java.io.FileOutputStream(offsetsTemporary);
+             java.io.DataOutputStream recordFile = new java.io.DataOutputStream(
+                     new java.io.BufferedOutputStream(recordRaw,32768));
+             java.io.DataOutputStream offsetFile = new java.io.DataOutputStream(
+                     new java.io.BufferedOutputStream(offsetRaw,32768))) {
             offsetFile.writeInt(OFFSET_INDEX_MAGIC);
             offsetFile.writeLong(0L); // Filled after the complete index is written.
             String header = reader.readLine();
@@ -200,21 +205,27 @@ public final class PlaylistFeedIndex {
             }
             PlaylistParser.parseEach(reader, 0, Integer.MAX_VALUE, source -> {
                 try {
-                    offsetFile.writeLong(recordFile.getFilePointer());
-                    writeRecord(recordFile, source);
+                    offsetFile.writeLong(recordPosition[0]);
+                    recordPosition[0] = Math.addExact(recordPosition[0],writeRecord(recordFile, source));
                     written[0]++;
                 } catch (IOException error) {
                     throw new IndexWriteFailure(error);
                 }
             }, paused);
             SourceProbeTimePolicy.checkPaused(paused);
-            offsetFile.seek(4L);
-            offsetFile.writeLong(written[0]);
-            if (offsetFile.length() != OFFSET_HEADER_BYTES + written[0] * 8L) {
-                throw new IOException("Playlist index offset count mismatch");
+            recordFile.flush();
+            offsetFile.flush();
+            if (recordsTemporary.length()!=recordPosition[0]
+                    ||offsetsTemporary.length()!=OFFSET_HEADER_BYTES+written[0]*8L)
+                throw new IOException("Playlist index byte count mismatch");
+            recordRaw.getFD().sync();
+            // Flush body before publishing the authoritative offset count.
+            try(RandomAccessFile headerFile=new RandomAccessFile(offsetsTemporary,"rw")){
+                headerFile.seek(4L);
+                headerFile.writeLong(written[0]);
+                headerFile.getFD().sync();
             }
-            offsetFile.getFD().sync();
-            recordFile.getFD().sync();
+            SourceProbeTimePolicy.checkPaused(paused);
         } catch (IndexWriteFailure error) {
             recordsTemporary.delete();
             offsetsTemporary.delete();
@@ -247,21 +258,23 @@ public final class PlaylistFeedIndex {
         }
     }
 
-    private static void writeRecord(RandomAccessFile output,
+    private static long writeRecord(java.io.DataOutputStream output,
                                     PlaylistParser.ChannelSource source) throws IOException {
-        writeField(output,source.name);
-        writeField(output,source.url);
-        writeField(output,source.group);
-        writeField(output,source.tvgId);
-        writeField(output,source.tvgName);
+        long bytes=writeField(output,source.name);
+        bytes+=writeField(output,source.url);
+        bytes+=writeField(output,source.group);
+        bytes+=writeField(output,source.tvgId);
+        bytes+=writeField(output,source.tvgName);
+        return bytes;
     }
 
-    private static void writeField(RandomAccessFile output,String value)throws IOException {
+    private static long writeField(java.io.DataOutputStream output,String value)throws IOException {
         if(value.length()>MAX_FIELD_BYTES)throw new IOException("Playlist index field exceeds size limit");
         byte[] bytes=value.getBytes(StandardCharsets.UTF_8);
         if(bytes.length>MAX_FIELD_BYTES)throw new IOException("Playlist index field exceeds size limit");
         output.writeInt(bytes.length);
         output.write(bytes);
+        return 4L+bytes.length;
     }
 
     private static String readField(RandomAccessFile input,long boundary)throws IOException {
