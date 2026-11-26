@@ -333,7 +333,10 @@ public class SourceUpdateWorker extends Worker {
             if(cached==null){
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                  .putString("source_initial_progress_phase","首批目录分段已保存，空闲时继续")
+                  .putBoolean("source_initial_index_bypassed",true)
+                  .putInt("source_initial_next_feed_index",
+                      InitialFeedRotationPolicy.nextAfterPartialAcquisition(nextIndex,feeds.length,false))
+                  .putString("source_initial_progress_phase","首批目录分段已保存，先检测其他中国目录")
                   .apply();
               return continueAfterAcquisition();
             }
@@ -560,8 +563,9 @@ public class SourceUpdateWorker extends Worker {
             if(cachedFeed==null){
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                  .putInt("source_initial_next_feed_index",feedIndex)
-                  .putString("source_initial_progress_phase","空闲时继续已保存目录分段")
+                  .putInt("source_initial_next_feed_index",
+                      InitialFeedRotationPolicy.nextAfterPartialAcquisition(feedIndex,feeds.length,false))
+                  .putString("source_initial_progress_phase","空闲时已保存目录分段，轮换其他目录")
                   .apply();
               return continueAfterAcquisition();
             }
@@ -582,7 +586,8 @@ public class SourceUpdateWorker extends Worker {
                 // directory nor the line-probe cursor is complete yet.
                 SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
                 new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                    .putInt("source_initial_next_feed_index",feedIndex)
+                    .putInt("source_initial_next_feed_index",
+                        InitialFeedRotationPolicy.nextAfterPartialAcquisition(feedIndex,feeds.length,true))
                     .putString("source_initial_progress_phase","已保存大型目录分段，稳定播放时继续下载")
                     .apply();
                 return continueAfterAcquisition();
