@@ -673,9 +673,9 @@ public class SourceUpdateWorker extends Worker {
             LIVE_DIRECTORY_RETRY_AFTER.put(feedIndex,android.os.SystemClock.elapsedRealtime()+300000L);
             continue;
           }
-          // Keep complete entries parsed before a transient stream read failure;
-          // an incomplete feed is still reported as failed and will be retried later.
           // Failed pages never contribute partial candidates or advance a cursor.
+          // The parsed count may already have been assigned before index validation
+          // failed; it is not durable evidence of a successfully processed page.
           // A partial initial feed is retried from its unchanged cursor. Do not
           // mix its partial page with another feed's batch, or a later fingerprint
           // change could discard unprobed entries from the partial page.
@@ -703,9 +703,10 @@ public class SourceUpdateWorker extends Worker {
           }
           feedsFailed++;if(errors.length()<350)errors.append(feed.substring(feed.lastIndexOf('/')+1)).append("；");
         }finally{
-          feedBatches.add(new FeedBatch(feedIndex,feedCursor,parsedCount[0],
-              indexedEntries,feedReadSucceeded||feedTerminalUnavailable,
-              feedTerminalUnavailable,feedVersion));
+          feedBatches.add(new FeedBatch(feedIndex,feedCursor,
+              feedReadSucceeded?parsedCount[0]:0,
+              feedReadSucceeded?indexedEntries:-1,feedReadSucceeded||feedTerminalUnavailable,
+              feedTerminalUnavailable,feedReadSucceeded?feedVersion:""));
           if(initialDiscoveryChain)attemptedFeedsThisRun[feedIndex]=true;
         }
         if(initialDiscoveryChain){
@@ -1149,7 +1150,9 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedDisplayLabelKey(batch.index));
           }
           if(initialDiscoveryChain&&batch.unavailable){
-            update.putBoolean(initialFeedUnavailableKey(batch.index),true);
+            String failedPrefix=DiscoveryBatchPolicy.initialBatchPrefix(batch.index);
+            update.putBoolean(initialFeedUnavailableKey(batch.index),true)
+                .remove(failedPrefix+"fingerprint").remove(failedPrefix+"scanned");
           }else if(initialDiscoveryChain){
             update.remove(initialFeedUnavailableKey(batch.index))
                 .remove(initialFeedFailureCountKey(batch.index))
@@ -1158,7 +1161,8 @@ public class SourceUpdateWorker extends Worker {
           }
           String cursorKey=initialDiscoveryChain?feedCursorKey(batch.index):
               manualRefresh?manualFeedCursorKey(batch.index):routineFeedCursorKey(batch.index);
-          if(initialDiscoveryChain&&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
+          if(initialDiscoveryChain&&SourceUpdateSchedulePolicy.initialFeedInspected(
+              batch.success,batch.unavailable,batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
             update.putBoolean(initialFeedDoneKey(batch.index),true)
                 .remove(cursorKey).remove(cursorKey+"_version");
           }else if(batch.parsed>0){
@@ -1200,8 +1204,9 @@ public class SourceUpdateWorker extends Worker {
         for(int i=0;i<feeds.length;i++)finished[i]=roomBoolean(initialFeedDoneKey(i),false);
         if(feedBatchComplete){
           for(FeedBatch batch:feedBatches){
-            if(batch.success&&batch.index>=0&&batch.index<feeds.length
-                &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED))
+            if(batch.index>=0&&batch.index<feeds.length
+                &&SourceUpdateSchedulePolicy.initialFeedInspected(
+                    batch.success,batch.unavailable,batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED))
               finished[batch.index]=true;
           }
         }
@@ -1211,8 +1216,7 @@ public class SourceUpdateWorker extends Worker {
           unavailableFlags[i]=roomBoolean(initialFeedUnavailableKey(i),false);
         if(feedBatchComplete){
           for(FeedBatch batch:feedBatches)
-            if(batch.index>=0&&batch.index<feeds.length&&batch.unavailable
-                &&batch.parsed<MAX_INITIAL_DISCOVERY_PER_FEED)
+            if(batch.index>=0&&batch.index<feeds.length&&batch.success&&batch.unavailable)
               unavailableFlags[batch.index]=true;
         }
         int unavailableCount=0;
@@ -1784,8 +1788,8 @@ public class SourceUpdateWorker extends Worker {
       boolean done=roomBoolean(initialFeedDoneKey(i),false);
       if(!done){
         for(FeedBatch batch:batches){
-          if(batch.index==i&&batch.success
-              &&SourceUpdateSchedulePolicy.manualFeedFinished(batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
+          if(batch.index==i&&SourceUpdateSchedulePolicy.initialFeedInspected(
+              batch.success,batch.unavailable,batch.cursor,batch.parsed,batch.indexedEntries,MAX_INITIAL_DISCOVERY_PER_FEED)){
             done=true;break;
           }
         }
