@@ -12,6 +12,11 @@ public class SourceProbeTimePolicyTest {
         org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.ConnectException()));
         org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.UnknownHostException()));
         org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.NoRouteToHostException()));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.SocketException("Connection reset")));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.EOFException("Unexpected end of response")));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new javax.net.ssl.SSLHandshakeException("Certificate validation")));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.ProtocolException()));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.InterruptedIOException()));
         org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.net.MalformedURLException()));
         org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.IOException()));
     }
