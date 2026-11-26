@@ -28,9 +28,13 @@ public final class DiscoveryBatchPolicy {
     // only the admitted window, not the immutable page size or fingerprint.
     // After a small initial network budget, resume full throughput even if
     // no usable channels have been found.
+    static boolean isEarlyFirstWatch(int stagedChannels,int checkedUrls) {
+        return stagedChannels<16&&checkedUrls<48;
+    }
+
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
-        return stagedChannels<16&&checkedUrls<48?6:INITIAL_PAGE_SIZE;
+        return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
     }
 
     /** Independent partial page checkpoints enable fair rotation. */
