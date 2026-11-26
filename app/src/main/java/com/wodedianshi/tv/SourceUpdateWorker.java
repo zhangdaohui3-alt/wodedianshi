@@ -2393,16 +2393,17 @@ public class SourceUpdateWorker extends Worker {
       String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
     }
     Iterator<String> keys=scores.keys();
-    while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES)keep.add(keys.next());
-    JSONObject retained=new JSONObject();
-    for(String key:keep)try{retained.put(key,scores.get(key));}catch(JSONException ignored){}
-    Iterator<String> remove=scores.keys();ArrayList<String> oldKeys=new ArrayList<>();
-    while(remove.hasNext())oldKeys.add(remove.next());
-    for(String key:oldKeys)scores.remove(key);
-    Iterator<String> retainedKeys=retained.keys();
-    while(retainedKeys.hasNext()){
-      String key=retainedKeys.next();
-      try{scores.put(key,retained.get(key));}catch(JSONException ignored){}
+    while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      keep.add(keys.next());
+    }
+    // JSONObject ordering is not a retention guarantee. Preserve precisely
+    // the chosen key/value set in this slice, without clearing/reinserting
+    // thousands of unchanged entries. Remove after the iteration completes.
+    for(String key:SourceRankingRetentionPolicy.surplusScoreKeys(
+        scores.keys(),keep,pauseRequested)){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      scores.remove(key);
     }
   }
   private void storePreflightScore(JSONObject scores,String url,ProbeResult result)throws JSONException{
