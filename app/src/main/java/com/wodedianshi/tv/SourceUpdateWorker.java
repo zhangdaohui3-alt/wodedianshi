@@ -635,7 +635,8 @@ public class SourceUpdateWorker extends Worker {
                     bEntry.scope,bEntry.name,bEntry.group,bEntry.tvgName,bEntry.tvgId)));
           }
           if(initialDiscoveryChain){
-            ArrayList<Entry> ordered=IdleProbeWavePolicy.interleaveHosts(feedCandidates,
+            ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
+                entry->identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName),
                 entry->probeHost(entry.url),entry->ChinaDiscoveryCandidatePolicy.initialProbePriority(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
             feedCandidates.clear();feedCandidates.addAll(ordered);
