@@ -312,7 +312,13 @@ final class ChannelNamePolicy {
 
     static boolean matchesLocalCity(String metadata, String province, String city) {
         if (metadata == null || province == null || city == null || city.isEmpty()) return false;
-        if (!province.equals(provinceForLocalChannel(metadata))) return false;
+        return matchesLocalCityWithProvince(metadata, province, city, provinceForLocalChannel(metadata));
+    }
+
+    /** Caller may reuse the province already resolved from this exact metadata. */
+    static boolean matchesLocalCityWithProvince(String metadata, String province, String city, String resolvedProvince) {
+        if (metadata == null || province == null || city == null || city.isEmpty()) return false;
+        if (!province.equals(resolvedProvince)) return false;
         String normalized = normalize(metadata);
         String upper = metadata.toUpperCase(Locale.ROOT);
         if (containsAlias(metadata, city, normalized)) return true;
@@ -412,6 +418,9 @@ final class ChannelNamePolicy {
         if (hasCjkCharacter(normalizedAlias)) {
             return normalizedMetadata.contains(normalizedAlias);
         }
+        // The boundary regex always requires this literal. Most Chinese or
+        // unrelated global records cannot contain it; skip Matcher allocation.
+        if (!uppercaseMetadata.contains(normalizedAlias)) return false;
         Pattern pattern = ENGLISH_LOCAL_PATTERNS.get(normalizedAlias);
         if (pattern == null) {
             Pattern compiled = Pattern.compile("(^|[^A-Z])"
@@ -482,7 +491,14 @@ final class ChannelNamePolicy {
     }
 
     private static String normalize(String value) {
-        return value == null ? "" : value.toUpperCase(Locale.ROOT)
-                .replaceAll("[^A-Z0-9\\u4E00-\\u9FFF]", "");
+        if (value == null) return "";
+        String upper = value.toUpperCase(Locale.ROOT);
+        StringBuilder normalized = new StringBuilder(upper.length());
+        for (int i=0; i<upper.length(); i++) {
+            char ch=upper.charAt(i);
+            if ((ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||(ch>=0x4E00&&ch<=0x9FFF))
+                normalized.append(ch);
+        }
+        return normalized.toString();
     }
 }
