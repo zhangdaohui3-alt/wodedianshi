@@ -2315,15 +2315,9 @@ public class SourceUpdateWorker extends Worker {
         String manifestUrl=manifestResponse.finalUrl;
         ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
-        String mediaUrl=manifestUrl;
-        long bestBandwidth=0L;
-        int bestWidth=0,bestHeight=0;
-        boolean selectedAes128=false;
-        HlsMediaPlaylistPolicy.Resources selectedResources=null;
-        byte[] selectedAesKey=null;
-        ArrayList<String> segments=null;
-        byte[] sample=null;
-        long segmentStart=0L;
+        // Select a rendition only after every required sample for that rendition
+        // passes. A stale second segment in a high-bitrate rendition must not
+        // prevent trying a healthy lower-bitrate sibling within the same budget.
         for(HlsVariantPolicy.Variant candidate:variants){
           if(probeDeadlineReached(deadline))return result;
           String candidateManifestUrl=candidate.url;
@@ -2370,45 +2364,39 @@ public class SourceUpdateWorker extends Worker {
             if(!HlsAes128Preflight.validatesMediaSegment(
                 candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
           }else if(!looksLikeHlsSegment(candidateSample))continue;
-          mediaUrl=candidateManifestUrl;
-          bestBandwidth=candidate.bandwidth;
-          bestWidth=candidate.width;
-          bestHeight=candidate.height;
-          segments=candidateSegments;
-          selectedAes128=resources.aes128Encrypted;
-          selectedResources=resources;
-          selectedAesKey=aesKey;
-          sample=candidateSample;
-          segmentStart=candidateSegmentStart;
-          break;
-        }
-        if(segments==null||sample==null)return result;
-        long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-segmentStart);
-        boolean secondSegmentOk=true;
-        if(segments.size()>1){
-          String secondUrl=new URL(new URL(mediaUrl),segments.get(1)).toString();
-          SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,deadline);
-          byte[] second=secondResponse==null?null:secondResponse.bytes;
-          if(selectedAes128&&second!=null){
-            byte[] secondIv=selectedResources.encryptionIv!=null
-                ?HlsAes128Preflight.parseExplicitIv(selectedResources.encryptionIv)
-                :HlsAes128Preflight.ivForMediaSequence(selectedResources.firstMediaSequenceNumber+1L);
-            secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
-                second,selectedAesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
-          }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
-        }
-        // A playlist exposing a second segment must prove that it is retrievable
-        // and structurally valid too. A valid first segment alone can be a stale
-        // edge/cache fragment and must not promote a dead live endpoint.
-        if(segments.size()>1&&!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))
+          long segmentMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-candidateSegmentStart);
+          if(candidateSegments.size()>1){
+            boolean secondSegmentOk=false;
+            try{
+              String secondUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(1)).toString();
+              SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,deadline);
+              byte[] second=secondResponse==null?null:secondResponse.bytes;
+              if(resources.aes128Encrypted&&second!=null){
+                byte[] secondIv=resources.encryptionIv!=null
+                    ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
+                    :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber+1L);
+                secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
+                    second,aesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
+              }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
+            }catch(java.net.SocketTimeoutException timeout){
+              // Preserve an inconclusive timeout if no sibling proves playable.
+              result.socketTimedOut=true;
+            }catch(java.io.IOException unavailable){
+              // This rendition failed; the remaining siblings can still be valid.
+            }
+            if(!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))continue;
+          }
+          if(probeDeadlineReached(deadline))return result;
+          result.socketTimedOut=false;
+          result.valid=true;result.width=candidate.width;result.height=candidate.height;
+          result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
+          int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
+          int bandwidth=(int)Math.min(500L,candidate.bandwidth/12000L);
+          int speed=SourceQualityScorer.preflightSpeedBonus(result.paced,candidateSample.length,segmentMs);
+          int latencyPenalty=SourceQualityScorer.preflightLatencyPenalty(result.paced,result.latencyMs);
+          result.score=500+resolution+bandwidth+speed-latencyPenalty+300+120;
           return result;
-        result.valid=true;result.width=bestWidth;result.height=bestHeight;
-        result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
-        int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
-        int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
-        int speed=SourceQualityScorer.preflightSpeedBonus(result.paced,sample.length,segmentMs);
-        int latencyPenalty=SourceQualityScorer.preflightLatencyPenalty(result.paced,result.latencyMs);
-        result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
+        }
         return result;
       }
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
