@@ -4,6 +4,25 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceDiscoveryPriorityPolicyTest {
+    @Test public void earlyFirstWatchVisitsDistinctDomesticFamiliesBeforeMirrors() {
+        boolean[] done=new boolean[26],tried=new boolean[26];
+        int[] order={0,2,4,5,6,7,8,9,1,3};
+        int start=0;
+        for(int expected:order){
+            int actual=SourceDiscoveryPriorityPolicy.nextFeed(start,done,tried,10,13,true);
+            assertEquals(expected,actual);
+            tried[actual]=true;
+            start=SourceDiscoveryPriorityPolicy.nextAfterFirstWatchTurn(actual,26);
+        }
+        assertEquals(-1,SourceDiscoveryPriorityPolicy.nextFeed(start,done,tried,10,13,true));
+        assertEquals(0,start);
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextFeed(1,done,new boolean[26],10,13,false));
+        java.util.Arrays.fill(done,0,10,true);
+        assertEquals(10,SourceDiscoveryPriorityPolicy.nextFeed(4,done,new boolean[26],10,13,true));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.firstWatchBootstrapFeed(0));
+        assertEquals(2,SourceDiscoveryPriorityPolicy.firstWatchBootstrapFeed(1));
+    }
+
     @Test public void mainlandHasPriorityEvenAfterCursorRotatesIntoGlobalArea() {
         boolean[] done = new boolean[8], tried = new boolean[8];
         assertEquals(0, SourceDiscoveryPriorityPolicy.nextFeed(7, done, tried,3,5));
