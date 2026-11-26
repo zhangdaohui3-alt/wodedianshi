@@ -311,6 +311,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private final ExecutorService catalogueFilterWorker = newLatestRequestWorker();
   // Worker-confined, bounded positional indexes. No duplicate Channel records.
   private final SnapshotCategoryIndex categorySnapshotIndex=new SnapshotCategoryIndex();
+  private volatile SnapshotCategoryIndex.PreparedLocal preparedLocalSnapshot;
   // The directory filter publishes the one order shared by rows and remote zapping.
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
   private String directoryFilterInFlightKey;
@@ -806,6 +807,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         favorites.addAll(roomSnapshot.favorites);
       }
       rebuildChannelIndexes();
+      prepareStartupLocalSnapshot();
       loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
       catalogueSnapshotTrusted=true;
       // Restore the complete score cache from the same validated catalogue
@@ -4694,6 +4696,39 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return "全部".equals(category)||"收藏".equals(category)||categoryMatch(c,category);
   }
 
+  private SnapshotCategoryIndex.LocalMembership buildLocalMembership(List<Channel> entries,
+      java.util.function.BooleanSupplier cancelled){
+    ArrayList<Integer> allLocal=new ArrayList<>();
+    java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
+    for(int i=0;i<entries.size();i++){
+      if((i&127)==0)SourceProbeTimePolicy.checkPublicationPaused(cancelled);
+      Channel candidate=entries.get(i);
+      if(candidate==null)continue;
+      LocalDirectoryFacts facts=localDirectoryFacts(candidate);
+      if(facts.local)allLocal.add(i);
+      if(!facts.excluded&&!facts.province.isEmpty())
+        provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
+    }
+    SourceProbeTimePolicy.checkPublicationPaused(cancelled);
+    return new SnapshotCategoryIndex.LocalMembership(entries.size(),allLocal,provinces);
+  }
+  private void prepareStartupLocalSnapshot(){
+    long started=android.os.SystemClock.elapsedRealtime();
+    final long epoch;
+    ArrayList<Channel> entries;
+    synchronized(channels){epoch=catalogueMutationGeneration;entries=new ArrayList<>(channels);}
+    try{
+      SnapshotCategoryIndex.LocalMembership membership=buildLocalMembership(entries,
+          ()->isFinishing()||isDestroyed()||epoch!=catalogueMutationGeneration);
+      if(epoch==catalogueMutationGeneration)
+        preparedLocalSnapshot=new SnapshotCategoryIndex.PreparedLocal(epoch,membership);
+      android.util.Log.i("MyTVDirectory","startup_local_index_ms="+
+          (android.os.SystemClock.elapsedRealtime()-started)+" rows="+entries.size());
+    }catch(RuntimeException deferred){
+      // Derived index failure must never invalidate the authoritative Room snapshot.
+      android.util.Log.w("MyTVDirectory","startup_local_index_deferred",deferred);
+    }
+  }
   private void refresh(){refresh(false);}
   private void refresh(boolean preserveQueuedZap){
     if(list==null||search==null||isFinishing()||isDestroyed())return;
@@ -4757,21 +4792,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null);
         if(indexEligible&&"地方".equals(categorySnapshot)
             &&!categorySnapshotIndex.hasLocalIndex(mutation,sources.size())){
-          ArrayList<Integer> allLocal=new ArrayList<>();
-          java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
-          for(int i=0;i<sources.size();i++){
-            if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
-            Channel candidate=sources.get(i);
-            if(candidate==null)continue;
-            LocalDirectoryFacts facts=localDirectoryFacts(candidate);
-            if(facts.local)allLocal.add(i);
-            if(!facts.excluded&&!facts.province.isEmpty())
-              provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
+          SnapshotCategoryIndex.PreparedLocal prebuilt=preparedLocalSnapshot;
+          if(prebuilt!=null&&prebuilt.matches(mutation,sources.size())){
+            categorySnapshotIndex.putLocalMembership(mutation,sources.size(),prebuilt.membership);
+          }else{
+            SnapshotCategoryIndex.LocalMembership membership;
+            try{
+              membership=buildLocalMembership(sources,()->generation!=catalogueFilterGeneration);
+            }catch(SourceProbeTimePolicy.PublicationPausedException superseded){return;}
+            if(generation!=catalogueFilterGeneration)return;
+            // A changed epoch must reach the existing publication/retry gate.
+            if(mutation==catalogueMutationGeneration)
+              categorySnapshotIndex.putLocalMembership(mutation,sources.size(),membership);
           }
-          if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-          // A changed epoch must reach the existing publication/retry gate.
-          if(mutation==catalogueMutationGeneration)
-            categorySnapshotIndex.putLocalIndex(mutation,sources.size(),allLocal,provinces);
         }
         java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
         java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
@@ -8569,6 +8602,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final HashMap<String,Integer> positionByIdentity=new HashMap<>();
     final HashMap<String,Integer> positionByNameGroup=new HashMap<>();
     final HashSet<String> favorites=new HashSet<>();
+    SnapshotCategoryIndex.LocalMembership localMembership;
   }
   private String roomChannelNameGroupKey(String name,String group){
     return (name==null?"":name)+"\u001f"+(group==null?"":group);
@@ -8617,6 +8651,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!prepared.positionByNameGroup.containsKey(nameGroup))
         prepared.positionByNameGroup.put(nameGroup,i);
       else prepared.positionByNameGroup.put(nameGroup,-1); // ambiguous label, never guess
+    }
+    long localIndexStarted=android.os.SystemClock.elapsedRealtime();
+    try{
+      prepared.localMembership=buildLocalMembership(prepared.entries,cancelled);
+      android.util.Log.i("MyTVDirectory","replacement_local_index_ms="+
+          (android.os.SystemClock.elapsedRealtime()-localIndexStarted)+" rows="+prepared.entries.size());
+    }catch(SourceProbeTimePolicy.PublicationPausedException superseded){throw superseded;}
+    catch(RuntimeException deferred){
+      android.util.Log.w("MyTVDirectory","replacement_local_index_deferred",deferred);
     }
     return prepared;
   }
@@ -8846,7 +8889,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               // A Room reload can replace channels between two bounded
               // snapshotChannelRows() batches. Invalidate those mixed copies
               // even if no caller explicitly requested a catalogue save.
-              synchronized(cataloguePersistLock){catalogueMutationGeneration++;}
+              synchronized(cataloguePersistLock){
+                catalogueMutationGeneration++;
+                preparedLocalSnapshot=prepared.localMembership==null?null:
+                    new SnapshotCategoryIndex.PreparedLocal(catalogueMutationGeneration,prepared.localMembership);
+              }
               loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
               if(indexedScores!=null){cachedProbeScoreJson=indexedScores;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
               if(!selectedIdentity.isEmpty()){
