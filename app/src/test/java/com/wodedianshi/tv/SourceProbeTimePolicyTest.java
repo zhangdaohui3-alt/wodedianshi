@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceProbeTimePolicyTest {
+    @org.junit.Test public void fullDirectoryRequiresCompleteResponseAndKnownIdentityLength(){
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.fullDirectoryResponse(200,null));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.fullDirectoryResponse(206,"bytes 0-9/20"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.fullDirectoryResponse(200,"bytes 0-9/20"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.fullDirectoryResponse(204,null));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.fullDirectoryResponse(304,null));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.completeFullDirectoryBody(20,20,"identity"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.completeFullDirectoryBody(10,20,null));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.completeFullDirectoryBody(21,20,"identity"));
+        org.junit.Assert.assertFalse(SourceProbeTimePolicy.completeFullDirectoryBody(0,-1,null));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.completeFullDirectoryBody(20,-1,null));
+        org.junit.Assert.assertTrue(SourceProbeTimePolicy.completeFullDirectoryBody(20,10,"gzip"));
+    }
+
     @org.junit.Test public void transientMediaResponsesDoNotProveInvalidity() {
         for(int code:new int[]{408,429,500,502,503,504})
             org.junit.Assert.assertTrue(SourceProbeTimePolicy.transientProbeHttpStatus(code));
