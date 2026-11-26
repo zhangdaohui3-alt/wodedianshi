@@ -425,6 +425,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .remove(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY)
+              .putLong(FullDiscoveryProgressPolicy.INITIAL_BUILD_STARTED_AT_KEY,System.currentTimeMillis())
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0)
               .putInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0)
