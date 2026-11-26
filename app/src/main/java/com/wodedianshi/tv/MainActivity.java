@@ -1899,7 +1899,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final String prefix="source_initial_progress_";
         ArrayList<String> keys=new ArrayList<>(Arrays.asList("source_update_time","source_update_result",
             FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,
-            FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY));
+            FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,FullDiscoveryProgressPolicy.INITIAL_BUILD_STARTED_AT_KEY,
+            "source_full_rebuild_completed_at","source_full_rebuild_active"));
         for(String suffix:new String[]{"unavailable_feeds","validated_urls","staged_channels",
             "china_done_feeds","china_total_feeds","china_validated_urls","total_feeds"})
           keys.add(prefix+suffix);
@@ -1923,6 +1924,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         String coverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.PUBLISHED_COVERAGE_KEY,"");
         String freshCoverage=snapshot.getOrDefault(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,"");
         String throughput=snapshot.getOrDefault(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,"尚无新版检测批次统计");
+        String buildDuration=FullDiscoveryProgressPolicy.buildDurationStatus(
+            readStateLong(snapshot,FullDiscoveryProgressPolicy.INITIAL_BUILD_STARTED_AT_KEY,0L),
+            readStateLong(snapshot,"source_full_rebuild_completed_at",0L),
+            Boolean.parseBoolean(snapshot.getOrDefault("source_full_rebuild_active","false")),System.currentTimeMillis());
         StringBuilder failedDetails=new StringBuilder();
         int failedShown=0;
         for(int i=0;i<feedTotal&&i<configuredCount;i++){
@@ -1948,7 +1953,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 +" · 中国线路预检通过："+Math.max(0,chinaValidated)+" 次"
                 +"\n已整理频道："+Math.max(0,staged)+" · 全部预检通过："
                 +Math.max(0,validated)+" 次 · 暂不可用来源："+Math.max(0,unavailable)
-                +"\n\n"+throughput
+                +"\n\n"+buildDuration+"\n"+throughput
                 +failedList
                 +"\n\n"+(coverage.isEmpty()?"首次发布覆盖统计尚未生成（旧版记录或尚未发布）":coverage)
                 +(freshCoverage.isEmpty()?"":"\n\n"+freshCoverage)
