@@ -963,8 +963,11 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       boolean viewingDeferred=false;
-      final int firstWatchPriorChina=earlyFirstWatch
+      final int priorChinaValidated=initialDiscoveryChain
           ?roomInt("source_initial_progress_china_validated_urls",0):0;
+      final int priorCoreMask=initialDiscoveryChain&&!slowPlayback&&previousStagedSize<=512
+          ?roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1):-1;
+      int observedCoreMask=priorCoreMask;
       HashSet<String> visitedUrls=new HashSet<>();
       HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
@@ -979,7 +982,11 @@ public class SourceUpdateWorker extends Worker {
         // another wave solely to fill the six-request budget. Finish all
         // already admitted requests before committing the exact prefix.
         if(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(earlyFirstWatch,slowPlayback,
-            firstWatchPriorChina,chinaPreflightsValid,saved.length(),idleWave.hasPending()))break;
+            priorChinaValidated,chinaPreflightsValid,saved.length(),idleWave.hasPending()))break;
+        if(initialDiscoveryChain&&DiscoveryBatchPolicy.yieldForNewCorePreview(slowPlayback,
+            saved.length(),priorCoreMask,observedCoreMask,
+            (int)Math.min(Integer.MAX_VALUE,(long)priorChinaValidated+chinaPreflightsValid),
+            idleWave.hasPending()))break;
         Entry e=probeCandidates.get(offset);
         // A completed speculative result can still be consumed after the batch
         // deadline, but no fresh request may begin after it.
@@ -1169,6 +1176,12 @@ public class SourceUpdateWorker extends Worker {
           }
         }
         if(initialDiscoveryChain||manualRefresh)touchedStagedRows.add(stagedPositions.get(target));
+        if(priorCoreMask>=0&&observedCoreMask!=FullDiscoveryProgressPolicy.ALL_CORE
+            &&saved.length()<=512){
+          observedCoreMask|=FullDiscoveryProgressPolicy.coreCategoryMask(
+              target.optString("name"),target.optString("group"),target.optString("tvgName"),
+              target.optString("tvgId"),hasChinaScope(target));
+        }
       }
       // Even if every discovery directory is temporarily unavailable, continue
       // rotating through already-saved source URLs. Existing channels still need
