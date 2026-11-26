@@ -29,6 +29,37 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void media3HeadroomAdjustsRateOnlyWithFreshHealthyLease(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(1000L,20000L);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(1000L));
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(11000L,12000L);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(11000L));
+            SourceUpdateActivityPolicy.reportStableLive(21000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(21000L,12000L);
+            assertEquals(49152L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(21000L));
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(22000L,500L);
+            assertEquals(16384L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(22000L));
+            SourceUpdateActivityPolicy.notePressure(23000L);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(23000L));
+            SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(35000L,2);
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(35000L));
+            assertEquals(32768L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(50000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+    @Test public void headroomPacingBoundsAndFallback(){
+        assertEquals(250L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,16384L));
+        assertEquals(84L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,49152L));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,100L,49152L));
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,Long.MAX_VALUE));
+    }
     @Test public void confirmedVlcPairGrantsBoundedLeaseButNeverRevivesExpiredOwner(){
         try{
             SourceUpdateActivityPolicy.setActivityActive(true);
