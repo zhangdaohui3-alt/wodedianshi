@@ -312,4 +312,26 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,1000L,61001L));
         assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(false,true,1000L,16001L));
     }
+
+    @Test public void provisionalRechecksReserveOnlyOutsideNormalWindowAndKeepFifo(){
+        java.util.ArrayList<String> saved=new java.util.ArrayList<>();
+        for(int i=0;i<20;i++)saved.add("k"+i);
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>(
+                java.util.Arrays.asList("k19","k5","k7","missing","k9","k10"));
+        assertEquals(java.util.Arrays.asList(5,7),
+                SourceUpdateSchedulePolicy.provisionalRecheckPositions(saved,15,8,pending));
+        // With eight ordinary slots, at most two can be reserved.
+    }
+
+    @Test public void provisionalEvidenceIsBoundedAndRetriesMoveToTail(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        for(int i=0;i<2050;i++)SourceUpdateSchedulePolicy.rememberProvisional(pending,"k"+i);
+        assertEquals(2048,pending.size());
+        assertFalse(pending.contains("k0"));
+        assertEquals("k2",pending.iterator().next());
+        SourceUpdateSchedulePolicy.rememberProvisional(pending,"k2");
+        assertEquals("k3",pending.iterator().next());
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckPositions(
+                java.util.Arrays.asList("a","b"),0,2,pending).isEmpty());
+    }
 }
