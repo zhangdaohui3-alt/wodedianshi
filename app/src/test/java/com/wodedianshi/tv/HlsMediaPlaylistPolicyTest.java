@@ -220,4 +220,41 @@ public class HlsMediaPlaylistPolicyTest {
                 playlist, "https://cdn.example/live/index.m3u8");
         assertTrue(resources.unsupportedEncryption);
     }
+
+    @Test public void skipsGapsAndRangesButRetainsExactEncryptedSequences() throws Exception {
+        String playlist="#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:40\n"
+                +"#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
+                +"#EXTINF:6,\n#EXT-X-GAP\nmissing.ts\n"
+                +"#EXTINF:6,\n# comment\nfirst.ts\n"
+                +"#EXTINF:6,\n#EXT-X-BYTERANGE:100@0\nshared.ts\n"
+                +"#EXTINF:6,\nfirst.ts\n"
+                +"#EXTINF:6,\nsecond.ts\n";
+        HlsMediaPlaylistPolicy.Resources resources=HlsMediaPlaylistPolicy.parse(
+                playlist,"https://cdn.example/live/index.m3u8");
+        assertFalse(resources.unsupportedEncryption);
+        assertEquals(java.util.Arrays.asList("https://cdn.example/live/first.ts",
+                "https://cdn.example/live/second.ts"),resources.mediaUrls);
+        assertEquals(java.util.Arrays.asList(41L,44L),resources.mediaSequenceNumbers);
+        assertEquals(41L,resources.firstMediaSequenceNumber);
+    }
+
+    @Test public void skipsUnavailableLowLatencyPartAndKeepsClearPartAlignment() throws Exception {
+        String playlist="#EXTM3U\n"
+                +"#EXT-X-PART:DURATION=0.3,GAP=YES,URI=\"missing.m4s\"\n"
+                +"#EXT-X-PART:DURATION=0.3,URI=\"part.m4s\"\n"
+                +"#EXTINF:6,\n# comment\nfull.m4s\n";
+        HlsMediaPlaylistPolicy.Resources resources=HlsMediaPlaylistPolicy.parse(
+                playlist,"https://cdn.example/live/index.m3u8");
+        assertEquals(java.util.Arrays.asList("https://cdn.example/live/part.m4s",
+                "https://cdn.example/live/full.m4s"),resources.mediaUrls);
+        assertEquals(java.util.Arrays.asList(-1L,0L),resources.mediaSequenceNumbers);
+    }
+
+    @Test public void rejectsClearThenEncryptedTimelineWithoutPerSegmentKeys() throws Exception {
+        String playlist="#EXTM3U\n#EXTINF:6,\nclear.ts\n"
+                +"#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
+                +"#EXTINF:6,\nencrypted.ts\n";
+        assertTrue(HlsMediaPlaylistPolicy.parse(playlist,
+                "https://cdn.example/live/index.m3u8").unsupportedEncryption);
+    }
 }
