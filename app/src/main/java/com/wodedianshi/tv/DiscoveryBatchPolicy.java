@@ -32,6 +32,13 @@ public final class DiscoveryBatchPolicy {
         return stagedChannels<16&&checkedUrls<48;
     }
 
+    // Only combine quick acquisition with the bounded six-position first-watch
+    // slice. Slow downloads and stable viewing retain separate work requests.
+    static boolean canProbeAfterQuickAcquisition(boolean early,boolean viewing,
+            int indexedEntries,long elapsedMs) {
+        return early&&!viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
+    }
+
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
         return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
