@@ -3044,7 +3044,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       String api="https://www.loc.gov/film-and-videos/?q="+URLEncoder.encode(query,"UTF-8")+"&fo=json&c=18&sp=1";
       org.json.JSONObject root=new org.json.JSONObject(httpGetFast(api));
       org.json.JSONArray docs=root.optJSONArray("results");if(docs==null)return items;
-      ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
+      CompletionService<VodItem> completion=new PurgeableCompletionService<>(vodMetadataWorker);
       int submitted=0;
       for(int i=0;i<docs.length()&&submitted<12&&!Thread.currentThread().isInterrupted();i++){
         org.json.JSONObject doc=docs.optJSONObject(i);if(doc==null)continue;
@@ -3107,7 +3107,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       ArrayList<Future<VodItem>> pendingVodChecks=new ArrayList<>();
       ArrayList<Future<org.json.JSONArray>> pageTasks=new ArrayList<>();
       ArrayList<Future<ArrayList<VodItem>>> sourceFutures=new ArrayList<>();
-      CompletionService<ArrayList<VodItem>> sourceCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+      CompletionService<ArrayList<VodItem>> sourceCompletion=new PurgeableCompletionService<>(vodSourceWorker);
       boolean titleSearch=category.startsWith("搜索：");
       String searchTerm=titleSearch?category.substring("搜索：".length()).trim():"";
       if(titleSearch&&!searchTerm.isEmpty())sourceFutures.add(sourceCompletion.submit(()->fetchMetadataVod(searchTerm,requestRegion)));
@@ -3202,8 +3202,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           queries.add("mediatype:movies AND (subject:film noir OR subject:western OR subject:silent film OR subject:classic cinema) AND (language:English OR language:eng)");
         }
 
-        ExecutorCompletionService<VodItem> completion=new ExecutorCompletionService<>(vodMetadataWorker);
-        ExecutorCompletionService<org.json.JSONArray> pageCompletion=new ExecutorCompletionService<>(vodSourceWorker);
+        CompletionService<VodItem> completion=new PurgeableCompletionService<>(vodMetadataWorker);
+        CompletionService<org.json.JSONArray> pageCompletion=new PurgeableCompletionService<>(vodSourceWorker);
         int submitted=0,completed=0;
         // Prioritize page 1 across every independent query before deeper pages.
         // This avoids letting one broad query occupy the queue with pages 1-3 while
