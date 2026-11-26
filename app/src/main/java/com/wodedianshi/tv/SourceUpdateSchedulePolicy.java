@@ -135,6 +135,12 @@ public final class SourceUpdateSchedulePolicy {
         return false;
     }
 
+    /** Resume an input-interrupted idle slice after a short quiet window;
+     * the next worker still rechecks playback and concurrency admission. */
+    static long initialPressureDelaySeconds(boolean playbackActive,boolean idleWaveInterrupted) {
+        return !playbackActive&&idleWaveInterrupted?5L:30L;
+    }
+
     /** Normal viewing deferral is not a failed network attempt. */
     public static long initialViewingDelaySeconds(boolean stableButWaitingForIdle) {
         return stableButWaitingForIdle ? 60L : 30L;
