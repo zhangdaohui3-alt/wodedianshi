@@ -29,6 +29,12 @@ public final class TrackHealthPolicy {
     static boolean recentRenderedCounter(long lastAdvanceAt,long now) {
         return lastAdvanceAt>0L&&now>=lastAdvanceAt&&now-lastAdvanceAt<15000L;
     }
+    /** A delayed watchdog alone is not proof of a frozen renderer. Require
+     * two unchanged observations after a demonstrated advance in this epoch. */
+    static boolean renderedCounterStalled(long lastAdvanceAt,long now,int stationaryChecks) {
+        return stationaryChecks>=2&&lastAdvanceAt>0L&&now>=lastAdvanceAt
+                &&now-lastAdvanceAt>=20000L;
+    }
     static boolean audioWarningQuiet(long warningAt,long now) {
         return warningAt==0L||(warningAt>0L&&now>=warningAt&&now-warningAt>=30000L);
     }
