@@ -7,6 +7,13 @@ import java.util.Collections;
 import java.util.concurrent.FutureTask;
 
 public class IdleProbeWavePolicyTest {
+    @Test public void bridgeOnlyRowsThatCannotIssueAnotherRequest(){
+        assertTrue(IdleProbeWavePolicy.canBridgeKnownRow(true,true));
+        assertTrue(IdleProbeWavePolicy.canBridgeKnownRow(false,false));
+        assertTrue(IdleProbeWavePolicy.canBridgeKnownRow(false,true));
+        assertFalse(IdleProbeWavePolicy.canBridgeKnownRow(true,false));
+    }
+
     @Test public void localRegionRotationPreservesHostStationAndPriority(){
         java.util.List<String> input=Arrays.asList("0AaF1","0BaF1","0CaG1","0DbF1","0EbG1","0AaF2","1ZaG1");
         java.util.List<String> expected=Arrays.asList("0AaF1","0DbF1","0CaG1","0EbG1","0BaF1","0AaF2","1ZaG1");
