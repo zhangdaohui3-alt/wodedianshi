@@ -12,20 +12,32 @@ public final class MediaPayloadValidator {
         if (data == null || data.length < 8) return false;
         int maxOffset = Math.min(187, data.length - 1);
         for (int offset = 0; offset <= maxOffset; offset++) {
-            if ((data[offset] & 0xFF) == 0x47
-                    && offset + 188 < data.length
-                    && (data[offset + 188] & 0xFF) == 0x47) {
+            if (isValidTransportStreamPacket(data, offset)
+                    && isValidTransportStreamPacket(data, offset + 188)) {
                 return true;
             }
         }
-        return hasIsoBmffBox(data);
+        return hasIsoBmffMediaFragment(data);
+    }
+
+    private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
+        if (data == null || offset < 0 || offset + 188 > data.length
+                || (data[offset] & 0xFF) != 0x47) return false;
+        int adaptationControl = (data[offset + 3] >>> 4) & 0x03;
+        if (adaptationControl == 0) return false;
+        if (adaptationControl == 2 || adaptationControl == 3) {
+            int adaptationLength = data[offset + 4] & 0xFF;
+            int maximum = adaptationControl == 2 ? 183 : 182;
+            if (adaptationLength > maximum) return false;
+            if (adaptationControl == 3 && 5 + adaptationLength >= 188) return false;
+        }
+        return true;
     }
 
     /**
-     * Walks top-level ISO-BMFF box headers rather than accepting the words
-     * "moof"/"mdat" anywhere in arbitrary bytes (for example, an HTML error
-     * page). Sample data may be range-truncated, so a valid declared box may
-     * extend beyond the sample; its header must still be structurally valid.
+     * Generic ISO-BMFF signature check for on-demand payloads. This intentionally
+     * accepts file-type and index boxes; HLS media segments use the stricter
+     * hasIsoBmffMediaFragment check below.
      */
     public static boolean hasIsoBmffBox(byte[] data) {
         if (data == null || data.length < 8) return false;
@@ -43,7 +55,73 @@ public final class MediaPayloadValidator {
                 size = data.length - offset;
             }
             if (size < headerSize) return false;
-            if (isMediaBox(type)) return true;
+            if (isGenericIsoBmffBox(type)) return true;
+            if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+            offset += (int) size;
+        }
+        return false;
+    }
+
+    /**
+     * A fragmented MP4 HLS media segment must contain a top-level moof followed
+     * by a top-level mdat. The mdat body may extend beyond the bounded HTTP sample,
+     * but its complete box header must be present and structurally valid.
+     */
+    public static boolean hasIsoBmffMediaFragment(byte[] data) {
+        if (data == null || data.length < 16) return false;
+        int offset = 0;
+        boolean hasMovieFragment = false;
+        int examined = 0;
+        while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+            long size = uint32(data, offset);
+            String type = fourCc(data, offset + 4);
+            int headerSize = 8;
+            if (size == 1L) {
+                if (offset + 16 > data.length) return false;
+                size = uint64(data, offset + 8);
+                headerSize = 16;
+            } else if (size == 0L) {
+                size = data.length - offset;
+            }
+            if (size < headerSize) return false;
+            if ("moof".equals(type)) {
+                if (size > data.length - offset) return false;
+                hasMovieFragment = true;
+            } else if ("mdat".equals(type)) {
+                return hasMovieFragment;
+            }
+            if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+            offset += (int) size;
+        }
+        return false;
+    }
+
+    /**
+     * An HLS fMP4 initialization section must contain file-type and movie
+     * metadata boxes. The moov payload may exceed the bounded sample, so validate
+     * its header but do not require the full box body to have been downloaded.
+     */
+    public static boolean hasIsoBmffInitializationSegment(byte[] data) {
+        if (data == null || data.length < 16) return false;
+        int offset = 0;
+        boolean hasFileType = false;
+        boolean hasMovie = false;
+        int examined = 0;
+        while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+            long size = uint32(data, offset);
+            String type = fourCc(data, offset + 4);
+            int headerSize = 8;
+            if (size == 1L) {
+                if (offset + 16 > data.length) return false;
+                size = uint64(data, offset + 8);
+                headerSize = 16;
+            } else if (size == 0L) {
+                return false;
+            }
+            if (size < headerSize) return false;
+            if ("ftyp".equals(type)) hasFileType = true;
+            if ("moov".equals(type)) hasMovie = true;
+            if (hasFileType && hasMovie) return true;
             if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
             offset += (int) size;
         }
@@ -51,16 +129,49 @@ public final class MediaPayloadValidator {
     }
 
     public static boolean looksLikeMediaPayload(byte[] data) {
-        if (data == null || data.length < 8) return false;
+        if (data == null || data.length < 7) return false;
         if (looksLikeHlsSegment(data)) return true;
-        if (data[0] == 'F' && data[1] == 'L' && data[2] == 'V') return true;
-        return (data[0] & 0xFF) == 0xFF && ((data[1] & 0xF6) == 0xF0);
+        if (hasIsoBmffBox(data)) return true;
+        if (isValidFlvHeader(data)) return true;
+        return isValidAdtsHeader(data);
     }
 
-    private static boolean isMediaBox(String type) {
+    /**
+     * A familiar URL suffix must never turn an HTML/error payload into a valid source.
+     */
+    public static boolean looksLikeMediaPayload(byte[] data, String address) {
+        return looksLikeMediaPayload(data);
+    }
+
+    private static boolean isGenericIsoBmffBox(String type) {
         return "ftyp".equals(type) || "styp".equals(type)
                 || "moof".equals(type) || "mdat".equals(type)
                 || "sidx".equals(type);
+    }
+
+    private static boolean isValidAdtsHeader(byte[] data) {
+        if (data == null || data.length < 7
+                || (data[0] & 0xFF) != 0xFF
+                || ((data[1] & 0xF0) != 0xF0)
+                || ((data[1] & 0x06) != 0)) return false;
+        int samplingFrequencyIndex = (data[2] & 0x3C) >>> 2;
+        if (samplingFrequencyIndex > 12) return false;
+        boolean protectionAbsent = (data[1] & 0x01) != 0;
+        int headerLength = protectionAbsent ? 7 : 9;
+        if (data.length < headerLength) return false;
+        int frameLength = ((data[3] & 0x03) << 11)
+                | ((data[4] & 0xFF) << 3)
+                | ((data[5] & 0xE0) >>> 5);
+        return frameLength >= headerLength;
+    }
+
+    private static boolean isValidFlvHeader(byte[] data) {
+        if (data == null || data.length < 9
+                || data[0] != 'F' || data[1] != 'L' || data[2] != 'V'
+                || (data[3] & 0xFF) != 1) return false;
+        if (((data[4] & 0xFF) & 0xFA) != 0) return false;
+        long dataOffset = uint32(data, 5);
+        return dataOffset >= 9L && dataOffset <= data.length;
     }
 
     private static long uint32(byte[] data, int offset) {
