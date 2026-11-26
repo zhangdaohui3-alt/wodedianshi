@@ -33,6 +33,17 @@ public class DiscoveryBatchPolicyTest {
             new boolean[]{false,false,false,false},new long[]{0,12000,1,1},2,3));
     }
 
+    @Test public void coolingAllRegionsResumesAtEarliestEligibleFeed() {
+        assertEquals(1L,DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(
+            new boolean[]{false,false,false,false},new long[]{21000,12000,1000,4000}));
+        assertEquals(2L,DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(
+            new boolean[]{true,false,false},new long[]{1,12000,1001}));
+        assertEquals(30L,DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(
+            new boolean[]{true,false,false},new long[]{0,0,1000}));
+        assertEquals(30L,DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(
+            new boolean[]{true,true},new long[]{0,0}));
+    }
+
     @Test public void idleInitialNetworkCapDoesNotDiscardReusablePrefix() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,false));
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canConsumeProbePosition(true,false,6,6,true));
