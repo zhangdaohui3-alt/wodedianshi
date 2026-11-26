@@ -334,4 +334,13 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckPositions(
                 java.util.Arrays.asList("a","b"),0,2,pending).isEmpty());
     }
+
+    @Test public void provisionalDailyEligibilityIsIndependentOfMonthlyMaintenance(){
+        long now=1700000000000L,day=86400000L;
+        assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(false,0L,now));
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,0L,now));
+        assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day-1));
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day));
+        assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(now,0L,now+day));
+    }
 }
