@@ -38,9 +38,6 @@ public final class SourceMaintenanceRetentionPolicy {
         // preflighted candidate actually ranks better. The pinned source and
         // stable primary are never retired automatically.
         int retireIndex=retirementIndex(old,bestFirst,primary,active,permittedToEvict);
-        if (retireIndex<0 || bestFirst!=null
-                    && bestFirst.compare(url,old.get(retireIndex))>0) retireIndex=i;
-        }
         if (retireIndex<0 || bestFirst==null || verifiedCandidate==null
                 || !(verifiedCandidate.startsWith("https://")
                       || verifiedCandidate.startsWith("http://"))
@@ -64,7 +61,10 @@ public final class SourceMaintenanceRetentionPolicy {
             if (!permittedToEvict.contains(key)
                     || key.equals(SourceSelectionPolicy.endpointKey(primary))
                     || key.equals(SourceSelectionPolicy.endpointKey(active))) continue;
-            return retireIndex;
+            if (retireIndex<0 || bestFirst!=null
+                    && bestFirst.compare(url,old.get(retireIndex))>0) retireIndex=i;
+        }
+        return retireIndex;
     }
 
 }
