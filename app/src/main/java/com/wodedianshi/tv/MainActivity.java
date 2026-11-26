@@ -4600,8 +4600,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       return hasRegionalToken(metadata,city);
     }
-    String[] provinceNames={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-    for(String province:provinceNames)if(cat.equals(province))return matchesProvinceLocal(c,province);
+    // Province labels are checked only after the fixed categories below.
     if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("全球频道"))return ChannelCatalogueScopePolicy.matches(c.sourceScopes,"global");
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
@@ -4613,6 +4612,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
     if(cat.equals("中国"))return g.equals("中国")||g.equals("china")||x.contains("中国");
+    for(String province:new String[]{"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"})
+      if(cat.equals(province))return matchesProvinceLocal(c,province);
     return false;
   }
   private int findChannelIndexByKey(String key){
@@ -4696,10 +4697,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return "全部".equals(category)||"收藏".equals(category)||categoryMatch(c,category);
   }
 
+  private static final String[] PREPARED_FIXED_CATEGORIES={"中国","央视","卫视","港澳台","香港","澳门","台湾","全部","全球频道","娱乐频道","国际新闻","体育","天气","教育","自建频道"};
   private SnapshotCategoryIndex.LocalMembership buildLocalMembership(List<Channel> entries,
-      java.util.function.BooleanSupplier cancelled){
+      java.util.function.BooleanSupplier cancelled,boolean prepareFixed){
     ArrayList<Integer> allLocal=new ArrayList<>();
     java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
+    java.util.Map<String,java.util.List<Integer>> fixed=new HashMap<>();
+    if(prepareFixed)for(String category:PREPARED_FIXED_CATEGORIES)fixed.put(category,new ArrayList<>());
     for(int i=0;i<entries.size();i++){
       if((i&127)==0)SourceProbeTimePolicy.checkPublicationPaused(cancelled);
       Channel candidate=entries.get(i);
@@ -4708,9 +4712,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(facts.local)allLocal.add(i);
       if(!facts.excluded&&!facts.province.isEmpty())
         provinces.computeIfAbsent(facts.province,k->new ArrayList<>()).add(i);
+      if(prepareFixed)for(String category:PREPARED_FIXED_CATEGORIES)
+        if("全部".equals(category)||categoryMatch(candidate,category))fixed.get(category).add(i);
+    }
+    if(prepareFixed){
+      java.util.List<Integer> cctv=fixed.get("央视");
+      HashMap<Integer,Integer> orders=new HashMap<>();
+      HashMap<Integer,String> names=new HashMap<>();
+      for(int i:cctv){
+        SourceProbeTimePolicy.checkPublicationPaused(cancelled);
+        Channel c=entries.get(i);orders.put(i,cctvSortOrder(c));names.put(i,displayChannelName(c));
+      }
+      cctv.sort((a,b)->{
+        int order=Integer.compare(orders.get(a),orders.get(b));
+        return order!=0?order:names.get(a).compareTo(names.get(b));
+      });
     }
     SourceProbeTimePolicy.checkPublicationPaused(cancelled);
-    return new SnapshotCategoryIndex.LocalMembership(entries.size(),allLocal,provinces);
+    return new SnapshotCategoryIndex.LocalMembership(entries.size(),allLocal,provinces,fixed);
   }
   private void prepareStartupLocalSnapshot(){
     long started=android.os.SystemClock.elapsedRealtime();
@@ -4719,7 +4738,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     synchronized(channels){epoch=catalogueMutationGeneration;entries=new ArrayList<>(channels);}
     try{
       SnapshotCategoryIndex.LocalMembership membership=buildLocalMembership(entries,
-          ()->isFinishing()||isDestroyed()||epoch!=catalogueMutationGeneration);
+          ()->isFinishing()||isDestroyed()||epoch!=catalogueMutationGeneration,true);
       if(epoch==catalogueMutationGeneration)
         preparedLocalSnapshot=new SnapshotCategoryIndex.PreparedLocal(epoch,membership);
       android.util.Log.i("MyTVDirectory","startup_local_index_ms="+
@@ -4798,7 +4817,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }else{
             SnapshotCategoryIndex.LocalMembership membership;
             try{
-              membership=buildLocalMembership(sources,()->generation!=catalogueFilterGeneration);
+              membership=buildLocalMembership(sources,()->generation!=catalogueFilterGeneration,false);
             }catch(SourceProbeTimePolicy.PublicationPausedException superseded){return;}
             if(generation!=catalogueFilterGeneration)return;
             // A changed epoch must reach the existing publication/retry gate.
@@ -4807,6 +4826,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
         }
         java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
+        SnapshotCategoryIndex.PreparedLocal preparedFixed=preparedLocalSnapshot;
+        if(exactScope==null&&indexEligible&&!regionOnly&&preparedFixed!=null&&preparedFixed.matches(mutation,sources.size()))
+          exactScope=preparedFixed.membership.fixedCategory(categorySnapshot);
         java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
             ?categorySnapshotIndex.localCandidates(mutation,sources.size(),regionOnly?provinceSnapshot:null):null;
         final java.util.List<Integer> cachedScope=exactScope!=null?exactScope:
@@ -8654,7 +8676,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     long localIndexStarted=android.os.SystemClock.elapsedRealtime();
     try{
-      prepared.localMembership=buildLocalMembership(prepared.entries,cancelled);
+      prepared.localMembership=buildLocalMembership(prepared.entries,cancelled,true);
       android.util.Log.i("MyTVDirectory","replacement_local_index_ms="+
           (android.os.SystemClock.elapsedRealtime()-localIndexStarted)+" rows="+prepared.entries.size());
     }catch(SourceProbeTimePolicy.PublicationPausedException superseded){throw superseded;}
