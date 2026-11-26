@@ -180,7 +180,7 @@ public class SourceUpdateWorker extends Worker {
             stageDeadline,android.os.SystemClock.elapsedRealtime());
         if(addressDeadline==0L)break;
         checked++;
-        ProbeResult observation=probe(candidate.url,addressDeadline,viewing,paused,!viewing);
+        ProbeResult observation=probe(candidate.url,addressDeadline,viewing,paused,false);
         SourceProbeTimePolicy.checkPaused(paused);
         if(observation.socketTimedOut||observation.transientNetworkFailure
             ||android.os.SystemClock.elapsedRealtime()>=addressDeadline){
@@ -312,6 +312,7 @@ public class SourceUpdateWorker extends Worker {
     if(manualRefresh&&manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
     // No full catalogue yet: the one-time chain owns discovery; a periodic
     // worker must neither compete with it nor publish a partial replacement.
+    boolean provisionalOnly=false;
     if(!initialDiscoveryChain){
       long completedAt=0L;
       try{completedAt=Long.parseLong(roomString("source_full_rebuild_completed_at","0"));}
@@ -321,8 +322,14 @@ public class SourceUpdateWorker extends Worker {
       long lastRoutineAt=0L;
       try{lastRoutineAt=Long.parseLong(roomString("source_last_routine_maintenance_at","0"));}
       catch(NumberFormatException ignored){}
-      if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis()))
-        return Result.success();
+      if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis())){
+        String pending=roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,"[]");
+        long last=0L;
+        try{last=Long.parseLong(roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,"0"));}
+        catch(NumberFormatException ignored){}
+        provisionalOnly=SourceUpdateSchedulePolicy.provisionalRecheckDue(!"[]".equals(pending)&&!pending.isEmpty(),last,System.currentTimeMillis());
+        if(!provisionalOnly)return Result.success();
+      }
       // A manual chain may be between slices or paused for playback while the
       // Activity is in the background. Do not occupy its next source-work slot
       // or replace its cached feed. Preserve the routine due date when yielding.
@@ -366,6 +373,7 @@ public class SourceUpdateWorker extends Worker {
     String[] feeds=SourceDiscoveryFeedCatalog.feeds();
     final IdleProbeWave idleWave=new IdleProbeWave();
     try{
+      if(provisionalOnly)return runProvisionalQualityRecheck();
       final String manualOwnerKey=com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_OWNER_KEY;
       JSONArray manualWorkingRows=null;
       boolean manualQueueOnly=false,manualIndexed=false;
@@ -2119,6 +2127,75 @@ public class SourceUpdateWorker extends Worker {
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){idleWave.close();saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
     finally{idleWave.close();}
+  }
+  /** Reuse the existing daily worker/ownership gate, but never download feeds
+   * or rewrite the catalogue just to upgrade provisional quality evidence. */
+  private Result runProvisionalQualityRecheck()throws Exception{
+    final Context context=getApplicationContext();
+    LinkedHashSet<String> pending=new LinkedHashSet<>();
+    JSONArray stored=new JSONArray(roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,"[]"));
+    for(int i=0;i<stored.length();i++)
+      SourceUpdateSchedulePolicy.rememberProvisional(pending,stored.optString(i,""));
+    if(pending.isEmpty())return Result.success();
+    HashMap<String,String> current=new HashMap<>();
+    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
+        com.wodedianshi.tv.db.RoomCatalogueReader.read(context,page->{
+          for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            ArrayList<String> urls=new ArrayList<>(row.sources);
+            urls.add(row.url);
+            for(String url:urls){
+              if(!url.startsWith("http://")&&!url.startsWith("https://"))continue;
+              String key=scoreKey(url);
+              if(pending.contains(key))current.putIfAbsent(key,url);
+            }
+          }
+        },pauseRequested);
+    if(snapshot==null)return Result.retry();
+    // Only discard missing keys after a complete, version-consistent read.
+    pending.retainAll(current.keySet());
+    ArrayList<String> selected=new ArrayList<>();
+    for(String key:pending){
+      selected.add(current.get(key));
+      if(selected.size()>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+    }
+    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
+    JSONObject scores=new JSONObject(indexed?"{}":roomString("source_probe_scores_v1","{}"));
+    JSONObject streaks=new JSONObject(indexed?"{}":roomString("source_probe_failure_streaks_v1","{}"));
+    HashSet<String> dirty=new HashSet<>();
+    if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
+        com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,selected,new HashSet<>(),scores,streaks,pauseRequested);
+    long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
+    int checked=0,conclusive=0;
+    for(String url:selected){
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,android.os.SystemClock.elapsedRealtime());
+      if(deadline==0L)break;
+      checked++;
+      ProbeResult measured=probe(url,deadline,false,pauseRequested,false);
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      String key=scoreKey(url);
+      if(measured.socketTimedOut||measured.transientNetworkFailure
+          ||android.os.SystemClock.elapsedRealtime()>=deadline){
+        SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
+        continue;
+      }
+      storePreflightScore(scores,url,measured);
+      // Do not retire or change channel membership in a quality-only pass.
+      // Preserve existing failure-streak records for the ordinary health rotation.
+      dirty.add(key);dirty.add(legacyScoreKey(url));
+      pending.remove(key);conclusive++;
+    }
+    com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(context)
+        .putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(pending).toString())
+        .putLong(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,System.currentTimeMillis());
+    if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
+        com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
+    else update.putString("source_probe_scores_v1",scores.toString());
+    update.applyAtCatalogueVersion(snapshot.catalogueVersion,pauseRequested);
+    android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
+        +" conclusive="+conclusive+" pending="+pending.size());
+    return Result.success();
   }
   private Result abortManualStructuralConflict(String manualId){
     com.wodedianshi.tv.db.AppStateEditor status=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
