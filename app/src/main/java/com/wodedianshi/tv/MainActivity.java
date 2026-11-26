@@ -1132,7 +1132,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void saveLastChannel(){
     if(selected<0||selected>=channels.size())return;
     Channel c=channels.get(selected);
-    LastChannelState next=new LastChannelState(identity(c),c.url,c.name,c.group,c.tvgId);
+    persistLastChannelState(new LastChannelState(identity(c),c.url,c.name,c.group,c.tvgId));
+  }
+  private void persistLastChannelState(LastChannelState next){
     roomLastChannel=next;
     final Context app=getApplicationContext();
     // One latest-value slot per process, with a serial transactional write.
@@ -4330,14 +4332,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(channels.size()<=1){toast("至少保留一个频道");return;}
     final Channel oldSelected=selected>=0&&selected<channels.size()?channels.get(selected):null;
     final Channel target=channels.get(removed);
+    final boolean clearSavedResume=findLastChannelForResume()==removed;
     final boolean restart=oldSelected!=null&&oldSelected!=target
         &&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null);
     // Native callbacks hold the old positional channel index. Revoke the live
     // session before a user-requested structural deletion, even when the
     // selected station survives. Do not restart under a different identity.
     if(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null){
-      stopFailedLiveSession("正在更新频道目录");
       ++playbackGeneration;currentMediaId="";
+      stopFailedLiveSession("正在更新频道目录");
     }
     clearPendingRemoteZap();
     synchronized(channels){
@@ -4348,8 +4351,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     rebuildChannelIndexes();
     if(startupAutoResumePending){
       startupResumeIndex=channels.indexOf(startupResumeChannel);
-      if(startupResumeIndex<0){startupResumeChannel=null;startupAutoResumePending=false;}
+      if(startupResumeIndex<0){
+        startupResumeChannel=null;startupAutoResumePending=false;
+        if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}
+      }
     }
+    if(clearSavedResume)persistLastChannelState(new LastChannelState("","","","",""));
     persist();refresh();
     if(restart&&selected>=0&&selected<channels.size()&&channels.get(selected)==oldSelected)
       startCurrentSource();
