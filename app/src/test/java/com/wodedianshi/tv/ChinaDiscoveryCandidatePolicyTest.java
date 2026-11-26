@@ -94,6 +94,37 @@ public class ChinaDiscoveryCandidatePolicyTest {
                 "global","BBC News","News","",""));
     }
 
+    @Test public void coverageOrderingPreservesExactPageSequenceWithoutRedundantPreSort() {
+        String[][] rows={
+            {"BBC News","global","International","","","bbc","h1"},
+            {"CCTV-1","china","央视","","","cctv1","h1"},
+            {"深圳新闻","china","广东","","","sz","h2"},
+            {"RTHK","china","Hong Kong","","","rthk","h1"},
+            {"福州新闻","china","福建","","","fz","h2"},
+            {"CCTV-1","china","央视","","","cctv1","h3"},
+            {"深圳新闻","china","广东","","","sz","h1"},
+            {"仙桃新闻","china","湖北","","","xt","h2"},
+            {"Local News","global","US","","","local","h2"},
+            {"湖南卫视","china","卫视","","","hn","h3"},
+            {"County News","china","Local","","","county","h1"}
+        };
+        java.util.List<String[]> raw=Arrays.asList(rows);
+        for(int i=0;i<SourceDiscoveryFeedCatalog.feeds().length;i++){
+            final int feed=i;
+            ArrayList<String[]> previouslySorted=new ArrayList<>(raw);
+            if(feed<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
+                previouslySorted.sort((a,b)->Integer.compare(
+                    ChinaDiscoveryCandidatePolicy.initialProbePriority(feed,a[1],a[0],a[2],a[3],a[4]),
+                    ChinaDiscoveryCandidatePolicy.initialProbePriority(feed,b[1],b[0],b[2],b[3],b[4])));
+            java.util.function.ToIntFunction<String[]> priority=e->
+                ChinaDiscoveryCandidatePolicy.initialCoveragePriority(feed,e[1],e[0],e[2],e[3],e[4]);
+            java.util.function.Function<String[],String> region=e->
+                ChinaDiscoveryCandidatePolicy.initialCoverageRegion(feed,e[1],e[0],e[2],e[3],e[4]);
+            assertEquals(IdleProbeWavePolicy.coverageFirst(previouslySorted,e->e[5],e->e[6],priority,region),
+                IdleProbeWavePolicy.coverageFirst(raw,e->e[5],e->e[6],priority,region));
+        }
+    }
+
     @Test public void unknownMetadataIsNotInventedAsMainland() {
         assertFalse(ChinaDiscoveryCandidatePolicy.isClearlyMainland(
                 null,null,null,null,null));
