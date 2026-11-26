@@ -8,7 +8,7 @@ public final class SourceUpdateActivityPolicy {
     private static volatile long stableUntil;
     private static long firstHealthyAt;
     private static long bufferSampleAt;
-    private static int ampleBufferSamples;
+    private static long ampleBufferSince;
     private static long viewingSampleRate=32768L;
     private static volatile long lastPressureAt;
     private static final java.util.concurrent.atomic.AtomicLong pressureGeneration=new java.util.concurrent.atomic.AtomicLong();
@@ -67,7 +67,7 @@ public final class SourceUpdateActivityPolicy {
     }
 
     private static void clearDiscoveryBuffer(){
-        bufferSampleAt=0L;ampleBufferSamples=0;viewingSampleRate=32768L;
+        bufferSampleAt=0L;ampleBufferSince=0L;viewingSampleRate=32768L;
     }
     /** Playback buffer is a headroom proxy, not a link bandwidth measurement.
      * Only the Media3 healthy watchdog may supply these observations. */
@@ -78,13 +78,14 @@ public final class SourceUpdateActivityPolicy {
         if(bufferSampleAt!=0L&&(now<bufferSampleAt||now-bufferSampleAt>=LEASE_MS))
             clearDiscoveryBuffer();
         if(bufferedMs<1000L){
-            ampleBufferSamples=0;viewingSampleRate=16384L;
+            ampleBufferSince=0L;viewingSampleRate=16384L;
         }else if(bufferedMs>=10000L){
-            if(bufferSampleAt==0L||now-bufferSampleAt>=MIN_HEALTHY_INTERVAL_MS)
-                ampleBufferSamples=Math.min(2,ampleBufferSamples+1);
-            viewingSampleRate=ampleBufferSamples>=2?49152L:32768L;
+            // Measure sustained ample headroom from its first observation, not
+            // the immediately previous watchdog tick. Freshness is tracked separately.
+            if(ampleBufferSince==0L)ampleBufferSince=now;
+            viewingSampleRate=now-ampleBufferSince>=MIN_HEALTHY_INTERVAL_MS?49152L:32768L;
         }else{
-            ampleBufferSamples=0;viewingSampleRate=32768L;
+            ampleBufferSince=0L;viewingSampleRate=32768L;
         }
         bufferSampleAt=now;
     }
