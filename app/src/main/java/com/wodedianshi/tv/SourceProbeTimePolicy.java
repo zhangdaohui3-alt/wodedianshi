@@ -89,6 +89,18 @@ public final class SourceProbeTimePolicy {
     static int sampleConnectTimeoutCap(boolean viewing) { return viewing ? 1500 : 2500; }
     static int sampleReadTimeoutCap(boolean viewing) { return viewing ? 1000 : 3000; }
 
+    // Viewing probes are serial; pace each chunk without accumulating credit
+    // during a slow response or across HLS requests. This is application-level
+    // body consumption, not a TCP/OS bandwidth guarantee.
+    static final int VIEWING_SAMPLE_CHUNK_BYTES=4096;
+    static final long VIEWING_SAMPLE_BYTES_PER_SECOND=32L*1024L;
+    static final long VIEWING_SAMPLE_PAUSE_POLL_MS=25L;
+    static long viewingSampleDelayMillis(int bytes) {
+        if(bytes<=0)return 0L;
+        return (bytes*1000L+VIEWING_SAMPLE_BYTES_PER_SECOND-1L)
+                /VIEWING_SAMPLE_BYTES_PER_SECOND;
+    }
+
     /** Read at most the retained sample plus one sentinel, never a full extra buffer. */
     static int sampleReadLength(int maxBytes,int received,int bufferLength) {
         if(maxBytes<=0||received<0||bufferLength<=0)return 0;
