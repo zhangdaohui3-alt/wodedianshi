@@ -290,6 +290,8 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_discovery_scanned")
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0)
+              .putInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0)
+              .putInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0)
               .putInt("source_initial_index_attempted",0)
               .putBoolean("source_initial_index_bypassed",slowPlayback)
               .putInt("source_initial_index_ready",0)
@@ -397,11 +399,14 @@ public class SourceUpdateWorker extends Worker {
         int pendingPreview=FullDiscoveryProgressPolicy.nextPreviewLevel(oldPreview,stagedCount,
             chinaValidated,roomInt("source_initial_progress_china_done_feeds",0)>=SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
         int pendingMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(oldMilestone,stagedCount,chinaValidated);
-        if((pendingPreview>oldPreview||pendingMilestone>oldMilestone)
+        int oldCoreMask=roomInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
+        int pendingCoreMask=FullDiscoveryProgressPolicy.nextPreviewCoreMask(oldCoreMask,
+            roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0),chinaValidated);
+        if((pendingPreview>oldPreview||pendingMilestone>oldMilestone||pendingCoreMask!=oldCoreMask)
             &&FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,stagedCount,
                 com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
           JSONArray ready=takeCommittedStaging();
-          if(ready.length()==stagedCount&&publishInitialPreview(ready,pendingPreview,pendingMilestone))
+          if(ready.length()==stagedCount&&publishInitialPreview(ready,pendingPreview,pendingMilestone,pendingCoreMask))
             return continueAfterAcquisition();
         }
         // Last viewing slice may already have committed every feed. Avoid
@@ -1239,6 +1244,7 @@ public class SourceUpdateWorker extends Worker {
       }
       int previewLevel=0, previousPreviewLevel=0;
       int previewMilestone=0, previousPreviewMilestone=0;
+      int previewCoreMask=0,previousPreviewCoreMask=0;
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
         // end-of-feed was observed. A successful HTTP response alone is not done.
@@ -1306,6 +1312,23 @@ public class SourceUpdateWorker extends Worker {
         previousPreviewMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
         previewMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(previousPreviewMilestone,saved.length(),
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
+        // At most three independent category triggers over the entire build.
+        // Once all categories were observed, do not scan the staging rows again.
+        // On upgrade without this key, reconstruct once from committed+new rows.
+        int stagedCoreMask=roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1);
+        Iterable<Integer> coverageRows=stagedCoreMask<0?allRowIndices(saved):touchedStagedRows;
+        stagedCoreMask=Math.max(0,stagedCoreMask)&FullDiscoveryProgressPolicy.ALL_CORE;
+        for(int rowIndex:coverageRows){
+          if(stagedCoreMask==FullDiscoveryProgressPolicy.ALL_CORE)break;
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          JSONObject row=saved.getJSONObject(rowIndex);
+          stagedCoreMask|=FullDiscoveryProgressPolicy.coreCategoryMask(
+              row.optString("name"),row.optString("group"),row.optString("tvgName"),row.optString("tvgId"));
+        }
+        previousPreviewCoreMask=roomInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
+        previewCoreMask=FullDiscoveryProgressPolicy.nextPreviewCoreMask(previousPreviewCoreMask,stagedCoreMask,
+            (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
+        update.putInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,stagedCoreMask);
         int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
         update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
             .putInt("source_initial_progress_percent",progressPercent)
@@ -1420,7 +1443,9 @@ public class SourceUpdateWorker extends Worker {
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed));
         }
-        failedBuildReset.remove("source_full_rebuild_active")
+        failedBuildReset.remove(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY)
+            .remove(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY)
+            .remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
             .remove("source_initial_has_validated_source")
             .remove("source_initial_discovery_fingerprint")
@@ -1465,8 +1490,9 @@ public class SourceUpdateWorker extends Worker {
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
         }
-        if(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)
-          publishInitialPreview(saved,previewLevel,previewMilestone);
+        if(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone
+            ||previewCoreMask!=previousPreviewCoreMask)
+          publishInitialPreview(saved,previewLevel,previewMilestone,previewCoreMask);
       }else if(manualRefresh){
         if(manualQueueOnly){
           if(!touchedStagedRows.isEmpty()||saved.length()!=0||!candidates.isEmpty()||!manualSavedOnly)
@@ -1752,7 +1778,7 @@ public class SourceUpdateWorker extends Worker {
       throw new IllegalStateException("Converted Room catalogue count mismatch");
     return snapshot;
   }
-  private boolean publishInitialPreview(JSONArray saved,int level,int milestone)throws Exception{
+  private boolean publishInitialPreview(JSONArray saved,int level,int milestone,int coreMask)throws Exception{
     if(saved.length()==0||!FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),
         com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels()))return false;
     noteInitialStage("正在发布阶段性已预检频道");
@@ -1762,7 +1788,8 @@ public class SourceUpdateWorker extends Worker {
     JSONArray preview=preservePreviouslyPublishedChannels(saved,priorRows);
     com.wodedianshi.tv.db.AppStateEditor state=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,level)
-        .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,milestone);
+        .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,milestone)
+        .putInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,coreMask);
     int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
         getApplicationContext(),preview,base.catalogueVersion,false,pauseRequested,state);
     if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
