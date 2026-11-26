@@ -72,6 +72,25 @@ public final class FullDiscoveryProgressPolicy {
         return !viewing&&milestone>0&&milestone<=16?4000L:15000L;
     }
 
+    // Independent category milestones. Staged mask is committed with the
+    // probe checkpoint; published mask only with the atomic live snapshot.
+    static final String STAGED_CORE_MASK_KEY="source_initial_staged_core_mask";
+    static final String PREVIEW_CORE_MASK_KEY="source_initial_preview_core_mask";
+    static final int CORE_CCTV=1,CORE_SATELLITE=2,CORE_LOCAL=4,ALL_CORE=7;
+
+    static int coreCategoryMask(String name,String group,String tvgName,String tvgId) {
+        String metadata=safe(name)+" "+safe(tvgName)+" "+safe(tvgId);
+        if(RegionCategoryPolicy.isHongKongMacauTaiwan(metadata,group))return 0;
+        if(ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group).startsWith("CCTV-"))
+            return CORE_CCTV;
+        if(ChannelNamePolicy.isSatellite(metadata,group))return CORE_SATELLITE;
+        return ChannelNamePolicy.provinceForLocalChannel(metadata+" "+safe(group)).isEmpty()?0:CORE_LOCAL;
+    }
+
+    static int nextPreviewCoreMask(int previous,int stagedMask,int mainlandValidated) {
+        return mainlandValidated>0 ? (previous|stagedMask)&ALL_CORE : previous&ALL_CORE;
+    }
+
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
     // More frequent early publication, then geometric growth to bound
     // database work. Existing watermark values remain valid on upgrade.
