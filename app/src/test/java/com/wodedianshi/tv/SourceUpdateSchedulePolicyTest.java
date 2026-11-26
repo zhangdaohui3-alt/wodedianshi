@@ -351,4 +351,13 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.needsIndexedQualityReload(-1L,42L,"",""));
         assertFalse(SourceUpdateSchedulePolicy.needsIndexedQualityReload(42L,42L,"",""));
     }
+
+    @Test public void oneReuseRuleRespectsEvidenceGradeAgeAndViewingMode(){
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,100000L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,true,false,false,1000L,100000L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,true,1000L,2000L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16001L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L));
+    }
 }
