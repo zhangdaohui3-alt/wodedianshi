@@ -78,12 +78,23 @@ public class FullDiscoveryProgressPolicyTest {
         org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1,0));
         org.junit.Assert.assertEquals(1,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,1,1));
         org.junit.Assert.assertEquals(4,FullDiscoveryProgressPolicy.nextPreviewMilestone(1,6,6));
-        org.junit.Assert.assertEquals(8,FullDiscoveryProgressPolicy.nextPreviewMilestone(4,15,20));
+        org.junit.Assert.assertEquals(14,FullDiscoveryProgressPolicy.nextPreviewMilestone(4,15,20));
         org.junit.Assert.assertEquals(128,FullDiscoveryProgressPolicy.nextPreviewMilestone(128,8,20));
         org.junit.Assert.assertEquals(16,FullDiscoveryProgressPolicy.nextPreviewMilestone(0,16,20));
         org.junit.Assert.assertEquals(128,FullDiscoveryProgressPolicy.nextPreviewMilestone(64,163,20));
         org.junit.Assert.assertEquals(192,FullDiscoveryProgressPolicy.nextPreviewMilestone(128,246,20));
         org.junit.Assert.assertEquals(192,FullDiscoveryProgressPolicy.nextPreviewMilestone(192,160,20));
+    }
+
+    @Test public void smallPreviewGrowthIsExposedWithoutWaitingForSixteenOrThirtyTwo(){
+        assertEquals(12,FullDiscoveryProgressPolicy.nextPreviewMilestone(8,13,20));
+        assertEquals(14,FullDiscoveryProgressPolicy.nextPreviewMilestone(12,14,20));
+        assertEquals(14,FullDiscoveryProgressPolicy.nextPreviewMilestone(14,15,20));
+        assertEquals(16,FullDiscoveryProgressPolicy.nextPreviewMilestone(14,16,20));
+        assertEquals(20,FullDiscoveryProgressPolicy.nextPreviewMilestone(16,21,20));
+        assertEquals(24,FullDiscoveryProgressPolicy.nextPreviewMilestone(20,31,20));
+        assertEquals(32,FullDiscoveryProgressPolicy.nextPreviewMilestone(32,24,20));
+        assertEquals(12,FullDiscoveryProgressPolicy.nextPreviewMilestone(12,24,0));
     }
 
     @org.junit.Test public void smallPreviewCanPublishWhileHealthyViewingButFinalSnapshotCannot(){
