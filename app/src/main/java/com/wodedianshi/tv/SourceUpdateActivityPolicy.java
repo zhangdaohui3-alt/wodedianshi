@@ -62,12 +62,16 @@ public final class SourceUpdateActivityPolicy {
                 &&!quarantined&&decoderAvailable;
     }
     public static int idleProbeConcurrency(long now){
+        return idleProbeConcurrency(now,false);
+    }
+    static int idleProbeConcurrency(long now,boolean initial){
         if(playbackActive)return 1;
+        int ceiling=initial?IdleProbeWavePolicy.MAX_CONCURRENT:IdleProbeWavePolicy.ORDINARY_CONCURRENT;
         long last=lastPressureAt;
-        if(last==0L)return 4;
+        if(last==0L)return ceiling;
         if(now<last||now-last<5000L)return 1;
         if(now-last<20000L)return 2;
-        return 4;
+        return ceiling;
     }
     public static synchronized boolean permitsInitialPlaybackWork(long now) {
         long until=stableUntil;
