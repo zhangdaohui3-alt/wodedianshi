@@ -4,6 +4,16 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void quickAcquisitionCanEnterBoundedFirstWatchProbeInSameSlice() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10000L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10001L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,true,48,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,false,48,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,0,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,-1,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,-1L));
+    }
+
     @org.junit.Test public void acquisitionMarkerRequiresExactNonemptyBodyVersion() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.isPreparedInitialFeed("feed:hash","feed:hash"));
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.isPreparedInitialFeed("feed:old","feed:new"));
