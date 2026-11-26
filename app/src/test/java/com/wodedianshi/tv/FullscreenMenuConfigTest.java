@@ -10,6 +10,17 @@ public class FullscreenMenuConfigTest {
         assertEquals("favorite", config.findCategory("live").getItems().get(0).id);
     }
 
+    @Test public void singleRefreshUpgradePreservesCustomMenuAndDoesNotDuplicate(){
+        FullscreenMenuConfig config=FullscreenMenuConfig.defaults();
+        assertFalse(config.addSingleChannelRefreshForUpgrade());
+        assertTrue(config.removeItem("live","refresh_channel"));
+        assertTrue(config.renameCategory("live","常用"));
+        assertTrue(config.addSingleChannelRefreshForUpgrade());
+        assertFalse(config.addSingleChannelRefreshForUpgrade());
+        assertEquals("常用",config.findCategory("live").title);
+        assertTrue(config.findCategory("live").getItems().stream().anyMatch(i->i.id.equals("refresh_channel")));
+    }
+
     @Test public void addRemoveRenameAndReorderCategories() {
         FullscreenMenuConfig config = FullscreenMenuConfig.defaults();
         assertTrue(config.addCategory("custom", "我的快捷项"));
