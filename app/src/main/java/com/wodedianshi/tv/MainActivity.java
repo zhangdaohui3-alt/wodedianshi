@@ -300,6 +300,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // instead of rebuilding/sorting the entire directory on the Android UI thread.
   private int pendingRemoteZapSteps=0;
   private long pendingRemoteZapGeneration=-1L;
+  private Runnable pendingRemoteZapDispatch;
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
   private volatile long indexedPlaybackScoreVersion=-1L;
@@ -4371,7 +4372,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             menuSelectedFocusGeneration=-1L;
             focusSelectedChannelInMenu();
           }
-          if(pendingRemoteZapGeneration==generation&&pendingRemoteZapSteps!=0){
+          if(RemoteChannelOrderPolicy.canDispatchQueuedZap(pendingRemoteZapDispatch!=null,pendingRemoteZapGeneration,generation,pendingRemoteZapSteps)){
             int steps=pendingRemoteZapSteps;
             clearPendingRemoteZap();
             if(canApplyRemoteZap())applyChannelZap(ready,steps);
@@ -5558,6 +5559,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     refresh(true);
   }
   private void clearPendingRemoteZap(){
+    if(pendingRemoteZapDispatch!=null){uiHandler.removeCallbacks(pendingRemoteZapDispatch);pendingRemoteZapDispatch=null;}
     pendingRemoteZapSteps=0;
     pendingRemoteZapGeneration=-1L;
   }
@@ -5608,10 +5610,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           +(android.os.SystemClock.elapsedRealtime()-started));
       return;
     }
-    clearPendingRemoteZap();
-    if(steps!=0)applyChannelZap(order,steps);
-    android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
-        +(android.os.SystemClock.elapsedRealtime()-started)+" total="+order.indexes.size());
+    pendingRemoteZapSteps=steps;
+    pendingRemoteZapGeneration=generation;
+    if(steps==0){clearPendingRemoteZap();return;}
+    if(pendingRemoteZapDispatch!=null)return;
+    pendingRemoteZapDispatch=()->{
+      pendingRemoteZapDispatch=null;
+      if(!canApplyRemoteZap()||!RemoteChannelOrderPolicy.canDispatchQueuedZap(false,
+          pendingRemoteZapGeneration,catalogueFilterGeneration,pendingRemoteZapSteps)){
+        clearPendingRemoteZap();return;
+      }
+      RemoteChannelOrder current=currentRemoteChannelOrder();
+      if(current==null){prewarmRemoteChannelOrder();return;}
+      int accumulated=pendingRemoteZapSteps;
+      clearPendingRemoteZap();
+      applyChannelZap(current,accumulated);
+      android.util.Log.i("MyTVZap","channel_key_to_tune_ms="
+          +(android.os.SystemClock.elapsedRealtime()-started)+" burst_steps="+accumulated
+          +" total="+current.indexes.size());
+    };
+    uiHandler.postDelayed(pendingRemoteZapDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
   }
   private void showChannelZapOverlay(){
     if(selected<0||selected>=channels.size())return;
