@@ -110,6 +110,16 @@ public final class DiscoveryBatchPolicy {
     static String initialTransientRecheckKey(int feedIndex) {
         return initialBatchPrefix(feedIndex)+"transient_recheck";
     }
+    static final long TRANSIENT_RECHECK_COOLDOWN_MS=30000L;
+    static String initialTransientRecheckAtKey(int feedIndex) {
+        return initialBatchPrefix(feedIndex)+"transient_recheck_at";
+    }
+    // Persist wall time across process restarts. A clock rollback cannot
+    // indefinitely block the page; invalid/missing timestamps are eligible.
+    static boolean transientRecheckCooling(long admittedAt,long now) {
+        return admittedAt>0L&&now>=admittedAt
+                &&now-admittedAt<TRANSIENT_RECHECK_COOLDOWN_MS;
+    }
     static int resumeTransientRecheck(boolean sameFingerprint,int marker,int scanned) {
         if(!sameFingerprint)return NO_TRANSIENT_RECHECK;
         if(marker==TRANSIENT_RECHECK_USED)return marker;
