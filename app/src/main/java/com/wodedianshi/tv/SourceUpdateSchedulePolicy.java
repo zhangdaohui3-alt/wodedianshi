@@ -86,6 +86,16 @@ public final class SourceUpdateSchedulePolicy {
         return !viewing&&freshDifferentNextFeed?0L:30L;
     }
 
+    /** A readable but nonempty page that consumes no candidate is not
+     * progress. Avoid an immediate scheduling loop even when the stop was
+     * before wave admission (e.g. the remaining stage budget is too small).
+     * A completed empty page or another eligible directory may still advance. */
+    static long initialCommittedContinuationDelay(boolean viewing,boolean feedRead,
+            boolean freshDifferentNextFeed,boolean pageComplete,int scanned,boolean waveTimedOut) {
+        if(!viewing&&feedRead&&scanned<=0&&(!pageComplete||waveTimedOut))return 30L;
+        return initialContinuationDelaySeconds(viewing,feedRead,freshDifferentNextFeed);
+    }
+
     // Idle slices normally have a 90s probe stage plus bounded acquisition.
     // Do not apply this guard to the separately paced 300s viewing download.
     static final long INITIAL_IDLE_SLICE_LIMIT_MS=240000L;
