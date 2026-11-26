@@ -32,7 +32,7 @@ public final class DiscoveryBatchPolicy {
         return stagedChannels<16&&checkedUrls<48;
     }
 
-    // Only combine quick acquisition with the bounded six-position first-watch
+    // Only combine quick acquisition with the bounded six-request first-watch
     // slice. Slow downloads and stable viewing retain separate work requests.
     static boolean canProbeAfterQuickAcquisition(boolean early,boolean viewing,
             int indexedEntries,long elapsedMs) {
@@ -51,6 +51,20 @@ public final class DiscoveryBatchPolicy {
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
         return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
+    }
+
+    /** A cached or shared endpoint does not consume a fresh network request.
+     * Allow a bounded longer contiguous prefix for the early idle slice, while
+     * keeping the six-request limit and the existing two-position viewing cap. */
+    static int discoveryPositionWindow(boolean early,boolean viewing,int remaining,int ordinaryWindow) {
+        if(viewing)return Math.min(Math.max(0,remaining),VIEWING_PROBES_PER_SLICE);
+        return Math.min(Math.max(0,remaining),early?24:Math.max(0,ordinaryWindow));
+    }
+
+    /** Includes the current request, whose counter was incremented before
+     * asking to admit a wave. Never launch speculative requests over budget. */
+    static int waveRequestAllowance(int limit,int checkedIncludingCurrent) {
+        return Math.max(0,limit-checkedIncludingCurrent+1);
     }
 
     /** Independent partial page checkpoints enable fair rotation. */
