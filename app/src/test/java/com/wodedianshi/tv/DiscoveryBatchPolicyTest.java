@@ -97,6 +97,16 @@ public class DiscoveryBatchPolicyTest {
                         scanned, channelEndpoints.size())));
     }
 
+    @Test public void shortFirstWatchSlicesAreBoundedAndPreserveViewingLimit() {
+        assertEquals(6,DiscoveryBatchPolicy.firstWatchProbeLimit(false,0,0));
+        assertEquals(6,DiscoveryBatchPolicy.firstWatchProbeLimit(false,15,47));
+        assertEquals(48,DiscoveryBatchPolicy.firstWatchProbeLimit(false,16,0));
+        assertEquals(48,DiscoveryBatchPolicy.firstWatchProbeLimit(false,0,48));
+        assertEquals(2,DiscoveryBatchPolicy.firstWatchProbeLimit(true,0,0));
+        assertEquals(2,DiscoveryBatchPolicy.firstWatchProbeLimit(true,200,500));
+        assertEquals(48,DiscoveryBatchPolicy.INITIAL_PAGE_SIZE);
+    }
+
     @Test public void largerInitialPageKeepsOrdinaryAndViewingProbeLimits() {
         assertEquals(48,DiscoveryBatchPolicy.INITIAL_PAGE_SIZE);
         assertEquals(48,DiscoveryBatchPolicy.probeLimit(true,false,24));
