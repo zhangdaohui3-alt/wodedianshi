@@ -36,8 +36,9 @@ public class SourceUpdateWorker extends Worker {
   }
   private static void rememberInitialProbe(String key,ProbeResult result,long at){
     INITIAL_PROBES.put(key,new RecentProbe(result,at));
-    while(INITIAL_PROBES.size()>INITIAL_PROBE_CACHE_CAP)
-      INITIAL_PROBES.remove(INITIAL_PROBES.keySet().iterator().next());
+    final long now=android.os.SystemClock.elapsedRealtime();
+    SourceUpdateSchedulePolicy.trimInitialProbeCache(INITIAL_PROBES,INITIAL_PROBE_CACHE_CAP,
+        entry->SourceUpdateSchedulePolicy.canReuseInitialProbe(entry.result.valid,entry.at,now));
   }
   private static void retainCompletedInitialSuccess(String key,ProbeResult result,
       long finishedAt,long addressDeadline,long batchDeadline){
