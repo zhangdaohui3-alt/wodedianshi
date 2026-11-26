@@ -22,6 +22,11 @@ public final class RoomCatalogueReloadPolicy {
                 && loadedVersion == committedVersion.longValue();
     }
 
+    /** Full-build progress is not UI acknowledgement. A later trusted version also satisfies the floor. */
+    static boolean hasLoadedFinalCatalogue(boolean trusted,long loadedVersion,long requiredVersion) {
+        return trusted&&requiredVersion>0L&&loadedVersion>=requiredVersion;
+    }
+
     public static boolean mayPublish(boolean activityActive, boolean latestRequest,
             long capturedMutationGeneration, long currentMutationGeneration) {
         return activityActive && latestRequest
