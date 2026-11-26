@@ -154,4 +154,24 @@ public class MediaPayloadValidatorTest {
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(flv));
         assertTrue(MediaPayloadValidator.looksLikeMediaPayload(adts));
     }
+
+    @Test public void earlyFragmentConfirmationRequiresCompleteMoofAndMediaByte(){
+        byte[] fragment={0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0,
+                0,0,16,0,'m','d','a','t',1};
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(java.util.Arrays.copyOf(fragment,15)));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(java.util.Arrays.copyOf(fragment,24)));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(fragment));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(java.util.Arrays.copyOf(fragment,8192)));
+        assertTrue(MediaPayloadValidator.looksLikeHlsSegment(fragment));
+        byte[] emptyMdat={0,0,0,8,'m','o','o','f',0,0,0,8,'m','d','a','t',1};
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(emptyMdat));
+    }
+
+    @Test public void earlyConfirmationPreservesExistingTsCheck(){
+        byte[] ts=new byte[376];
+        ts[0]=0x47;ts[3]=0x10;ts[188]=0x47;ts[191]=0x10;
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(java.util.Arrays.copyOf(ts,375)));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(ts));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(new byte[8192]));
+    }
 }
