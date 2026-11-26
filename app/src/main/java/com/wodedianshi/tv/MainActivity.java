@@ -4818,8 +4818,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         ArrayList<Channel> sources;
         synchronized(channels){sources=new ArrayList<>(channels);}
-        final Set<String> geoKeys=geoScopeSnapshot==null?null:
-            geoKeysForSnapshot(sources,membershipEpoch,geoScopeSnapshot,geoCountrySnapshot);
+        final boolean geographic=geoScopeSnapshot!=null;
+        final boolean indexEligible=!favoriteOnly;
+        final java.util.List<String> scopeKey=SnapshotCategoryIndex.scopeKey(categorySnapshot,
+            regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null,geoScopeSnapshot,geoCountrySnapshot);
+        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
+        // A cached geographic position list already proves exact membership.
+        // On a miss retain the existing provenance-based membership resolution.
+        final Set<String> geoKeys=geographic&&exactScope==null?
+            geoKeysForSnapshot(sources,membershipEpoch,geoScopeSnapshot,geoCountrySnapshot):null;
         // Filter the stable reference snapshot directly. Cloning every Channel here
         // duplicated 11k+ objects and their display strings on every category/search
         // refresh, compounding the already large restored catalogue in memory.
@@ -4827,10 +4834,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // resolve by stable key, so these references are read-only in this pass.
         HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Integer> indexes=new ArrayList<>();
-        final boolean indexEligible=!favoriteOnly&&geoKeys==null;
-        final java.util.List<String> scopeKey=java.util.Arrays.asList(categorySnapshot,
-            regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null);
-        if(indexEligible&&"地方".equals(categorySnapshot)
+        if(indexEligible&&!geographic&&"地方".equals(categorySnapshot)
             &&!categorySnapshotIndex.hasLocalIndex(membershipEpoch,sources.size())){
           SnapshotCategoryIndex.PreparedLocal prebuilt=preparedLocalSnapshot;
           if(prebuilt!=null&&prebuilt.matches(membershipEpoch,sources.size())){
@@ -4846,11 +4850,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               categorySnapshotIndex.putLocalMembership(membershipEpoch,sources.size(),membership);
           }
         }
-        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
         SnapshotCategoryIndex.PreparedLocal preparedFixed=preparedLocalSnapshot;
-        if(exactScope==null&&indexEligible&&!regionOnly&&preparedFixed!=null&&preparedFixed.matches(membershipEpoch,sources.size()))
+        if(exactScope==null&&indexEligible&&!geographic&&!regionOnly&&preparedFixed!=null&&preparedFixed.matches(membershipEpoch,sources.size()))
           exactScope=preparedFixed.membership.fixedCategory(categorySnapshot);
-        java.util.List<Integer> localCandidates=indexEligible&&"地方".equals(categorySnapshot)
+        java.util.List<Integer> localCandidates=indexEligible&&!geographic&&"地方".equals(categorySnapshot)
             ?categorySnapshotIndex.localCandidates(membershipEpoch,sources.size(),regionOnly?provinceSnapshot:null):null;
         final java.util.List<Integer> cachedScope=exactScope!=null?exactScope:
             (citySnapshot==null?localCandidates:null);
