@@ -4,6 +4,23 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void expiredRecentCacheEntryDoesNotEvictReusableOlderResult() {
+        java.util.LinkedHashMap<String,Long> cache=new java.util.LinkedHashMap<>(8,0.75f,true);
+        cache.put("older-success",290000L);
+        cache.put("expired-failure",10000L);
+        cache.put("new-success",300000L);
+        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,2,
+            at->SourceUpdateSchedulePolicy.canReuseInitialProbe(true,at,320000L));
+        assertEquals(java.util.Arrays.asList("older-success","new-success"),new java.util.ArrayList<>(cache.keySet()));
+        cache.put("another-success",310000L);
+        cache.get("older-success");
+        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,2,
+            at->SourceUpdateSchedulePolicy.canReuseInitialProbe(true,at,320000L));
+        assertEquals(java.util.Arrays.asList("another-success","older-success"),new java.util.ArrayList<>(cache.keySet()));
+        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,0,at->true);
+        assertTrue(cache.isEmpty());
+    }
+
     @org.junit.Test public void onlyTimelyCompletedPositiveObservationsSurviveCancellation() {
         org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,100,101,200));
         org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(false,false,100,101,200));
