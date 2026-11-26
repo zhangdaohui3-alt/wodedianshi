@@ -49,6 +49,19 @@ public final class SourceDiscoveryPriorityPolicy {
         return nextFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd);
     }
 
+    /** Select from the highest-priority eligible stage. A temporarily deferred
+     * feed remains unfinished in the durable state; the mask below is local
+     * to selection and must never be used for progress or final publication. */
+    static int nextEligibleFeed(int preferredStart,boolean[] completed,boolean[] attempted,
+            int mainlandEnd,int regionEnd,boolean firstWatch) {
+        int preferred=nextFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd,firstWatch);
+        if(preferred>=0)return preferred;
+        if(completed==null||attempted==null||completed.length!=attempted.length)return -1;
+        boolean[] selectionOnly=completed.clone();
+        for(int i=0;i<selectionOnly.length;i++)selectionOnly[i]|=attempted[i];
+        return nextFeed(preferredStart,selectionOnly,attempted,mainlandEnd,regionEnd,firstWatch);
+    }
+
     /** 0 mainland, 1 HMT, 2 other regions, 3 all inspected. */
     public static int activeStage(boolean[] completed, int mainlandEnd, int regionEnd) {
         int size = completed == null ? 0 : completed.length;
