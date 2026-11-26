@@ -3120,7 +3120,7 @@ public class SourceUpdateWorker extends Worker {
             if(resources.aes128Encrypted){
               byte[] segmentIv=resources.encryptionIv!=null
                   ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
-                  :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber);
+                  :HlsAes128Preflight.ivForMediaSequence(resources.mediaSequenceNumbers.get(0));
               if(!HlsAes128Preflight.validatesMediaSegment(
                   candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
             }else if(!looksLikeHlsSegment(candidateSample))continue;
@@ -3134,7 +3134,7 @@ public class SourceUpdateWorker extends Worker {
                 if(resources.aes128Encrypted&&second!=null){
                   byte[] secondIv=resources.encryptionIv!=null
                       ?HlsAes128Preflight.parseExplicitIv(resources.encryptionIv)
-                      :HlsAes128Preflight.ivForMediaSequence(resources.firstMediaSequenceNumber+1L);
+                      :HlsAes128Preflight.ivForMediaSequence(resources.mediaSequenceNumbers.get(1));
                   secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
                       second,aesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
                 }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
