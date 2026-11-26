@@ -650,11 +650,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // An old row can outlive a catalogue index replacement.
     // Do not relabel it while its click still owns the old key.
     if(!channel.key().equals(button.getTag(R.id.tag_channel_key)))return;
-    String channelName=channel.name==null?"":channel.name;
     boolean broadcast=isCctvChannel(channel)||isSatelliteChannel(channel);
     String title=displayChannelName(channel);
-    String channelGroup=channel.group==null?"":channel.group;
-    String group=broadcast?"":(channelGroup.isEmpty()?"":" · "+channelGroup);
+    String group=broadcast?"":displayLiveChannelGroup(channel);
     button.setText((index==selected?"▶ ":"")+(favorites.contains(channel.key())?"★ ":"")+title+group);
     button.setContentDescription(index==selected?"当前正在播放："+title:title);
     applyLiveChannelRowStyle(button,Color.rgb(35,45,62));
@@ -1047,6 +1045,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!broadcaster.isEmpty())return displayChannelName(broadcaster);
     return ChannelNamePolicy.canonicalLocalDisplayName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
+  }
+  private String displayLiveChannelGroup(Channel c){
+    if(c==null)return "";
+    String group=c.group==null?"":c.group;
+    // In the local directory show the resolved Chinese province, not an
+    // aggregator's English genre/group label. Preserve raw metadata in Room.
+    if("地方".equals(activeCategory)||localRegionFilterActive){
+      String province=ChannelNamePolicy.provinceForLocalChannel(regionalMetadata(c));
+      if(!province.isEmpty())group=province;
+      else if(ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china"))group="地方台";
+    }
+    return group.isEmpty()?"":" · "+group;
   }
   private String canonicalChannelName(String name){
     String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
@@ -4289,7 +4299,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean matchesProvinceLocal(Channel c,String province){
     if(c==null||province==null)return false;
     String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata))return false;
+    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
+        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     // The shared classifier also recognizes county stations (e.g. 上虞、固镇、
@@ -4337,7 +4348,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean matchesProvinceCity(Channel c,String province,String city){
     if(c==null||province==null||city==null)return false;
     String metadata=regionalMetadata(c);
-    if(isSatelliteChannel(c,metadata))return false;
+    if(isSatelliteChannel(c,metadata)||isCctvChannel(c)
+        ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group))return false;
     String explicit=explicitProvinceIn(metadata);
     if(!explicit.isEmpty()&&!explicit.equals(province))return false;
     if(!java.util.Arrays.asList(citiesForProvince(province)).contains(city))return false;
@@ -4667,10 +4679,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Filtering runs on a worker over the same Channel references. UI rendering
       // must NEVER mutate their fields; use null-safe display locals instead.
       final String channelKey=c.key();
-      final String channelName=c.name==null?"":c.name;
       final String title=displayChannelName(c);
-      String channelGroup=c.group==null?"":c.group;
-      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":((channelGroup==null||channelGroup.isEmpty())?"":" · "+channelGroup);
+      String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":displayLiveChannelGroup(c);
       Integer mappedIndex=sourceIndexByKey==null?null:sourceIndexByKey.get(channelKey);
       final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
