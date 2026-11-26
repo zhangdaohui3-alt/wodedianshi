@@ -9,6 +9,10 @@ public final class LivePagePolicy {
         return (int) Math.max(1L, ((long) itemCount + pageSize - 1L) / pageSize);
     }
 
+    public static boolean canSelectPage(int targetPage, int itemCount, int pageSize) {
+        return targetPage>=0 && targetPage<pageCount(itemCount,pageSize);
+    }
+
     public static boolean canAdvance(int currentPage, int itemCount, int pageSize) {
         return currentPage >= 0 && currentPage + 1 < pageCount(itemCount, pageSize);
     }
