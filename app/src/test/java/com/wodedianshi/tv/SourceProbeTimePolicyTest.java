@@ -111,6 +111,17 @@ public class SourceProbeTimePolicyTest {
                 SourceProbeTimePolicy.sampleReadTimeoutCap(true)));
     }
 
+    @Test public void viewingSamplePacesEveryChunkWithoutUnusedCredit() {
+        assertEquals(32768L,SourceProbeTimePolicy.VIEWING_SAMPLE_BYTES_PER_SECOND);
+        assertEquals(4096,SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES);
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleDelayMillis(4096));
+        assertEquals(1000L,8*SourceProbeTimePolicy.viewingSampleDelayMillis(4096));
+        assertEquals(1L,SourceProbeTimePolicy.viewingSampleDelayMillis(1));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleDelayMillis(0));
+        assertEquals(0L,SourceProbeTimePolicy.viewingSampleDelayMillis(-1));
+        assertEquals(25L,SourceProbeTimePolicy.VIEWING_SAMPLE_PAUSE_POLL_MS);
+    }
+
     @Test public void boundedSampleReadsOnlyOneSentinelAndDoesNotPadShortRanges() {
         assertEquals(4096,SourceProbeTimePolicy.sampleReadLength(8192,0,4096));
         assertEquals(2,SourceProbeTimePolicy.sampleReadLength(8192,8191,4096));
