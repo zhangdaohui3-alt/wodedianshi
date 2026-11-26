@@ -664,9 +664,8 @@ public class SourceUpdateWorker extends Worker {
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
-          enqueueInitialContinuation(DiscoveryBatchPolicy.earliestStageCooldownSeconds(inspectedFeeds,
-              recheckRemaining,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT));
+          enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(inspectedFeeds,
+              recheckRemaining));
           return Result.success();
         }
       }
@@ -982,9 +981,14 @@ public class SourceUpdateWorker extends Worker {
       final String initialRevision=initialDiscoveryChain?
           com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).appStateDao()
               .getValue(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY):null;
+      // The source owner is exclusive; completion flags cannot change before the
+      // staging transaction. Overlay this slice's feed outcomes on admission's
+      // Room snapshot once instead of rereading the same flags up to three times.
+      final boolean allFeedsInspectedThisSlice=initialDiscoveryChain
+          &&areAllDiscoveryFeedsComplete(inspectedFeeds,feedBatches);
       final boolean initialIndexEligible=initialDiscoveryChain&&FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(
           previousStagedSize,roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1),
-          areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length));
+          allFeedsInspectedThisSlice);
       if(initialIndexEligible&&!slowPlayback&&!com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
           getApplicationContext(),previousStagedSize,initialRevision))
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.backfillInitialIndex(
@@ -1421,7 +1425,7 @@ public class SourceUpdateWorker extends Worker {
             +" resume_position="+nextBatchScanned);
       }
       boolean finalRanking=initialDiscoveryChain&&nextBatchScanned>=candidates.size()
-          &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
+          &&allFeedsInspectedThisSlice&&!slowPlayback;
       if(initialIndexed&&finalRanking)throw new IllegalStateException("Sparse staging cannot finalize a full snapshot");
       final int stagedSizeAfterProbe=initialIndexed
           ?FullDiscoveryProgressPolicy.indexedInitialRowCount(previousStagedSize,indexedPositions.size(),saved.length()):saved.length();
@@ -1463,7 +1467,7 @@ public class SourceUpdateWorker extends Worker {
                 attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
       }
       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
-          &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+          &&allFeedsInspectedThisSlice;
       boolean initialHasValidatedSource=initialDiscoveryChain
           &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
       boolean awaitingIdleFinalization=FullDiscoveryProgressPolicy.awaitingIdleFinalization(initialFeedsExhausted,slowPlayback);
@@ -2237,8 +2241,16 @@ public class SourceUpdateWorker extends Worker {
   }
   private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
           List<FeedBatch> batches,int feedCount){
-    for(int i=0;i<feedCount;i++){
-      boolean done=roomBoolean(initialFeedDoneKey(i),false);
+    ArrayList<String> keys=new ArrayList<>(feedCount);
+    for(int i=0;i<feedCount;i++)keys.add(initialFeedDoneKey(i));
+    Map<String,String> values=readRoomValues(keys);
+    boolean[] completed=new boolean[feedCount];
+    for(int i=0;i<feedCount;i++)completed[i]=Boolean.parseBoolean(values.get(keys.get(i)));
+    return areAllDiscoveryFeedsComplete(completed,batches);
+  }
+  private boolean areAllDiscoveryFeedsComplete(boolean[] completed,List<FeedBatch> batches){
+    for(int i=0;i<completed.length;i++){
+      boolean done=completed[i];
       if(!done){
         for(FeedBatch batch:batches){
           if(batch.index==i&&SourceUpdateSchedulePolicy.initialFeedInspected(
