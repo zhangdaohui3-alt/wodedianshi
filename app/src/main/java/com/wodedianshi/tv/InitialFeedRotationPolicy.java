@@ -24,6 +24,15 @@ public final class InitialFeedRotationPolicy {
         return (normalizeStart(current, feedCount) + 1) % feedCount;
     }
 
+    /** Idle range acquisition only resumes existing partial files, so yielding
+     * does not create new competing range checkpoints. Viewing keeps its
+     * current feed to avoid eviction under the bounded partial-cache policy.
+     */
+    public static int nextAfterPartialAcquisition(int current,int feedCount,boolean viewing) {
+        return viewing ? normalizeStart(current,feedCount)
+                : nextAfterAttempt(current,feedCount,false,false);
+    }
+
     /** Each feed has its own durable page fingerprint and scanned position.
      * Yield after a partial page too, without changing its raw feed cursor.
      * The priority selector still restricts rotation to the current region stage.
