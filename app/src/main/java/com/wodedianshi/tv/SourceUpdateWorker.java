@@ -899,7 +899,7 @@ public class SourceUpdateWorker extends Worker {
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
-          String cacheKey=initialDiscoveryChain?StableKey.url(e.url):"";
+          String cacheKey=initialDiscoveryChain?SourceUpdateSchedulePolicy.initialProbeCacheKey(e.url):"";
           RecentProbe cached=initialDiscoveryChain?INITIAL_PROBES.get(cacheKey):null;
           long clock=android.os.SystemClock.elapsedRealtime();
           boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
@@ -2210,7 +2210,7 @@ public class SourceUpdateWorker extends Worker {
         String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=probeHost(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(i!=offset){
-          RecentProbe cached=initial?INITIAL_PROBES.get(StableKey.url(entry.url)):null;
+          RecentProbe cached=initial?INITIAL_PROBES.get(SourceUpdateSchedulePolicy.initialProbeCacheKey(entry.url)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
               &&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
