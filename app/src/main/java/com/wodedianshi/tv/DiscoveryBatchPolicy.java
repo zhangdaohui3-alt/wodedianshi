@@ -125,6 +125,15 @@ public final class DiscoveryBatchPolicy {
         if(marker==TRANSIENT_RECHECK_USED)return marker;
         return marker>=0&&marker<scanned?marker:NO_TRANSIENT_RECHECK;
     }
+    /** Extra timeout replay is reserved for a missing domestic core category in the early build.
+     * The existing immutable-page replay marker and cooldown still bound it to one suffix replay. */
+    static boolean shouldRecheckCoreTimeout(boolean timedOut,int stagedRows,long checkedUrls,
+            int observedMask,int candidateMask) {
+        if(!timedOut||stagedRows<0||stagedRows>=96||checkedUrls<0||checkedUrls>=144)return false;
+        if(observedMask<0&&!(stagedRows<16&&checkedUrls<48))return false;
+        int knownMask=Math.max(0,observedMask);
+        return (candidateMask&~knownMask&FullDiscoveryProgressPolicy.ALL_CORE)!=0;
+    }
     static int noteTransientRecheck(int marker,int position) {
         return marker==NO_TRANSIENT_RECHECK&&position>=0?position:marker;
     }
