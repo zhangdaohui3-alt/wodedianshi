@@ -4,6 +4,13 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class TrackHealthPolicyTest {
+    @org.junit.Test public void vodVlcStartupRequiresBothEventsRegardlessOfOrder() {
+        org.junit.Assert.assertFalse(TrackHealthPolicy.vlcVodStartupConfirmed(false,false));
+        org.junit.Assert.assertFalse(TrackHealthPolicy.vlcVodStartupConfirmed(true,false));
+        org.junit.Assert.assertFalse(TrackHealthPolicy.vlcVodStartupConfirmed(false,true));
+        org.junit.Assert.assertTrue(TrackHealthPolicy.vlcVodStartupConfirmed(true,true));
+    }
+
     @Test public void automaticChannelRecoveryStaysInScopeAndStopsAfterThreeSwitches() {
         java.util.List<Integer> scope=java.util.Arrays.asList(3,10,28,47,99);
         assertEquals(10,ChannelFailoverPolicy.nextScopedChannel(scope,0,0));
