@@ -6,6 +6,16 @@ import java.util.Collections;
 import static org.junit.Assert.*;
 
 public class SingleChannelRefreshPolicyTest {
+    @org.junit.Test public void refreshDeadlineAppliesThroughoutRequest(){
+        org.junit.Assert.assertFalse(SingleChannelRefreshPolicy.requestExpired(89999L,90000L));
+        org.junit.Assert.assertTrue(SingleChannelRefreshPolicy.requestExpired(90000L,90000L));
+        org.junit.Assert.assertTrue(SingleChannelRefreshPolicy.requestExpired(90001L,90000L));
+        org.junit.Assert.assertFalse(SingleChannelRefreshPolicy.shouldCancelRequest(false,7,7,89999L,90000L));
+        org.junit.Assert.assertTrue(SingleChannelRefreshPolicy.shouldCancelRequest(false,7,7,90000L,90000L));
+        org.junit.Assert.assertTrue(SingleChannelRefreshPolicy.shouldCancelRequest(true,7,7,1000L,90000L));
+        org.junit.Assert.assertTrue(SingleChannelRefreshPolicy.shouldCancelRequest(false,7,8,1000L,90000L));
+    }
+
     private boolean match(String n,String g,String id,String guide,String n2,String g2,String id2,String guide2){
         return SingleChannelRefreshPolicy.matchesStation(n,g,id,guide,n2,g2,id2,guide2);
     }
