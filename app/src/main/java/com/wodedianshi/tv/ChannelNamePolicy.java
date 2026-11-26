@@ -296,6 +296,20 @@ final class ChannelNamePolicy {
         return new String[0];
     }
 
+    static boolean isKnownLocality(String province, String city) {
+        if (province == null || city == null || city.isEmpty()) return false;
+        for (String[] row : LOCAL_CITY_ALIASES) {
+            if (!row[0].equals(province)) continue;
+            for (int i = 1; i < row.length; i++)
+                if (city.equals(row[i]) && hasCjkCharacter(row[i])) return true;
+            // Municipalities have only their English alias in the city row.
+            return province.equals(city) && ("北京".equals(province)
+                    || "天津".equals(province) || "上海".equals(province)
+                    || "重庆".equals(province));
+        }
+        return false;
+    }
+
     static boolean matchesLocalCity(String metadata, String province, String city) {
         if (metadata == null || province == null || city == null || city.isEmpty()) return false;
         if (!province.equals(provinceForLocalChannel(metadata))) return false;
