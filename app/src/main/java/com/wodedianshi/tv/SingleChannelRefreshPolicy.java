@@ -5,7 +5,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 
-/** Conservative append-only plan for an explicit single-station refresh. */
+/** Conservative bounded refresh plan for an explicit single-station refresh. */
 public final class SingleChannelRefreshPolicy {
     private SingleChannelRefreshPolicy(){}
     /** The same request deadline applies to queue wait, search, probe and commit. */
@@ -106,4 +106,31 @@ public final class SingleChannelRefreshPolicy {
         }
         return result;
     }
+    /** Keep exact source positions for an explicit refresh. New verified
+     * candidates fill free slots first; at capacity, the shared maintenance
+     * rule may retire only a repeatedly failed, lower-scoring backup.
+     * Protect both persisted selection and actual visible playback endpoint. */
+    public static List<String> planRefresh(List<String> existing, Collection<String> verifiedBestFirst,
+            int maximum,String primary,String selected,String playing,
+            java.util.Set<String> repeatedlyFailed,java.util.Comparator<String> bestFirst){
+        ArrayList<String> result=new ArrayList<>(existing);
+        if(verifiedBestFirst==null||maximum<=0||result.size()>maximum)return result;
+        HashSet<String> eligible=new HashSet<>();
+        if(repeatedlyFailed!=null)eligible.addAll(repeatedlyFailed);
+        eligible.remove(SourceSelectionPolicy.endpointKey(playing));
+        HashSet<String> seen=new HashSet<>();
+        for(String url:existing)seen.add(SourceSelectionPolicy.endpointKey(url));
+        for(String candidate:appendCandidates(existing,verifiedBestFirst,Integer.MAX_VALUE)){
+            String key=SourceSelectionPolicy.endpointKey(candidate);
+            if(!seen.add(key))continue;
+            if(result.size()<maximum){result.add(candidate);continue;}
+            if(bestFirst==null)continue;
+            int slot=SourceMaintenanceRetentionPolicy.retirementIndex(result,bestFirst,primary,selected,eligible);
+            if(slot<0||bestFirst.compare(candidate,result.get(slot))>=0)continue;
+            eligible.remove(SourceSelectionPolicy.endpointKey(result.get(slot)));
+            result.set(slot,candidate);
+        }
+        return result;
+    }
+
 }
