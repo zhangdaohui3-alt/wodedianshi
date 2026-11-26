@@ -4807,16 +4807,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
         if("地方".equals(categorySnapshot) && indexes.isEmpty() && scanPositions==null) {
-          int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
+          int localCandidateCount=0, provinceCandidates=0, satelliteExcluded=0;
           for(Channel candidate:sources) {
             if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
             if(candidate==null)continue;
             if(isSatelliteChannel(candidate)){satelliteExcluded++;continue;}
-            if(isLocalChannel(candidate))localCandidates++;
+            if(isLocalChannel(candidate))localCandidateCount++;
             if(provinceSnapshot!=null && matchesProvinceLocal(candidate,provinceSnapshot))provinceCandidates++;
           }
           String localDetail="total="+sources.size()
-              +" local_candidates="+localCandidates+" province_candidates="+provinceCandidates
+              +" local_candidates="+localCandidateCount+" province_candidates="+provinceCandidates
               +" satellite_excluded="+satelliteExcluded+" province="+provinceSnapshot
               +" city="+citySnapshot+" query_matches="+queryMatches
               +" search_active="+(!query.isEmpty());
