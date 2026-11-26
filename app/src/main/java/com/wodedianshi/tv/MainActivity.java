@@ -215,6 +215,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private String initialDiscoveryProgressDetail="正在准备读取来源目录…";
   private AlertDialog initialDiscoveryDetailsDialog;
   private boolean initialResumeRequestPending;
+  private String initialRecoveryProgressSignature;
+  private long initialRecoveryUnchangedSince;
+  private boolean initialRecoveryRequested;
   private String initialDiscoverySchedulerDetail="";
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
@@ -1722,6 +1725,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final String prefix="source_initial_progress_";
           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
           keys.add("source_full_rebuild_completed_at");
+          keys.add("source_full_rebuild_active");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY);
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY);
@@ -1736,6 +1740,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               "percent","basis_points","phase"})keys.add(prefix+suffix);
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
+          final boolean buildActive="true".equals(snapshot.get("source_full_rebuild_active"));
           final com.wodedianshi.tv.db.CatalogueMigrationEntity finalCheckpoint=completed>0L
               ?com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).channelDao()
                   .getMigration(com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY):null;
@@ -1830,6 +1835,38 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               },12000L);
               return;
             }
+            String recoverySignature=done+":"+checked+":"+validated+":"+staged+":"+basisPoints
+                +":"+feedIndex+":"+cursor+":"+indexAttempted+":"+indexReady+":"+indexEntries;
+            long recoveryNow=android.os.SystemClock.elapsedRealtime();
+            if(!recoverySignature.equals(initialRecoveryProgressSignature)
+                ||recoveryNow<initialRecoveryUnchangedSince){
+              initialRecoveryProgressSignature=recoverySignature;
+              initialRecoveryUnchangedSince=recoveryNow;
+              initialRecoveryRequested=false;
+            }
+            long unchangedMs=recoveryNow-initialRecoveryUnchangedSince;
+            boolean autoEnabled=getSharedPreferences("mytv",0).getBoolean("auto_source_update",true);
+            if(startupDataReady&&!initialResumeRequestPending&&!isAnyPlaybackLockActive()
+                &&currentVodPanel==null&&SourceUpdateSchedulePolicy.mayRecoverMissingInitialChain(
+                    unchangedMs,initialDiscoveryWorkObserved,initialDiscoveryWorkUnfinished,
+                    SourceUpdateWorker.isSourceWorkActive(),SourceUpdateActivityPolicy.isPlaybackActive(),
+                    autoEnabled,buildActive,initialRecoveryRequested)){
+              initialRecoveryRequested=true;
+              // KEEP handles a concurrent enqueue without cancelling it.
+              // The worker rechecks the durable completion marker before doing work.
+              try{
+                OneTimeWorkRequest recovery=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+                    .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,TimeUnit.SECONDS)
+                    .setInputData(new Data.Builder().putBoolean("manual",true)
+                        .putBoolean("initial_discovery_chain",true).build()).build();
+                WorkManager.getInstance(this).enqueueUniqueWork("mytv_startup_source_refresh",
+                    ExistingWorkPolicy.KEEP,recovery);
+                android.util.Log.i("MyTVSourceDiscovery","missing_initial_chain_recovery_requested unchanged_ms="+unchangedMs);
+              }catch(RuntimeException failure){
+                android.util.Log.w("MyTVSourceDiscovery","missing_initial_chain_recovery_failed",failure);
+              }
+            }
             initialDiscoveryProgressPanel.setVisibility(View.VISIBLE);
             initialDiscoveryProgressBar.setProgress(Math.max(0,Math.min(9999,basisPoints)));
             int bootstrapLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
@@ -1852,6 +1889,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   :"当前没有播放资源占用，等待下一批抓源调度";
               else taskStatus=initialDiscoveryWorkObserved?"当前无运行或排队的抓源任务，可在设置中继续":"正在读取抓源任务状态";
             }
+            if(initialRecoveryRequested&&!initialDiscoveryWorkUnfinished)
+              taskStatus="已请求自动续抓，保留断点，等待系统调度";
+            else if(unchangedMs>=SourceUpdateSchedulePolicy.INITIAL_STALL_OBSERVATION_MS
+                &&initialDiscoveryWorkUnfinished&&!SourceUpdateActivityPolicy.isPlaybackActive())
+              taskStatus+=" · 已超过3分钟未见已提交进度（保留现有任务）";
             initialDiscoveryProgressDetail=taskStatus
                 +"\n上次保存状态："+phase
                 +"\n当前已载入 "+loadedCount+" 个频道（不等于本轮完成）"
