@@ -213,6 +213,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private LinearLayout initialDiscoveryProgressPanel;
   private TextView initialDiscoveryProgressTitle;
   private String initialDiscoveryProgressDetail="正在准备读取来源目录…";
+  private AlertDialog initialDiscoveryDetailsDialog;
+  private boolean initialResumeRequestPending;
+  private String initialDiscoverySchedulerDetail="";
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
   private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone,displayedInitialPreviewCoreMask;
@@ -1438,9 +1441,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       AlertDialog.Builder details=new AlertDialog.Builder(this).setTitle(initialDiscoveryProgressTitle.getText())
           .setMessage(initialDiscoveryProgressDetail)
           .setPositiveButton("关闭",null);
-      if(roomFullRebuildCompletedAt<=0L)
-        details.setNeutralButton("停止直播，继续抓源",(d,w)->stopLiveForInitialDiscovery());
-      details.show();
+      if(roomFullRebuildCompletedAt<=0L){
+        if(SourceUpdateActivityPolicy.isPlaybackActive())
+          details.setNeutralButton("停止直播，继续抓源",(d,w)->stopLiveForInitialDiscovery());
+        else details.setNeutralButton("立即续抓（保留进度）",(d,w)->resumeIdleInitialDiscovery());
+      }
+      AlertDialog dialog=details.create();
+      initialDiscoveryDetailsDialog=dialog;
+      dialog.setOnDismissListener(d->{if(initialDiscoveryDetailsDialog==dialog)initialDiscoveryDetailsDialog=null;});
+      dialog.show();
     });
     // The entire progress card is one remote/touch target; neither the title
     // nor the progress bar should take focus away from its click action.
@@ -1611,8 +1620,50 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     selected=-1;
     if(fullScreenPlayback)exitFullScreenPlayback();else refresh();
     reloadChannelsAfterBackgroundUpdateIfNeeded();
-    scheduleAutomaticSourceUpdates();
-    toast("已停止直播，正在等待抓源任务继续；可随时选择频道观看");
+    resumeIdleInitialDiscovery();
+  }
+  // Explicit recovery only. Never cancel an actively running source worker or
+  // delete Room staging just because the scheduler has a delayed request.
+  private void resumeIdleInitialDiscovery(){
+    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()
+        ||currentVodPanel!=null||roomFullRebuildCompletedAt>0L||initialResumeRequestPending)return;
+    if(SourceUpdateActivityPolicy.isPlaybackActive()){toast("播放资源仍在释放，请稍后重试");return;}
+    initialResumeRequestPending=true;
+    try{worker.execute(()->{
+      final WorkManager manager=WorkManager.getInstance(getApplicationContext());
+      boolean running=false,unfinished=false;
+      boolean readable=true;
+      try{
+        for(androidx.work.WorkInfo info:manager.getWorkInfosForUniqueWork("mytv_startup_source_refresh").get(3L,TimeUnit.SECONDS)){
+          running|=info.getState()==androidx.work.WorkInfo.State.RUNNING;
+          unfinished|=!info.getState().isFinished();
+        }
+      }catch(Exception unavailable){readable=false;if(unavailable instanceof InterruptedException)Thread.currentThread().interrupt();}
+      final boolean active=running,pending=unfinished,known=readable;
+      runOnUiThread(()->{
+        initialResumeRequestPending=false;
+        if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()
+            ||currentVodPanel!=null||roomFullRebuildCompletedAt>0L||SourceUpdateActivityPolicy.isPlaybackActive())return;
+        if(!known){toast("暂时无法确认抓源任务状态，请重试");return;}
+        if(active||SourceUpdateWorker.isSourceWorkActive()){toast("抓源任务正在运行或释放资源，保留当前任务");return;}
+        OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(SourceUpdateWorker.class)
+            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(androidx.work.BackoffPolicy.LINEAR,30L,TimeUnit.SECONDS)
+            .setInputData(new Data.Builder().putBoolean("manual",true).putBoolean("initial_discovery_chain",true).build()).build();
+        // REPLACE only the explicitly requested idle recovery. The worker's
+        // ownership gate and transactional pause checks protect a race at dispatch.
+        manager.enqueueUniqueWork("mytv_startup_source_refresh",pending?ExistingWorkPolicy.REPLACE:ExistingWorkPolicy.KEEP,request);
+        toast("已请求立即续抓，保留已保存频道和进度；实际启动由系统调度");
+        startInitialDiscoveryProgressTicker();
+      });
+    });}catch(RuntimeException rejected){initialResumeRequestPending=false;toast("暂时无法读取抓源任务状态");}
+  }
+  private void refreshInitialDiscoveryDetailsDialog(){
+    AlertDialog dialog=initialDiscoveryDetailsDialog;
+    if(dialog!=null&&dialog.isShowing()){
+      dialog.setTitle(initialDiscoveryProgressTitle.getText());
+      dialog.setMessage(initialDiscoveryProgressDetail);
+    }
   }
   private void startInitialDiscoveryProgressTicker(){
     stopInitialDiscoveryProgressTicker();
@@ -1746,8 +1797,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               if(initialFinalCataloguePending){
                 initialDiscoveryProgressDetail+="\n"+(hasPlaybackCatalogueOwner()
                     ?"保留当前播放，空闲后载入完整目录":"正在等待完整目录载入；当前显示 "+channels.size()+" 个频道");
+                refreshInitialDiscoveryDetailsDialog();
                 return;
               }
+              refreshInitialDiscoveryDetailsDialog();
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
               uiHandler.postDelayed(()->{
@@ -1788,7 +1841,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
-                +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:"");
+                +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:"")
+                +(initialDiscoverySchedulerDetail.isEmpty()?"":"\n"+initialDiscoverySchedulerDetail);
+            refreshInitialDiscoveryDetailsDialog();
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
@@ -1818,13 +1873,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         .observe(this,workInfos->{
           if(workInfos==null)return;
           boolean unfinished=false,failed=false,cancelled=false,running=false;
+          int queued=0,blocked=0,attempts=0;
           for(androidx.work.WorkInfo workInfo:workInfos){
             androidx.work.WorkInfo.State state=workInfo.getState();
-            if(!state.isFinished())unfinished=true;
+            if(!state.isFinished()){unfinished=true;attempts=Math.max(attempts,workInfo.getRunAttemptCount());}
+            if(state==androidx.work.WorkInfo.State.ENQUEUED)queued++;
+            if(state==androidx.work.WorkInfo.State.BLOCKED)blocked++;
             if(state==androidx.work.WorkInfo.State.RUNNING)running=true;
             if(state==androidx.work.WorkInfo.State.FAILED)failed=true;
             if(state==androidx.work.WorkInfo.State.CANCELLED)cancelled=true;
           }
+          initialDiscoverySchedulerDetail="系统任务：运行 "+(running?1:0)+" · 排队 "+queued+" · 阻塞 "+blocked+" · 未结束任务最大尝试次数 "+attempts;
           initialDiscoveryWorkObserved=true;
           initialDiscoveryWorkRunning=running;
           initialDiscoveryWorkUnfinished=unfinished;
