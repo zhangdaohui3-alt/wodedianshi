@@ -12,6 +12,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import org.robolectric.annotation.Implements;
+import org.robolectric.annotation.Implementation;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
@@ -24,8 +28,25 @@ import static org.junit.Assert.*;
 /** Loopback HTTP exercises actual directory IO without public providers.
  * Logical health time is injected; no claims about real decoder or network speed. */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk=28,manifest=Config.NONE,application=Application.class)
+@Config(sdk=28,manifest=Config.NONE,application=Application.class,
+        shadows=ViewingNetworkCancellationIntegrationTest.HostAtomicRename.class)
 public class ViewingNetworkCancellationIntegrationTest {
+    /** Android's native rename is not implemented by the host sandbox.
+     * Model only that syscall, with real atomic same-filesystem replacement.
+     * Do not shadow the application cache, download, or cancellation methods. */
+    @Implements(android.system.Os.class)
+    public static class HostAtomicRename {
+        @Implementation protected static void rename(String oldPath,String newPath)
+                throws android.system.ErrnoException {
+            try {
+                Files.move(Paths.get(oldPath),Paths.get(newPath),
+                        StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+            }catch(IOException failure){
+                throw new android.system.ErrnoException("rename",android.system.OsConstants.EIO,failure);
+            }
+        }
+    }
+
     @Test public void revokedViewingLeaseCancelsDownloadAndFreshLeaseCanRetry()throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         ExecutorService network=Executors.newSingleThreadExecutor();
@@ -105,7 +126,9 @@ public class ViewingNetworkCancellationIntegrationTest {
             File result=network.submit(()->PlaylistFeedCache.obtainSmallInitialDuringViewing(
                     context,url,false,nextGate)).get(8,TimeUnit.SECONDS);
             assertNotNull(result);
+            assertTrue("completed cache must exist",result.isFile());
             assertArrayEquals(body,Files.readAllBytes(result.toPath()));
+            assertTrue(new File(result.getPath()+".properties").isFile());
             assertFalse(nextGate.getAsBoolean());
             served.get(5,TimeUnit.SECONDS);
         }finally{
