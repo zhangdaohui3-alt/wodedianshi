@@ -39,6 +39,15 @@ public final class DiscoveryBatchPolicy {
         return early&&!viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
     }
 
+    /** Stop only at a drained wave boundary after a first useful mainland
+     * preview has been merged in memory. Commit the contiguous prefix through
+     * the normal staging and publication transaction; never discard a suffix. */
+    static boolean yieldForFirstMainlandPreview(boolean early,boolean viewing,
+            int previousMainlandValidated,int newlyValidated,int stagedRows,boolean wavePending) {
+        return early&&!viewing&&previousMainlandValidated<=0
+                &&newlyValidated>0&&stagedRows>0&&!wavePending;
+    }
+
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
         return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
