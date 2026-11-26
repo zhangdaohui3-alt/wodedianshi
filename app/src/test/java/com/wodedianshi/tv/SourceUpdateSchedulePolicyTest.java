@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @org.junit.Test public void onlyTimelyCompletedPositiveObservationsSurviveCancellation() {
+        org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,100,101,200));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(false,false,100,101,200));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,true,100,101,200));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,101,101,200));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,100,200,100));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,-1,101,200));
+    }
+
     @Test public void failedDirectoryIsNotEofEvenIfParsedCountLooksComplete() {
         assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(false,false,19952,48,20000,48));
         assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(false,false,0,0,-1,48));
