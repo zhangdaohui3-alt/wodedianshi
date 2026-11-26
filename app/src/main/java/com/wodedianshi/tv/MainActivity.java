@@ -1896,7 +1896,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                   :"当前没有播放资源占用，等待下一批抓源调度";
               else taskStatus=initialDiscoveryWorkObserved?"当前无运行或排队的抓源任务，可在设置中继续":"正在读取抓源任务状态";
             }
-            if(initialRecoveryRequested&&!initialDiscoveryWorkUnfinished)
+            if(SourceUpdateWorker.isRetiringProbePoolActive())
+              taskStatus="上批网络检测仍在安全释放，保留断点，暂不启动新检测";
+            else if(initialRecoveryRequested&&!initialDiscoveryWorkUnfinished)
               taskStatus="已请求自动续抓，保留断点，等待系统调度";
             else if(unchangedMs>=SourceUpdateSchedulePolicy.INITIAL_STALL_OBSERVATION_MS
                 &&initialDiscoveryWorkUnfinished&&!SourceUpdateActivityPolicy.isPlaybackActive())
