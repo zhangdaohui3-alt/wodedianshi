@@ -10,6 +10,24 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class PlaylistParserTest {
+    @Test public void displayNameCannotSupplyFakeAttributesOrOverrideExtGroup() {
+        String m3u = "#EXTM3U\n#EXTGRP:福建地方台\n"
+                + "#EXTINF:-1,福州新闻 tvg-id=Fake tvg-name=Other group-title=国际\nhttps://a.example/live\n"
+                + "#EXTBURL:https://backup.example/live\n"
+                + "#EXTINF:-1 tvg-name=\"CCTV, News\" tvg-id=real group-title=央视,\nhttps://b.example/live";
+        List<PlaylistParser.ChannelSource> items=PlaylistParser.parse(m3u,10);
+        assertEquals(3,items.size());
+        assertEquals("福州新闻 tvg-id=Fake tvg-name=Other group-title=国际",items.get(0).name);
+        assertEquals("福建地方台",items.get(0).group);
+        assertEquals("",items.get(0).tvgId);
+        assertEquals("",items.get(0).tvgName);
+        assertEquals("福建地方台",items.get(1).group);
+        assertEquals("",items.get(1).tvgId);
+        assertEquals("CCTV, News",items.get(2).name);
+        assertEquals("real",items.get(2).tvgId);
+        assertEquals("央视",items.get(2).group);
+    }
+
     @Test public void handlesBomCrLfAndQuotedCommaInMetadata() {
         String m3u = "\uFEFF#EXTM3U\r\n"
                 + "#EXTINF:-1 tvg-name=\"CCTV, News\" group-title=\"央视\",中央电视台新闻频道\r\n"
