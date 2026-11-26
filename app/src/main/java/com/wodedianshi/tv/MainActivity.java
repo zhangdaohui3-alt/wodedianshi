@@ -5984,6 +5984,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private long watchdogLastAdvanceAt=0L;
   // Updated from the decoder playback thread whenever a video frame is about to render.
   private volatile long lastVideoPipelineActivityAt=0L;
+  private androidx.media3.exoplayer.DecoderCounters liveRenderedCounter;
+  private int liveRenderedCount=-1;
+  private long liveRenderedAdvanceAt=0L,lastLiveAudioWarningAt=0L;
   // One same-source recovery per selected channel before moving to its backup.
   private int sameSourceRecoveryCount=0;
   // A stale HLS live-window position gets one in-place recovery before source failover.
@@ -6059,6 +6062,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void cancelPlaybackWatchdog(){
     if(playbackWatchdog!=null){uiHandler.removeCallbacks(playbackWatchdog);playbackWatchdog=null;}
   }
+  private void resetLiveRenderedEvidence(){
+    liveRenderedCounter=null;liveRenderedCount=-1;liveRenderedAdvanceAt=0L;
+  }
+  private void sampleLiveRenderedEvidence(long now){
+    androidx.media3.exoplayer.DecoderCounters counters=player==null?null:player.getVideoDecoderCounters();
+    if(counters==null){resetLiveRenderedEvidence();return;}
+    counters.ensureUpdated();
+    int count=counters.renderedOutputBufferCount;
+    boolean same=counters==liveRenderedCounter;
+    if(!same||count<liveRenderedCount)liveRenderedAdvanceAt=0L;
+    else if(TrackHealthPolicy.renderedCounterAdvanced(true,liveRenderedCount,count))liveRenderedAdvanceAt=now;
+    liveRenderedCounter=counters;liveRenderedCount=count;
+  }
   private void schedulePlaybackWatchdog(){
     cancelPlaybackWatchdog();
     if(player==null||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
@@ -6073,6 +6089,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(state==Player.STATE_BUFFERING){pauseStableDiscovery();if(bufferingFallback==null)scheduleBufferingFallback();return;}
       if(state!=Player.STATE_READY){pauseStableDiscovery();return;}
       long now=android.os.SystemClock.elapsedRealtime();
+      sampleLiveRenderedEvidence(now);
       long position=player.getCurrentPosition();
       if(watchdogLastPosition<0||position>watchdogLastPosition+250){
         watchdogLastPosition=position;
@@ -6096,7 +6113,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // A source that was healthy for a long time should not consume the startup retry budget forever.
       boolean confirmedOutput=TrackHealthPolicy.hasConfirmedTvOutput(audioTrackPresent,
           audioTrackSupported,audioTrackSelected,audioPositionAdvancing,videoTrackPresent,
-          videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded);
+           videoTrackSupported,videoTrackSelected,sourceFirstFrameRecorded)
+           &&TrackHealthPolicy.recentRenderedCounter(liveRenderedAdvanceAt,now)
+           &&TrackHealthPolicy.audioWarningQuiet(lastLiveAudioWarningAt,now);
       if(TrackHealthPolicy.canGrantStableDiscovery(confirmedOutput,sourceReadyAt,
           lastStableDiscoveryInteraction,watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)
           &&player.isPlaying()&&activityStarted&&hasWindowFocus()
@@ -6457,6 +6476,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     sourceReadyAt=0L;
     lastRecoveryBudgetRefreshAt=0L;
     lastVideoPipelineActivityAt=0L;
+    resetLiveRenderedEvidence();lastLiveAudioWarningAt=0L;
     sourceReadyRecorded=false;
     sourceStableRecorded=false;
     sourceFirstFrameRecorded=false;
@@ -6543,13 +6563,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         @Override public void onAudioCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Codec callbacks can be recoverable. Record diagnostics, but let Player.Listener
           // and the sustained-output watchdog decide whether the source actually failed.
-          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime)){
+            lastLiveAudioWarningAt=android.os.SystemClock.elapsedRealtime();
+            pauseStableDiscovery();
             recordSourceMetric(currentSourceUrl(),"audioCodecError",0L);
+          }
         }
         @Override public void onAudioSinkError(AnalyticsListener.EventTime eventTime,Exception error){
           // A single sink warning is not proof of a dead stream; avoid premature failover.
-          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime))
+          if(listenerOwner==MainActivity.this.player&&isCurrentLiveAnalyticsEvent(eventTime)){
+            lastLiveAudioWarningAt=android.os.SystemClock.elapsedRealtime();
+            pauseStableDiscovery();
             recordSourceMetric(currentSourceUrl(),"audioSinkError",0L);
+          }
         }
         @Override public void onVideoCodecError(AnalyticsListener.EventTime eventTime,Exception error){
           // Keep video decoder diagnostics separate from confirmed source failures.
@@ -6644,6 +6670,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(st==Player.STATE_BUFFERING){
             cancelPlaybackWatchdog();
             cancelAudioTrackCheck();
+            resetLiveRenderedEvidence();
             boolean firstBuffering=!sourceWasBuffering;
             if(sourceReadyRecorded&&firstBuffering)recordSourceMetric(currentSourceUrl(),"buffer",0L);
             sourceWasBuffering=true;
@@ -6669,6 +6696,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(videoTrackSelected&&!sourceFirstFrameRecorded)videoTrackSelectedAt=watchdogLastAdvanceAt;
             // Start the frame-stall timer only after the player reports READY.
             lastVideoPipelineActivityAt=watchdogLastAdvanceAt;
+            resetLiveRenderedEvidence();sampleLiveRenderedEvidence(watchdogLastAdvanceAt);
             schedulePlaybackWatchdog();
             // Run the audio-track/output check only after READY; buffering can
             // legitimately pause audio advancement and must not trigger a false failover.
