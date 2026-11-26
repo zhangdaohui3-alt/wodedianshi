@@ -383,11 +383,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String key;
     final ArrayList<Integer> indexes;
     final HashMap<Integer,Integer> positions;
-    RemoteChannelOrder(String key,ArrayList<Integer> indexes) {
-      this.key=key;this.indexes=indexes;
+    // All four collections are worker-owned until publication and read-only thereafter.
+    final ArrayList<Channel> visible;
+    final HashMap<String,Integer> sourceIndexByKey;
+    RemoteChannelOrder(String key,ArrayList<Integer> indexes,ArrayList<Channel> visible,
+        HashMap<String,Integer> sourceIndexByKey) {
+      this.key=key;this.indexes=indexes;this.visible=visible;this.sourceIndexByKey=sourceIndexByKey;
       this.positions=new HashMap<>(Math.max(16,indexes.size()*2));
       for(int i=0;i<indexes.size();i++)positions.put(indexes.get(i),i);
     }
+    private RemoteChannelOrder(String key,RemoteChannelOrder previous) {
+      this.key=key;this.indexes=previous.indexes;this.positions=previous.positions;
+      this.visible=previous.visible;this.sourceIndexByKey=previous.sourceIndexByKey;
+    }
+    RemoteChannelOrder withKey(String key){return new RemoteChannelOrder(key,this);}
   }
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
@@ -4831,17 +4840,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       int scanned=0,categoryMatches=0,queryMatches=0,nullRecords=0,nullNames=0,nullGroups=0,nullTvgNames=0,nullTvgIds=0,nullUrls=0;
       try{
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
-        ArrayList<Channel> sources;
-        synchronized(channels){sources=new ArrayList<>(channels);}
+        final boolean reusePage;
+        final ArrayList<Channel> sources;
+        synchronized(channels){
+          reusePage=pageOrder!=null&&pageOrder.key.equals(remoteChannelOrderKey(
+              categorySnapshot,query,favoriteOnly,oldGeneration,mutation,expectedCount,favoriteHash))
+              &&mutation==catalogueMutationGeneration&&expectedCount==channels.size();
+          sources=reusePage?null:new ArrayList<>(channels);
+        }
+        final RemoteChannelOrder ready;
+        if(reusePage){
+          // Exact prior result; do not rebuild channel arrays or key/position maps.
+          ready=pageOrder.withKey(orderKey);
+          categoryMatches=queryMatches=ready.indexes.size();
+          android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot
+              +" total="+expectedCount+" scanned=0 page_order_reuse=true matches="+ready.indexes.size()
+              +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt)+" generation="+generation);
+        }else{
         final boolean geographic=geoScopeSnapshot!=null;
         final boolean indexEligible=!favoriteOnly;
         final java.util.List<String> scopeKey=SnapshotCategoryIndex.scopeKey(categorySnapshot,
             regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null,geoScopeSnapshot,geoCountrySnapshot);
-        final boolean reusePage=pageOrder!=null&&pageOrder.key.equals(remoteChannelOrderKey(
-            categorySnapshot,query,favoriteOnly,oldGeneration,mutation,expectedCount,favoriteHash))
-            &&mutation==catalogueMutationGeneration&&expectedCount==sources.size();
-        java.util.List<Integer> exactScope=reusePage?pageOrder.indexes:
-            indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
+        java.util.List<Integer> exactScope=indexEligible?categorySnapshotIndex.get(membershipEpoch,sources.size(),scopeKey):null;
         // A cached geographic position list already proves exact membership.
         // On a miss retain the existing provenance-based membership resolution.
         final Set<String> geoKeys=geographic&&exactScope==null?
@@ -4853,7 +4873,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // resolve by stable key, so these references are read-only in this pass.
         HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Integer> indexes=new ArrayList<>();
-        if(!reusePage&&indexEligible&&!geographic&&"地方".equals(categorySnapshot)
+        if(indexEligible&&!geographic&&"地方".equals(categorySnapshot)
             &&!categorySnapshotIndex.hasLocalIndex(membershipEpoch,sources.size())){
           SnapshotCategoryIndex.PreparedLocal prebuilt=preparedLocalSnapshot;
           if(prebuilt!=null&&prebuilt.matches(membershipEpoch,sources.size())){
@@ -4894,8 +4914,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(cachedScope==null&&!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
               geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
-          String display=reusePage||query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
-          if(!reusePage&&!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
+          String display=query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
+          if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
           queryMatches++;
           indexes.add(i);
           if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
@@ -4933,9 +4953,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           categorySnapshotIndex.put(membershipEpoch,sources.size(),scopeKey,indexes);
         ArrayList<Channel> visible=new ArrayList<>(indexes.size());
         for(int index:indexes)visible.add(sources.get(index));
-        RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
+        ready=new RemoteChannelOrder(orderKey,indexes,visible,sourceIndexByKey);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" scope_index_hit="+(cachedScope!=null)+" page_order_reuse="+reusePage+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
+        }
+        if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
         runOnUiThread(()->publishFilteredDirectory(generation,()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           directoryFilterInFlightKey=null;
@@ -4949,9 +4971,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           cachedRemoteChannelOrder=ready;
           String currentSelectedKey=null;
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
-          renderFilteredChannels(visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
-              preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,sourceIndexByKey);
-          if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+visible.size()+" 个频道"+(visible.isEmpty()?"；可手动更新或导入":""));
+          renderFilteredChannels(ready.visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
+              preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,ready.sourceIndexByKey);
+          if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+ready.visible.size()+" 个频道"+(ready.visible.isEmpty()?"；可手动更新或导入":""));
           if(menuSelectedFocusGeneration==generation){
             menuSelectedFocusGeneration=-1L;
             focusSelectedChannelInMenu();
