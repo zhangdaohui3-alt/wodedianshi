@@ -50,6 +50,15 @@ public final class SourceUpdateSchedulePolicy {
                 && now - measuredAt <= (valid ? 300_000L : 15_000L);
     }
 
+    /** Do not make a different, unfailed directory inherit the failed one's
+     * retry delay. Retain backoff for repeated failure, no eligible successor,
+     * and every viewing slice. Called after the durable outcome commits. */
+    static long initialContinuationDelaySeconds(boolean viewing,boolean feedRead,
+            boolean freshDifferentNextFeed) {
+        if(feedRead)return viewing?DiscoveryBatchPolicy.VIEWING_SUCCESS_DELAY_SECONDS:0L;
+        return !viewing&&freshDifferentNextFeed?0L:30L;
+    }
+
     /** Continue immediately only after a successful committed discovery advance.
      * Keep the existing delay for failed/empty-progress slices to avoid retry churn. */
     static long manualContinuationDelaySeconds(boolean feedRead,int discoveryScanned,boolean pageComplete) {
