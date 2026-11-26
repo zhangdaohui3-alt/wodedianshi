@@ -133,8 +133,14 @@ public class SourceUpdateSchedulePolicyTest {
 
     @Test public void inlineInitialWorkRequiresCommittedProgressAndIdleBudget() {
         assertTrue(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,false,true,0));
-        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(2,1000,false,false,false,true,0));
-        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,60000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(0,1000,false,false,false,true,0));
+        assertTrue(SourceUpdateSchedulePolicy.canContinueInitialInline(2,60000,false,false,false,true,0));
+        assertTrue(SourceUpdateSchedulePolicy.canContinueInitialInline(3,119999,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(4,1000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,120000,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(3,-1,false,false,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(3,119999,false,true,false,true,0));
+        assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(3,119999,false,false,true,true,0));
         assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,true,false,false,true,0));
         assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,true,false,true,0));
         assertFalse(SourceUpdateSchedulePolicy.canContinueInitialInline(1,1000,false,false,true,true,0));
