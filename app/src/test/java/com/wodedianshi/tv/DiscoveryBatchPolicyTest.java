@@ -4,6 +4,18 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void missingCoreCategoryExtendsRotationButNotSmallProbeWindow() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.preferCoreCoverage(5,20,-1));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.preferCoreCoverage(16,48,3));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.preferCoreCoverage(95,143,3));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.preferCoreCoverage(96,143,3));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.preferCoreCoverage(95,144,3));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.preferCoreCoverage(16,48,7));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.preferCoreCoverage(16,48,-1));
+        org.junit.Assert.assertEquals(48,DiscoveryBatchPolicy.firstWatchProbeLimit(false,16,48));
+        org.junit.Assert.assertEquals(2,DiscoveryBatchPolicy.firstWatchProbeLimit(true,16,48));
+    }
+
     @org.junit.Test public void exactPageDedupPreservesDistinctStationMetadataAndAddresses() {
         java.util.List<String> first=java.util.Arrays.asList("CCTV-1","https://example.invalid/a","CCTV","","","china");
         java.util.List<String> duplicate=new java.util.ArrayList<>(first);
