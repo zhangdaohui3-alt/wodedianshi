@@ -13,7 +13,7 @@ import static org.junit.Assert.assertEquals;
 
 public class PlaylistFeedIndexTest {
     @Test public void failedRecordWriteAbortsWithoutPublishingPartialIndex() throws Exception {
-        char[] oversized = new char[65536];
+        char[] oversized = new char[1024*1024+1];
         java.util.Arrays.fill(oversized,'x');
         StringBuilder body=new StringBuilder("#EXTM3U\n#EXTINF:-1,");
         body.append(oversized).append("\nhttps://bad.example/live\n");
@@ -26,8 +26,10 @@ public class PlaylistFeedIndexTest {
             PlaylistFeedIndex.readPage(feed,0,48,page::add,()->{
                 checks.incrementAndGet();return false;
             });
-            org.junit.Assert.fail("Expected oversized modified UTF record failure");
-        }catch(java.io.UTFDataFormatException expected){}
+            org.junit.Assert.fail("Expected oversized bounded field failure");
+        }catch(java.io.IOException expected){
+            org.junit.Assert.assertTrue(expected.getMessage().contains("field exceeds size limit"));
+        }
         assertEquals(0,page.size());
         org.junit.Assert.assertTrue("Must abort before parsing hundreds of tail entries",checks.get()<30);
         org.junit.Assert.assertFalse(new File(feed.getAbsolutePath()+".index-data").exists());
@@ -39,6 +41,48 @@ public class PlaylistFeedIndexTest {
         }
         assertEquals(1,PlaylistFeedIndex.readPage(feed,0,48,page::add));
         assertEquals("正常",page.get(0).name);
+    }
+
+    @Test public void extendedFieldsKeepOriginalRowOrderAndContents() throws Exception {
+        char[] name=new char[65536];
+        java.util.Arrays.fill(name,'中');
+        String large=new String(name);
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,"+large+"\nhttps://a.example/live\n"
+                +"#EXTINF:-1,乙\nhttps://b.example/live\n");
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,page::add));
+        assertEquals(large,page.get(0).name);
+        assertEquals(2,PlaylistFeedIndex.indexedEntryCount(feed));
+        page.clear();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,1,1,page::add));
+        assertEquals("乙",page.get(0).name);
+    }
+
+    @Test public void oldIndexFormatRemainsReadableWithoutRebuild() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n");
+        File records=new File(feed.getAbsolutePath()+".index-data");
+        File offsets=new File(feed.getAbsolutePath()+".index-offsets");
+        try(RandomAccessFile data=new RandomAccessFile(records,"rw");
+                RandomAccessFile index=new RandomAccessFile(offsets,"rw")){
+            data.writeUTF("旧索引");data.writeUTF("https://a.example/live");
+            data.writeUTF("");data.writeUTF("");data.writeUTF("");
+            index.writeInt(0x4D545649);index.writeLong(1L);index.writeLong(0L);
+        }
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.indexedEntryCount(feed));
+        assertEquals(1,PlaylistFeedIndex.readExistingPage(feed,0,1,page::add,()->false));
+        assertEquals("旧索引",page.get(0).name);
+    }
+
+    @Test public void damagedExtendedLengthRebuildsBeforeEmittingAnyRow() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n");
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,ignored->{}));
+        try(RandomAccessFile data=new RandomAccessFile(new File(feed.getAbsolutePath()+".index-data"),"rw")){
+            data.writeInt(Integer.MAX_VALUE);
+        }
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,page::add));
+        assertEquals("甲",page.get(0).name);
     }
 
     private File playlist(String value) throws Exception {
