@@ -53,6 +53,14 @@ public final class SourceUpdateActivityPolicy {
         if(now>0L)lastPressureAt=now;
         revokeStableLive();
     }
+    /** Called only after release continuations have run. Keep the worker
+     * gated if any playback owner or queued native teardown remains. */
+    static boolean mayClearAfterDecoderHandoff(boolean liveOwner,boolean vodOwner,
+            boolean pendingContinuation,boolean releaseBusy,boolean quarantined,
+            boolean decoderAvailable) {
+        return !liveOwner&&!vodOwner&&!pendingContinuation&&!releaseBusy
+                &&!quarantined&&decoderAvailable;
+    }
     public static int idleProbeConcurrency(long now){
         if(playbackActive)return 1;
         long last=lastPressureAt;
