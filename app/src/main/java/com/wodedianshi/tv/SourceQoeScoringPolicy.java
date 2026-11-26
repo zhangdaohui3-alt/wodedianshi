@@ -49,9 +49,18 @@ public final class SourceQoeScoringPolicy {
         double readyPenalty = Math.min(120.0d, Math.max(0L, averageReadyMs) / 200.0d);
         double firstFramePenalty = Math.min(180.0d, Math.max(0L, averageFirstFrameMs) / 180.0d);
         double codecPenalty = Math.min(60.0d, codecWarningRate * 8.0d);
-        double failurePenalty = Math.min(180.0d, failureRate * 180.0d);
+        // READY alone proves connection, not rendered television. Grant only
+        // a small provisional reward for readiness without confirmed output.
+        double outputRate = Math.max(firstFrameRate, stableRate);
+        double confirmedReadyRate = Math.min(readyRate, outputRate);
+        double readyReward = confirmedReadyRate * 450.0d
+                + (readyRate - confirmedReadyRate) * 90.0d;
+        // Repeated actual failures with no stable output must not be outweighed
+        // by READY callbacks. Normalize by attempts and reduce this additional
+        // penalty as stable evidence accumulates. Unobserved output is not failure.
+        double failurePenalty = failureRate * (180.0d + 420.0d * (1.0d - stableRate));
         double bufferPenalty = Math.min(110.0d, bufferRate * 110.0d);
-        return readyRate * 450.0d + firstFrameRate * 450.0d + stableRate * 700.0d
+        return readyReward + firstFrameRate * 450.0d + stableRate * 700.0d
                 - readyPenalty - firstFramePenalty - codecPenalty
                 - failurePenalty - bufferPenalty;
     }
