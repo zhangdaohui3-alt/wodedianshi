@@ -66,13 +66,18 @@ public final class FullDiscoveryProgressPolicy {
     }
 
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
-    // Independent watermark preserves the original mainland-complete level
-    // and limits additional initial publications to three geometric milestones.
+    // More frequent early publication, then geometric growth to bound
+    // database work. Existing watermark values remain valid on upgrade.
     public static final String PREVIEW_MILESTONE_KEY = "source_initial_preview_milestone";
+    private static final int[] PREVIEW_MILESTONES={16,32,64,96,128,192,256,384,512,1024,2048,4096,8192};
     static int nextPreviewMilestone(int previous,int stagedChannels,int mainlandValidated) {
         if(mainlandValidated<=0)return previous;
-        int reached=stagedChannels>=1024?1024:stagedChannels>=256?256:stagedChannels>=64?64:0;
-        return Math.max(previous,reached);
+        int reached=previous;
+        for(int milestone:PREVIEW_MILESTONES){
+            if(milestone>stagedChannels)break;
+            reached=Math.max(reached,milestone);
+        }
+        return reached;
     }
 
     // At most two extra publications: an early useful set, then mainland coverage.
