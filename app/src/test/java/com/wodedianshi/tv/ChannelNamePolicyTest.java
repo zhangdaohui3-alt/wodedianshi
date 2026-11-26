@@ -4,6 +4,30 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ChannelNamePolicyTest {
+    @Test public void reusedProvinceRetainsCityAndAmbiguitySemantics(){
+        String[][] cases={
+            {"深圳新闻综合","广东","深圳"},
+            {"ShenzhenNews.cn","广东","深圳"},
+            {"Fujian Fuzhou News","福建","福州"},
+            {"Jiangxi Fuzhou News","福建","福州"},
+            {"Fuzhou TV","福建","福州"},
+            {"NotShenzhenNews","广东","深圳"},
+            {"江苏台州新闻","江苏","泰州"},
+            {"青海 海南州新闻","青海","海南州"},
+            {"Ｘiamen News","福建","厦门"},
+            {"深圳—新闻📺","广东","深圳"},
+            {"Local News US","福建","福州"}
+        };
+        for(String[] row:cases){
+            String resolved=ChannelNamePolicy.provinceForLocalChannel(row[0]);
+            assertEquals(row[0],ChannelNamePolicy.matchesLocalCity(row[0],row[1],row[2]),
+                ChannelNamePolicy.matchesLocalCityWithProvince(row[0],row[1],row[2],resolved));
+        }
+        assertTrue(ChannelNamePolicy.matchesLocalCity("深圳—新闻📺","广东","深圳"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("NotShenzhenNews","广东","深圳"));
+        assertFalse(ChannelNamePolicy.matchesLocalCity("Fuzhou TV","福建","福州"));
+    }
+
     @Test public void recognizesCompactLocalServiceNamesAndEpgIdsConservatively() {
         assertEquals("广东", ChannelNamePolicy.provinceForLocalChannel("ShenzhenNews.cn"));
         assertEquals("四川", ChannelNamePolicy.provinceForLocalChannel("ChengduComprehensive"));
