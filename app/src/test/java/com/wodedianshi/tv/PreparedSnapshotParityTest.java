@@ -110,4 +110,44 @@ public class PreparedSnapshotParityTest {
         assertTrue(prepared.matches(7,rows.size()));
         assertFalse(prepared.matches(8,rows.size()));
     }
+
+    @Test public void selectedGeoScopeUsesCurrentRowsAfterSameSizeReplacement() throws Exception {
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();
+        Class<?> channel=Class.forName("com.wodedianshi.tv.MainActivity$Channel");
+        Constructor<?> constructor=channel.getDeclaredConstructor(String.class,String.class,String.class);
+        constructor.setAccessible(true);
+        Object oldRow=constructor.newInstance("Old Phoenix station","https://example.invalid/old","local");
+        Object newRow=constructor.newInstance("New Phoenix station","https://example.invalid/new","local");
+        Object other=constructor.newInstance("Other country","https://example.invalid/other","local");
+        field(channel,"tvgId").set(oldRow,"OldPhoenix.us");
+        field(channel,"tvgId").set(newRow,"NewPhoenix.us");
+        field(channel,"tvgId").set(other,"Other.ca");
+        for(Object row:Arrays.asList(oldRow,newRow)){
+            @SuppressWarnings("unchecked")
+            Set<String> scopes=(Set<String>)field(channel,"sourceScopes").get(row);
+            scopes.add("global");
+            scopes.add("geo:cities:us-phoenix");
+        }
+        Method key=channel.getDeclaredMethod("key");key.setAccessible(true);
+        String oldKey=(String)key.invoke(oldRow),newKey=(String)key.invoke(newRow);
+        assertNotEquals(oldKey,newKey);
+        List<Object> before=Arrays.asList(oldRow,other),after=Arrays.asList(newRow,other);
+        Method build=method("buildLocalMembership",List.class,BooleanSupplier.class,boolean.class);
+        Method geo=method("geoKeysForSnapshot",List.class,long.class,String.class,String.class);
+        Field prepared=field(MainActivity.class,"preparedLocalSnapshot");
+        SnapshotCategoryIndex.LocalMembership oldIndex=(SnapshotCategoryIndex.LocalMembership)
+            build.invoke(activity,before,(BooleanSupplier)()->false,true);
+        prepared.set(activity,new SnapshotCategoryIndex.PreparedLocal(7,oldIndex));
+        for(String[] scope:new String[][]{{"geo:countries:us","us"},{"geo:cities:us-phoenix",""}}){
+            assertEquals(Collections.singleton(oldKey),geo.invoke(activity,before,7L,scope[0],scope[1]));
+            // The selected scope is unchanged, but the old index is invalid even
+            // though the replacement has exactly the same number of rows.
+            assertEquals(Collections.singleton(newKey),geo.invoke(activity,after,8L,scope[0],scope[1]));
+        }
+        SnapshotCategoryIndex.LocalMembership newIndex=(SnapshotCategoryIndex.LocalMembership)
+            build.invoke(activity,after,(BooleanSupplier)()->false,true);
+        prepared.set(activity,new SnapshotCategoryIndex.PreparedLocal(8,newIndex));
+        for(String[] scope:new String[][]{{"geo:countries:us","us"},{"geo:cities:us-phoenix",""}})
+            assertEquals(Collections.singleton(newKey),geo.invoke(activity,after,8L,scope[0],scope[1]));
+    }
 }
