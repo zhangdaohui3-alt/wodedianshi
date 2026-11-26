@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void pacedForwardScanKeepsEarliestUnresolvedPositionUntilIdleReplay(){
+        int marker=DiscoveryBatchPolicy.noteTransientRecheck(DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK,2);
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.deferInitialReplayForIdle(true,marker));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.deferInitialReplayForIdle(true,DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK));
+        marker=DiscoveryBatchPolicy.resumeTransientRecheck(true,marker,4);
+        marker=DiscoveryBatchPolicy.noteTransientRecheck(marker,5);
+        org.junit.Assert.assertEquals(2,marker);
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldReplayTransientSuffix(marker,6,48));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldReplayTransientSuffix(marker,48,48));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.deferInitialReplayForIdle(true,DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.deferInitialReplayForIdle(false,DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldReplayTransientSuffix(DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED,48,48));
+    }
+
     @Test public void coolingStageResumesAtEarliestEligibleFeedWithoutSkippingPriority() {
         assertEquals(30000L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,100000L));
         assertEquals(1L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,129999L));
