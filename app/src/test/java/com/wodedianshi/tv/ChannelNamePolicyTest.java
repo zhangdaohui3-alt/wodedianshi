@@ -165,6 +165,29 @@ public class ChannelNamePolicyTest {
         assertEquals("上虞", ChannelNamePolicy.localCityForChannel("上虞新闻综合"));
     }
 
+    @Test public void pickerUsesSameLocalitiesAsClassifier() {
+        String[][] groups = {
+            {"浙江","上虞","余姚","兰溪","庆元","开化","文成","新昌"},
+            {"安徽","固镇"},{"四川","旺苍"},{"新疆","库尔勒","伊宁"},
+            {"湖北","仙桃","潜江","天门"},{"北京","北京"},{"上海","上海"}
+        };
+        for(String[] group:groups){
+            java.util.List<String> picker=java.util.Arrays.asList(ChannelNamePolicy.localitiesForProvince(group[0]));
+            for(int i=1;i<group.length;i++){
+                assertTrue(picker.contains(group[i]));
+                assertTrue(ChannelNamePolicy.isKnownLocality(group[0],group[i]));
+                assertEquals(group[0],ChannelNamePolicy.provinceForLocalChannel(group[i]+"新闻"));
+                assertTrue(ChannelNamePolicy.matchesLocalCity(group[i]+"新闻",group[0],group[i]));
+            }
+        }
+        assertFalse(ChannelNamePolicy.isKnownLocality("湖南","仙桃"));
+        assertFalse(ChannelNamePolicy.isKnownLocality("广东","广东"));
+        assertEquals(0,ChannelNamePolicy.localitiesForProvince("unknown").length);
+        assertEquals("湖北",ChannelNamePolicy.provinceForLocalChannel("Xiantao News"));
+        assertEquals("潜江新闻",ChannelNamePolicy.canonicalLocalDisplayName("Qianjiang News","","","湖北"));
+        assertTrue(ChannelNamePolicy.matchesLocalCity("Tianmen News","湖北","天门"));
+    }
+
     @Test public void doesNotGuessProvinceForAmbiguousCityAliases() {
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Taizhou TV"));
         assertEquals("", ChannelNamePolicy.provinceForLocalChannel("Yulin TV"));
