@@ -644,7 +644,8 @@ public class SourceUpdateWorker extends Worker {
           catch(NumberFormatException ignored){}
           // Forward scanning may continue while playing; an admitted replay
           // remains idle-only. Legacy holds resume at the saved prefix.
-          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(slowPlayback,transientState);
+          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(slowPlayback,transientState)
+              ||(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(i,0L));
           if(!inspectedFeeds[i]&&!attemptedFeedsThisRun[i]
               &&transientState==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
             long admittedAt=0L;
@@ -658,10 +659,10 @@ public class SourceUpdateWorker extends Worker {
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
-            &&SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,inspectedFeeds,
+            &&SourceDiscoveryPriorityPolicy.nextEligibleFeed(initialNextFeedIndex,inspectedFeeds,
                 attemptedFeedsThisRun,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)<0){
-          // All remaining feeds in the current priority stage are cooling.
+          // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
           enqueueInitialContinuation(DiscoveryBatchPolicy.earliestStageCooldownSeconds(inspectedFeeds,
               recheckRemaining,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
@@ -678,16 +679,16 @@ public class SourceUpdateWorker extends Worker {
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
-            ?SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,
+            ?SourceDiscoveryPriorityPolicy.nextEligibleFeed(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
-        // Full rebuild: inspect China mainland feeds first (CCTV, provincial,
-        // county/local); then HK/Macau/Taiwan; only then international feeds.
-        // Rotate fairly within a stage and resume each feed's saved page cursor.
-        // Keep the 24-probe budget and yield to playback in every stage.
+        // Prefer mainland, then HK/Macau/Taiwan, then international feeds.
+        // If an entire stage is temporarily deferred, use the next eligible stage.
+        // Deferred feeds remain unfinished and retain their exact saved cursors.
+        // Preserve the existing probe budgets and playback gates.
         String feed=feeds[feedIndex];
         String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):
             manualRefresh?manualFeedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
