@@ -2433,9 +2433,9 @@ public class SourceUpdateWorker extends Worker {
       long now=android.os.SystemClock.elapsedRealtime();
       long remaining=deadline-now;
       if(remaining<2L)return null;
-      int connectTimeout=(int)Math.min(2500L,Math.max(1L,remaining/2L));
+      int connectTimeout=(int)Math.min(SourceProbeTimePolicy.sampleConnectTimeoutCap(slowPlayback),Math.max(1L,remaining/2L));
       int readTimeout=SourceProbeTimePolicy.boundedTimeoutMillis(
-          deadline,now+connectTimeout,3000);
+          deadline,now+connectTimeout,SourceProbeTimePolicy.sampleReadTimeoutCap(slowPlayback));
       if(readTimeout<=0)return null;
       c.setConnectTimeout(connectTimeout);
       c.setReadTimeout(readTimeout);
@@ -2454,16 +2454,19 @@ public class SourceUpdateWorker extends Worker {
         byte[] buffer=new byte[4096];int n,total=0;
         while(total<=maxBytes){
           if(probeDeadlineReached(deadline))return null;
-          n=in.read(buffer);
+          int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
+          if(length==0)break;
+          n=in.read(buffer,0,length);
+          if(probeDeadlineReached(deadline))return null;
           if(n==-1)break;
-          int take=Math.min(n,maxBytes+1-total);out.write(buffer,0,take);total+=take;
-          if(total>maxBytes)break;
+          out.write(buffer,0,n);total+=n;
         }
         if(probeDeadlineReached(deadline))return null;
         byte[] received=out.toByteArray();
         boolean truncated=rangeIncomplete
             ||HlsProbeValidationPolicy.isTruncatedSample(received.length,maxBytes);
-        byte[] bounded=truncated?Arrays.copyOf(received,maxBytes):received;
+        int retained=SourceProbeTimePolicy.sampleRetainedLength(received.length,maxBytes);
+        byte[] bounded=retained<received.length?Arrays.copyOf(received,retained):received;
         return new SampleResponse(bounded,finalUrl,truncated);
       }
     }finally{if(c!=null)c.disconnect();}
