@@ -109,6 +109,14 @@ public final class SourceUpdateSchedulePolicy {
                 && now - measuredAt <= (valid ? (provisional ? 60_000L : 300_000L) : 15_000L);
     }
 
+    /** Single rule for the owner, initial wave admission and rolling refill.
+     * Paced observations cannot stand in for an unpaced quality measurement. */
+    static boolean reusableInitialObservation(boolean valid,boolean provisional,boolean paced,
+            boolean viewing,long measuredAt,long now) {
+        return SourceQualityScorer.reusableProbeMode(paced,viewing)
+                &&canReuseInitialProbe(valid,provisional,measuredAt,now);
+    }
+
     /** At capacity discard expired observations before evicting a still reusable
      * least-recently-used result. The owner retains the original hard cap. */
     static <K,V> void trimInitialProbeCache(java.util.LinkedHashMap<K,V> cache,int capacity,
