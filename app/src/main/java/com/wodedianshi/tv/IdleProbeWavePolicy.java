@@ -63,6 +63,35 @@ final class IdleProbeWavePolicy {
         return ordered;
     }
 
+    /** Within a fixed priority group, try one address for each distinct station
+     * before its second address, then its third, etc. Host balance remains
+     * bounded within each round. Ordering depends only on immutable page rows. */
+    static <T> java.util.ArrayList<T> coverageFirst(java.util.List<T> entries,
+            java.util.function.Function<T,String> stationOf,
+            java.util.function.Function<T,String> hostOf,
+            java.util.function.ToIntFunction<T> priorityOf) {
+        java.util.TreeMap<Integer,java.util.LinkedHashMap<String,java.util.ArrayDeque<T>>> groups=
+                new java.util.TreeMap<>();
+        for(T entry:entries){
+            groups.computeIfAbsent(priorityOf.applyAsInt(entry),k->new java.util.LinkedHashMap<>())
+                .computeIfAbsent(stationOf.apply(entry),k->new java.util.ArrayDeque<>()).add(entry);
+        }
+        java.util.ArrayList<T> ordered=new java.util.ArrayList<>(entries.size());
+        for(java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> stations:groups.values()){
+            while(!stations.isEmpty()){
+                java.util.ArrayList<T> round=new java.util.ArrayList<>(stations.size());
+                java.util.Iterator<java.util.ArrayDeque<T>> iterator=stations.values().iterator();
+                while(iterator.hasNext()){
+                    java.util.ArrayDeque<T> queue=iterator.next();
+                    round.add(queue.removeFirst());
+                    if(queue.isEmpty())iterator.remove();
+                }
+                ordered.addAll(interleaveHosts(round,hostOf,entry->0));
+            }
+        }
+        return ordered;
+    }
+
     /** Never treat cancellation as proof the underlying network call exited. */
     static boolean allFinished(Collection<? extends Future<?>> futures) {
         for(Future<?> future:futures)
