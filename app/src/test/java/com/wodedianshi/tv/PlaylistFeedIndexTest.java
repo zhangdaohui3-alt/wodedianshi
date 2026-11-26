@@ -91,6 +91,54 @@ public class PlaylistFeedIndexTest {
         assertEquals("频道乙", recovered.get(1).name);
     }
 
+    @Test public void repeatedOffsetAcrossPageBoundaryRebuildsInsteadOfRepeatingChannel() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
+                +"#EXTINF:-1,乙\nhttps://b.example/live\n");
+        assertEquals(2,PlaylistFeedIndex.readPage(feed,0,2,ignored->{}));
+        File offsets=new File(feed.getAbsolutePath()+".index-offsets");
+        try(RandomAccessFile index=new RandomAccessFile(offsets,"rw")){
+            index.seek(20L);index.writeLong(0L);
+        }
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,1,1,page::add));
+        assertEquals("乙",page.get(0).name);
+    }
+
+    @Test public void offsetThatSkipsARecordRebuildsBeforeEmittingPage() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
+                +"#EXTINF:-1,乙\nhttps://b.example/live\n"
+                +"#EXTINF:-1,丙\nhttps://c.example/live\n");
+        assertEquals(3,PlaylistFeedIndex.readPage(feed,0,3,ignored->{}));
+        File offsets=new File(feed.getAbsolutePath()+".index-offsets");
+        try(RandomAccessFile index=new RandomAccessFile(offsets,"rw")){
+            index.seek(28L);long third=index.readLong();
+            index.seek(20L);index.writeLong(third);
+        }
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,page::add));
+        assertEquals("甲",page.get(0).name);
+        page.clear();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,1,1,page::add));
+        assertEquals("乙",page.get(0).name);
+    }
+
+    @Test public void cancelledIndexReadKeepsSidecarsAndEmitsNothing() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
+                +"#EXTINF:-1,乙\nhttps://b.example/live\n");
+        assertEquals(2,PlaylistFeedIndex.readPage(feed,0,2,ignored->{}));
+        File records=new File(feed.getAbsolutePath()+".index-data");
+        File offsets=new File(feed.getAbsolutePath()+".index-offsets");
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        try{
+            PlaylistFeedIndex.readPage(feed,0,2,page::add,()->checks.incrementAndGet()>=2);
+            org.junit.Assert.fail("expected pause");
+        }catch(SourceProbeTimePolicy.PausedException expected){}
+        assertEquals(0,page.size());
+        org.junit.Assert.assertTrue(records.isFile()&&offsets.isFile());
+        assertEquals(2,PlaylistFeedIndex.readPage(feed,0,2,page::add));
+    }
+
     @Test public void emptyAndExhaustedPagesReturnZeroWithoutSkippingEntries() throws Exception {
         File feed = playlist("#EXTM3U\n"
                 + "#EXTINF:-1,频道甲\nhttps://a.example/live.m3u8\n"
