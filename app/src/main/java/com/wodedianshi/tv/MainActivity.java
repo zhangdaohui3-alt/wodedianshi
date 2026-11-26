@@ -3636,7 +3636,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         return super.dispatchKeyEvent(event);
       }
       private float videoTouchX,videoTouchY;
-      private boolean videoTapCandidate=false;
+      private boolean videoTapCandidate=false,ownsVodVideoGesture=false;
       private void hideVodControlsNow(){
         if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
         if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
@@ -3661,6 +3661,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         int action=event.getActionMasked();
         boolean mouse=isMouseEvent(event);
         if(action==android.view.MotionEvent.ACTION_DOWN){
+          ownsVodVideoGesture=false;
           boolean controlsHidden=vodControlsHolder[0]==null||vodControlsHolder[0].getVisibility()!=View.VISIBLE;
           if(mouse&&controlsHidden){
             // Mouse hover normally reveals controls before click; keep mouse hit-testing native.
@@ -3674,14 +3675,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           videoTouchX=event.getX();videoTouchY=event.getY();
           // Intercept the whole first finger tap while controls are hidden.
           // Otherwise PlayerView can own ACTION_DOWN and the stage never receives ACTION_UP.
-          if(videoTapCandidate)return true;
-        }else if(action==android.view.MotionEvent.ACTION_UP&&videoTapCandidate){
-          float dx=Math.abs(event.getX()-videoTouchX),dy=Math.abs(event.getY()-videoTouchY);
-          videoTapCandidate=false;
-          if(dx<dp(28)&&dy<dp(28))toggleVodControls();
-          return true;
-        }else if(action==android.view.MotionEvent.ACTION_CANCEL&&videoTapCandidate){
-          videoTapCandidate=false;
+          ownsVodVideoGesture=videoTapCandidate;
+        }
+        // Never forward MOVE or POINTER events to a child that did not receive
+        // DOWN. Reject multi-touch and drags without losing gesture ownership.
+        if(ownsVodVideoGesture){
+          if(action==MotionEvent.ACTION_POINTER_DOWN||event.getPointerCount()!=1
+              ||Math.abs(event.getX()-videoTouchX)>=dp(28)
+              ||Math.abs(event.getY()-videoTouchY)>=dp(28))videoTapCandidate=false;
+          if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){
+            boolean toggle=action==MotionEvent.ACTION_UP&&videoTapCandidate;
+            ownsVodVideoGesture=false;videoTapCandidate=false;
+            if(toggle)toggleVodControls();
+          }
           return true;
         }
         return super.dispatchTouchEvent(event);
