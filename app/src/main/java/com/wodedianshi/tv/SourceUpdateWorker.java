@@ -787,9 +787,9 @@ public class SourceUpdateWorker extends Worker {
       final String initialRevision=initialDiscoveryChain?
           com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).appStateDao()
               .getValue(com.wodedianshi.tv.db.RoomCatalogueBuildStore.STAGING_REVISION_KEY):null;
-      final boolean initialIndexEligible=initialDiscoveryChain&&previousStagedSize>1024
-          &&roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1)>=0
-          &&!areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
+      final boolean initialIndexEligible=initialDiscoveryChain&&FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(
+          previousStagedSize,roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1),
+          areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length));
       if(initialIndexEligible&&!slowPlayback&&!com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
           getApplicationContext(),previousStagedSize,initialRevision))
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.backfillInitialIndex(
@@ -1167,7 +1167,7 @@ public class SourceUpdateWorker extends Worker {
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length)&&!slowPlayback;
       if(initialIndexed&&finalRanking)throw new IllegalStateException("Sparse staging cannot finalize a full snapshot");
       final int stagedSizeAfterProbe=initialIndexed
-          ?Math.addExact(previousStagedSize,saved.length()-indexedPositions.size()):saved.length();
+          ?FullDiscoveryProgressPolicy.indexedInitialRowCount(previousStagedSize,indexedPositions.size(),saved.length()):saved.length();
       // The manual directory is private until its ready marker is committed.
       // During collection rank only changed rows; health-only probes need no
       // full directory sort. A final pass uses the latest saved scoring state.
