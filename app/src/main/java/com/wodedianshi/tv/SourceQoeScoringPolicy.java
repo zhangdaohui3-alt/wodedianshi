@@ -3,6 +3,37 @@ package com.wodedianshi.tv;
 public final class SourceQoeScoringPolicy {
     private SourceQoeScoringPolicy() {}
 
+
+    /**
+     * A source is eligible for a stable-play success only after an actual output
+     * is confirmed. Video streams require Media3's rendered-first-frame event;
+     * audio-only streams require a selected audio track and advancing audio.
+     */
+    public static boolean hasConfirmedOutputForStablePlay(boolean videoTrackPresent,
+                                                           boolean firstFrameRendered,
+                                                           boolean audioTrackSelected,
+                                                           boolean audioPositionAdvancing) {
+        return firstFrameRendered
+                || (!videoTrackPresent && audioTrackSelected && audioPositionAdvancing);
+    }
+
+    /** Recency bonus for an actual rendered-first-frame or stable-play event. */
+    public static double recentSuccessBonus(long lastFirstFrame, long lastStable, long nowMs) {
+        long verifiedAt = SourceSuccessTimestampPolicy.latestVerifiedSuccess(
+                lastFirstFrame, lastStable);
+        if (verifiedAt <= 0L) return 0.0d;
+        double ageHours = Math.max(0.0d, (nowMs - verifiedAt) / 3600000.0d);
+        return Math.max(0.0d, 100.0d - ageHours * 4.0d);
+    }
+
+    /** Shared 30-day half-life for foreground and background source ranking. */
+    public static double historyWeight(long updatedAt, long nowMs) {
+        if (updatedAt <= 0L) return 0.12d;
+        long ageMs = Math.max(0L, nowMs - updatedAt);
+        double halfLifeMs = 30.0d * 24.0d * 60.0d * 60.0d * 1000.0d;
+        return Math.max(0.12d, Math.pow(0.5d, ageMs / halfLifeMs));
+    }
+
     /** Returns the shared foreground/background QoE adjustment. */
     public static double adjustment(int attempts, int ready, int firstFrames,
                                     int stablePlays, int failures, int buffers,
