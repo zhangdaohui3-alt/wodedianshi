@@ -1715,7 +1715,7 @@ public class SourceUpdateWorker extends Worker {
       throw new IllegalStateException("Converted Room catalogue count mismatch");
     return snapshot;
   }
-  private boolean publishInitialPreview(JSONArray saved,int level,int milestone)throws JSONException{
+  private boolean publishInitialPreview(JSONArray saved,int level,int milestone)throws Exception{
     if(saved.length()==0||!FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),
         com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels()))return false;
     noteInitialStage("正在发布阶段性已预检频道");
@@ -1909,7 +1909,9 @@ public class SourceUpdateWorker extends Worker {
     if(initialDiscoveryChain){
       // The existing counters and cursors stay unchanged while viewing.
       com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),
-          "source_initial_progress_phase","播放或浏览优先：抓源已暂停，进度已保存");
+          "source_initial_progress_phase",SourceUpdateActivityPolicy.isPlaybackActive()
+               ?"播放资源占用：本批抓源暂停，已保存进度"
+               :"本批任务已让出或取消，已保存进度，等待续抓");
       return continueAfterViewingDelay(false);
     }
     // Do not repeatedly wake the periodic job every few minutes while a user
