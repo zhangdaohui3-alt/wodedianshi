@@ -207,7 +207,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // A deliberate page-button action must not be overridden by the selected channel's page.
   private boolean preserveRequestedLivePageOnce=false;
   private Button livePreviousPageButton,liveNextPageButton;
-  private TextView livePageStatus;
+  private Button livePageStatus;
   // Compact, nonblocking first-install progress. No network access from UI.
   private LinearLayout initialDiscoveryProgressPanel;
   private TextView initialDiscoveryProgressTitle;
@@ -1384,7 +1384,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
     LinearLayout livePaging=new LinearLayout(this);livePaging.setOrientation(0);livePaging.setGravity(Gravity.CENTER_VERTICAL);
     livePreviousPageButton=new Button(this);livePreviousPageButton.setText("上一页");livePreviousPageButton.setAllCaps(false);livePreviousPageButton.setTextSize(12);livePreviousPageButton.setMinHeight(0);livePreviousPageButton.setMinimumHeight(0);livePreviousPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(livePreviousPageButton,Color.rgb(35,55,78));
-    livePageStatus=new TextView(this);livePageStatus.setTextColor(Color.LTGRAY);livePageStatus.setTextSize(11);livePageStatus.setGravity(Gravity.CENTER);livePageStatus.setText("第 1 页"); 
+    livePageStatus=new Button(this);livePageStatus.setAllCaps(false);livePageStatus.setTextSize(11);
+    livePageStatus.setSingleLine(true);livePageStatus.setMinWidth(0);livePageStatus.setMinimumWidth(0);
+    livePageStatus.setMinHeight(0);livePageStatus.setMinimumHeight(0);
+    livePageStatus.setGravity(Gravity.CENTER);livePageStatus.setPadding(dp(2),0,dp(2),0);
+    livePageStatus.setText("1/1 页 ▾");styleTvButton(livePageStatus,Color.rgb(35,55,78));
+    livePageStatus.setId(View.generateViewId());
+    livePageStatus.setContentDescription("选择频道列表页码");
+    livePageStatus.setOnClickListener(v->showLivePagePicker());
     liveNextPageButton=new Button(this);liveNextPageButton.setText("下一页");liveNextPageButton.setAllCaps(false);liveNextPageButton.setTextSize(12);liveNextPageButton.setMinHeight(0);liveNextPageButton.setMinimumHeight(0);liveNextPageButton.setPadding(dp(2),0,dp(2),0);styleTvButton(liveNextPageButton,Color.rgb(35,55,78));
     livePaging.addView(livePreviousPageButton,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(livePageStatus,new LinearLayout.LayoutParams(0,dp(34),1));livePaging.addView(liveNextPageButton,new LinearLayout.LayoutParams(0,dp(34),1));
     // First full source discovery is visible without covering playback or
@@ -1435,6 +1442,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     search.setNextFocusDownId(initialDiscoveryProgressPanel.getId());
     livePreviousPageButton.setNextFocusUpId(initialDiscoveryProgressPanel.getId());
     liveNextPageButton.setNextFocusUpId(initialDiscoveryProgressPanel.getId());
+    livePageStatus.setNextFocusUpId(initialDiscoveryProgressPanel.getId());
+    livePreviousPageButton.setNextFocusRightId(livePageStatus.getId());
+    liveNextPageButton.setNextFocusLeftId(livePageStatus.getId());
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
@@ -4718,6 +4728,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     lastFilteredMatchCount=visible.size();
     updateLivePaging(visible.size());
+    if(preserveRequestedPage&&channelScroll!=null)channelScroll.scrollTo(0,0);
     updateLiveChannelPresentation();
     // Replace the dialog's transient "正在显示/正在筛选" text only after the
     // latest background filter has actually rendered its result.
@@ -4757,6 +4768,32 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(target!=null)target.requestFocus();
     });
   }
+  private void showLivePagePicker(){
+    if(!startupDataReady||!activityStarted||isFinishing()||isDestroyed())return;
+    RemoteChannelOrder order=currentRemoteChannelOrder();
+    if(order==null||directoryFilterInFlightKey!=null){
+      toast("频道目录正在整理，请稍后选择页码");return;
+    }
+    final String renderedKey=order.key;
+    final int count=getCurrentLiveMatchCount();
+    final int pages=LivePagePolicy.pageCount(count,LIVE_PAGE_SIZE);
+    if(pages<=1){toast("当前分类只有一页");return;}
+    final String[] choices=new String[pages];
+    for(int i=0;i<pages;i++)choices[i]="第 "+(i+1)+" 页";
+    showHoverChoiceDialog("选择页码 · 共 "+pages+" 页",choices,"取消",
+        Math.max(0,Math.min(pages-1,livePageIndex)),which->{
+      // Reject a choice belonging to an obsolete category/search/snapshot.
+      RemoteChannelOrder latest=currentRemoteChannelOrder();
+      if(latest==null||directoryFilterInFlightKey!=null||!renderedKey.equals(latest.key)){
+        toast("频道目录已更新，请重新选择页码");return;
+      }
+      if(!LivePagePolicy.canSelectPage(which,getCurrentLiveMatchCount(),LIVE_PAGE_SIZE))return;
+      if(which==livePageIndex)return;
+      livePageIndex=which;
+      preserveRequestedLivePageOnce=true;
+      refresh();
+    });
+  }
   private int getCurrentLiveMatchCount(){
     // The exact count is produced by the background filter and published with the
     // rendered page. Never rescan a large catalogue from a paging-button click.
@@ -4765,7 +4802,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void updateLivePaging(int total){
     int pages=LivePagePolicy.pageCount(total,LIVE_PAGE_SIZE);
     if(livePageIndex>=pages)livePageIndex=pages-1;
-    if(livePageStatus!=null)livePageStatus.setText("第 "+(livePageIndex+1)+" / "+pages+" 页");
+    if(livePageStatus!=null){
+      livePageStatus.setText((livePageIndex+1)+"/"+pages+" 页 ▾");
+      livePageStatus.setContentDescription("第 "+(livePageIndex+1)+" 页，共 "+pages+" 页，点击选择页码");
+    }
     if(livePreviousPageButton!=null){
       boolean enabled=livePageIndex>0;livePreviousPageButton.setEnabled(enabled);
       livePreviousPageButton.setAlpha(enabled?1f:0.42f);
