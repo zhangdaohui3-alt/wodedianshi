@@ -4,6 +4,91 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class TrackHealthPolicyTest {
+    @Test public void automaticChannelRecoveryStaysInScopeAndStopsAfterThreeSwitches() {
+        java.util.List<Integer> scope=java.util.Arrays.asList(3,10,28,47,99);
+        assertEquals(10,ChannelFailoverPolicy.nextScopedChannel(scope,0,0));
+        assertEquals(47,ChannelFailoverPolicy.nextScopedChannel(scope,2,2));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,3,3));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(scope,null,0));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(null,0,0));
+        assertEquals(-1,ChannelFailoverPolicy.nextScopedChannel(java.util.Arrays.asList(3,10),1,1));
+    }
+
+    @Test public void firstFrameWithoutAudioIsNotConfirmedTvOutput() {
+        assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,false,true,true,true,true));
+        assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,false));
+        assertFalse(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,false,false,false,false));
+        assertTrue(TrackHealthPolicy.hasConfirmedTvOutput(true,true,true,true,true,true,true,true));
+    }
+
+    @Test public void renderedCounterNeedsSameLiveBaselineAndRecentAdvance() {
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(false,10,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,-1,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,20,20));
+        assertFalse(TrackHealthPolicy.renderedCounterAdvanced(true,20,1));
+        assertTrue(TrackHealthPolicy.renderedCounterAdvanced(true,20,21));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(0L,1000L));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(2000L,1000L));
+        assertTrue(TrackHealthPolicy.recentRenderedCounter(1000L,15999L));
+        assertFalse(TrackHealthPolicy.recentRenderedCounter(1000L,16000L));
+    }
+
+    @Test public void recentAudioWarningDisablesHealthPromotionTemporarily() {
+        assertTrue(TrackHealthPolicy.audioWarningQuiet(0L,1000L));
+        assertFalse(TrackHealthPolicy.audioWarningQuiet(2000L,1000L));
+        assertFalse(TrackHealthPolicy.audioWarningQuiet(1000L,30999L));
+        assertTrue(TrackHealthPolicy.audioWarningQuiet(1000L,31000L));
+    }
+
+    @Test public void vlcClockRequiresMeaningfulForwardProgressFromKnownBaseline() {
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(0L,12000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,0L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,12000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,1000L));
+        assertFalse(TrackHealthPolicy.vlcClockAdvanced(12000L,12249L));
+        assertTrue(TrackHealthPolicy.vlcClockAdvanced(12000L,12250L));
+        assertTrue(TrackHealthPolicy.vlcClockAdvanced(12000L,24000L));
+    }
+
+    @Test public void vlcDiscoveryRequiresTwoHealthyChecksAndQuietViewer() {
+        assertTrue(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(false,true,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,false,false,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,true,true,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,false,2,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,1,1000L,22000L));
+        assertFalse(TrackHealthPolicy.canGrantVlcDiscovery(true,true,false,true,2,3000L,22000L));
+    }
+
+    @Test public void stableDiscoveryUsesContinuousReadyTimeNotRetryRefreshTime() {
+        long readyAt=1000L, refreshedAt=121000L, now=122000L;
+        assertTrue(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,Math.max(readyAt,refreshedAt),now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,now-100L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-5000L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,readyAt,1000L,now-100L,now-5000L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(false,readyAt,1000L,now-100L,now-100L,now));
+        assertFalse(TrackHealthPolicy.canGrantStableDiscovery(true,now-29000L,1000L,now-100L,now-100L,now));
+    }
+
+    @Test public void retryBudgetRequiresConfirmedRecentOutput() {
+        assertTrue(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,120000L,121000L));
+        assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(false,1000L,120000L,120000L,121000L));
+        assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,100000L,120000L,121000L));
+        assertFalse(TrackHealthPolicy.canRefreshRecoveryBudget(true,1000L,120000L,100000L,121000L));
+    }
+
+    @Test public void earlyTrackCheckPreservesBoundedAudioGrace() {
+        assertEquals(8000L,TrackHealthPolicy.initialTrackCheckDelayMs(false,true));
+        assertEquals(8000L,TrackHealthPolicy.initialTrackCheckDelayMs(true,false));
+        assertEquals(12000L,TrackHealthPolicy.initialTrackCheckDelayMs(true,true));
+        assertEquals(4000L,TrackHealthPolicy.remainingAudioGraceMs(true,true,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(false,true,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,false,true,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,true,false,false));
+        assertEquals(0L,TrackHealthPolicy.remainingAudioGraceMs(true,true,true,true));
+    }
+
     @Test public void missingVideoTriggersFailover() {
         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(false, true));
     }
@@ -12,8 +97,8 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, true));
     }
 
-    @Test public void missingAudioAloneDoesNotDiscardVideo() {
-        assertFalse(TrackHealthPolicy.shouldFailoverForTrackHealth(true, false));
+    @Test public void missingAudioAloneTriggersFailoverEvenWhenVideoIsPresent() {
+        assertTrue(TrackHealthPolicy.shouldFailoverForTrackHealth(true, false));
     }
 
     @Test public void healthyTracksDoNotFailover() {
