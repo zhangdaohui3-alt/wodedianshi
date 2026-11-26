@@ -180,6 +180,13 @@ public final class DiscoveryBatchPolicy {
         return initial&&viewing&&pending;
     }
 
+    /** Once the suffix has been rewound, its replay must remain idle-only.
+     * A legacy hold (no replay marker) can resume its exact saved prefix under
+     * the new policy; an incomplete forward scan may continue until page end. */
+    static boolean deferInitialReplayForIdle(boolean viewing,int marker) {
+        return viewing&&marker==TRANSIENT_RECHECK_USED;
+    }
+
     /** A paced inconclusive candidate has not had its unrestricted probe turn. */
     static boolean holdInconclusiveCandidate(boolean initial,boolean viewing,boolean savedSource) {
         return initial&&viewing&&!savedSource;
