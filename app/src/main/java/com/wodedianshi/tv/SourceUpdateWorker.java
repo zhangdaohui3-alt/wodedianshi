@@ -839,10 +839,11 @@ public class SourceUpdateWorker extends Worker {
                 entry->Arrays.asList(entry.name,entry.url,entry.group,entry.tvgId,entry.tvgName,entry.scope));
             feedCandidates.clear();feedCandidates.addAll(distinct);
           }
-          if((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
-            // Preserve every address and the exact raw index cursor. Within the
-            // current fixed-size page, probe mainland candidates first. Java's List
-            // sort is stable, so partial-batch fingerprint/resume stays deterministic.
+          if(manualRefresh&&!initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
+            // Manual refresh retains its stable mainland-first sort. Initial
+            // discovery already partitions by a refinement of this rank in
+            // coverageFirst below; pre-sorting there cannot alter order within
+            // any final rank and repeats expensive metadata classification.
             feedCandidates.sort((aEntry,bEntry)->Integer.compare(
                 ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
                     aEntry.scope,aEntry.name,aEntry.group,aEntry.tvgName,aEntry.tvgId),
