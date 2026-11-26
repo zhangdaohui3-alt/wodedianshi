@@ -290,6 +290,12 @@ public interface ChannelDao {
     @Query("SELECT COUNT(*) FROM catalogue_build_rows")
     int countCatalogueBuildRows();
 
+    @Query("SELECT COUNT(*) FROM catalogue_build_rows WHERE mergeIdentity=''")
+    int countUnindexedCatalogueBuildRows();
+
+    @Query("SELECT * FROM catalogue_build_rows WHERE mergeIdentity='' ORDER BY sortOrder,rowId LIMIT :limit")
+    List<CatalogueBuildRowEntity> getUnindexedCatalogueBuildRows(int limit);
+
     @Query("DELETE FROM catalogue_build_rows")
     void clearCatalogueBuildRows();
 
