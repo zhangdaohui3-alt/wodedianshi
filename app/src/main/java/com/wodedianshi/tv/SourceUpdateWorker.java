@@ -1566,6 +1566,17 @@ public class SourceUpdateWorker extends Worker {
       // Advance a feed only after every candidate in the current multi-feed batch
       // has had its probe turn. This prevents losing the tail when the probe deadline
       // interrupts a run, and ensures later playlist pages are eventually discovered.
+      // Recovery diagnostics use one committed Room read per completed
+      // non-initial batch, not a separate query for every configured feed.
+      // Keep the baseline shared by warning removal and remaining-count logic.
+      Map<String,String> recoveryState=Collections.emptyMap();
+      if(!initialDiscoveryChain&&feedBatchComplete){
+        ArrayList<String> keys=new ArrayList<>(feeds.length);
+        for(int i=0;i<feeds.length;i++)keys.add(initialFeedUnavailableKey(i));
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        recoveryState=readRoomValues(keys);
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      }
       if(feedBatchComplete){
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
@@ -1573,7 +1584,7 @@ public class SourceUpdateWorker extends Worker {
               .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(batch.index))
               .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(batch.index));
           if(!initialDiscoveryChain && recoveredDirectoryScanned(batch)
-              && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
+              && Boolean.parseBoolean(recoveryState.get(initialFeedUnavailableKey(batch.index)))){
             // The same indexed directory has reached EOF after processing its
             // pages. Do not clear its old warning after only a partial page.
             update.remove(initialFeedUnavailableKey(batch.index))
@@ -1619,7 +1630,7 @@ public class SourceUpdateWorker extends Worker {
       if(!initialDiscoveryChain&&feedBatchComplete){
         int stillUnavailable=0;
         for(int i=0;i<feeds.length;i++){
-          boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
+          boolean wasUnavailable=Boolean.parseBoolean(recoveryState.get(initialFeedUnavailableKey(i)));
           if(wasUnavailable){
             for(FeedBatch batch:feedBatches){
               if(batch.index==i&&recoveredDirectoryScanned(batch)){wasUnavailable=false;break;}
