@@ -8,6 +8,11 @@ public final class SourceUpdateActivityPolicy {
     private static volatile long stableUntil;
     private static long firstHealthyAt;
     private static volatile long lastPressureAt;
+    private static final java.util.concurrent.atomic.AtomicLong pressureGeneration=new java.util.concurrent.atomic.AtomicLong();
+    static long pressureGeneration(){return pressureGeneration.get();}
+    static boolean idleWavePressureChanged(long admitted){
+        return admitted>=0L&&pressureGeneration.get()!=admitted;
+    }
     private static final long LEASE_MS=15000L;
     private static final long MIN_HEALTHY_INTERVAL_MS=8000L;
     private static final java.util.concurrent.atomic.AtomicLong stableRevocations=new java.util.concurrent.atomic.AtomicLong();
@@ -51,6 +56,7 @@ public final class SourceUpdateActivityPolicy {
      * This does not wait for an in-flight connection to close. */
     public static synchronized void notePressure(long now){
         if(now>0L)lastPressureAt=now;
+        pressureGeneration.incrementAndGet();
         revokeStableLive();
     }
     /** Called only after release continuations have run. Keep the worker
