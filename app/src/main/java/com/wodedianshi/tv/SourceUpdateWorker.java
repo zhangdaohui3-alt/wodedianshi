@@ -1140,11 +1140,10 @@ public class SourceUpdateWorker extends Worker {
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
           if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index));
-          if(!initialDiscoveryChain && batch.parsed>0
+          if(!initialDiscoveryChain && recoveredDirectoryScanned(batch)
               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
-            // A previously unavailable directory has now been fetched and its
-            // candidates have completed this run's probe window. Clear its old
-            // warning; other old source warnings remain intact.
+            // The same indexed directory has reached EOF after processing its
+            // pages. Do not clear its old warning after only a partial page.
             update.remove(initialFeedUnavailableKey(batch.index))
                 .remove(initialFeedFailureCountKey(batch.index))
                 .remove(initialFeedFailureReasonKey(batch.index))
@@ -1186,7 +1185,7 @@ public class SourceUpdateWorker extends Worker {
           boolean wasUnavailable=roomBoolean(initialFeedUnavailableKey(i),false);
           if(wasUnavailable){
             for(FeedBatch batch:feedBatches){
-              if(batch.index==i&&batch.success&&batch.parsed>0){wasUnavailable=false;break;}
+              if(batch.index==i&&recoveredDirectoryScanned(batch)){wasUnavailable=false;break;}
             }
           }
           if(wasUnavailable)stillUnavailable++;
@@ -1898,6 +1897,10 @@ public class SourceUpdateWorker extends Worker {
       name=n;url=u;group=g;savedSource=saved;scope=sourceScope;
       tvgId=id==null?"":id;tvgName=guideName==null?"":guideName;
     }
+  }
+  private static boolean recoveredDirectoryScanned(FeedBatch batch){
+    return SourceUpdateSchedulePolicy.recoveredDirectoryScanned(batch.success,batch.unavailable,
+        batch.cursor,batch.parsed,batch.indexedEntries);
   }
   private static class FeedBatch{
     final int index,cursor,parsed,indexedEntries;
