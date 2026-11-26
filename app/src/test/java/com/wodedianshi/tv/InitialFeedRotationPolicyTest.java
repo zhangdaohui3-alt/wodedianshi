@@ -16,6 +16,17 @@ public class InitialFeedRotationPolicyTest {
                 5, 21, true, true));
     }
 
+    @Test public void partialAcquisitionYieldsOnlyWhileIdle() {
+        assertEquals(5,InitialFeedRotationPolicy.nextAfterPartialAcquisition(4,21,false));
+        assertEquals(4,InitialFeedRotationPolicy.nextAfterPartialAcquisition(4,21,true));
+        assertEquals(0,InitialFeedRotationPolicy.nextAfterPartialAcquisition(20,21,false));
+        assertEquals(0,InitialFeedRotationPolicy.nextAfterPartialAcquisition(0,0,false));
+        boolean[] done={false,false,false,false};
+        boolean[] attempted={false,false,false,false};
+        int next=InitialFeedRotationPolicy.nextAfterPartialAcquisition(1,4,false);
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextFeed(next,done,attempted,2,3));
+    }
+
     @Test public void shortPageMovesToNextFeed() {
         assertEquals(5, InitialFeedRotationPolicy.nextAfterAttempt(
                 4, 21, true, false));
