@@ -55,6 +55,9 @@ public class SourceUpdateWorker extends Worker {
   private static String committedStagingRevision="";
   private static long committedStagingAt;
   private boolean slowPlayback;
+  private boolean inlineInitialRequested;
+  private int ownedSlices;
+  private long ownedStartedAt;
   // Set only when this initial idle slice admits a high-concurrency wave.
   // Keep it until the slice exits so a late input cannot authorize a stale commit.
   private volatile long idleWavePressureGeneration=-1L;
@@ -227,8 +230,29 @@ public class SourceUpdateWorker extends Worker {
       long now=android.os.SystemClock.elapsedRealtime();
       if(!getInputData().getBoolean("initial_discovery_chain",false)
           ||now<committedStagingAt||now-committedStagingAt>60000L)discardStagingReuse();
-      noteInitialStage("准备本轮目录整理");
-      return runOwnedWork();
+      ownedStartedAt=android.os.SystemClock.elapsedRealtime();
+      ownedSlices=0;
+      for(;;){
+        if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
+        // A drained pool must really terminate before the next slice admits
+        // network work, including an inline continuation in the same owner.
+        java.util.concurrent.ExecutorService previous=retiringProbeExecutor;
+        if(previous!=null){
+          try{
+            if(!previous.isTerminated()&&!previous.awaitTermination(250L,
+                java.util.concurrent.TimeUnit.MILLISECONDS))return Result.retry();
+          }catch(InterruptedException interrupted){
+            Thread.currentThread().interrupt();return Result.retry();
+          }
+          retiringProbeExecutor=null;
+        }
+        inlineInitialRequested=false;
+        ownedSlices++;
+        noteInitialStage("准备本轮目录整理");
+        Result result=runOwnedWork();
+        if(!inlineInitialRequested)return result;
+        android.util.Log.i("MyTVSourceDiscovery","inline_initial_continuation completed_slices="+ownedSlices);
+      }
     }finally{
       if(isStopped()||Thread.currentThread().isInterrupted())discardStagingReuse();
       initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);
@@ -1952,8 +1976,19 @@ public class SourceUpdateWorker extends Worker {
           freshDifferentNextFeed=next>=0&&next!=attempted
               &&roomInt(initialFeedFailureCountKey(next),0)==0;
         }
-        enqueueInitialContinuation(SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
-            slowPlayback,feedsOk>0,freshDifferentNextFeed));
+        long delay=SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
+            slowPlayback,feedsOk>0,freshDifferentNextFeed);
+        // This branch follows the durable Room commit and any preview publish.
+        // Each inline slice reconstructs its gates/cursors from current state.
+        // No acquisition, delayed retry, or playback slice requests inline work.
+        if(SourceUpdateSchedulePolicy.canContinueInitialInline(ownedSlices,
+            android.os.SystemClock.elapsedRealtime()-ownedStartedAt,slowPlayback,
+            SourceUpdateActivityPolicy.isPlaybackActive(),pauseRequested.getAsBoolean(),
+            feedsOk>0&&discoveryScanned>0,delay)){
+          inlineInitialRequested=true;
+          return Result.success();
+        }
+        enqueueInitialContinuation(delay);
         return Result.success();
       }
       if(manualRefresh&&!manualComplete){
