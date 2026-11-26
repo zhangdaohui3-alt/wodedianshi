@@ -324,6 +324,37 @@ final class ChannelNamePolicy {
         return englishMatches.size() == 1 ? englishMatches.iterator().next() : "";
     }
 
+    /** Strict refresh evidence only. Do not change persisted catalogue identity keys.
+     * Null means conflicting cities; empty means no specific city. Explicitly paired
+     * English aliases are normalized to their Chinese city for comparison. */
+    static String localCityEvidence(String metadata, String province) {
+        if (province == null || province.isEmpty()) return "";
+        String normalized = normalize(metadata);
+        String upper = metadata == null ? "" : metadata.toUpperCase(Locale.ROOT);
+        java.util.LinkedHashSet<String> known = new java.util.LinkedHashSet<>();
+        java.util.LinkedHashSet<String> unpaired = new java.util.LinkedHashSet<>();
+        for (int row = 0; row < LOCAL_CITY_ALIASES.length; row++) {
+            if (!province.equals(LOCAL_CITY_ALIASES[row][0])) continue;
+            for (int i = 1; i < NORMALIZED_LOCAL_CITY_ALIASES[row].length; i++) {
+                String alias = NORMALIZED_LOCAL_CITY_ALIASES[row][i];
+                if (!containsNormalizedAlias(upper, alias, normalized)) continue;
+                if (hasCjkCharacter(alias)) { known.add(alias); continue; }
+                String mapped = "";
+                for (String[] pair : CITY_FILTER_ALIASES)
+                    if (province.equals(pair[0]) && alias.equals(pair[2])) {
+                        mapped = pair[1]; break;
+                    }
+                if (mapped.isEmpty()) unpaired.add(alias); else known.add(mapped);
+            }
+        }
+        if (known.size() > 1 || unpaired.size() > 1) return null;
+        // No mapping exists for some aliases. Do not assert a contradiction
+        // merely because an unpaired token accompanies one known Chinese city.
+        if (!known.isEmpty()) return known.iterator().next();
+        if (!unpaired.isEmpty()) return unpaired.iterator().next();
+        return localCityForChannel(metadata);
+    }
+
     static boolean hasSpecificLocalCity(String metadata) {
         return !localCityForChannel(metadata).isEmpty();
     }
