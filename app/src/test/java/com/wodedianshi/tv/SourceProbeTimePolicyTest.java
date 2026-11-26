@@ -21,6 +21,16 @@ public class SourceProbeTimePolicyTest {
         org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.IOException()));
     }
 
+    @Test public void transientRangeFailureKeepsValidCheckpointWithoutImmediateFullRetry() {
+        assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.net.SocketTimeoutException(),true));
+        assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.net.SocketException(),true));
+        assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.io.EOFException(),true));
+        assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.net.UnknownHostException(),true));
+        assertFalse(SourceProbeTimePolicy.deferRangeFallback(new java.net.SocketTimeoutException(),false));
+        assertFalse(SourceProbeTimePolicy.deferRangeFallback(new java.io.IOException("Directory range identity changed"),true));
+        assertFalse(SourceProbeTimePolicy.deferRangeFallback(new javax.net.ssl.SSLHandshakeException("Certificate"),true));
+    }
+
     @Test public void firstBuildIdleReservesFallbackTimeOnlyWithEnoughBudget() {
         assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,1000L,15000L));
         assertEquals(10000L,SourceProbeTimePolicy.initialRenditionDeadline(true,true,4000L,15000L));
