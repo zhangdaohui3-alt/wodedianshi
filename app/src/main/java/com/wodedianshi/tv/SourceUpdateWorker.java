@@ -3078,7 +3078,8 @@ public class SourceUpdateWorker extends Worker {
   // remains subject to its separate inactivity timeout; do not promise instant
   // cancellation or create another player/network thread.
   private static boolean paceViewingSample(int bytes,long readElapsedMs,long deadline,java.util.function.BooleanSupplier pauseRequested){
-    long delay=SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(bytes,readElapsedMs);
+    long rate=SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(android.os.SystemClock.elapsedRealtime());
+    long delay=SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(bytes,readElapsedMs,rate);
     long end=android.os.SystemClock.elapsedRealtime()+delay;
     for(;;){
       if(probeDeadlineReached(deadline,pauseRequested))return false;
