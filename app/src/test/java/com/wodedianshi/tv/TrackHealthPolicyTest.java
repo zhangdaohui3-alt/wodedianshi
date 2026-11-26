@@ -40,6 +40,34 @@ public class TrackHealthPolicyTest {
         assertTrue(TrackHealthPolicy.audioWarningQuiet(1000L,31000L));
     }
 
+    @Test public void vlcCounterStallRequiresProvenOutputAndTwoStationaryIntervals() {
+        TrackHealthPolicy.VlcCounterProgress counter=new TrackHealthPolicy.VlcCounterProgress();
+        assertFalse(counter.observe(0L));
+        assertFalse(counter.observe(0L));
+        assertFalse(counter.observe(0L));
+        assertFalse(counter.stalled());
+        assertTrue(counter.observe(20L));
+        assertFalse(counter.observe(20L));
+        assertFalse(counter.stalled());
+        assertFalse(counter.observe(20L));
+        assertTrue(counter.stalled());
+        assertTrue(counter.observe(21L));
+        assertFalse(counter.stalled());
+    }
+
+    @Test public void vlcUnknownResetAndBufferingDiscardOldStallEvidence() {
+        TrackHealthPolicy.VlcCounterProgress counter=new TrackHealthPolicy.VlcCounterProgress();
+        counter.observe(10L);counter.observe(20L);counter.observe(20L);
+        counter.observe(-1L);counter.observe(20L);counter.observe(20L);counter.observe(20L);
+        assertFalse(counter.stalled());
+        counter.observe(21L);counter.observe(21L);counter.observe(1L);
+        counter.observe(1L);counter.observe(1L);
+        assertFalse(counter.stalled());
+        counter.observe(2L);counter.observe(2L);counter.reset();
+        counter.observe(2L);counter.observe(2L);
+        assertFalse(counter.stalled());
+    }
+
     @Test public void vlcOutputHealthNeedsBothIndependentCountersToAdvance() {
         assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(-1L,-1L,100L,100L));
         assertFalse(TrackHealthPolicy.vlcOutputsAdvanced(100L,100L,100L,120L));
