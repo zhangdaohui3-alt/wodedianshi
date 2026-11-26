@@ -7177,11 +7177,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     releaseDecoderOwnershipIfIdle();
     if(libVlcReleaseNotice!=null){uiHandler.removeCallbacks(libVlcReleaseNotice);libVlcReleaseNotice=null;}
     if(decoderReleaseUnconfirmed)return;
-    if(player==null&&libVlcEngine==null&&currentVodPanel==null)setSourceUpdatePlaybackActive(false);
-    if(libVlcReleaseCallbacks.isEmpty()){
-      reloadDeferredCatalogueIfIdle();
-      return;
-    }
+    // Keep playback admission closed across the release -> next tune handoff.
+    // A worker on another thread must never observe a transient idle window.
     ArrayList<Runnable> callbacks=new ArrayList<>(libVlcReleaseCallbacks);
     libVlcReleaseCallbacks.clear();
     for(Runnable callback:callbacks){
@@ -7190,6 +7187,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         saveLiveDiagnostic("VLC_RELEASE_CALLBACK_ERROR",failure.getClass().getSimpleName());
       }
     }
+    if(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(
+        player!=null||libVlcEngine!=null,
+        vodPlayer!=null||vodFallbackBackend!=null||currentVodPanel!=null,
+        !libVlcReleaseCallbacks.isEmpty()||liveVlcReleaseContinuation!=null||pendingVodStartAfterRelease!=null,
+        libVlcReleaseInProgress||pendingVlcTeardowns>0||PROCESS_VLC_TEARDOWNS.get()>0,
+        decoderReleaseUnconfirmed,DECODER_OWNERSHIP.availableTo(decoderOwnerToken)))
+      setSourceUpdatePlaybackActive(false);
     reloadDeferredCatalogueIfIdle();
   }
   private void releaseLibVlcEngine(Runnable afterRelease){
