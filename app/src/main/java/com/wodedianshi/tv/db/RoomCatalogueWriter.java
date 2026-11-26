@@ -56,6 +56,85 @@ public final class RoomCatalogueWriter {
         }
     }
 
+    public static final class ChannelRefreshResult {
+        public final int addedSources;
+        public final long catalogueVersion;
+        ChannelRefreshResult(int addedSources,long catalogueVersion){
+            this.addedSources=addedSources;this.catalogueVersion=catalogueVersion;
+        }
+    }
+
+    /**
+     * Commit a bounded list of independently preflight-validated candidates for
+     * one existing channel. Caller must establish station identity before calling.
+     * No network, full-catalogue rewrite, staging mutation or route retirement here.
+     * Exact checkpoint guard prevents stale results from updating a changed row.
+     */
+    public static ChannelRefreshResult appendVerifiedChannelSources(Context context,
+            String channelId,long expectedVersion,
+            Map<String,? extends java.util.Set<String>> verifiedBestFirst,
+            BooleanSupplier paused) {
+        if(channelId==null||channelId.isEmpty()||expectedVersion<0L||verifiedBestFirst==null)
+            throw new IllegalArgumentException("Missing channel refresh identity/version");
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        ChannelDao dao=db.channelDao();
+        final ChannelRefreshResult[] result={null};
+        db.runInTransaction(()->{
+            checkPause(paused);
+            CatalogueMigrationEntity checkpoint=dao.getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY);
+            if(checkpoint==null||!CatalogueVersionPolicy.matches(expectedVersion,checkpoint.completedAt))
+                throw new StaleCatalogueException();
+            ChannelEntity row=dao.getChannelById(channelId);
+            if(row==null)throw new StaleCatalogueException();
+            List<BackupSourceEntity> old=dao.getBackupSourcesForChannel(channelId);
+            ArrayList<String> existing=new ArrayList<>();
+            for(int i=0;i<old.size();i++){
+                if(old.get(i).priority!=i)throw new IllegalStateException("Noncontiguous channel source priorities");
+                existing.add(old.get(i).url);
+            }
+            if(existing.isEmpty()||!existing.contains(row.primaryUrl)
+                    ||row.activeSource<0||row.activeSource>=existing.size())
+                throw new IllegalStateException("Untrusted current channel source list");
+            List<String> additions=com.wodedianshi.tv.SingleChannelRefreshPolicy.appendCandidates(
+                existing,verifiedBestFirst.keySet(),8);
+            if(additions.isEmpty()){
+                result[0]=new ChannelRefreshResult(0,checkpoint.completedAt);return;
+            }
+            java.util.TreeSet<String> scopes=new java.util.TreeSet<>();
+            try{
+                JSONArray prior=new JSONArray(row.channelScopesJson);
+                for(int i=0;i<prior.length();i++)scopes.add(prior.getString(i));
+            }catch(org.json.JSONException malformed){
+                throw new IllegalStateException("Invalid stored channel scope",malformed);
+            }
+            List<BackupSourceEntity> newRows=new ArrayList<>();
+            for(String url:additions){
+                checkPause(paused);
+                java.util.TreeSet<String> owned=new java.util.TreeSet<>();
+                java.util.Set<String> incoming=verifiedBestFirst.get(url);
+                if(incoming!=null)for(String scope:incoming)
+                    if(scope!=null&&!scope.isEmpty())owned.add(scope);
+                scopes.addAll(owned);
+                JSONArray sourceScopes=new JSONArray();
+                for(String scope:owned)sourceScopes.put(scope);
+                newRows.add(new BackupSourceEntity(channelId,url,old.size()+newRows.size(),sourceScopes.toString()));
+            }
+            JSONArray channelScopes=new JSONArray();for(String scope:scopes)channelScopes.put(scope);
+            dao.updateChannelFields(row.id,row.legacyKey,row.name,row.primaryUrl,row.groupName,
+                row.categoryId,row.tvgId,row.tvgName,channelScopes.toString(),row.activeSource,row.sortOrder);
+            dao.insertBackupSources(newRows);
+            long version=Math.max(System.currentTimeMillis(),checkpoint.completedAt+1L);
+            dao.insertMigration(new CatalogueMigrationEntity(MasterCatalogueRepository.MIGRATION_KEY,
+                checkpoint.channelsCount,Math.addExact(checkpoint.backupSourcesCount,newRows.size()),
+                checkpoint.favoritesCount,checkpoint.categoriesCount,version,checkpoint.catalogueFingerprint));
+            db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,
+                Long.toString(version),System.currentTimeMillis()));
+            checkPause(paused);
+            result[0]=new ChannelRefreshResult(newRows.size(),version);
+        });
+        return result[0];
+    }
+
     /** MainActivity must pass the version of the in-memory Room snapshot.
      * A stale in-memory catalogue is rejected atomically instead of overwriting
      * newer SourceUpdateWorker country/local channels.
