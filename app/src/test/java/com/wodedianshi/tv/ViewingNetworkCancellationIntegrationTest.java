@@ -2,14 +2,17 @@ package com.wodedianshi.tv;
 
 import android.app.Application;
 import android.content.Context;
-import com.sun.net.httpserver.HttpServer;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -26,30 +29,41 @@ public class ViewingNetworkCancellationIntegrationTest {
     @Test public void revokedViewingLeaseCancelsDownloadAndFreshLeaseCanRetry()throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         ExecutorService network=Executors.newSingleThreadExecutor();
-        ExecutorService handlers=Executors.newCachedThreadPool();
-        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        ExecutorService handlers=Executors.newSingleThreadExecutor();
+        ServerSocket server=new ServerSocket();
+        server.bind(new InetSocketAddress("127.0.0.1",0));
+        server.setSoTimeout(10000);
         CountDownLatch firstBody=new CountDownLatch(1),allowTail=new CountDownLatch(1);
-        AtomicBoolean blockFirst=new AtomicBoolean(true);
         AtomicLong healthTime=new AtomicLong(9000L);
         byte[] body=("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
                 +"#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n").getBytes(StandardCharsets.UTF_8);
-        server.setExecutor(handlers);
-        server.createContext("/directory",exchange->{
-            try{
-                exchange.sendResponseHeaders(200,body.length);
-                if(blockFirst.getAndSet(false)){
-                    exchange.getResponseBody().write(body,0,8);
-                    exchange.getResponseBody().flush();
-                    firstBody.countDown();
-                    if(!allowTail.await(5,TimeUnit.SECONDS))return;
-                    exchange.getResponseBody().write(body,8,body.length-8);
-                }else exchange.getResponseBody().write(body);
-            }catch(IOException cancelled){/* client may have closed the stream */}
-            catch(InterruptedException interrupted){Thread.currentThread().interrupt();}
-            finally{exchange.close();}
+        Future<?> served=handlers.submit(()->{
+            for(int request=0;request<2;request++){
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    String start=reader.readLine();
+                    assertNotNull(start);
+                    assertTrue(start.startsWith("GET /directory "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    OutputStream out=socket.getOutputStream();
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/x-mpegURL\r\n"
+                            +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n")
+                            .getBytes(StandardCharsets.US_ASCII));
+                    if(request==0){
+                        out.write(body,0,8);
+                        out.flush();
+                        firstBody.countDown();
+                        assertTrue("test released response tail",allowTail.await(5,TimeUnit.SECONDS));
+                        try{out.write(body,8,body.length-8);out.flush();}
+                        catch(IOException cancelled){/* old client may already have closed */}
+                    }else{out.write(body);out.flush();}
+                }
+            }
+            return null;
         });
-        server.start();
-        String url="http://127.0.0.1:"+server.getAddress().getPort()+"/directory";
+        String url="http://127.0.0.1:"+server.getLocalPort()+"/directory";
         try{
             SourceUpdateActivityPolicy.setActivityActive(true);
             SourceUpdateActivityPolicy.setPlaybackActive(true);
@@ -93,9 +107,10 @@ public class ViewingNetworkCancellationIntegrationTest {
             assertNotNull(result);
             assertArrayEquals(body,Files.readAllBytes(result.toPath()));
             assertFalse(nextGate.getAsBoolean());
+            served.get(5,TimeUnit.SECONDS);
         }finally{
             allowTail.countDown();
-            server.stop(0);
+            server.close();
             network.shutdownNow();
             handlers.shutdownNow();
             SourceUpdateActivityPolicy.setPlaybackActive(false);
