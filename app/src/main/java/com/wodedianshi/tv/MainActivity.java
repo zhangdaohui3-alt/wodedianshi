@@ -1682,6 +1682,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return dialog!=null&&dialog.isShowing()&&window!=null
         &&window.getDecorView().hasWindowFocus();
   }
+  // Shared UI/resource gate; each engine still proves its own output health.
+  private boolean canGrantStableDiscoveryUi(){
+    return activityStarted&&hasStableDiscoveryWindowFocus()&&currentVodPanel==null
+        &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
+        &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
+        &&!isAnyPlaybackLockActive()&&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed;
+  }
   private void refreshInitialDiscoveryDetailsDialog(){
     AlertDialog dialog=initialDiscoveryDetailsDialog;
     if(dialog!=null&&dialog.isShowing()){
@@ -6830,12 +6837,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
            &&TrackHealthPolicy.audioWarningQuiet(lastLiveAudioWarningAt,now);
       if(TrackHealthPolicy.canGrantStableDiscovery(confirmedOutput,sourceReadyAt,
           lastStableDiscoveryInteraction,watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)
-          &&player.isPlaying()&&activityStarted&&hasStableDiscoveryWindowFocus()
-          &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
-          &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
-          &&currentVodPanel==null&&!isAnyPlaybackLockActive()
-          &&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
+          &&player.isPlaying()&&canGrantStableDiscoveryUi()){
+        boolean alreadyPermitted=SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now);
         SourceUpdateActivityPolicy.reportStableLive(now);
+        if(!alreadyPermitted&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now))
+          android.util.Log.i("MyTVSourceDiscovery","MEDIA3_DISCOVERY_PERMITTED bounded low-priority discovery");
       }else SourceUpdateActivityPolicy.revokeStableLive();
       if(!sourceStableRecorded&&confirmedOutput&&sourceReadyAt>0L
           &&now-sourceReadyAt>=30000L&&now-watchdogLastAdvanceAt<15000L
@@ -7768,12 +7774,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       long now=android.os.SystemClock.elapsedRealtime();
       if(TrackHealthPolicy.canGrantVlcDiscovery(libVlcVideoOutputReady,libVlcAudioTrackReady,
           libVlcRebuffering,reportsPlaying,libVlcStableChecks,lastStableDiscoveryInteraction,now)
-          &&activityStarted&&hasStableDiscoveryWindowFocus()&&currentVodPanel==null
-          &&!fullscreenControlsVisible&&!fullscreenRemoteDialogOpen
-          &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
-          &&!isAnyPlaybackLockActive()&&!libVlcReleaseInProgress&&!decoderReleaseUnconfirmed){
+          &&canGrantStableDiscoveryUi()){
         boolean alreadyPermitted=SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now);
-        SourceUpdateActivityPolicy.reportStableLive(now);
+        SourceUpdateActivityPolicy.reportConfirmedVlcStableLive(now,libVlcStableChecks);
         if(!alreadyPermitted&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now))
           saveLiveDiagnostic("VLC_DISCOVERY_PERMITTED","bounded low-priority discovery; actual output unverified");
       }else SourceUpdateActivityPolicy.revokeStableLive();
