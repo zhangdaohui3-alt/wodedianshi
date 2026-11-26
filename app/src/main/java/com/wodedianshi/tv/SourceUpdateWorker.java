@@ -160,11 +160,12 @@ public class SourceUpdateWorker extends Worker {
       if(existing.size()>=MAX_SOURCES_PER_CHANNEL)
         return new SingleRefreshResult(SingleRefreshResult.Status.FULL,0,0,0,0,expectedVersion,false);
       SingleChannelCandidateSearch.Target target=new SingleChannelCandidateSearch.Target(row.name,row.groupName,row.tvgId,row.tvgName);
-      SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(context,target,existing,paused);
+      final int limit=viewing?2:4;
+      SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(context,channelId,target,existing,limit,paused);
       SingleChannelCandidateSearch.tryOnlineFallback(found,target,existing,viewing,paused);
       final long stageDeadline=android.os.SystemClock.elapsedRealtime()+(viewing?30000L:60000L);
-      final int limit=viewing?2:4;
       int checked=0;
+      boolean cachedConclusive=true;
       ArrayList<SingleChannelCandidateSearch.Candidate> passed=new ArrayList<>();
       HashMap<String,Integer> scores=new HashMap<>();
       for(SingleChannelCandidateSearch.Candidate candidate:found.candidates){
@@ -176,8 +177,12 @@ public class SourceUpdateWorker extends Worker {
         checked++;
         ProbeResult observation=probe(candidate.url,addressDeadline,viewing,paused,!viewing);
         SourceProbeTimePolicy.checkPaused(paused);
-        if(!observation.valid||observation.socketTimedOut||observation.transientNetworkFailure
-            ||android.os.SystemClock.elapsedRealtime()>=addressDeadline)continue;
+        if(observation.socketTimedOut||observation.transientNetworkFailure
+            ||android.os.SystemClock.elapsedRealtime()>=addressDeadline){
+          if(checked<=found.cachedCandidates)cachedConclusive=false;
+          continue;
+        }
+        if(!observation.valid)continue;
         passed.add(candidate);scores.put(candidate.url,observation.score);
       }
       boolean bounded=found.bounded||found.missingFeeds>0||checked<found.candidates.size();
@@ -186,12 +191,18 @@ public class SourceUpdateWorker extends Worker {
       for(SingleChannelCandidateSearch.Candidate candidate:passed)
         verified.put(candidate.url,Collections.singleton(candidate.scope));
       SourceProbeTimePolicy.checkPublicationPaused(paused);
-      if(verified.isEmpty())
+      if(verified.isEmpty()){
+        SingleChannelCandidateSearch.persistCompletedSearch(context,found,checked,cachedConclusive,paused);
         return new SingleRefreshResult(SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),
             checked,0,0,expectedVersion,bounded);
+      }
       com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelRefreshResult commit=
           com.wodedianshi.tv.db.RoomCatalogueWriter.appendVerifiedChannelSources(
               context,channelId,expectedVersion,verified,paused);
+      // A committed route must still be reported if cancellation or a cursor
+      // write failure happens after the transaction. Re-scanning is safe.
+      try{SingleChannelCandidateSearch.persistCompletedSearch(context,found,checked,cachedConclusive,paused);}
+      catch(Exception cursorFailure){android.util.Log.w("MyTVSourceDiscovery","single-channel cursor save deferred",cursorFailure);}
       return new SingleRefreshResult(commit.addedSources>0?SingleRefreshResult.Status.SAVED:
           SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),checked,passed.size(),
           commit.addedSources,commit.catalogueVersion,bounded,commit.addedRoutes);
