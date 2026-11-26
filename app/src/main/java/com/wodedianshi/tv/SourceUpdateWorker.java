@@ -1152,6 +1152,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       int originDeferred=0;
+      boolean idleWaveTimedOut=false;
       boolean viewingDeferred=false;
       final int priorChinaValidated=initialDiscoveryChain
           ?roomInt("source_initial_progress_china_validated_urls",0):0;
@@ -1240,7 +1241,19 @@ public class SourceUpdateWorker extends Worker {
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
                     DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral))){
-              TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
+              TimedProbe outcome;
+              try{outcome=idleWave.take(endpoint,probeDeadline);}
+              catch(java.util.concurrent.TimeoutException timeout){
+                if(!initialDiscoveryChain||slowPlayback)throw timeout;
+                // The current position has no consumed result. Preserve the
+                // previously processed contiguous prefix, not this position.
+                if(e.savedSource)savedScanned--;else discoveryScanned--;
+                idleWaveTimedOut=true;
+                idleWave.close();
+                if(!awaitRetiringProbePool())throw timeout;
+                SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+                break;
+              }
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
             }else{
@@ -1437,10 +1450,17 @@ public class SourceUpdateWorker extends Worker {
       boolean discoveryUnavailable=feedsOk==0;
       // Never leave speculative network work alive while committing a prefix.
       // A missing result at the stage deadline leaves that slice for retry.
-      idleWave.finishBeforeCommit();
+      try{idleWave.finishBeforeCommit();}
+      catch(java.util.concurrent.TimeoutException timeout){
+        if(!initialDiscoveryChain||slowPlayback)throw timeout;
+        idleWaveTimedOut=true;
+        idleWave.close();
+        if(!awaitRetiringProbePool())throw timeout;
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      }
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1949,8 +1969,9 @@ public class SourceUpdateWorker extends Worker {
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
-        long delay=SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
-            slowPlayback,feedsOk>0,freshDifferentNextFeed);
+        long delay=idleWaveTimedOut&&discoveryScanned==0?30L:
+            SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(
+                slowPlayback,feedsOk>0,freshDifferentNextFeed);
         // This branch follows the durable Room commit and any preview publish.
         // Each inline slice reconstructs its gates/cursors from current state.
         // No acquisition, delayed retry, or playback slice requests inline work.
