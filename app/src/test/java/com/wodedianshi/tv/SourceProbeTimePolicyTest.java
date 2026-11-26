@@ -83,6 +83,8 @@ public class SourceProbeTimePolicyTest {
             assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(25000L));
             SourceUpdateActivityPolicy.reportStableLive(33000L);
             assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33000L));
+            assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33000L,expiredGeneration));
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(33000L,admittedGeneration));
 
             long generation=SourceUpdateActivityPolicy.stableRevocationGeneration();
             SourceUpdateActivityPolicy.revokeStableLive();
