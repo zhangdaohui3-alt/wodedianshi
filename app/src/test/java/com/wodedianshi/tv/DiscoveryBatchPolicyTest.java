@@ -4,6 +4,19 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @Test public void earlyTimeoutReplayTargetsMissingCoreOnly() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,3,4));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,-1,4));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,95,143,3,4));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(false,13,40,3,4));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,3,1));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,3,0));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,13,40,7,4));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,96,143,3,4));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,95,144,3,4));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,16,48,-1,4));
+    }
+
     @org.junit.Test public void transientReplayCooldownIsBoundedAndClockRollbackSafe() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.transientRecheckCooling(100000L,100000L));
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.transientRecheckCooling(100000L,129999L));
