@@ -3430,6 +3430,8 @@ public class SourceUpdateWorker extends Worker {
         while(total<=maxBytes){
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
+          // Fragmented socket reads must not overshoot the first screening threshold.
+          if(stopOnDirectTs&&total<4096)length=Math.min(length,4096-total);
           if(length==0)break;
           long readStarted=slowPlayback?android.os.SystemClock.elapsedRealtime():0L;
           n=in.read(buffer,0,length);
