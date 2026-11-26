@@ -21,7 +21,28 @@ public class PlaybackRecoveryPolicyTest {
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 10000L, 0L, 30000L, 20000L));
     }
 
-    @Test public void receivedVideoFramesUseLastRenderedFrameTime() {
+    @Test public void metadataBeforeRenderedFirstFrameDoesNotResetStartupDeadline() {
+        // Decoder metadata may arrive while the output surface is still black.
+        // Only AnalyticsListener.onRenderedFirstFrame ends the startup deadline.
+        assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false,
+                10000L, 29000L, 30000L, 20000L));
+    }
+
+    @Test public void renderedFirstFrameSwitchesToFrameStallDeadline() {
+        assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true,
+                10000L, 25000L, 44999L, 20000L));
+        assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true,
+                10000L, 25000L, 45000L, 20000L));
+    }
+
+    @Test public void firstFrameDeadlineStartsWhenVideoTrackBecomesSelected() {
+        // The stream may be READY for a while before track selection completes.
+        // That earlier wait must not consume the decoder's first-frame budget.
+        assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 49000L, 20000L));
+        assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 50000L, 20000L));
+    }
+
+    @Test public void renderedFirstFrameThenUsesVideoPipelineActivityTime() {
         assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 44999L, 20000L));
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 45000L, 20000L));
     }
