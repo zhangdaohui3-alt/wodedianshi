@@ -1088,7 +1088,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
     String[] chinese={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
-    for(int i=1;i<chinese.length;i++)if(value.matches(".*中央(?:电视台)?"+chinese[i]+"套.*"))return "CCTV-"+i;
+    // All these patterns require the literal 中央; avoid compiling seventeen
+    // regexes for every unrelated local or international station.
+    if(value.contains("中央"))for(int i=1;i<chinese.length;i++)if(value.matches(".*中央(?:电视台)?"+chinese[i]+"套.*"))return "CCTV-"+i;
     if(value.contains("中央电视台综合频道"))return "CCTV-1";
     if(value.contains("中央电视台财经频道"))return "CCTV-2";
     if(value.contains("中央电视台综艺频道"))return "CCTV-3";
@@ -5004,7 +5006,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
-      if(channelKey.equals(selectedKey))b.setContentDescription("当前正在播放："+title);
+      b.setContentDescription(channelKey.equals(selectedKey)?"当前正在播放："+title:title);
       b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));
       b.setOnClickListener(v->playChannelByKey(channelKey));
       b.setOnLongClickListener(v->{
@@ -5038,7 +5040,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     lastFilteredMatchCount=visible.size();
     updateLivePaging(visible.size());
     if(preserveRequestedPage&&channelScroll!=null)channelScroll.scrollTo(0,0);
-    updateLiveChannelPresentation();
+    // Newly constructed rows already have their title, favorite/playing marker,
+    // accessibility text and initial style. Avoid immediately processing all 48 again.
     // Replace the dialog's transient "正在显示/正在筛选" text only after the
     // latest background filter has actually rendered its result.
     if(info!=null){
