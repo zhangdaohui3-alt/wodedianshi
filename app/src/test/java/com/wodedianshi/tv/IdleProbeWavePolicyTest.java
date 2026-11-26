@@ -118,4 +118,13 @@ public class IdleProbeWavePolicyTest {
         assertFalse(IdleProbeWavePolicy.allFinished(Collections.singletonList(cancelled)));
         assertTrue(IdleProbeWavePolicy.allFinished(Collections.emptyList()));
     }
+
+    @Test public void completedHeadsCanRefillWithinExistingPendingAndRequestBounds(){
+        assertEquals(6,IdleProbeWavePolicy.rollingAdmissionSlots(6,0,6,42));
+        assertEquals(3,IdleProbeWavePolicy.rollingAdmissionSlots(6,3,6,42));
+        assertEquals(1,IdleProbeWavePolicy.rollingAdmissionSlots(6,0,11,42));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(6,0,12,42));
+        assertEquals(2,IdleProbeWavePolicy.rollingAdmissionSlots(6,0,6,2));
+        assertEquals(0,IdleProbeWavePolicy.rollingAdmissionSlots(1,0,6,42));
+    }
 }
