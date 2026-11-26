@@ -1115,13 +1115,12 @@ public class SourceUpdateWorker extends Worker {
       int nextBatchScanned=Math.min(candidates.size(),initialDiscoveryScanned+discoveryScanned);
       boolean feedBatchComplete=nextBatchScanned>=candidates.size();
       if(initialDiscoveryChain&&!feedBatches.isEmpty()){
-        // If a 90-second deadline paused probing inside the current feed page,
-        // resume this exact feed and its fingerprint before rotating onward.
-        // Otherwise its prefix would be rescanned and the tail could starve.
+        // Rotate even after a time-limited partial page. Its per-feed fingerprint
+        // and scanned position are committed with staging below, while the raw
+        // feed cursor only advances when the page is complete.
         int attemptedFeed=feedBatches.get(feedBatches.size()-1).index;
-        initialNextFeedIndex=slowPlayback&&pageFeed>=0?(pageFeed+1)%feeds.length:
-            InitialFeedRotationPolicy.nextAfterProbeBatch(
-                attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
+        initialNextFeedIndex=InitialFeedRotationPolicy.nextAfterProbeBatch(
+            attemptedFeed,initialNextFeedIndex,feeds.length,feedBatchComplete);
       }
       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
           &&areAllDiscoveryFeedsComplete(prefs,feedBatches,feeds.length);
