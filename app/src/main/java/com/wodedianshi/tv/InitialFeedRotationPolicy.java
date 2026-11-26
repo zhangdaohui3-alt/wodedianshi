@@ -24,11 +24,13 @@ public final class InitialFeedRotationPolicy {
         return (normalizeStart(current, feedCount) + 1) % feedCount;
     }
 
-    /** Do not rotate midway through a partly probed page: the next WorkManager
-     * attempt must find its exact fingerprint/cursor to finish the same batch.
+    /** Each feed has its own durable page fingerprint and scanned position.
+     * Yield after a partial page too, without changing its raw feed cursor.
+     * The priority selector still restricts rotation to the current region stage.
      */
     public static int nextAfterProbeBatch(int attemptedFeed, int candidateNext,
             int feedCount, boolean fullyProbed) {
-        return normalizeStart(fullyProbed ? candidateNext : attemptedFeed, feedCount);
+        return fullyProbed ? normalizeStart(candidateNext, feedCount)
+                : nextAfterAttempt(attemptedFeed, feedCount, false, false);
     }
 }
