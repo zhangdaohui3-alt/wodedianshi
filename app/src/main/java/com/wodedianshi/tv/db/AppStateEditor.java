@@ -53,6 +53,20 @@ public final class AppStateEditor {
         db.runInTransaction(() -> applyInTransaction(db));
     }
 
+    /** Quality-only write: refuse a stale catalogue or revoked viewing lease.
+     * Do not replace any catalogue rows or advance its structural checkpoint. */
+    public void applyAtCatalogueVersion(long expected,java.util.function.BooleanSupplier paused) {
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        db.runInTransaction(()->{
+            com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+            CatalogueMigrationEntity checkpoint=db.channelDao().getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+            if(checkpoint==null||checkpoint.completedAt!=expected)
+                throw new RoomCatalogueReader.StaleSnapshotException();
+            applyInTransaction(db);
+            com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+        });
+    }
+
     /** The catalogue writer owns the outer transaction and its rollback. */
     void applyInTransaction(AppDatabase db) {
         if (!db.inTransaction()) throw new IllegalStateException("App state requires Room transaction");
