@@ -1212,12 +1212,20 @@ public class SourceUpdateWorker extends Worker {
               update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
               break;
             }
-            // Remember the first temporarily failed position for one later
-            // replay of this exact page. No URL or duplicate identity is dropped.
+            // Preserve the existing transient failure replay. Also allow a timed-out
+            // clearly mainland candidate to recover a missing early core category.
+            // Do not expand ordinary timeout retries across the full catalogue.
             if(initialDiscoveryChain&&pageFeed>=0&&!slowPlayback&&!e.savedSource
-                &&measured.transientNetworkFailure)
-              transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
-                  initialDiscoveryScanned+discoveryScanned-1);
+                &&transientRecheck==DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK){
+              boolean coreTimeout=measured.socketTimedOut&&preferCoreCoverage
+                  &&ChinaDiscoveryCandidatePolicy.isClearlyMainland(e.scope,e.name,e.group,e.tvgName,e.tvgId)
+                  &&DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,saved.length(),
+                      (long)initialCheckedAtStart+checked,observedCoreMask,
+                      FullDiscoveryProgressPolicy.coreCategoryMask(e.name,e.group,e.tvgName,e.tvgId,"china".equals(e.scope)));
+              if(measured.transientNetworkFailure||coreTimeout)
+                transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
+                    initialDiscoveryScanned+discoveryScanned-1);
+            }
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
