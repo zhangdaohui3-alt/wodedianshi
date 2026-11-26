@@ -2013,7 +2013,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         setVodCategoryHover(null);
       }else categoryScroll.requestFocus();
     });
-    refreshVodButton.setOnClickListener(v->loadVodCatalogue(activeVodQuery.isEmpty()?activeVodCategory:"搜索："+activeVodQuery,panel,status,results,true));
+    refreshVodButton.setOnClickListener(v->{
+      if(activeVodQuery.isEmpty()&&"播放记录".equals(activeVodCategory))loadVodHistory(panel);
+      else if(activeVodQuery.isEmpty()&&"我的收藏".equals(activeVodCategory))loadVodFavorites(panel);
+      else loadVodCatalogue(activeVodQuery.isEmpty()?activeVodCategory:"搜索："+activeVodQuery,panel,status,results,true);
+    });
     searchButton.setOnClickListener(v->{
        String q=query.getText().toString().trim();
        if(q.isEmpty()){toast("请输入影片名称或关键词");query.requestFocus();return;}
@@ -2094,6 +2098,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         vodGrid.requestFocus();
       }
     });
+    final int initialCatalogueRequest=vodRequestId;
     dialog.show();
     // Show the full-screen VOD window before parsing the potentially large cache.
     panel.post(()->{
@@ -2107,7 +2112,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // cards until the live backend has actually released its audio session.
       releaseLibVlcEngine(()->{
         if(activityStarted&&!isFinishing()&&!isDestroyed()&&dialog.isShowing()
-            &&currentVodPanel==panel&&!isAnyPlaybackLockActive())
+            &&currentVodPanel==panel&&!isAnyPlaybackLockActive()
+            &&initialCatalogueRequest==vodRequestId)
           loadVodCatalogue("电影",panel,status,results);
       });
     });
@@ -2570,14 +2576,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     int oldFocusedTop=oldFocusedCard==null?oldTop:oldFocusedCard.getTop();
     boolean preservePosition=category.equals(currentVodRenderedCategory)&&grid.getAdapter()!=null&&grid.getAdapter().getCount()>0;
-    grid.setAdapter(new VodGridAdapter(items));
+    final VodGridAdapter renderedAdapter=new VodGridAdapter(items);
+    final int renderedRequest=vodRequestId;
+    grid.setAdapter(renderedAdapter);
     if(preservePosition&&items!=null&&!items.isEmpty()){
       final int restorePosition=Math.min(oldFocusedPosition>=0?oldFocusedPosition:oldFirst,items.size()-1);
       final int restoreTop=oldFocusedPosition>=0?oldFocusedTop:oldTop;
       final boolean restoreFocus=oldFocusedPosition>=0;
       grid.post(()->{
+        if(!ownsVodGridRestore(grid,renderedAdapter,renderedRequest,results))return;
         grid.setSelectionFromTop(restorePosition,restoreTop);
         if(restoreFocus)grid.post(()->{
+          if(!ownsVodGridRestore(grid,renderedAdapter,renderedRequest,results))return;
           int childIndex=restorePosition-grid.getFirstVisiblePosition();
           if(childIndex>=0&&childIndex<grid.getChildCount()){
             View child=grid.getChildAt(childIndex);
@@ -2585,6 +2595,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }else{
             grid.smoothScrollToPosition(restorePosition);
             grid.postDelayed(()->{
+              if(!ownsVodGridRestore(grid,renderedAdapter,renderedRequest,results))return;
               int retryIndex=restorePosition-grid.getFirstVisiblePosition();
               if(retryIndex>=0&&retryIndex<grid.getChildCount()){
                 View retry=grid.getChildAt(retryIndex);
@@ -2594,8 +2605,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
         });
       });
-    }else grid.post(()->grid.setSelection(0));
+    }else grid.post(()->{
+      if(ownsVodGridRestore(grid,renderedAdapter,renderedRequest,results))grid.setSelection(0);
+    });
     currentVodRenderedCategory=category;
+  }
+  private boolean ownsVodGridRestore(GridView grid,VodGridAdapter adapter,int request,LinearLayout results){
+    return activityStarted&&!isFinishing()&&!isDestroyed()&&currentVodPanel!=null
+        &&currentVodResults==results&&request==vodRequestId
+        &&grid.getAdapter()==adapter&&grid.isAttachedToWindow();
   }
   private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
@@ -2623,6 +2641,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void loadVodFavorites(LinearLayout panel){
     if(panel==null||panel!=currentVodPanel||currentVodStatus==null||currentVodResults==null)return;
+    cancelActiveVodCatalogue();
+    invalidateVodPosterSession();
     TextView status=currentVodStatus;LinearLayout results=currentVodResults;
     ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);
     status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");
@@ -2682,6 +2702,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void loadVodHistory(TextView status,LinearLayout results){
+    if(!activityStarted||isFinishing()||isDestroyed()||currentVodPanel==null
+        ||status!=currentVodStatus||results!=currentVodResults
+        ||!"播放记录".equals(activeVodCategory)||!activeVodQuery.isEmpty())return;
+    // Local history owns the page: revoke queued search results and old posters.
+    cancelActiveVodCatalogue();
+    invalidateVodPosterSession();
+    currentVodRenderedCategory="";
     ArrayList<org.json.JSONObject> history=readVodHistory();results.removeAllViews();
     LinearLayout tools=new LinearLayout(this);tools.setOrientation(0);
     Button clear=new Button(this);clear.setText("清空播放记录");clear.setAllCaps(false);styleTvButton(clear,Color.rgb(125,48,48));tools.addView(clear,new LinearLayout.LayoutParams(-2,dp(44)));
