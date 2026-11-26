@@ -69,6 +69,16 @@ public final class DiscoveryBatchPolicy {
                 &&(observedMask&~priorMask&FullDiscoveryProgressPolicy.ALL_CORE)!=0;
     }
 
+    /** Once first watch and all domestic core categories are covered, keep
+     * idle network slots busy even in a small catalogue. Otherwise preserve
+     * the existing drained-wave boundary for first useful previews. */
+    static boolean permitsRollingInitial(boolean initial,boolean early,boolean preferCore,
+            int stagedRows,int priorCoreMask) {
+        return initial&&!early&&!preferCore&&(stagedRows>512
+                ||(priorCoreMask>=0&&(priorCoreMask&FullDiscoveryProgressPolicy.ALL_CORE)
+                    ==FullDiscoveryProgressPolicy.ALL_CORE));
+    }
+
     static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
         if(viewing)return VIEWING_PROBES_PER_SLICE;
         return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
