@@ -210,7 +210,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView livePageStatus;
   // Compact, nonblocking first-install progress. No network access from UI.
   private LinearLayout initialDiscoveryProgressPanel;
-  private TextView initialDiscoveryProgressTitle,initialDiscoveryProgressDetail;
+  private TextView initialDiscoveryProgressTitle;
+  private String initialDiscoveryProgressDetail="正在准备读取来源目录…";
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
   private int displayedInitialPreviewLevel;
@@ -1373,10 +1374,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // blocking TV remote focus. This panel stays hidden after a completed build.
     initialDiscoveryProgressPanel=new LinearLayout(this);
     initialDiscoveryProgressPanel.setOrientation(1);
-    initialDiscoveryProgressPanel.setPadding(dp(6),dp(7),dp(6),dp(7));
+    initialDiscoveryProgressPanel.setPadding(dp(6),dp(3),dp(6),dp(3));
     initialDiscoveryProgressPanel.setBackground(makeButtonBg(Color.rgb(25,40,64),false));
     initialDiscoveryProgressTitle=new TextView(this);
-    initialDiscoveryProgressTitle.setText("首次完整抓源 · 正在读取进度");
+    initialDiscoveryProgressTitle.setText("抓源进度 · 读取中");
+    initialDiscoveryProgressTitle.setSingleLine(true);
+    initialDiscoveryProgressTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    initialDiscoveryProgressTitle.setIncludeFontPadding(false);
     initialDiscoveryProgressTitle.setTextSize(13);
     initialDiscoveryProgressTitle.setTextColor(Color.WHITE);
     initialDiscoveryProgressTitle.setTypeface(null,android.graphics.Typeface.BOLD);
@@ -1385,16 +1389,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     initialDiscoveryProgressBar.setIndeterminate(false);
     initialDiscoveryProgressBar.setMax(10000);
     initialDiscoveryProgressBar.setProgress(0);
-    LinearLayout.LayoutParams progressBarParams=new LinearLayout.LayoutParams(-1,dp(12));
+    LinearLayout.LayoutParams progressBarParams=new LinearLayout.LayoutParams(-1,dp(7));
     progressBarParams.topMargin=dp(3);
     initialDiscoveryProgressPanel.addView(initialDiscoveryProgressBar,progressBarParams);
-    initialDiscoveryProgressDetail=new TextView(this);
-    initialDiscoveryProgressDetail.setText("正在准备读取来源目录…");
-    initialDiscoveryProgressDetail.setTextSize(11);
-    initialDiscoveryProgressDetail.setTextColor(Color.LTGRAY);
-    initialDiscoveryProgressDetail.setMaxLines(6);
-    initialDiscoveryProgressPanel.addView(initialDiscoveryProgressDetail);
-    channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,-2));
+    // Keep the weighted channel ScrollView usable on short landscape phone screens.
+    // Full details are available without reserving six lines above the channel rows.
+    initialDiscoveryProgressPanel.setContentDescription("抓源进度，点击查看详情");
+    initialDiscoveryProgressPanel.setOnClickListener(v->{
+      if(!activityStarted||isFinishing()||isDestroyed())return;
+      new AlertDialog.Builder(this).setTitle(initialDiscoveryProgressTitle.getText())
+          .setMessage(initialDiscoveryProgressDetail)
+          .setPositiveButton("关闭",null).show();
+    });
+    initialDiscoveryProgressPanel.setFocusable(false);
+    channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
     livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
     liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refresh();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
@@ -1596,10 +1604,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               String coverageWarning=coverageLines.length>=4
                   ?(coverageLines[3].startsWith("覆盖有缺口")?"中国覆盖有缺口，待补查":"省级地区有记录，仍待实播")
                   :"覆盖详情尚未确认";
-              initialDiscoveryProgressDetail.setText("快照已保存 · "+Math.max(0,staged)+" 个频道（非实播验证）"
+              initialDiscoveryProgressDetail="快照已保存 · "+Math.max(0,staged)+" 个频道（非实播验证）"
                   +"\n"+coreCounts
                   +"\n"+coverageWarning+" · 暂不可用目录 "+Math.max(0,unavailable)+" 个"
-                  +"\n100%仅指目录处理完成；详见设置→查看更新状态");
+                  +"\n100%仅指目录处理完成；详见设置→查看更新状态";
               stopInitialDiscoveryProgressTicker();
               // Give the user a confirmation, then restore the channel list space.
               uiHandler.postDelayed(()->{
@@ -1614,13 +1622,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             boolean indexing=!indexBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(indexAttempted,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,checked,indexEntries,false);
             initialDiscoveryProgressTitle.setText(indexing
-                ?"首批中国目录尝试 · "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
-                :"首次完整抓源 · "+FullDiscoveryProgressPolicy.formatIncompleteProgress(basisPoints)
-                    +" · 已检 "+Math.max(0,checked)+" 条");
+                ?"中国目录 "+Math.max(0,indexAttempted)+"/"+bootstrapLimit
+                :"抓源 "+FullDiscoveryProgressPolicy.formatIncompleteProgress(basisPoints)
+                    +" · "+Math.max(0,checked)+"条");
             String fraction=entries>0?" · 当前源 "+Math.min(cursor,entries)+"/"+entries:"";
             String liveStage=SourceUpdateWorker.currentInitialLiveStage();
             final int loadedCount=channels.size();
-            initialDiscoveryProgressDetail.setText(
+            initialDiscoveryProgressDetail=
                 (initialDiscoveryTerminalStatus.isEmpty()?(liveStage.isEmpty()?phase:liveStage):initialDiscoveryTerminalStatus)
                 +"\n当前已载入 "+loadedCount+" 个频道（不等于本轮完成）"
                 +"\n"+(indexing?"首批目录已尝试 "+indexAttempted+"/"+bootstrapLimit+" · 已索引 "+indexReady+" 个，原始条目 "+indexEntries:
@@ -1631,7 +1639,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
                     +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
-                +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:""));
+                +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:"");
           });
         }catch(Throwable error){
           android.util.Log.w("MyTVDiscoveryProgress","read initial progress failed",error);
