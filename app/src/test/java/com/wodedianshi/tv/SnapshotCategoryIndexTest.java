@@ -7,6 +7,22 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SnapshotCategoryIndexTest {
+    @Test public void preparedFixedCategoriesPreserveOrderAndDistinguishEmptyFromUnknown(){
+        java.util.Map<String,List<Integer>> fixed=new java.util.HashMap<>();
+        ArrayList<Integer> cctv=new ArrayList<>(Arrays.asList(6,2,4));
+        fixed.put("央视",cctv);
+        fixed.put("港澳台",java.util.Collections.emptyList());
+        SnapshotCategoryIndex.LocalMembership membership=new SnapshotCategoryIndex.LocalMembership(
+            10,Arrays.asList(3,7),java.util.Collections.emptyMap(),fixed);
+        cctv.clear();fixed.clear();
+        assertEquals(Arrays.asList(6,2,4),membership.fixedCategory("央视"));
+        assertTrue(membership.fixedCategory("港澳台").isEmpty());
+        assertNull(membership.fixedCategory("收藏"));
+        SnapshotCategoryIndex.PreparedLocal prepared=new SnapshotCategoryIndex.PreparedLocal(7,membership);
+        assertTrue(prepared.matches(7,10));
+        assertFalse(prepared.matches(8,10));
+    }
+
     @Test public void preparedMembershipCanBeAdoptedOnlyForExactSnapshot(){
         java.util.Map<String,List<Integer>> provinces=new java.util.HashMap<>();
         provinces.put("福建",Arrays.asList(3,6));
