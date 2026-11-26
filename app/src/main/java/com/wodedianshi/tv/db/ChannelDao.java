@@ -281,6 +281,12 @@ public interface ChannelDao {
     @Query("SELECT * FROM catalogue_build_rows ORDER BY sortOrder, rowId")
     List<CatalogueBuildRowEntity> getCatalogueBuildRows();
 
+    @Query("SELECT * FROM catalogue_build_rows WHERE mergeIdentity IN (:identities) ORDER BY sortOrder,rowId")
+    List<CatalogueBuildRowEntity> getCatalogueBuildRowsByIdentity(List<String> identities);
+
+    @Query("UPDATE catalogue_build_rows SET mergeIdentity=:identity WHERE rowId=:rowId")
+    int setCatalogueBuildIdentity(String rowId,String identity);
+
     @Query("SELECT COUNT(*) FROM catalogue_build_rows")
     int countCatalogueBuildRows();
 

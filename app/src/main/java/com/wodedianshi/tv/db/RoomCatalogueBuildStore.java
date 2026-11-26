@@ -22,6 +22,7 @@ public final class RoomCatalogueBuildStore {
     public static final String MANUAL_BASE_STRUCTURE_KEY="source_manual_staging_base_structure";
     public static final String MANUAL_READY_KEY="source_manual_staging_ready";
     private static final String MANUAL_QUEUE_KEY="source_manual_queue_owner_v1";
+    private static final String MANUAL_IDENTITY_KEY="source_manual_identity_index_owner_v1";
     public static final String MANUAL_BASE_COUNT_KEY="source_manual_staging_base_count";
 
     public static String currentStructureVersion(Context context){
@@ -79,6 +80,7 @@ public final class RoomCatalogueBuildStore {
         db.appStateDao().remove(MANUAL_BASE_STRUCTURE_KEY);
         db.appStateDao().remove(MANUAL_READY_KEY);
         db.appStateDao().remove(MANUAL_QUEUE_KEY);
+        db.appStateDao().remove(MANUAL_IDENTITY_KEY);
         db.appStateDao().remove(MANUAL_BASE_COUNT_KEY);
         db.appStateDao().remove(MANUAL_SCORES_KEY);
         db.appStateDao().remove(MANUAL_STREAKS_KEY);
@@ -124,6 +126,55 @@ public final class RoomCatalogueBuildStore {
             checkPause(paused);
         });
         return ready[0];
+    }
+
+    private static String mergeIdentity(JSONObject row){
+        return com.wodedianshi.tv.SourceDiscoveryIdentityPolicy.identity(row.optString("name"),row.optString("group"),
+            row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
+    }
+
+    /** Upgrade an existing manual round once. Existing JSON, queue and cursors stay intact. */
+    public static void ensureManualIdentityIndex(Context context,String owner,BooleanSupplier paused)throws JSONException{
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_OWNER_KEY));
+        if(owner.equals(db.appStateDao().getValue(MANUAL_IDENTITY_KEY)))return;
+        // Prepare outside the write transaction, retaining only row ID and identity.
+        java.util.LinkedHashMap<String,String> keys=new java.util.LinkedHashMap<>();
+        for(CatalogueBuildRowEntity row:db.channelDao().getCatalogueBuildRows()){
+            checkPause(paused);
+            keys.put(row.rowId,mergeIdentity(new JSONObject(row.recordJson)));
+        }
+        db.runInTransaction(()->{
+            checkPause(paused);
+            requireManualOwner(db,owner);
+            if(owner.equals(db.appStateDao().getValue(MANUAL_IDENTITY_KEY)))return;
+            if(db.channelDao().countCatalogueBuildRows()!=keys.size())
+                throw new IllegalStateException("Staging identity backfill count changed");
+            for(java.util.Map.Entry<String,String> key:keys.entrySet()){
+                checkPause(paused);
+                if(db.channelDao().setCatalogueBuildIdentity(key.getKey(),key.getValue())!=1)
+                    throw new IllegalStateException("Staging identity backfill row missing");
+            }
+            db.appStateDao().put(new AppStateEntity(MANUAL_IDENTITY_KEY,owner,System.currentTimeMillis()));
+            checkPause(paused);
+        });
+    }
+
+    /** Returns matching rows in original order; duplicate identities remain distinct. */
+    public static List<CatalogueBuildRowEntity> readManualByIdentity(Context context,String owner,
+            java.util.Collection<String> identities,BooleanSupplier paused){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_OWNER_KEY));
+        requireMatchingOwner(owner,db.appStateDao().getValue(MANUAL_IDENTITY_KEY));
+        List<String> keys=new ArrayList<>(new java.util.LinkedHashSet<>(identities));
+        List<CatalogueBuildRowEntity> result=new ArrayList<>();
+        for(int i=0;i<keys.size();i+=256){
+            checkPause(paused);
+            result.addAll(db.channelDao().getCatalogueBuildRowsByIdentity(keys.subList(i,Math.min(i+256,keys.size()))));
+        }
+        result.sort(java.util.Comparator.comparingInt((CatalogueBuildRowEntity row)->row.sortOrder).thenComparing(row->row.rowId));
+        checkPause(paused);
+        return result;
     }
 
     public static JSONArray readManual(Context context,String owner,BooleanSupplier paused)throws JSONException {
@@ -209,7 +260,9 @@ public final class RoomCatalogueBuildStore {
             String rowId = String.format(java.util.Locale.ROOT, "row-%08d", i);
             String recordJson = record.toString();
             if (!recordJson.equals(existingJson.get(rowId))) {
-                changedRows.add(new CatalogueBuildRowEntity(rowId, i, recordJson));
+                CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(rowId,i,recordJson);
+                if(manualOwner!=null)entity.mergeIdentity=mergeIdentity(record);
+                changedRows.add(entity);
             }
         }
         checkPause(paused);
@@ -247,6 +300,7 @@ public final class RoomCatalogueBuildStore {
                 db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,Long.toString(structure),now));
                 db.appStateDao().put(new AppStateEntity(MANUAL_BASE_STRUCTURE_KEY,Long.toString(structure),now));
                 seedQueueInTransaction(db,manualOwner,snapshot,paused);
+                db.appStateDao().put(new AppStateEntity(MANUAL_IDENTITY_KEY,manualOwner,now));
             }
             checkPause(paused);
         });
@@ -349,8 +403,10 @@ public final class RoomCatalogueBuildStore {
             JSONObject record=snapshot.getJSONObject(i);
             if(record.optString("name","").trim().isEmpty()||record.optString("url","").trim().isEmpty())
                 throw new JSONException("Invalid incremental build row "+i);
-            changed.add(new CatalogueBuildRowEntity(
-                String.format(java.util.Locale.ROOT,"row-%08d",i),i,record.toString()));
+            CatalogueBuildRowEntity entity=new CatalogueBuildRowEntity(
+                String.format(java.util.Locale.ROOT,"row-%08d",i),i,record.toString());
+            if(manualOwner!=null)entity.mergeIdentity=mergeIdentity(record);
+            changed.add(entity);
         }
         AppDatabase db=RoomDatabaseProvider.get(context);
         ChannelDao dao=db.channelDao();

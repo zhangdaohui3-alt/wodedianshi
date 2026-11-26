@@ -46,6 +46,14 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    private static final Migration MIGRATION_9_10 = new Migration(9, 10) {
+        @Override public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE catalogue_build_rows ADD COLUMN mergeIdentity TEXT NOT NULL DEFAULT ''");
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_catalogue_build_rows_mergeIdentity_sortOrder "
+                + "ON catalogue_build_rows(mergeIdentity,sortOrder)");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
@@ -58,7 +66,7 @@ public final class RoomDatabaseProvider {
                             context.getApplicationContext(),
                             AppDatabase.class,
                             "mytv_catalogue_clean_v1.db"
-                    ).addMigrations(MIGRATION_6_7,MIGRATION_7_8,MIGRATION_8_9).build();
+                    ).addMigrations(MIGRATION_6_7,MIGRATION_7_8,MIGRATION_8_9,MIGRATION_9_10).build();
                     instance = local;
                 }
             }
