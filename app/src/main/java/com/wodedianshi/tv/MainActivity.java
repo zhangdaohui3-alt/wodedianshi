@@ -214,7 +214,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private String initialDiscoveryProgressDetail="正在准备读取来源目录…";
   private ProgressBar initialDiscoveryProgressBar;
   private Runnable initialDiscoveryProgressTicker;
-  private int displayedInitialPreviewLevel;
+  private int displayedInitialPreviewLevel,displayedInitialPreviewMilestone;
   private String initialDiscoveryTerminalStatus="";
   private final java.util.concurrent.atomic.AtomicBoolean initialDiscoveryProgressReadPending=
       new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -1550,6 +1550,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           java.util.ArrayList<String> keys=new java.util.ArrayList<>();
           keys.add("source_full_rebuild_completed_at");
           keys.add(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY);
+          keys.add(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY);
           keys.add(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY);
           keys.add("source_initial_index_attempted");
           keys.add("source_initial_index_bypassed");
@@ -1562,6 +1563,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final Map<String,String> snapshot=readRoomStateValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final int previewLevel=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0L);
+          final int previewMilestone=(int)readStateLong(snapshot,FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0L);
           final int indexAttempted=(int)readStateLong(snapshot,"source_initial_index_attempted",0L);
           final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
@@ -1586,9 +1588,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           runOnUiThread(()->{
             if(isFinishing()||isDestroyed()||!activityStarted
                 ||initialDiscoveryProgressPanel==null)return;
-            if(completed<=0L&&startupDataReady&&previewLevel!=displayedInitialPreviewLevel){
+            if(completed<=0L&&startupDataReady&&(previewLevel!=displayedInitialPreviewLevel||previewMilestone!=displayedInitialPreviewMilestone)){
               displayedInitialPreviewLevel=previewLevel;
-              if(previewLevel>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
+              displayedInitialPreviewMilestone=previewMilestone;
+              if(previewLevel>0||previewMilestone>0)reloadChannelsAfterBackgroundUpdateIfNeeded();
             }
             if(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(completed)){
               boolean newlyPublished=roomFullRebuildCompletedAt<=0L;
