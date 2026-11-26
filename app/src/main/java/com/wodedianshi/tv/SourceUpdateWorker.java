@@ -91,15 +91,16 @@ public class SourceUpdateWorker extends Worker {
     final long catalogueVersion;
     final boolean bounded;
     final Map<String,Set<String>> addedRoutes;
+    final Map<String,String> replacedRoutes;
     SingleRefreshResult(Status status,int candidates,int checked,int validated,int added,
         long catalogueVersion,boolean bounded){
-      this(status,candidates,checked,validated,added,catalogueVersion,bounded,Collections.emptyMap());
+      this(status,candidates,checked,validated,added,catalogueVersion,bounded,Collections.emptyMap(),Collections.emptyMap());
     }
     SingleRefreshResult(Status status,int candidates,int checked,int validated,int added,
-        long catalogueVersion,boolean bounded,Map<String,Set<String>> addedRoutes){
+        long catalogueVersion,boolean bounded,Map<String,Set<String>> addedRoutes,Map<String,String> replacedRoutes){
       this.status=status;this.candidates=candidates;this.checked=checked;
       this.validated=validated;this.added=added;this.catalogueVersion=catalogueVersion;
-      this.bounded=bounded;this.addedRoutes=addedRoutes;
+      this.bounded=bounded;this.addedRoutes=addedRoutes;this.replacedRoutes=replacedRoutes;
     }
   }
   /** Resolve the visible channel against the newest committed Room row, not
@@ -124,10 +125,14 @@ public class SourceUpdateWorker extends Worker {
     for(com.wodedianshi.tv.db.BackupSourceEntity source:dao.getBackupSourcesForChannel(row.id))
       if(activeUrl.equals(source.url)){hasActive=true;break;}
     if(!hasActive)throw new com.wodedianshi.tv.db.RoomCatalogueWriter.StaleCatalogueException();
-    return refreshSingleChannel(context,row.id,checkpoint.completedAt,cancelled);
+    return refreshSingleChannel(context,row.id,checkpoint.completedAt,activeUrl,cancelled);
   }
   static SingleRefreshResult refreshSingleChannel(Context context,String channelId,long expectedVersion,
       java.util.function.BooleanSupplier cancelled)throws Exception{
+    return refreshSingleChannel(context,channelId,expectedVersion,"",cancelled);
+  }
+  static SingleRefreshResult refreshSingleChannel(Context context,String channelId,long expectedVersion,
+      String playingUrl,java.util.function.BooleanSupplier cancelled)throws Exception{
     if(channelId==null||channelId.isEmpty()||expectedVersion<0L||cancelled==null)
       throw new IllegalArgumentException("Missing single channel refresh request");
     if(!SOURCE_WORK_ACTIVE.compareAndSet(false,true))
@@ -157,8 +162,8 @@ public class SourceUpdateWorker extends Worker {
       ArrayList<String> existing=new ArrayList<>();
       for(com.wodedianshi.tv.db.BackupSourceEntity source:dao.getBackupSourcesForChannel(channelId))
         existing.add(source.url);
-      if(existing.size()>=MAX_SOURCES_PER_CHANNEL)
-        return new SingleRefreshResult(SingleRefreshResult.Status.FULL,0,0,0,0,expectedVersion,false);
+      // Full channels still search; retirement requires stored failure evidence.
+      final boolean full=existing.size()>=MAX_SOURCES_PER_CHANNEL;
       SingleChannelCandidateSearch.Target target=new SingleChannelCandidateSearch.Target(row.name,row.groupName,row.tvgId,row.tvgName);
       final int limit=viewing?2:4;
       SingleChannelCandidateSearch.SearchResult found=SingleChannelCandidateSearch.searchCached(context,channelId,target,existing,limit,paused);
@@ -196,16 +201,36 @@ public class SourceUpdateWorker extends Worker {
         return new SingleRefreshResult(SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),
             checked,0,0,expectedVersion,bounded);
       }
+      HashSet<String> eligible=new HashSet<>();
+      HashMap<String,Double> quality=new HashMap<>();
+      for(String candidate:verified.keySet())quality.put(candidate,(double)scores.get(candidate));
+      if(full||existing.size()+verified.size()>MAX_SOURCES_PER_CHANNEL){
+        boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
+        JSONObject priorScores=new JSONObject(indexed?"{}":com.wodedianshi.tv.db.AppStateStore.get(context,"source_probe_scores_v1","{}"));
+        JSONObject streaks=new JSONObject(indexed?"{}":com.wodedianshi.tv.db.AppStateStore.get(context,"source_probe_failure_streaks_v1","{}"));
+        if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
+            com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,existing,new HashSet<>(),priorScores,streaks,paused);
+        for(String old:existing){
+          String key=StableKey.url(old);
+          double score=priorScores.optDouble(key,0.0);
+          quality.put(old,score);
+          if(streaks.optInt(key,0)>=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT
+              &&SourceQualityScorer.isFailedProbeScore(score))
+            eligible.add(SourceSelectionPolicy.endpointKey(old));
+        }
+      }
+      java.util.Comparator<String> bestFirst=(a,b)->Double.compare(quality.getOrDefault(b,0.0),quality.getOrDefault(a,0.0));
       com.wodedianshi.tv.db.RoomCatalogueWriter.ChannelRefreshResult commit=
-          com.wodedianshi.tv.db.RoomCatalogueWriter.appendVerifiedChannelSources(
-              context,channelId,expectedVersion,verified,paused);
+          com.wodedianshi.tv.db.RoomCatalogueWriter.refreshVerifiedChannelSources(
+              context,channelId,expectedVersion,verified,playingUrl,eligible,bestFirst,paused);
       // A committed route must still be reported if cancellation or a cursor
       // write failure happens after the transaction. Re-scanning is safe.
       try{SingleChannelCandidateSearch.persistCompletedSearch(context,found,checked,cachedConclusive,paused);}
       catch(Exception cursorFailure){android.util.Log.w("MyTVSourceDiscovery","single-channel cursor save deferred",cursorFailure);}
       return new SingleRefreshResult(commit.addedSources>0?SingleRefreshResult.Status.SAVED:
-          SingleRefreshResult.Status.NO_NEW_SOURCE,found.candidates.size(),checked,passed.size(),
-          commit.addedSources,commit.catalogueVersion,bounded,commit.addedRoutes);
+          (full?SingleRefreshResult.Status.FULL:SingleRefreshResult.Status.NO_NEW_SOURCE),
+          found.candidates.size(),checked,passed.size(),commit.addedSources,commit.catalogueVersion,
+          bounded,commit.addedRoutes,commit.replacedRoutes);
     }finally{
       SOURCE_WORK_ACTIVE.set(false);
     }
