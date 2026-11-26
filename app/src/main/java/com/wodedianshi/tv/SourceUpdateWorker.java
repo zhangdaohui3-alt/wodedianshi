@@ -639,13 +639,12 @@ public class SourceUpdateWorker extends Worker {
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=Boolean.parseBoolean(feedState.get(initialFeedDoneKey(i)));
-          // Deferred pages are ineligible only during viewing; keep their true
-          // completion flags false so priority stages and publication cannot skip them.
-          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferPageForIdle(true,slowPlayback,
-              Boolean.parseBoolean(feedState.get(DiscoveryBatchPolicy.initialIdleRecheckKey(i))));
           int transientState=-1;
           try{transientState=Integer.parseInt(feedState.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
           catch(NumberFormatException ignored){}
+          // Forward scanning may continue while playing; an admitted replay
+          // remains idle-only. Legacy holds resume at the saved prefix.
+          attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(slowPlayback,transientState);
           if(!inspectedFeeds[i]&&!attemptedFeedsThisRun[i]
               &&transientState==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
             long admittedAt=0L;
@@ -1244,11 +1243,18 @@ public class SourceUpdateWorker extends Worker {
             initialTimeouts++;
             if(DiscoveryBatchPolicy.holdInconclusiveCandidate(initialDiscoveryChain,slowPlayback,e.savedSource)){
               if(pageFeed<0)throw new IllegalStateException("Missing initial recheck page");
-              // Undo the loop-entry count; commit marker with unchanged prefix.
-              discoveryScanned--;
               viewingDeferred=true;
-              update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
-              break;
+              if(transientRecheck==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
+                // Defensive: a rewound replay must never be consumed in viewing.
+                discoveryScanned--;
+                update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
+                break;
+              }
+              // Save the earliest unresolved position with the same immutable
+              // page fingerprint, but let other positions have their paced turn.
+              // At page end rewind once for idle replay before advancing raw cursor.
+              transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
+                  initialDiscoveryScanned+discoveryScanned-1);
             }
             // Preserve the existing transient failure replay. Also allow a timed-out
             // clearly mainland candidate to recover a missing early core category.
@@ -1681,7 +1687,7 @@ public class SourceUpdateWorker extends Worker {
             .putInt("source_initial_progress_feed_entries",Math.max(0,activeEntries))
             .putString("source_initial_progress_phase",initialDiscoveryComplete
                 ?("完整频道快照已发布，另有 "+unavailableCount+" 个来源暂不可用，待空闲补查")
-                :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":viewingDeferred?"低速检测未确认，已保存原位置，空闲后补检；"+stageDescription:stageDescription+"；暂不可用 "+unavailableCount+" 个"))
+                :(awaitingIdleFinalization?"线路初筛已完成，等待空闲发布或确认结果":viewingDeferred?"低速检测部分未确认，记录补查位置，空闲后复检；"+stageDescription:stageDescription+"；暂不可用 "+unavailableCount+" 个"))
             .putString("source_update_result",initialDiscoveryComplete
                 ?("首次全量目录检查已完成并发布；成功处理 "
                     +(completedFeeds-unavailableCount)+"/"+feeds.length
