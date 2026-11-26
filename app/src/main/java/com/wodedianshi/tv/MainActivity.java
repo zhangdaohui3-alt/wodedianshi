@@ -1655,7 +1655,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             long previewNow=android.os.SystemClock.elapsedRealtime();
             if(completed<=0L&&startupDataReady&&initialPreviewReloadPending
                 &&(!hasPlaybackCatalogueOwner()||mayAppendInitialLivePreview())
-                &&(initialPreviewReloadRequestedAt==0L||previewNow-initialPreviewReloadRequestedAt>=15000L)){
+                &&(initialPreviewReloadRequestedAt==0L||previewNow-initialPreviewReloadRequestedAt
+                    >=FullDiscoveryProgressPolicy.previewReloadIntervalMs(
+                        hasPlaybackCatalogueOwner(),previewMilestone))){
               initialPreviewReloadRequestedAt=previewNow;
               reloadChannelsAfterBackgroundUpdateIfNeeded();
             }
