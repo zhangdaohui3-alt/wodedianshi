@@ -39,6 +39,14 @@ public final class TrackHealthPolicy {
         return previousMs>0L&&currentMs>previousMs&&currentMs-previousMs>=250L;
     }
 
+    /** Both output paths must advance between observations. Unknown, reset,
+     * wrapped or stationary counters are not affirmative playback evidence. */
+    static boolean vlcOutputsAdvanced(long previousVideo,long previousAudio,
+            long currentVideo,long currentAudio) {
+        return previousVideo>=0L&&previousAudio>=0L
+                &&currentVideo>previousVideo&&currentAudio>previousAudio;
+    }
+
     /** Permission for bounded discovery only, not proof of rendered pixels or audible sound. */
     public static boolean canGrantVlcDiscovery(boolean videoOutput, boolean audioSelected,
             boolean buffering, boolean reportsPlaying, int consecutiveChecks,
