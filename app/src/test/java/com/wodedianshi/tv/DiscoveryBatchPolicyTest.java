@@ -300,4 +300,15 @@ public class DiscoveryBatchPolicyTest {
         assertEquals(0, DiscoveryBatchPolicy.scannedForBatch(
                 "batch", "batch", 2, 0));
     }
+
+    @Test public void rollingAdmissionProtectsFirstWatchAndMissingCorePreviews(){
+        int all=FullDiscoveryProgressPolicy.ALL_CORE;
+        assertFalse(DiscoveryBatchPolicy.permitsRollingInitial(false,false,false,1000,all));
+        assertFalse(DiscoveryBatchPolicy.permitsRollingInitial(true,true,false,16,all));
+        assertFalse(DiscoveryBatchPolicy.permitsRollingInitial(true,false,true,100,all));
+        assertFalse(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,100,0));
+        assertFalse(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,100,-1));
+        assertTrue(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,100,all));
+        assertTrue(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,513,-1));
+    }
 }
