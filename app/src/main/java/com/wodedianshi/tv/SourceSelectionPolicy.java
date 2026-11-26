@@ -91,6 +91,17 @@ public final class SourceSelectionPolicy {
         return currentSources.indexOf(requestedUrl);
     }
 
+    /** A delayed manual request belongs to the same channel and playback
+     * generation. Resolve by exact URL, never reuse a stale list position. */
+    static int resolveQueuedManualSelection(Object expectedChannel,Object currentChannel,
+            long expectedSerial,long currentSerial,List<String> sources,
+            String expectedActive,String currentActive,String target,Set<String> blocked) {
+        if(expectedSerial!=currentSerial||expectedActive==null
+                ||!expectedActive.equals(currentActive)||expectedActive.equals(target)
+                ||(blocked!=null&&blocked.contains(target)))return -1;
+        return resolveManualSelection(expectedChannel,currentChannel,sources,target);
+    }
+
     /** Finds a remembered URL in the current list without rewriting its signed path/query. */
     public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
         if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
