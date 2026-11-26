@@ -286,4 +286,46 @@ public class HlsWorkerProbeIntegrationTest {
             assertEquals(4096L,result.sampleBytes);
         }finally{releaseTail.countDown();serverThread.shutdownNow();}
     }
+
+    @Test public void sameDirectStreamFullVersusInitialUsesOneEighthBodyBytes()throws Exception{
+        byte[] body=new byte[32768];
+        for(int at=0;at+188<=body.length;at+=188){
+            body[at]=0x47;body[at+2]=0x20;body[at+3]=0x10;
+        }
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(int attempt=0;attempt<2;attempt++){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(
+                                socket.getInputStream(),StandardCharsets.US_ASCII));
+                        assertTrue(reader.readLine().startsWith("GET /same.ts "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        OutputStream out=socket.getOutputStream();
+                        out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n"
+                                +"Content-Length: 32768\r\nConnection: close\r\n\r\n"));
+                        out.write(body,0,1379);out.flush();
+                        // The fast reader can close after its bounded prefix.
+                        try{out.write(body,1379,body.length-1379);out.flush();}
+                        catch(SocketException closed){if(attempt==0)throw closed;}
+                    }
+                }
+                return null;
+            });
+            String url="http://127.0.0.1:"+server.getLocalPort()+"/same.ts";
+            SourceUpdateWorker.ProbeResult full=SourceUpdateWorker.probe(url,
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,false);
+            SourceUpdateWorker.ProbeResult screen=SourceUpdateWorker.probe(url,
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(full.valid);assertTrue(screen.valid);
+            assertFalse(full.provisional);assertTrue(screen.provisional);
+            assertEquals(1L,full.sampleRequests);assertEquals(1L,screen.sampleRequests);
+            assertEquals(32768L,full.sampleBytes);assertEquals(4096L,screen.sampleBytes);
+            assertEquals(full.sampleBytes,8L*screen.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
 }
