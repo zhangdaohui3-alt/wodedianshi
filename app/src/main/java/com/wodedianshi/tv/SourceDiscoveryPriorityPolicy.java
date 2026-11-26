@@ -49,6 +49,22 @@ public final class SourceDiscoveryPriorityPolicy {
         return nextFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd);
     }
 
+    /** During the bounded core-coverage phase, give each eligible mainland
+     * family a first inspection turn before revisiting a partially scanned
+     * family. This selection mask is not a completion or progress marker. */
+    static int nextCoverageFeed(int preferredStart,boolean[] completed,boolean[] attempted,
+            boolean[] visited,int mainlandEnd,int regionEnd,boolean preferCore) {
+        if(preferCore&&completed!=null&&attempted!=null&&visited!=null
+                &&completed.length==attempted.length&&completed.length==visited.length
+                &&activeStage(completed,mainlandEnd,regionEnd)==0){
+            boolean[] firstTurns=attempted.clone();
+            for(int i=0;i<firstTurns.length;i++)firstTurns[i]|=visited[i];
+            int first=nextFeed(preferredStart,completed,firstTurns,mainlandEnd,regionEnd,true);
+            if(first>=0)return first;
+        }
+        return nextEligibleFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd,preferCore);
+    }
+
     /** Select from the highest-priority eligible stage. A temporarily deferred
      * feed remains unfinished in the durable state; the mask below is local
      * to selection and must never be used for progress or final publication. */
