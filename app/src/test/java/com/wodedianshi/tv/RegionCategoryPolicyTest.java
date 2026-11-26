@@ -62,6 +62,16 @@ public class RegionCategoryPolicyTest {
                 "新闻综合", "News", "福建福州新闻综合", "", "custom"));
     }
 
+    @Test public void explicitCountryMetadataIdentifiesOtherwiseUnresolvedStations() {
+        assertEquals("china",RegionCategoryPolicy.catalogueScope("County News","China; Local","","","global"));
+        assertEquals("china",RegionCategoryPolicy.catalogueScope("县新闻","中国","","","global"));
+        assertEquals("china",RegionCategoryPolicy.catalogueScope("Unknown TV","News","","CountyNews.cn","global"));
+        assertEquals("global",RegionCategoryPolicy.catalogueScope("Unknown TV","News","","CountyNews.cn.example","global"));
+        assertEquals("global",RegionCategoryPolicy.catalogueScope("Unknown TV","News","","https://example.cn","global"));
+        assertEquals("global",RegionCategoryPolicy.catalogueScope("Unknown TV","Chinatown","","","global"));
+        assertEquals("custom",RegionCategoryPolicy.catalogueScope("Unknown TV","China","","CountyNews.cn","custom"));
+    }
+
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
         assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
         assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
