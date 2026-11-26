@@ -2192,6 +2192,8 @@ public class SourceUpdateWorker extends Worker {
     if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
         com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
     else update.putString("source_probe_scores_v1",scores.toString());
+    if(conclusive>0)update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
+        java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(snapshot.catalogueVersion,pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
         +" conclusive="+conclusive+" pending="+pending.size());
