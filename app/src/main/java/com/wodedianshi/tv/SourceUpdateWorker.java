@@ -208,20 +208,6 @@ public class SourceUpdateWorker extends Worker {
     int originalPriority=android.os.Process.THREAD_PRIORITY_DEFAULT;
     boolean priorityChanged=false;
     try{
-      java.util.concurrent.ExecutorService retiring=retiringProbeExecutor;
-      if(retiring!=null){
-        // Worker thread only: a pool whose final task just exited may need a
-        // moment to terminate. Avoid a full WorkManager backoff for that race.
-        // Never allow a second source owner while an old request is still live.
-        try{
-          if(!retiring.isTerminated()&&!retiring.awaitTermination(250L,
-              java.util.concurrent.TimeUnit.MILLISECONDS))return Result.retry();
-        }catch(InterruptedException interrupted){
-          Thread.currentThread().interrupt();return Result.retry();
-        }
-        if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
-        retiringProbeExecutor=null;
-      }
       try{
         originalPriority=android.os.Process.getThreadPriority(android.os.Process.myTid());
         if(originalPriority<android.os.Process.THREAD_PRIORITY_BACKGROUND){
@@ -238,16 +224,7 @@ public class SourceUpdateWorker extends Worker {
         if(isStopped()||Thread.currentThread().isInterrupted())return Result.retry();
         // A drained pool must really terminate before the next slice admits
         // network work, including an inline continuation in the same owner.
-        java.util.concurrent.ExecutorService previous=retiringProbeExecutor;
-        if(previous!=null){
-          try{
-            if(!previous.isTerminated()&&!previous.awaitTermination(250L,
-                java.util.concurrent.TimeUnit.MILLISECONDS))return Result.retry();
-          }catch(InterruptedException interrupted){
-            Thread.currentThread().interrupt();return Result.retry();
-          }
-          retiringProbeExecutor=null;
-        }
+        if(!awaitRetiringProbePool())return Result.retry();
         inlineInitialRequested=false;
         ownedSlices++;
         noteInitialStage("准备本轮目录整理");
@@ -261,6 +238,22 @@ public class SourceUpdateWorker extends Worker {
       if(priorityChanged)try{android.os.Process.setThreadPriority(originalPriority);}
       catch(RuntimeException ignored){}
     }
+  }
+  /** The exclusive Worker owner uses the same pool-drain gate for the first
+   * slice and every inline continuation. Never bypass a live retired pool. */
+  private boolean awaitRetiringProbePool(){
+    java.util.concurrent.ExecutorService previous=retiringProbeExecutor;
+    if(previous!=null){
+      try{
+        if(!previous.isTerminated()&&!previous.awaitTermination(250L,
+            java.util.concurrent.TimeUnit.MILLISECONDS))return false;
+      }catch(InterruptedException interrupted){
+        Thread.currentThread().interrupt();return false;
+      }
+      if(isStopped()||Thread.currentThread().isInterrupted())return false;
+      retiringProbeExecutor=null;
+    }
+    return !isStopped()&&!Thread.currentThread().isInterrupted();
   }
   private Result runOwnedWork(){
     final long sliceStartedAt=android.os.SystemClock.elapsedRealtime();
