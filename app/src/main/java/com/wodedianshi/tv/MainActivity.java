@@ -168,6 +168,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Button fullscreenAspectMenuItem;
   private Runnable hideFullscreenControls;
   private boolean fullscreenControlsVisible=false;
+  private boolean fullscreenControlGesture;
   private long lastChannelZapKeyAt=0L;
   private Runnable revealVodControlsAction;
   private Runnable backVodToCatalogueAction;
@@ -1421,11 +1422,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       @Override public boolean dispatchTouchEvent(MotionEvent event){
         int action=event.getActionMasked();
         if(action==MotionEvent.ACTION_DOWN){
+          fullscreenControlGesture=false;
+          boolean hitsButton=fullscreenControlsVisible&&(hitsControl(fullscreenMenuButton,event)
+              ||hitsControl(fullscreenSourceButton,event)||hitsControl(fullscreenFavoriteButton,event));
+          if(fullScreenPlayback&&activityStarted&&currentVodPanel==null
+              &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
+              &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())&&hitsButton){
+            fullscreenControlGesture=true;
+            if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
+          }
           ownsVideoGesture=fullScreenPlayback&&activityStarted&&currentVodPanel==null
               &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
               &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())
-              &&!hitsControl(fullscreenMenuButton,event)&&!hitsControl(fullscreenSourceButton,event)
-              &&!hitsControl(fullscreenFavoriteButton,event)&&!hitsControl(channelZapOverlay,event);
+              &&!hitsButton&&!hitsControl(channelZapOverlay,event);
           tapCandidate=ownsVideoGesture;
           downX=event.getX();downY=event.getY();
         }
@@ -1444,7 +1453,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           return true;
         }
-        return super.dispatchTouchEvent(event);
+        boolean handled=super.dispatchTouchEvent(event);
+        if(fullscreenControlGesture&&(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL
+            ||(action==MotionEvent.ACTION_DOWN&&!handled))){
+          fullscreenControlGesture=false;
+          if(fullscreenControlsVisible&&fullScreenPlayback)scheduleFullscreenControlsHide();
+        }
+        return handled;
+      }
+      @Override protected void onDetachedFromWindow(){
+        fullscreenControlGesture=false;
+        ownsVideoGesture=false;tapCandidate=false;
+        super.onDetachedFromWindow();
       }
     };liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
@@ -5038,7 +5058,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     if(video!=null)video.setKeepScreenOn(false);
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
-    fullscreenControlsVisible=false;
+    fullscreenControlsVisible=false;fullscreenControlGesture=false;
     fullscreenMenuButton.setVisibility(View.GONE);
     fullscreenSourceButton.setVisibility(View.GONE);
     fullscreenFavoriteButton.setVisibility(View.GONE);
@@ -5074,14 +5094,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!fullScreenPlayback)return;
     fullscreenControlsVisible=true;
     TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton};
-    for(TextView control:controls){control.animate().cancel();control.setVisibility(View.VISIBLE);control.setAlpha(0f);control.animate().alpha(1f).setDuration(180).start();}
+    // Make visible controls hit-testable immediately rather than losing a fast
+    // second tap during the fade-in. Keep a complete button gesture together.
+    for(TextView control:controls){control.animate().cancel();control.setVisibility(View.VISIBLE);control.setAlpha(1f);}
+    scheduleFullscreenControlsHide();
+  }
+  private void scheduleFullscreenControlsHide(){
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
-    hideFullscreenControls=()->hideFullscreenControlsNow();
+    if(fullscreenControlGesture||!fullScreenPlayback||!fullscreenControlsVisible)return;
+    hideFullscreenControls=()->{if(!fullscreenControlGesture)hideFullscreenControlsNow();};
     uiHandler.postDelayed(hideFullscreenControls,3500);
   }
   private void hideFullscreenControlsNow(){
     if(!fullScreenPlayback)return;
-    fullscreenControlsVisible=false;
+    fullscreenControlsVisible=false;fullscreenControlGesture=false;
     TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton};
     for(TextView control:controls){control.animate().cancel();control.animate().alpha(0f).setDuration(220).withEndAction(()->{if(!fullscreenControlsVisible&&fullScreenPlayback)control.setVisibility(View.GONE);}).start();}
     if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
