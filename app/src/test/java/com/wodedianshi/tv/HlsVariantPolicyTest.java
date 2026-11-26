@@ -5,6 +5,35 @@ import java.util.ArrayList;
 import static org.junit.Assert.*;
 
 public class HlsVariantPolicyTest {
+    @Test public void duplicateRenditionsDoNotConsumeTheDistinctAttemptLimit() throws Exception {
+        StringBuilder master = new StringBuilder("#EXTM3U\n");
+        for (int i = 0; i < 12; i++) {
+            master.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(1000000 + i)
+                    .append("\n").append(i % 2 == 0 ? "same.m3u8" :
+                        "https://cdn.example/root/same.m3u8").append("\n");
+        }
+        master.append("#EXT-X-STREAM-INF:BANDWIDTH=200000\nlow.m3u8\n");
+        ArrayList<HlsVariantPolicy.Variant> variants = HlsVariantPolicy.parse(
+                master.toString(), "https://cdn.example/root/master.m3u8");
+        assertEquals(2, variants.size());
+        assertEquals("https://cdn.example/root/same.m3u8", variants.get(0).url);
+        assertEquals(1000011L, variants.get(0).bandwidth);
+        assertEquals("https://cdn.example/root/low.m3u8", variants.get(1).url);
+    }
+
+    @Test public void invalidChildUrlsDoNotDiscardHealthySiblingOrDistinctQueries() throws Exception {
+        String master = "#EXTM3U\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=900000\nhttp://[broken\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=800000\nfile:///tmp/invalid.m3u8\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=700000\nchild.m3u8?token=a\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=600000\nchild.m3u8?token=b\n";
+        ArrayList<HlsVariantPolicy.Variant> variants = HlsVariantPolicy.parse(
+                master, "https://cdn.example/root/master.m3u8");
+        assertEquals(2, variants.size());
+        assertEquals("https://cdn.example/root/child.m3u8?token=a", variants.get(0).url);
+        assertEquals("https://cdn.example/root/child.m3u8?token=b", variants.get(1).url);
+    }
+
     @Test public void ordersVariantsFromHighestBandwidthToLowestAndResolvesRelativeUrls() throws Exception {
         String master = "#EXTM3U\n"
                 + "#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360\nlow/index.m3u8\n"
