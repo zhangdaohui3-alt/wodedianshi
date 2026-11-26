@@ -4,6 +4,17 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @Test public void failedDirectoryIsNotEofEvenIfParsedCountLooksComplete() {
+        assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(false,false,19952,48,20000,48));
+        assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(false,false,0,0,-1,48));
+        assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(false,true,0,0,-1,48));
+        assertFalse(SourceUpdateSchedulePolicy.initialFeedInspected(true,false,19904,48,20000,48));
+        assertTrue(SourceUpdateSchedulePolicy.initialFeedInspected(true,false,19952,48,20000,48));
+        assertTrue(SourceUpdateSchedulePolicy.initialFeedInspected(true,true,19904,48,20000,48));
+        assertTrue(SourceUpdateSchedulePolicy.initialFeedInspected(true,true,19904,0,-1,48));
+        assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,true,19952,48,20000));
+    }
+
     @Test public void recoveryWarningRequiresSuccessfulNonemptyIndexedEof() {
         assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,false,0,4,20000));
         assertFalse(SourceUpdateSchedulePolicy.recoveredDirectoryScanned(true,true,19996,4,20000));
