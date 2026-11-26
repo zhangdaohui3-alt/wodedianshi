@@ -7,6 +7,23 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SnapshotCategoryIndexTest {
+    @Test public void preparedMembershipCanBeAdoptedOnlyForExactSnapshot(){
+        java.util.Map<String,List<Integer>> provinces=new java.util.HashMap<>();
+        provinces.put("福建",Arrays.asList(3,6));
+        SnapshotCategoryIndex.LocalMembership membership=new SnapshotCategoryIndex.LocalMembership(
+            10,Arrays.asList(3,6,9),provinces);
+        SnapshotCategoryIndex.PreparedLocal prepared=new SnapshotCategoryIndex.PreparedLocal(7,membership);
+        provinces.clear();
+        assertTrue(prepared.matches(7,10));
+        assertFalse(prepared.matches(8,10));
+        assertFalse(prepared.matches(7,11));
+        SnapshotCategoryIndex cache=new SnapshotCategoryIndex();
+        cache.putLocalMembership(7,10,prepared.membership);
+        assertEquals(Arrays.asList(3,6),cache.localCandidates(7,10,"福建"));
+        assertNull(cache.localCandidates(8,10,"福建"));
+        assertEquals(Arrays.asList(3,6,9),prepared.membership.candidates(null));
+    }
+
     @Test public void completeProvinceIndexRetainsEmptyAndAmbiguousMembership(){
         SnapshotCategoryIndex cache=new SnapshotCategoryIndex();
         java.util.Map<String,List<Integer>> provinces=new java.util.HashMap<>();
