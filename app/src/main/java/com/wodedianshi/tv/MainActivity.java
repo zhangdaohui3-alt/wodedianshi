@@ -3598,8 +3598,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final LinearLayout[] vodControlsHolder=new LinearLayout[1];
     final Runnable[] hideVodSeekTask=new Runnable[1];
     final View[] vodTopControls=new View[4];
+    final View[] vodTerminalPanel={null};
     FrameLayout stage=new FrameLayout(this){
+      private boolean terminalPanelVisible(){
+        return vodTerminalPanel[0]!=null&&vodTerminalPanel[0].getVisibility()==View.VISIBLE;
+      }
       private void revealVodSeekBar(){
+        if(terminalPanelVisible())return;
         boolean controlsWereHidden=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()!=View.VISIBLE;
         if(vodControlsHolder[0]!=null){vodControlsHolder[0].setVisibility(View.VISIBLE);vodControlsHolder[0].bringToFront();}
         if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.VISIBLE);
@@ -3615,6 +3620,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(terminalPanelVisible())return super.dispatchKeyEvent(event);
         if(event.getKeyCode()==KeyEvent.KEYCODE_MENU||event.getKeyCode()==KeyEvent.KEYCODE_SETTINGS){
           if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
             revealVodControlsAction=()->revealVodSeekBar();
@@ -3651,6 +3657,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
       }
       private void toggleVodControls(){
+        if(terminalPanelVisible())return;
         boolean visible=vodControlsHolder[0]!=null&&vodControlsHolder[0].getVisibility()==View.VISIBLE;
         if(visible)hideVodControlsNow();else revealVodSeekBar();
       }
@@ -3668,7 +3675,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         int action=event.getActionMasked();
         boolean mouse=isMouseEvent(event);
         if(action==android.view.MotionEvent.ACTION_DOWN){
-          ownsVodVideoGesture=false;
+          ownsVodVideoGesture=false;videoTapCandidate=false;
+          // Terminal actions own their complete DOWN/UP sequence. Do not
+          // intercept a tap merely because the normal transport bar is hidden.
+          if(terminalPanelVisible())return super.dispatchTouchEvent(event);
           boolean controlsHidden=vodControlsHolder[0]==null||vodControlsHolder[0].getVisibility()!=View.VISIBLE;
           if(mouse&&controlsHidden){
             // Mouse hover normally reveals controls before click; keep mouse hit-testing native.
@@ -3693,7 +3703,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){
             boolean toggle=action==MotionEvent.ACTION_UP&&videoTapCandidate;
             ownsVodVideoGesture=false;videoTapCandidate=false;
-            if(toggle)toggleVodControls();
+            if(toggle&&!terminalPanelVisible())toggleVodControls();
           }
           return true;
         }
@@ -3705,7 +3715,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     VLCVideoLayout vodVlcView=new VLCVideoLayout(this);vodVlcVideoLayout=vodVlcView;vodVlcView.setVisibility(View.GONE);stage.addView(vodVlcView,new FrameLayout.LayoutParams(-1,-1));
     // End-of-film overlay: keep the last video frame visible and offer clear
     // remote-friendly actions instead of leaving the viewer on a black screen.
-    LinearLayout endedPanel=new LinearLayout(this);endedPanel.setOrientation(1);endedPanel.setGravity(Gravity.CENTER);
+    LinearLayout endedPanel=new LinearLayout(this);vodTerminalPanel[0]=endedPanel;endedPanel.setOrientation(1);endedPanel.setGravity(Gravity.CENTER);
     endedPanel.setPadding(dp(24),dp(20),dp(24),dp(20));endedPanel.setBackgroundColor(0xDD101820);endedPanel.setVisibility(View.GONE);
     TextView endedTitle=new TextView(this);endedTitle.setText("播放完毕");endedTitle.setTextColor(Color.WHITE);endedTitle.setTextSize(24);endedTitle.setGravity(Gravity.CENTER);
     TextView endedSubtitle=new TextView(this);endedSubtitle.setText("《"+item.title+"》已播放结束");endedSubtitle.setTextColor(0xFFD4DFE8);endedSubtitle.setTextSize(15);endedSubtitle.setGravity(Gravity.CENTER);endedSubtitle.setPadding(0,dp(8),0,dp(18));
@@ -3742,7 +3752,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           seekBy(direction*5000L);
           if(remoteRepeat!=null)removeCallbacks(remoteRepeat);
           remoteRepeat=()->{
-            if(remoteDirection!=0){
+            if(remoteDirection!=0&&hasFocus()&&isAttachedToWindow()
+                &&vodPlayerDialog==d&&activeVodItem==item&&d.isShowing()
+                &&endedPanel.getVisibility()!=View.VISIBLE){
               seekBy(remoteDirection*15000L);
               postDelayed(remoteRepeat,220L);
             }
@@ -3751,10 +3763,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         return true;
       }
+      private void stopRemoteSeekRepeat(){
+        remoteDirection=0;
+        if(remoteRepeat!=null){removeCallbacks(remoteRepeat);remoteRepeat=null;}
+      }
+      @Override protected void onFocusChanged(boolean gainFocus,int direction,android.graphics.Rect previous){
+        if(!gainFocus)stopRemoteSeekRepeat();
+        super.onFocusChanged(gainFocus,direction,previous);
+      }
+      @Override protected void onDetachedFromWindow(){
+        stopRemoteSeekRepeat();
+        super.onDetachedFromWindow();
+      }
       @Override public boolean onKeyUp(int keyCode,KeyEvent event){
         if(keyCode==KeyEvent.KEYCODE_DPAD_LEFT||keyCode==KeyEvent.KEYCODE_DPAD_RIGHT){
-          remoteDirection=0;
-          if(remoteRepeat!=null){removeCallbacks(remoteRepeat);remoteRepeat=null;}
+          stopRemoteSeekRepeat();
           return true;
         }
         return super.onKeyUp(keyCode,event);
