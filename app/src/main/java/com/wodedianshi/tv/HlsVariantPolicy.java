@@ -89,7 +89,10 @@ public final class HlsVariantPolicy {
         java.util.HashSet<String> seen = new java.util.HashSet<>();
         ArrayList<Variant> distinct = new ArrayList<>();
         for (Variant variant : variants) {
-            if (seen.add(variant.url)) distinct.add(variant);
+            // Match the existing exact stream endpoint identity, including
+            // case-insensitive host and equivalent default ports. Preserve
+            // the original selected URL and every distinct path/query.
+            if (seen.add(SourceSelectionPolicy.endpointKey(variant.url))) distinct.add(variant);
             if (distinct.size() >= MAX_VARIANTS) break;
         }
         return distinct;
