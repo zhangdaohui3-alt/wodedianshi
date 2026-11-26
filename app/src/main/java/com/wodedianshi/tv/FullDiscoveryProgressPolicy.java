@@ -58,6 +58,15 @@ public final class FullDiscoveryProgressPolicy {
     }
 
     public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
+    // Independent watermark preserves the original mainland-complete level
+    // and limits additional initial publications to three geometric milestones.
+    public static final String PREVIEW_MILESTONE_KEY = "source_initial_preview_milestone";
+    static int nextPreviewMilestone(int previous,int stagedChannels,int mainlandValidated) {
+        if(mainlandValidated<=0)return previous;
+        int reached=stagedChannels>=1024?1024:stagedChannels>=256?256:stagedChannels>=64?64:0;
+        return Math.max(previous,reached);
+    }
+
     // At most two extra publications: an early useful set, then mainland coverage.
     // A milestone is not a completed full build and does not change the probe policy.
     public static int nextPreviewLevel(int previous, int stagedChannels,
