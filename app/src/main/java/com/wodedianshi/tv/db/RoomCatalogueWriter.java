@@ -59,8 +59,11 @@ public final class RoomCatalogueWriter {
     public static final class ChannelRefreshResult {
         public final int addedSources;
         public final long catalogueVersion;
-        ChannelRefreshResult(int addedSources,long catalogueVersion){
+        public final Map<String,java.util.Set<String>> addedRoutes;
+        ChannelRefreshResult(int addedSources,long catalogueVersion,
+                Map<String,java.util.Set<String>> addedRoutes){
             this.addedSources=addedSources;this.catalogueVersion=catalogueVersion;
+            this.addedRoutes=java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(addedRoutes));
         }
     }
 
@@ -98,7 +101,7 @@ public final class RoomCatalogueWriter {
             List<String> additions=com.wodedianshi.tv.SingleChannelRefreshPolicy.appendCandidates(
                 existing,verifiedBestFirst.keySet(),8);
             if(additions.isEmpty()){
-                result[0]=new ChannelRefreshResult(0,checkpoint.completedAt);return;
+                result[0]=new ChannelRefreshResult(0,checkpoint.completedAt,java.util.Collections.emptyMap());return;
             }
             java.util.TreeSet<String> scopes=new java.util.TreeSet<>();
             try{
@@ -108,6 +111,7 @@ public final class RoomCatalogueWriter {
                 throw new IllegalStateException("Invalid stored channel scope",malformed);
             }
             List<BackupSourceEntity> newRows=new ArrayList<>();
+            Map<String,java.util.Set<String>> addedRoutes=new java.util.LinkedHashMap<>();
             for(String url:additions){
                 checkPause(paused);
                 java.util.TreeSet<String> owned=new java.util.TreeSet<>();
@@ -115,6 +119,7 @@ public final class RoomCatalogueWriter {
                 if(incoming!=null)for(String scope:incoming)
                     if(scope!=null&&!scope.isEmpty())owned.add(scope);
                 scopes.addAll(owned);
+                addedRoutes.put(url,java.util.Collections.unmodifiableSet(new java.util.HashSet<>(owned)));
                 JSONArray sourceScopes=new JSONArray();
                 for(String scope:owned)sourceScopes.put(scope);
                 newRows.add(new BackupSourceEntity(channelId,url,old.size()+newRows.size(),sourceScopes.toString()));
@@ -130,7 +135,7 @@ public final class RoomCatalogueWriter {
             db.appStateDao().put(new AppStateEntity(CatalogueVersionPolicy.STRUCTURE_VERSION_KEY,
                 Long.toString(version),System.currentTimeMillis()));
             checkPause(paused);
-            result[0]=new ChannelRefreshResult(newRows.size(),version);
+            result[0]=new ChannelRefreshResult(newRows.size(),version,addedRoutes);
         });
         return result[0];
     }
