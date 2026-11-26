@@ -65,6 +65,15 @@ public final class SourceUpdateSchedulePolicy {
         return savedOnly&&feedCount>=0&&nextFeed>=feedCount&&poolSize>=0&&covered>=poolSize;
     }
 
+    /** Clear an earlier unavailable-feed warning only at the end of a
+     * nonempty, successfully scanned indexed directory. A readable first page
+     * or a terminal failure is not completion of the recovery pass. */
+    static boolean recoveredDirectoryScanned(boolean success,boolean unavailable,
+            int cursor,int parsed,int indexedEntries) {
+        return success&&!unavailable&&cursor>=0&&parsed>=0&&indexedEntries>0
+                &&(long)cursor+parsed==indexedEntries;
+    }
+
     /** Manual refresh advances only at EOF, never just because a page was processed. */
     public static boolean manualFeedFinished(int cursor, int parsed, int indexedEntries,
             int pageSize) {
