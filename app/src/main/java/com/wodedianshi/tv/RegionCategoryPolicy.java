@@ -9,6 +9,12 @@ final class RegionCategoryPolicy {
     private static final Pattern MO = Pattern.compile("(^|[^a-z])mo([^a-z]|$)");
     private static final Pattern TW = Pattern.compile("(^|[^a-z])tw([^a-z]|$)");
 
+    // Some feeds qualify the country-suffixed EPG identifier with a known
+    // stream quality tag. Accept only the exact identifier format, not URLs,
+    // arbitrary suffixes or a country substring in a foreign identifier.
+    private static final Pattern CN_EPG_ID = Pattern.compile(
+            "[a-z0-9][a-z0-9._-]*\\.cn(?:@(?:sd|hd|fhd|uhd|4k|8k|480p|576p|720p|1080[pi]|2160p|4320p))?");
+
     private RegionCategoryPolicy() {}
 
     /** Keeps Chinese regional and national channels in China when found in global indexes. */
@@ -20,7 +26,7 @@ final class RegionCategoryPolicy {
         String scope=catalogueScope(combinedName, group, requestedScope);
         // Country-qualified EPG IDs are metadata, not playback URLs.
         if("global".equals(scope)&&tvgId!=null
-                &&tvgId.trim().toLowerCase(Locale.ROOT).matches("[a-z0-9][a-z0-9._-]*\\.cn"))
+                &&CN_EPG_ID.matcher(tvgId.trim().toLowerCase(Locale.ROOT)).matches())
             return "china";
         return scope;
     }
