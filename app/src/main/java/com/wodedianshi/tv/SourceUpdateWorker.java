@@ -3096,8 +3096,8 @@ public class SourceUpdateWorker extends Worker {
   // A pressure event interrupts pacing at the next poll. A blocked socket
   // remains subject to its separate inactivity timeout; do not promise instant
   // cancellation or create another player/network thread.
-  private static boolean paceViewingSample(int bytes,long deadline,java.util.function.BooleanSupplier pauseRequested){
-    long delay=SourceProbeTimePolicy.viewingSampleDelayMillis(bytes);
+  private static boolean paceViewingSample(int bytes,long readElapsedMs,long deadline,java.util.function.BooleanSupplier pauseRequested){
+    long delay=SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(bytes,readElapsedMs);
     long end=android.os.SystemClock.elapsedRealtime()+delay;
     for(;;){
       if(probeDeadlineReached(deadline,pauseRequested))return false;
@@ -3149,11 +3149,13 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
           if(length==0)break;
+          long readStarted=slowPlayback?android.os.SystemClock.elapsedRealtime():0L;
           n=in.read(buffer,0,length);
+          long readElapsed=slowPlayback?android.os.SystemClock.elapsedRealtime()-readStarted:0L;
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
-          if(slowPlayback&&!paceViewingSample(n,deadline,pauseRequested))return null;
+          if(slowPlayback&&!paceViewingSample(n,readElapsed,deadline,pauseRequested))return null;
         }
         if(probeDeadlineReached(deadline,pauseRequested))return null;
         byte[] received=out.toByteArray();
