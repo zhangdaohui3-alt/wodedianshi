@@ -37,6 +37,16 @@ public class ChinaDiscoveryCandidatePolicyTest {
         assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,"global","BBC News","News","",""));
     }
 
+    @Test public void regionalSchedulingDoesNotInventLocalMembership() {
+        assertEquals("福建",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"china","福州新闻","福建","",""));
+        assertEquals("广东",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"china","深圳新闻","广东","",""));
+        assertEquals("",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"china","CCTV-1","央视","",""));
+        assertEquals("",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"china","湖南卫视","卫视","",""));
+        assertEquals("",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"china","County News","Local","",""));
+        assertEquals("",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(MIXED,"global","Local News","US","",""));
+        assertEquals("",ChinaDiscoveryCandidatePolicy.initialCoverageRegion(0,"china","福州新闻","福建","",""));
+    }
+
     @Test public void mixedFeedRanksMainlandBeforeHmtAndForeign() {
         assertEquals(0,ChinaDiscoveryCandidatePolicy.initialProbePriority(
                 MIXED,"china","上虞新闻综合","中国大陆 · 新闻","",""));
