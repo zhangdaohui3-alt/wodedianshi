@@ -9,6 +9,25 @@ import static org.junit.Assert.*;
 public class SourceSelectionPolicyTest {
     private final java.util.List<String> sources = Arrays.asList("a", "b", "c", "d");
 
+    @Test public void queuedSourceResolvesByExactUrlAndCurrentTune() {
+        Object channel=new Object();
+        java.util.List<String> reordered=Arrays.asList("c","a","d","b");
+        assertEquals(2,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,new Object(),7L,7L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,8L,
+                reordered,"a","a","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","c","d",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","a",Collections.emptySet()));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","d",Collections.singleton("d")));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
+                reordered,"a","a","missing",Collections.emptySet()));
+    }
+
     @Test public void wrapIndexHandlesNegativeAndOversizedValues() {
         assertEquals(3, SourceSelectionPolicy.wrapIndex(-1, 4));
         assertEquals(2, SourceSelectionPolicy.wrapIndex(6, 4));
@@ -99,6 +118,39 @@ public class SourceSelectionPolicyTest {
                 Collections.singleton("b"), Collections.emptySet()));
     }
 
+    @Test public void sourceMenuFollowsExactUrlAfterReorderingButRejectsStaleChannel() {
+        Object channel = new Object();
+        java.util.List<String> reordered = Arrays.asList("b", "a", "c");
+        assertEquals(0, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, "b"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, new Object(), reordered, "b"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, "removed"));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel, reordered, ""));
+        assertEquals(-1, SourceSelectionPolicy.resolveManualSelection(channel, channel,
+                Collections.singletonList("https://example.com/live?token=new"),
+                "https://example.com/live?token=old"));
+    }
+
+    @Test public void rememberedSourceMatchesHostCaseAndDefaultPortAliases() {
+        assertEquals(1, SourceSelectionPolicy.findEquivalentSource(
+                Arrays.asList("http://other/live", "HTTP://Example.COM:80/live.m3u8"),
+                "http://example.com/live.m3u8"));
+    }
+
+    @Test public void rememberedSourceDoesNotIgnoreSignedPathOrQueryDifferences() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/live?token=old"),
+                "https://example.com/live?token=new"));
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/Live"),
+                "https://example.com/live"));
+    }
+
+    @Test public void missingRememberedSourceDoesNotInventAnIndex() {
+        assertEquals(-1, SourceSelectionPolicy.findEquivalentSource(
+                Collections.singletonList("https://example.com/current"),
+                "https://example.com/removed"));
+    }
+
     @Test public void scanCursorFollowsLastUrlWhenPlaylistEntriesAreInserted() {
         java.util.List<String> oldList = Arrays.asList("a", "b", "c");
         String last = SourceSelectionPolicy.lastScannedKey(oldList, 0, 2);
@@ -120,5 +172,23 @@ public class SourceSelectionPolicyTest {
     @Test public void emptyScanDoesNotCreateCursorKey() {
         assertEquals("", SourceSelectionPolicy.lastScannedKey(
                 Arrays.asList("a", "b"), 0, 0));
+    }
+
+    @Test public void channelFailoverStopsWhenThereIsOnlyOneChannel() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(1, 0, 0));
+    }
+
+    @Test public void channelFailoverStopsAfterEveryOtherChannelWasTried() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(4, 2, 3));
+    }
+
+    @Test public void channelFailoverAdvancesAndWrapsAround() {
+        assertEquals(0, ChannelFailoverPolicy.nextChannelIndex(4, 3, 1));
+        assertEquals(2, ChannelFailoverPolicy.nextChannelIndex(4, 1, 0));
+    }
+
+    @Test public void channelFailoverRejectsEmptyListAndInvalidIndex() {
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(0, 0, 0));
+        assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(3, -1, 0));
     }
 }
