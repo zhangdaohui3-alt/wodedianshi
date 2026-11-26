@@ -3073,6 +3073,9 @@ public class SourceUpdateWorker extends Worker {
         // Select a rendition only after every required sample for that rendition
         // passes. A stale second segment in a high-bitrate rendition must not
         // prevent trying a healthy lower-bitrate sibling within the same budget.
+        // Positive clear initialization evidence is local to this single probe.
+        // Do not reuse encrypted, failed, or historical resources.
+        HashSet<String> confirmedClearMaps=new HashSet<>();
         for(int variantIndex=0;variantIndex<variants.size();variantIndex++){
           HlsVariantPolicy.Variant candidate=variants.get(variantIndex);
           if(probeDeadlineReached(deadline,pauseRequested))return result;
@@ -3102,7 +3105,8 @@ public class SourceUpdateWorker extends Worker {
             }
             // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
             // AES-128 maps require their explicit IV and must validate after decryption.
-            if(resources.initializationUrl!=null){
+            if(resources.initializationUrl!=null&&!(initialIdle&&!slowPlayback&&!resources.aes128Encrypted
+                &&confirmedClearMaps.contains(resources.initializationUrl))){
               SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,renditionDeadline,slowPlayback,pauseRequested);
               byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
               if(initialization==null)continue;
@@ -3110,7 +3114,10 @@ public class SourceUpdateWorker extends Worker {
                 byte[] mapIv=HlsAes128Preflight.parseExplicitIv(resources.encryptionIv);
                 if(mapIv==null||!HlsAes128Preflight.validatesInitializationSegment(
                     initialization,aesKey,mapIv,HlsProbeValidationPolicy.isCompleteSample(initializationResponse.truncated)))continue;
-              }else if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
+              }else{
+                if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
+                if(initialIdle&&!slowPlayback)confirmedClearMaps.add(resources.initializationUrl);
+              }
             }
             String candidateSegmentUrl=candidateSegments.get(0);
             long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
