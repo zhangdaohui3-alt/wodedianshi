@@ -58,6 +58,14 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.shouldBuildSavedProbePool(true,true,false));
     }
 
+    @Test public void idleFailureDoesNotDelayDifferentUnfailedDirectory() {
+        assertEquals(0L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(false,false,true));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(false,false,false));
+        assertEquals(30L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,false,true));
+        assertEquals(0L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(false,true,false));
+        assertEquals(5L,SourceUpdateSchedulePolicy.initialContinuationDelaySeconds(true,true,true));
+    }
+
     @Test public void normalInitialViewingDeferralUsesFixedDelay() {
         assertEquals(30L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(false));
         assertEquals(60L,SourceUpdateSchedulePolicy.initialViewingDelaySeconds(true));
