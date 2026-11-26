@@ -21,6 +21,13 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     private volatile long positionMs, durationMs;
     private final java.util.concurrent.ExecutorService worker;
     private final Runnable poll = this::pollTimeline;
+    // Serialize posting the next tick with revocation, so a native poll that
+    // finishes after dismissal cannot reinsert a removed callback.
+    private synchronized void schedulePoll(long delayMs) {
+        if (revoked || released) return;
+        mainHandler.removeCallbacks(poll);
+        mainHandler.postDelayed(poll, delayMs);
+    }
     // Main-handler-owned; at most two inspections per backend lifetime.
     private int audioTrackChecks;
 
@@ -106,7 +113,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
             }
             if (revoked) return;
             engine.play(url);
-            mainHandler.post(poll);
+            schedulePoll(0L);
         });
     }
 
@@ -119,7 +126,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
                 durationMs = engine.getLengthMs();
                 // Schedule only after the previous poll completes; a slow
                 // decoder cannot accumulate periodic JNI work in the queue.
-                if (!revoked) mainHandler.postDelayed(poll, 500L);
+                schedulePoll(500L);
             });
         } catch (RuntimeException ignored) { }
     }
@@ -150,7 +157,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     }
 
     /** Main-thread revocation precedes posting teardown to the shared worker. */
-    void revoke() {
+    synchronized void revoke() {
         revoked = true;
         released = true;
         listener = null;
