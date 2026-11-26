@@ -11,6 +11,9 @@ public class SingleChannelRefreshPolicyTest {
     }
     @Test public void recognizedNationalStationsMustAgreeAcrossMetadata(){
         assertTrue(match("CCTV-2","央视","","","中央二套","央视","",""));
+        assertTrue(match("CCTV-12","央视","","","中央电视台十二套","央视","",""));
+        assertFalse(match("CCTV-2","央视","","","中央二套专题","央视","",""));
+        assertFalse(match("CCTV-2","央视","","","中央二套","央视","","CCTV-3"));
         assertFalse(match("CCTV-2","央视","","","CCTV-3","央视","",""));
         assertFalse(match("CCTV-2","央视","","","CCTV-2","央视","","CCTV-3"));
         assertFalse(match("CCTV-4","央视","","","CCTV-4 Asia","央视","",""));
