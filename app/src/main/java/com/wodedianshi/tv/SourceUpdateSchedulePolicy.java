@@ -113,11 +113,16 @@ public final class SourceUpdateSchedulePolicy {
                 &&!ownerActive&&!playbackActive&&autoEnabled&&buildActive&&!alreadyRequested;
     }
 
-    // Admit at most one extra committed idle slice, and only early enough in
-    // the owner lifetime. Existing per-slice network budgets still apply.
+    // Reuse the existing exclusive owner for up to four independently committed
+    // idle slices. Admit a successor only in the first two minutes: with the
+    // existing 240s slice guard this leaves substantial WorkManager time margin.
+    // Each slice rechecks playback, cancellation, network and durable progress.
+    static final int INITIAL_INLINE_MAX_SLICES=4;
+    static final long INITIAL_INLINE_ADMISSION_MS=120000L;
     static boolean canContinueInitialInline(int completedSlices,long elapsedMs,
             boolean viewing,boolean playbackActive,boolean paused,boolean progressed,long delaySeconds) {
-        return completedSlices==1&&elapsedMs>=0L&&elapsedMs<60000L
+        return completedSlices>=1&&completedSlices<INITIAL_INLINE_MAX_SLICES
+                &&elapsedMs>=0L&&elapsedMs<INITIAL_INLINE_ADMISSION_MS
                 &&!viewing&&!playbackActive&&!paused&&progressed&&delaySeconds==0L;
     }
 
