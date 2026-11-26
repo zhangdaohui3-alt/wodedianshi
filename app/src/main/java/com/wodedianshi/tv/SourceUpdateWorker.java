@@ -378,6 +378,23 @@ public class SourceUpdateWorker extends Worker {
               .putString("source_initial_progress_phase","稳定直播：开始低速准备中国目录")
               .apply();
         }
+        // Recover an already committed but not yet exposed preview even when
+        // every remaining feed is deferred for idle. Do not probe another URL
+        // or advance a cursor in this publication-only continuation.
+        int stagedCount=roomInt("source_initial_progress_staged_channels",0);
+        int chinaValidated=roomInt("source_initial_progress_china_validated_urls",0);
+        int oldPreview=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
+        int oldMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
+        int pendingPreview=FullDiscoveryProgressPolicy.nextPreviewLevel(oldPreview,stagedCount,
+            chinaValidated,roomInt("source_initial_progress_china_done_feeds",0)>=SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+        int pendingMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(oldMilestone,stagedCount,chinaValidated);
+        if((pendingPreview>oldPreview||pendingMilestone>oldMilestone)
+            &&FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,stagedCount,
+                com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
+          JSONArray ready=takeCommittedStaging();
+          if(ready.length()==stagedCount&&publishInitialPreview(ready,pendingPreview,pendingMilestone))
+            return continueAfterAcquisition();
+        }
         // Last viewing slice may already have committed every feed. Avoid
         // reloading/ranking staging on each retry while only publication waits.
         if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
@@ -1430,22 +1447,8 @@ public class SourceUpdateWorker extends Worker {
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
         }
-        if((previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)
-            &&FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),
-                com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
-          // First commit staging and cursors. A failed preview never loses that work.
-          noteInitialStage("正在发布阶段性已预检频道");
-          JSONArray priorRows=new JSONArray();
-          roomSnapshot=readPublishedForInitialCommit(priorRows);
-          JSONArray preview=preservePreviouslyPublishedChannels(saved,priorRows);
-          com.wodedianshi.tv.db.AppStateEditor previewState=
-              new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel)
-                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,previewMilestone);
-          int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
-              getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
-          if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
-        }
+        if(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)
+          publishInitialPreview(saved,previewLevel,previewMilestone);
       }else if(manualRefresh){
         if(manualQueueOnly){
           if(!touchedStagedRows.isEmpty()||saved.length()!=0||!candidates.isEmpty()||!manualSavedOnly)
@@ -1711,6 +1714,22 @@ public class SourceUpdateWorker extends Worker {
     if(snapshot!=null&&rows.length()!=snapshot.channelCount)
       throw new IllegalStateException("Converted Room catalogue count mismatch");
     return snapshot;
+  }
+  private boolean publishInitialPreview(JSONArray saved,int level,int milestone)throws JSONException{
+    if(saved.length()==0||!FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),
+        com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels()))return false;
+    noteInitialStage("正在发布阶段性已预检频道");
+    JSONArray priorRows=new JSONArray();
+    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot base=readPublishedForInitialCommit(priorRows);
+    if(!FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,saved.length(),priorRows.length()))return false;
+    JSONArray preview=preservePreviouslyPublishedChannels(saved,priorRows);
+    com.wodedianshi.tv.db.AppStateEditor state=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+        .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,level)
+        .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,milestone);
+    int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
+        getApplicationContext(),preview,base.catalogueVersion,false,pauseRequested,state);
+    if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
+    return true;
   }
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedForInitialCommit(JSONArray rows){
     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=readPublishedRows(rows);
