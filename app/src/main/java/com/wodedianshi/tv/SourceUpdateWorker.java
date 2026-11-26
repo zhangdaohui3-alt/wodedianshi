@@ -863,7 +863,8 @@ public class SourceUpdateWorker extends Worker {
           String cacheKey=initialDiscoveryChain?StableKey.url(e.url):"";
           RecentProbe cached=initialDiscoveryChain?INITIAL_PROBES.get(cacheKey):null;
           long clock=android.os.SystemClock.elapsedRealtime();
-          boolean reuse=cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(
+          boolean reuse=cached!=null&&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
+              &&SourceUpdateSchedulePolicy.canReuseInitialProbe(
               cached.result.valid,cached.at,clock);
           long addressDeadline=probeDeadline;
           long measuredAt=clock;
@@ -904,9 +905,9 @@ public class SourceUpdateWorker extends Worker {
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
           }
-          if(!reuse&&(measured.socketTimedOut||(initialDiscoveryChain
+          if(!reuse&&(measured.socketTimedOut||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
-            // A socket timeout is inconclusive in every mode: do not promote,
+            // Socket timeouts and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
             // The candidate had its probe opportunity; later maintenance may retry.
             initialTimeouts++;
@@ -926,13 +927,11 @@ public class SourceUpdateWorker extends Worker {
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
-          measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
-          measuredScores.remove(legacyScoreKey(e.url));
+          storePreflightScore(measuredScores,e.url,measured);
         }
         if(indexedQuality){
           // Shared endpoint observations can be consumed by more than one exact URL.
-          measuredScores.put(scoreKey(e.url),measured.valid?measured.score:-500);
-          measuredScores.remove(legacyScoreKey(e.url));
+          storePreflightScore(measuredScores,e.url,measured);
           manualQualityDirty.add(scoreKey(e.url));manualQualityDirty.add(legacyScoreKey(e.url));
         }
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
@@ -2131,6 +2130,7 @@ public class SourceUpdateWorker extends Worker {
         if(i!=offset){
           RecentProbe cached=initial?INITIAL_PROBES.get(StableKey.url(entry.url)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||(cached!=null
+              &&SourceQualityScorer.reusableProbeMode(cached.result.paced,slowPlayback)
               &&SourceUpdateSchedulePolicy.canReuseInitialProbe(cached.result.valid,cached.at,now)))break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
@@ -2198,6 +2198,7 @@ public class SourceUpdateWorker extends Worker {
   private static class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
+    boolean paced;
     int score;
     int width,height;
     long latencyMs;
@@ -2233,6 +2234,12 @@ public class SourceUpdateWorker extends Worker {
       String key=retainedKeys.next();
       try{scores.put(key,retained.get(key));}catch(JSONException ignored){}
     }
+  }
+  private void storePreflightScore(JSONObject scores,String url,ProbeResult result)throws JSONException{
+    String key=scoreKey(url),legacyKey=legacyScoreKey(url);
+    double prior=scores.has(key)?scores.optDouble(key,0.0):scores.optDouble(legacyKey,0.0);
+    scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,prior,result.score):-500.0);
+    scores.remove(legacyKey);
   }
   private String scoreKey(String url){return StableKey.url(url);}
   private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
@@ -2271,6 +2278,7 @@ public class SourceUpdateWorker extends Worker {
   // HLS manifests through extensionless or tokenized endpoint URLs.
   private ProbeResult probe(String address,long deadline){
     ProbeResult result=new ProbeResult();
+    result.paced=slowPlayback;
     long started=android.os.SystemClock.elapsedRealtime();
     try{
       if(probeDeadlineReached(deadline))return result;
@@ -2379,8 +2387,8 @@ public class SourceUpdateWorker extends Worker {
         result.bitrate=bestBandwidth;result.latencyMs=Math.max(1L,segmentStart-started);
         int resolution=(bestWidth>=1920||bestHeight>=1080)?900:(bestWidth>=1280||bestHeight>=720)?700:(bestWidth>=854||bestHeight>=480)?500:300;
         int bandwidth=(int)Math.min(500L,bestBandwidth/12000L);
-        int speed=(int)Math.min(300L,(sample.length*1000L/segmentMs)/2048L);
-        int latencyPenalty=(int)Math.min(250L,result.latencyMs/20L);
+        int speed=SourceQualityScorer.preflightSpeedBonus(result.paced,sample.length,segmentMs);
+        int latencyPenalty=SourceQualityScorer.preflightLatencyPenalty(result.paced,result.latencyMs);
         result.score=500+resolution+bandwidth+speed-latencyPenalty+300+(secondSegmentOk?120:(segments.size()>1?-180:0));
         return result;
       }
@@ -2389,7 +2397,7 @@ public class SourceUpdateWorker extends Worker {
       String ext=url.getPath().toLowerCase(Locale.ROOT);
       if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes,ext))return result;
       result.valid=true;
-      result.score=350+(int)Math.min(300L,(initialBytes.length*1000L/result.latencyMs)/2048L);
+      result.score=350+SourceQualityScorer.preflightSpeedBonus(result.paced,initialBytes.length,result.latencyMs);
       return result;
     }catch(java.net.SocketTimeoutException timeout){result.socketTimedOut=true;return result;}
     catch(Exception e){return result;}
