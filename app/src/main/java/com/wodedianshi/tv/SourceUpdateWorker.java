@@ -1088,6 +1088,12 @@ public class SourceUpdateWorker extends Worker {
       int savedWindow=initialDiscoveryChain?0:manualRefresh?
           savedPool.size():
           Math.min(MAX_PROBES_PER_RUN/2,savedPool.size());
+      LinkedHashSet<String> provisionalKeys=new LinkedHashSet<>();
+      if(!manualRefresh){
+        JSONArray pendingProvisional=new JSONArray(roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,"[]"));
+        for(int i=0;i<pendingProvisional.length();i++)
+          SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,pendingProvisional.optString(i,""));
+      }
       int pageFeed=-1;
       if(initialDiscoveryChain)for(FeedBatch batch:feedBatches)
         if(batch.success&&!batch.unavailable){pageFeed=batch.index;break;}
@@ -1133,6 +1139,19 @@ public class SourceUpdateWorker extends Worker {
       int discoveryWindow=DiscoveryBatchPolicy.discoveryPositionWindow(
           earlyFirstWatch,slowPlayback,DiscoveryBatchPolicy.remaining(
               initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
+      Set<Entry> priorityRechecks=Collections.newSetFromMap(new IdentityHashMap<Entry,Boolean>());
+      ArrayList<Entry> priorityOrder=new ArrayList<>();
+      if(!initialDiscoveryChain&&!manualRefresh&&!foregroundAtStart&&!provisionalKeys.isEmpty()){
+        ArrayList<String> savedKeys=new ArrayList<>(savedPool.size());
+        for(Entry entry:savedPool){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          savedKeys.add(scoreKey(entry.url));
+        }
+        for(int position:SourceUpdateSchedulePolicy.provisionalRecheckPositions(savedKeys,savedScanStart,savedWindow,provisionalKeys)){
+          Entry entry=savedPool.get(position);
+          priorityRechecks.add(entry);priorityOrder.add(entry);
+        }
+      }
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -1141,7 +1160,10 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);discoveryIndex++;
         }
         if(savedIndex<savedWindow){
-          Entry e=savedPool.get((savedScanStart+savedIndex)%savedPool.size());
+          // Keep the normal saved cursor contiguous; prioritized entries consume
+          // only reserved slots and do not advance that cursor.
+          Entry e=savedIndex<priorityOrder.size()?priorityOrder.get(savedIndex):
+              savedPool.get((savedScanStart+savedIndex-priorityOrder.size())%savedPool.size());
           probeCandidates.add(e);savedIndex++;
         }
       }
@@ -1229,7 +1251,8 @@ public class SourceUpdateWorker extends Worker {
         if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
             checked,runProbeLimit,false)||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
             &&!idleWave.has(SourceSelectionPolicy.endpointKey(e.url))))break;
-        if(e.savedSource)savedScanned++;else discoveryScanned++;
+        boolean priorityRecheck=priorityRechecks.contains(e);
+        if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=SourceSelectionPolicy.endpointKey(e.url);
         ProbeResult measured=measuredByEndpoint.get(endpoint);
@@ -1261,7 +1284,7 @@ public class SourceUpdateWorker extends Worker {
           // leaving its exact cursor for the next worker. Never launch more probes.
           if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
               checked,runProbeLimit,!reuse)){
-            if(e.savedSource)savedScanned--;else discoveryScanned--;
+            if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
             break;
           }
           long addressDeadline=probeDeadline;
@@ -1293,7 +1316,7 @@ public class SourceUpdateWorker extends Worker {
                 if(!initialDiscoveryChain||slowPlayback)throw timeout;
                 // The current position has no consumed result. Preserve the
                 // previously processed contiguous prefix, not this position.
-                if(e.savedSource)savedScanned--;else discoveryScanned--;
+                if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
                 idleWaveTimedOut=true;
                 idleWave.close();
                 if(!awaitRetiringProbePool())throw timeout;
@@ -1327,7 +1350,7 @@ public class SourceUpdateWorker extends Worker {
           }
           if(parallelOutcome?measuredAt>=probeDeadline:probeDeadlineReached(probeDeadline)){
             // A source interrupted by the global deadline is inconclusive, not a failed source.
-            if(e.savedSource)savedScanned--;else discoveryScanned--;
+            if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
             break;
           }
           if(initialDiscoveryChain&&!slowPlayback&&!reuse){
@@ -1374,6 +1397,7 @@ public class SourceUpdateWorker extends Worker {
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
+            if(priorityRecheck)SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,scoreKey(e.url));
             // Ordinary idle first-pass duplicates do not immediately repeat a
             // socket timeout. Keep the extra retry for core coverage, transient
             // transport failures, paced viewing, and the designated idle replay.
@@ -1392,6 +1416,11 @@ public class SourceUpdateWorker extends Worker {
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
           storePreflightScore(measuredScores,e.url,measured);
+        }
+        if(!manualRefresh){
+          if(measured.provisional&&measured.valid)
+            SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,scoreKey(e.url));
+          else if(!measured.paced&&!measured.provisional)provisionalKeys.remove(scoreKey(e.url));
         }
         if(indexedQuality){
           // Shared endpoint observations can be consumed by more than one exact URL.
@@ -1607,7 +1636,10 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_update_result",(initialDiscoveryChain
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
-      if(!manualRefresh)update.putString(scoresKey,measuredScores.toString()).putString(streaksKey,probeFailureStreaks.toString());
+      if(!manualRefresh){
+        update.putString(scoresKey,measuredScores.toString()).putString(streaksKey,probeFailureStreaks.toString());
+        update.putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(provisionalKeys).toString());
+      }
       if(initialDiscoveryChain){
         update.putInt("source_initial_next_feed_index",initialNextFeedIndex);
       }
