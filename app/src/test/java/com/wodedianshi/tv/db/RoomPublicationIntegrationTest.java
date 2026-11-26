@@ -371,4 +371,29 @@ public class RoomPublicationIntegrationTest {
         for(ManualProbeQueueEntity row:rows)result.add(row.endpoint);
         return result;
     }
+
+    @Test public void qualityOnlyCommitKeepsCatalogueAndRejectsStaleOrRevokedWrites()throws Exception{
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long empty=RoomCatalogueReader.read(context).catalogueVersion;
+            JSONArray rows=new JSONArray().put(channel("CCTV-1","https://example.invalid/live"));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,empty,false,()->false,new AppStateEditor(context));
+            long version=RoomCatalogueReader.read(context).catalogueVersion;
+            String key="quality_only_test";
+            new AppStateEditor(context).putString(key,"confirmed").applyAtCatalogueVersion(version,()->false);
+            assertEquals(version,RoomCatalogueReader.read(context).catalogueVersion);
+            assertEquals(1,RoomCatalogueReader.read(context).channelCount);
+            try{
+                new AppStateEditor(context).putString(key,"stale").applyAtCatalogueVersion(empty,()->false);
+                fail("stale version");
+            }catch(RoomCatalogueReader.StaleSnapshotException expected){}
+            java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+            try{
+                new AppStateEditor(context).putString(key,"cancelled").applyAtCatalogueVersion(version,()->checks.incrementAndGet()>=2);
+                fail("cancelled transaction");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+            assertEquals("confirmed",RoomDatabaseProvider.get(context).appStateDao().getValue(key));
+            assertEquals(version,RoomCatalogueReader.read(context).catalogueVersion);
+        });
+    }
 }
