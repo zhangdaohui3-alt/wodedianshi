@@ -332,7 +332,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       Math.max(2048,Math.min(8192,(int)(Runtime.getRuntime().maxMemory()/1024/32)))) {
     protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
   };
-  private final Set<String> vodPosterRequests = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
+  // UI-thread owned subscribers; a recycled/rebound cell joins the existing
+  // download instead of missing its result. Weak references do not retain cards.
+  private final HashMap<String,ArrayList<java.lang.ref.WeakReference<ImageView>>> vodPosterRequests=new HashMap<>();
   private volatile long vodPosterSessionGeneration;
   private int vodRequestId=0;
   private final Handler uiHandler = new Handler(Looper.getMainLooper());
@@ -2053,7 +2055,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(vodCatalogueDialog!=dialog)return;
       revokePendingVodStart();
       vodCatalogueDialog=null;
-      ++vodPosterSessionGeneration;
+      invalidateVodPosterSession();
       clearVodMouseHover();
       setVodCategoryHover(null);
       cancelActiveVodCatalogue();
@@ -3458,19 +3460,39 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }catch(Exception ignored){}finally{if(c!=null)c.disconnect();}
     return "";
   }
+  private void invalidateVodPosterSession(){
+    ++vodPosterSessionGeneration;
+    vodPosterRequests.clear();
+    // This bounded pool is dedicated to posters; only stale queued tasks exist
+    // at this boundary. Running reads use the existing session/time limits.
+    if(posterWorker instanceof ThreadPoolExecutor)((ThreadPoolExecutor)posterWorker).getQueue().clear();
+  }
   private void loadVodPoster(ImageView target,String identifier,String title){
     loadVodPoster(target,identifier,title,"");
   }
   private void loadVodPoster(ImageView target,String identifier,String title,String suppliedPosterUrl){
+    boolean sameBinding=identifier.equals(target.getTag());
     target.setTag(identifier);
     Bitmap cached=vodPosterCache.get(identifier);
     if(cached!=null){target.setImageBitmap(cached);return;}
-    // Do not allocate a placeholder when a real cached image is available.
-    target.setImageBitmap(createVodFallbackPoster(title,identifier));
+    // Keep the existing placeholder for repeated binds of the same cell.
+    if(!sameBinding||target.getDrawable()==null)target.setImageBitmap(createVodFallbackPoster(title,identifier));
     final long posterSession=vodPosterSessionGeneration;
     final String requestKey=posterSession+":"+identifier;
-    final java.lang.ref.WeakReference<ImageView> targetRef=new java.lang.ref.WeakReference<>(target);
-    if(!vodPosterRequests.add(requestKey))return;
+    ArrayList<java.lang.ref.WeakReference<ImageView>> waiting=vodPosterRequests.get(requestKey);
+    if(waiting!=null){
+      boolean registered=false;
+      for(int i=waiting.size()-1;i>=0;i--){
+        ImageView view=waiting.get(i).get();
+        if(view==null||!identifier.equals(view.getTag()))waiting.remove(i);
+        else if(view==target)registered=true;
+      }
+      if(!registered)waiting.add(new java.lang.ref.WeakReference<>(target));
+      return;
+    }
+    waiting=new ArrayList<>();
+    waiting.add(new java.lang.ref.WeakReference<>(target));
+    vodPosterRequests.put(requestKey,waiting);
     try{posterWorker.execute(()->{
       Bitmap bitmap=null;HttpURLConnection connection=null;
       try{
@@ -3509,15 +3531,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
       }catch(Exception ignored){}finally{
         if(connection!=null)connection.disconnect();
-        if(bitmap!=null&&posterSession==vodPosterSessionGeneration)vodPosterCache.put(identifier,bitmap);
-        vodPosterRequests.remove(requestKey);
+        final Bitmap image=bitmap;
+        // Registration and delivery share the UI looper. Remove subscribers only
+        // when delivering, so a bind racing the network result cannot be lost.
+        uiHandler.post(()->{
+          ArrayList<java.lang.ref.WeakReference<ImageView>> subscribers=vodPosterRequests.remove(requestKey);
+          if(image==null||posterSession!=vodPosterSessionGeneration||isFinishing()||isDestroyed())return;
+          vodPosterCache.put(identifier,image);
+          if(subscribers==null)return;
+          for(java.lang.ref.WeakReference<ImageView> ref:subscribers){
+            ImageView view=ref.get();
+            if(view!=null&&identifier.equals(view.getTag()))view.setImageBitmap(image);
+          }
+        });
       }
-      final Bitmap image=bitmap;
-      if(image!=null)uiHandler.post(()->{
-        ImageView view=targetRef.get();
-        if(view!=null&&posterSession==vodPosterSessionGeneration&&!isFinishing()&&!isDestroyed()
-            &&identifier.equals(view.getTag()))view.setImageBitmap(image);
-      });
     });}catch(RejectedExecutionException ignored){vodPosterRequests.remove(requestKey);}
   }
   private String encodeArchivePath(String path){
@@ -8239,5 +8266,5 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
   }
   protected void onStop(){revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=currentVodPanel==null&&selected>=0&&selected<channels.size();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
-  protected void onDestroy(){activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();++vodPosterSessionGeneration;revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onDestroy(){activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();invalidateVodPosterSession();vodPosterCache.evictAll();revokePendingVodStart();stopLiveUiStallProbe();geoDirectoryRequestGeneration++;if(activeGeoCatalogueTask!=null)activeGeoCatalogueTask.cancel(true);geoCatalogueWorker.shutdownNow();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
