@@ -309,6 +309,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Keep large catalogue filtering and sorting off the UI thread. Results are
   // generation-checked so an older search/category cannot overwrite a newer one.
   private final ExecutorService catalogueFilterWorker = newLatestRequestWorker();
+  // Worker-confined, bounded positional indexes. No duplicate Channel records.
+  private final SnapshotCategoryIndex categorySnapshotIndex=new SnapshotCategoryIndex();
   // The directory filter publishes the one order shared by rows and remote zapping.
   private volatile RemoteChannelOrder cachedRemoteChannelOrder;
   private String directoryFilterInFlightKey;
@@ -4750,10 +4752,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // resolve by stable key, so these references are read-only in this pass.
         HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Integer> indexes=new ArrayList<>();
-        final int[] cctvOrders="央视".equals(categorySnapshot)?new int[sources.size()]:null;
+        final boolean indexEligible=!favoriteOnly&&geoKeys==null;
+        final java.util.List<String> scopeKey=java.util.Arrays.asList(categorySnapshot,
+            regionOnly?provinceSnapshot:null,regionOnly?citySnapshot:null);
+        final java.util.List<Integer> cachedScope=indexEligible?categorySnapshotIndex.get(mutation,sources.size(),scopeKey):null;
+        final int scanCount=cachedScope==null?sources.size():cachedScope.size();
+        final int[] cctvOrders=cachedScope==null&&"央视".equals(categorySnapshot)?new int[sources.size()]:null;
         final String[] cctvNames=cctvOrders==null?null:new String[sources.size()];
-        for(int i=0;i<sources.size();i++){
-          if((i&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
+        for(int position=0;position<scanCount;position++){
+          if((position&127)==0&&(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration))return;
+          int i=cachedScope==null?position:cachedScope.get(position);
           scanned++;
           Channel c=sources.get(i);
           if(c==null){nullRecords++;continue;}
@@ -4762,10 +4770,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(c.tvgName==null)nullTvgNames++;
           if(c.tvgId==null)nullTvgIds++;
           if(c.url==null)nullUrls++;
-          if(!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
+          if(cachedScope==null&&!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
               geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
-          String display=displayChannelName(c);
+          String display=query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
           if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
           queryMatches++;
           indexes.add(i);
@@ -4775,7 +4783,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
-        if("地方".equals(categorySnapshot) && indexes.isEmpty()) {
+        if("地方".equals(categorySnapshot) && indexes.isEmpty() && cachedScope==null) {
           int localCandidates=0, provinceCandidates=0, satelliteExcluded=0;
           for(Channel candidate:sources) {
             if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
@@ -4800,11 +4808,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           });
         }
         if(Thread.currentThread().isInterrupted()||generation!=catalogueFilterGeneration)return;
+        if(indexEligible&&cachedScope==null&&query.isEmpty()&&mutation==catalogueMutationGeneration)
+          categorySnapshotIndex.put(mutation,sources.size(),scopeKey,indexes);
         ArrayList<Channel> visible=new ArrayList<>(indexes.size());
         for(int index:indexes)visible.add(sources.get(index));
         RemoteChannelOrder ready=new RemoteChannelOrder(orderKey,indexes);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
-        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
+        android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" scope_index_hit="+(cachedScope!=null)+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         runOnUiThread(()->publishFilteredDirectory(generation,()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           directoryFilterInFlightKey=null;
