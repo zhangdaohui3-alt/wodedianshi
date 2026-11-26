@@ -840,9 +840,9 @@ public class SourceUpdateWorker extends Worker {
           initialDiscoveryChain?DiscoveryBatchPolicy.firstWatchProbeLimit(
               slowPlayback,previousStagedSize,roomInt("source_initial_progress_checked_urls",0)):
           DiscoveryBatchPolicy.probeLimit(false,slowPlayback,MAX_PROBES_PER_RUN);
-      int discoveryWindow=Math.min(DiscoveryBatchPolicy.remaining(
-          initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
-      if(slowPlayback)discoveryWindow=Math.min(DiscoveryBatchPolicy.VIEWING_PROBES_PER_SLICE,discoveryWindow);
+      int discoveryWindow=DiscoveryBatchPolicy.discoveryPositionWindow(
+          earlyFirstWatch,slowPlayback,DiscoveryBatchPolicy.remaining(
+              initialDiscoveryScanned,candidates.size()),runProbeLimit-savedWindow);
       ArrayList<Entry> probeCandidates=new ArrayList<>(savedWindow+discoveryWindow);
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
@@ -916,7 +916,7 @@ public class SourceUpdateWorker extends Worker {
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
         // Once the first mainland candidate has been merged, do not start
-        // another wave solely to fill the six-position budget. Finish all
+        // another wave solely to fill the six-request budget. Finish all
         // already admitted requests before committing the exact prefix.
         if(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(earlyFirstWatch,slowPlayback,
             firstWatchPriorChina,chinaPreflightsValid,saved.length(),idleWave.hasPending()))break;
@@ -957,7 +957,8 @@ public class SourceUpdateWorker extends Worker {
             noteInitialStage((slowPlayback?"稳定直播低速检测 · ":"")+"本批检测第 "+checked+" 条（尚未提交）");
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
-                    visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain))){
+                    visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
+                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked)))){
               TimedProbe outcome=idleWave.take(endpoint,probeDeadline);
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
@@ -2269,12 +2270,12 @@ public class SourceUpdateWorker extends Worker {
     boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
-        Set<String> visited,long deadline,long batchDeadline,boolean initial){
+        Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests){
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
       long now=android.os.SystemClock.elapsedRealtime();
       long pressureAtAdmission=SourceUpdateActivityPolicy.pressureGeneration();
-      int limit=SourceUpdateActivityPolicy.idleProbeConcurrency(now,initial);
+      int limit=Math.min(remainingRequests,SourceUpdateActivityPolicy.idleProbeConcurrency(now,initial));
       if(limit<2)return false;
       ArrayList<Entry> wave=new ArrayList<>();
       IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy(limit);
