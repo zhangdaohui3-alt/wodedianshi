@@ -60,6 +60,14 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void inputInvalidatesOnlyAdmittedIdleWaveGeneration(){
+        long admitted=SourceUpdateActivityPolicy.pressureGeneration();
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(admitted));
+        SourceUpdateActivityPolicy.notePressure(100000L);
+        assertTrue(SourceUpdateActivityPolicy.idleWavePressureChanged(admitted));
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(-1L));
+        assertFalse(SourceUpdateActivityPolicy.idleWavePressureChanged(SourceUpdateActivityPolicy.pressureGeneration()));
+    }
     @Test public void idleConcurrencyRecoversInSteps(){
         try{
             SourceUpdateActivityPolicy.setPlaybackActive(true);
