@@ -47,12 +47,14 @@ public final class PlaylistFeedIndex {
         // corrupt halfway through, rebuilding cannot duplicate partial emissions.
         List<PlaylistParser.ChannelSource> page;
         try {
-            page = readIndexedPage(records, offsets, startEntry, maxEntries);
+            page = readIndexedPage(records, offsets, startEntry, maxEntries, paused);
+        } catch (SourceProbeTimePolicy.PausedException pausedRead) {
+            throw pausedRead; // Cancellation is not corruption; retain the valid sidecars.
         } catch (IOException corruptIndex) {
             deleteIndex(records, offsets);
             buildIndex(playlist, records, offsets, paused);
             // A second failure is a real I/O/source-data problem; preserve the cursor.
-            page = readIndexedPage(records, offsets, startEntry, maxEntries);
+            page = readIndexedPage(records, offsets, startEntry, maxEntries, paused);
         }
         SourceProbeTimePolicy.checkPaused(paused);
         for (PlaylistParser.ChannelSource source : page) consumer.accept(source);
@@ -66,7 +68,7 @@ public final class PlaylistFeedIndex {
         File records=new File(playlist.getAbsolutePath()+".index-data");
         File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
         if(!isUsableIndex(records,offsets))throw new IOException("Cached index unavailable");
-        List<PlaylistParser.ChannelSource> page=readIndexedPage(records,offsets,startEntry,maxEntries);
+        List<PlaylistParser.ChannelSource> page=readIndexedPage(records,offsets,startEntry,maxEntries,paused);
         for(PlaylistParser.ChannelSource source:page){
             SourceProbeTimePolicy.checkPaused(paused);
             consumer.accept(source);
@@ -93,7 +95,8 @@ public final class PlaylistFeedIndex {
     }
 
     private static List<PlaylistParser.ChannelSource> readIndexedPage(
-            File records, File offsets, int startEntry, int maxEntries) throws IOException {
+            File records, File offsets, int startEntry, int maxEntries,
+            java.util.function.BooleanSupplier paused) throws IOException {
         List<PlaylistParser.ChannelSource> page = new ArrayList<>();
         try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r");
              RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
@@ -109,16 +112,29 @@ public final class PlaylistFeedIndex {
             int emitted = (int) Math.min((long) maxEntries, count - startEntry);
             long recordsLength = recordFile.length();
             long previousOffset = -1L;
+            if(startEntry>0){
+                offsetFile.seek(OFFSET_HEADER_BYTES+((long)startEntry-1L)*8L);
+                previousOffset=offsetFile.readLong();
+                if(previousOffset<0L||previousOffset>=recordsLength)
+                    throw new IOException("Previous playlist offset is invalid");
+            }
             for (int i = 0; i < emitted; i++) {
-                offsetFile.seek(OFFSET_HEADER_BYTES + ((long) startEntry + i) * 8L);
+                SourceProbeTimePolicy.checkPaused(paused);
+                long entry=(long)startEntry+i;
+                offsetFile.seek(OFFSET_HEADER_BYTES+entry*8L);
                 long recordOffset = offsetFile.readLong();
+                long nextOffset=entry+1L<count?offsetFile.readLong():recordsLength;
                 if (recordOffset <= previousOffset || recordOffset < 0L
-                        || recordOffset >= recordsLength) {
+                        || recordOffset >= recordsLength || (entry==0L&&recordOffset!=0L)
+                        || nextOffset<=recordOffset||nextOffset>recordsLength) {
                     throw new IOException("Playlist index offset is invalid");
                 }
                 previousOffset = recordOffset;
                 recordFile.seek(recordOffset);
-                page.add(readRecord(recordFile));
+                PlaylistParser.ChannelSource source=readRecord(recordFile);
+                if(recordFile.getFilePointer()!=nextOffset)
+                    throw new IOException("Playlist record does not match indexed boundary");
+                page.add(source);
             }
         }
         return page;
@@ -134,7 +150,8 @@ public final class PlaylistFeedIndex {
             if (input.readInt() != OFFSET_INDEX_MAGIC) return false;
             long count = input.readLong();
             return count >= 0L && count <= Integer.MAX_VALUE
-                    && offsets.length() == OFFSET_HEADER_BYTES + count * 8L;
+                    && offsets.length() == OFFSET_HEADER_BYTES + count * 8L
+                    && (count==0L?records.length()==0L:records.length()>0L);
         } catch (IOException ignored) {
             return false;
         }
