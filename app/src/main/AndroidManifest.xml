@@ -13,6 +13,9 @@
         android:allowBackup="true"
 
         android:label="我的电视"
+        android:icon="@drawable/mytv_launcher"
+        android:roundIcon="@drawable/mytv_launcher"
+        android:banner="@drawable/mytv_banner"
 
         android:theme="@android:style/Theme.Material.NoActionBar"
 
