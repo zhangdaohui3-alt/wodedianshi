@@ -5,6 +5,24 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void domesticUnresolvedLocalTriggersPreviewWithoutInventingProvince() {
+        org.junit.Assert.assertEquals(FullDiscoveryProgressPolicy.CORE_LOCAL,
+            FullDiscoveryProgressPolicy.coreCategoryMask("County News","Local","","",true));
+        org.junit.Assert.assertEquals(0,
+            FullDiscoveryProgressPolicy.coreCategoryMask("County News","Local","","",false));
+        org.junit.Assert.assertEquals(0,
+            FullDiscoveryProgressPolicy.coreCategoryMask("香港新闻","地方","","",true));
+        org.junit.Assert.assertEquals(FullDiscoveryProgressPolicy.CORE_CCTV,
+            FullDiscoveryProgressPolicy.coreCategoryMask("CCTV-1","地方","","",true));
+        FullDiscoveryProgressPolicy.Coverage coverage=new FullDiscoveryProgressPolicy.Coverage();
+        coverage.add("County News","Local","","",true);
+        coverage.add("County News","Local","","",false);
+        coverage.add("香港新闻","地方","","",true);
+        org.junit.Assert.assertEquals(1,coverage.localCount());
+        org.junit.Assert.assertEquals(0,coverage.provinceCount());
+        org.junit.Assert.assertTrue(coverage.summary().contains("地方台省份未识别 1"));
+    }
+
     @org.junit.Test public void indexedInitialBatchesExcludeSmallUnknownAndFinalSnapshots() {
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1024,7,false));
         org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(1025,-1,false));
