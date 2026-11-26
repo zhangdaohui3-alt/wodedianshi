@@ -4,6 +4,16 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void firstMainlandPreviewYieldsOnlyAtDrainedEarlyIdleBoundary() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,1,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,1,1,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,0,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,0,1,0,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,false,1,1,2,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(true,true,0,1,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(false,false,0,1,1,false));
+    }
+
     @org.junit.Test public void quickAcquisitionCanEnterBoundedFirstWatchProbeInSameSlice() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10000L));
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10001L));
