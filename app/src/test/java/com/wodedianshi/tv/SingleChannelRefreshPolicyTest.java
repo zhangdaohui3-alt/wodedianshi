@@ -86,4 +86,25 @@ public class SingleChannelRefreshPolicyTest {
         assertTrue(SingleChannelRefreshPolicy.appendCandidates(
             Collections.singletonList("https://a.example/live"),Collections.emptyList(),8).isEmpty());
     }
+    @Test public void fullRefreshReplacesOnlyFailedLowerQualityUnprotectedSlots(){
+        String primary="https://primary.example/live", selected="https://selected.example/live",
+            playing="https://playing.example/live", failed="https://failed.example/live",
+            good="https://good.example/live", fresh="https://fresh.example/live";
+        java.util.List<String> old=Arrays.asList(primary,selected,playing,failed,good);
+        java.util.Set<String> eligible=new java.util.HashSet<>(Arrays.asList(primary,selected,playing,failed));
+        java.util.Comparator<String> bestFirst=java.util.Comparator.comparingInt(url->url.equals(fresh)?0:1);
+        assertEquals(Arrays.asList(primary,selected,playing,fresh,good),
+            SingleChannelRefreshPolicy.planRefresh(old,Arrays.asList(fresh,good),5,primary,selected,playing,eligible,bestFirst));
+        assertEquals(old,SingleChannelRefreshPolicy.planRefresh(old,Collections.singletonList(fresh),5,
+            primary,selected,playing,Collections.emptySet(),bestFirst));
+        assertEquals(old,SingleChannelRefreshPolicy.planRefresh(old,Collections.singletonList(fresh),5,
+            primary,selected,playing,eligible,bestFirst.reversed()));
+        assertEquals(Arrays.asList(primary,selected,playing,failed,good,fresh),
+            SingleChannelRefreshPolicy.planRefresh(old,Collections.singletonList(fresh),6,
+                primary,selected,playing,eligible,bestFirst));
+        assertEquals(old,SingleChannelRefreshPolicy.planRefresh(old,Collections.singletonList("https://FAILED.example:443/live"),5,
+            primary,selected,playing,eligible,bestFirst));
+        assertEquals(Arrays.asList(primary,selected,playing,failed,good),old);
+    }
+
 }
