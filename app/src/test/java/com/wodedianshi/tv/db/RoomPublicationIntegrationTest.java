@@ -333,6 +333,39 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void supersededPagedReadStopsBeforeNextPageAndRetainsDurableCatalogue()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long empty=RoomCatalogueReader.read(context).catalogueVersion;
+            JSONArray rows=new JSONArray();
+            for(int i=0;i<401;i++){
+                rows.put(channel("Audit test channel "+i,"https://example.invalid/station/"+i)
+                        .put("group","自建频道"));
+            }
+            assertEquals(401,RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,empty,false,
+                    ()->false,new AppStateEditor(context)));
+            long version=RoomCatalogueReader.read(context).catalogueVersion;
+            java.util.concurrent.atomic.AtomicLong generation=new java.util.concurrent.atomic.AtomicLong(1);
+            List<RoomCatalogueReader.ChannelRecord> privateStaging=new ArrayList<>();
+            try{
+                RoomCatalogueReader.read(context,page->{
+                    privateStaging.addAll(page);
+                    generation.incrementAndGet();
+                },()->generation.get()!=1L);
+                fail("superseded request must not return a complete snapshot");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+            assertEquals(200,privateStaging.size());
+            List<RoomCatalogueReader.ChannelRecord> replacement=new ArrayList<>();
+            RoomCatalogueReader.Snapshot complete=RoomCatalogueReader.read(context,
+                    replacement::addAll,()->generation.get()!=2L);
+            assertNotNull(complete);
+            assertEquals(version,complete.catalogueVersion);
+            assertEquals(401,complete.channelCount);
+            assertEquals(401,replacement.size());
+            assertEquals(401,RoomCatalogueReader.read(context).channelCount);
+        });
+    }
+
     private static List<String> endpoints(List<ManualProbeQueueEntity> rows){
         List<String> result=new ArrayList<>();
         for(ManualProbeQueueEntity row:rows)result.add(row.endpoint);
