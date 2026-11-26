@@ -1361,7 +1361,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       showProvinceDialog();return;
     }if(name.equals("全球频道"))loadGlobalChannels();if(name.equals("娱乐频道"))loadEntertainmentChannels();if(name.equals("港澳台")||name.equals("香港")||name.equals("澳门")||name.equals("台湾"))loadRegionChannels();if(name.equals("央视")||name.equals("卫视"))loadChinaChannels();v.requestFocus();refresh();});catItems.addView(x,new LinearLayout.LayoutParams(-1,dp(43)));}
     ScrollView catScroll=new ScrollView(this);catScroll.setFillViewport(false);catScroll.addView(catItems);cats.addView(catScroll,new LinearLayout.LayoutParams(-1,0,1));
-    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady)return;new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置","查看直播诊断记录"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else if(w==13)configureRemoteParentLock();else showLiveDiagnostics();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
+    Button settings=new Button(this);settings.setText("设置");settings.setTextColor(Color.WHITE);styleTvButton(settings,Color.rgb(35,45,62));settings.setOnClickListener(v->{if(!startupDataReady)return;new AlertDialog.Builder(this).setTitle("设置与管理").setItems(new String[]{"导入 M3U 文件","导入播放列表网址","手动添加频道","导出 M3U 配置","官方平台入口","全球正版电影点播","解码与声音设置","卡顿自动切换备用源","立即更新频道源","后台自动更新："+(getSharedPreferences("mytv",0).getBoolean("auto_source_update",true)?"开启":"关闭"),"查看更新状态","右下角显示网速："+(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?"开启":"关闭"),"儿童锁与时段管理","云端家长锁设置","查看直播诊断记录","停止直播，继续首次抓源"},(d,w)->{if(w==0)chooseFile();else if(w==1)urlDialog();else if(w==2)addDialog();else if(w==3)exportFile();else if(w==4)officialDialog();else if(w==5)vodDialog();else if(w==6)decoderSettingsDialog();else if(w==7)bufferingSwitchSettingsDialog();else if(w==8)startManualSourceUpdate();else if(w==9)toggleAutomaticSourceUpdates();else if(w==10)showSourceUpdateStatus();else if(w==11)toggleNetworkSpeed();else if(w==12)childLockSettingsDialog();else if(w==13)configureRemoteParentLock();else if(w==14)showLiveDiagnostics();else if(w==15)stopLiveForInitialDiscovery();}).show();});cats.addView(settings,new LinearLayout.LayoutParams(-1,dp(48)));
     LinearLayout channelPane=new LinearLayout(this);this.channelPane=channelPane;channelPane.setOrientation(1);channelPane.setPadding(dp(8),0,dp(8),0);channelPane.setBackgroundColor(Color.rgb(19,29,47));
     TextView title=new TextView(this);title.setText("频道列表");title.setTextColor(Color.WHITE);title.setTextSize(19);title.setPadding(dp(8),dp(10),0,dp(8));channelPane.addView(title);
     search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(Color.LTGRAY);search.setHint("搜索频道");search.setEnabled(false);channelPane.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
@@ -1397,9 +1397,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     initialDiscoveryProgressPanel.setContentDescription("抓源进度，点击查看详情");
     initialDiscoveryProgressPanel.setOnClickListener(v->{
       if(!activityStarted||isFinishing()||isDestroyed())return;
-      new AlertDialog.Builder(this).setTitle(initialDiscoveryProgressTitle.getText())
+      AlertDialog.Builder details=new AlertDialog.Builder(this).setTitle(initialDiscoveryProgressTitle.getText())
           .setMessage(initialDiscoveryProgressDetail)
-          .setPositiveButton("关闭",null).show();
+          .setPositiveButton("关闭",null);
+      if(roomFullRebuildCompletedAt<=0L)
+        details.setNeutralButton("停止直播，继续抓源",(d,w)->stopLiveForInitialDiscovery());
+      details.show();
     });
     initialDiscoveryProgressPanel.setFocusable(false);
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
@@ -1512,6 +1515,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // The daily job only checks whether a 30-day maintenance pass is due.
     // The worker exits before discovery while busy or not due.
     wm.enqueueUniquePeriodicWork("mytv_periodic_source_update",ExistingPeriodicWorkPolicy.UPDATE,request);
+  }
+  // Explicit user choice, never invoked by automatic maintenance.
+  private void stopLiveForInitialDiscovery(){
+    if(!activityStarted||isFinishing()||isDestroyed()||currentVodPanel!=null||isAnyPlaybackLockActive())return;
+    if(roomFullRebuildCompletedAt>0L){toast("首次完整抓源已经完成");return;}
+    saveLastChannel();
+    startupAutoResumePending=false;startupResumeIndex=-1;startupResumeChannel=null;
+    if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}
+    resumePlaybackOnStart=false;resumeLiveAfterVod=false;
+    ++playbackGeneration;currentMediaId="";
+    stopFailedLiveSession("已停止直播，继续首次抓源；进度保留");
+    selected=-1;
+    if(fullScreenPlayback)exitFullScreenPlayback();else refresh();
+    reloadChannelsAfterBackgroundUpdateIfNeeded();
+    scheduleAutomaticSourceUpdates();
+    toast("已停止直播，正在等待抓源任务继续；可随时选择频道观看");
   }
   private void startInitialDiscoveryProgressTicker(){
     stopInitialDiscoveryProgressTicker();
