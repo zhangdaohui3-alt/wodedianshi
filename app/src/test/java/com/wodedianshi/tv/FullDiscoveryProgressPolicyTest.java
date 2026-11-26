@@ -5,6 +5,22 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class FullDiscoveryProgressPolicyTest {
+    @org.junit.Test public void firstCoreCategoriesIndependentlyTriggerPreview() {
+        int c=FullDiscoveryProgressPolicy.coreCategoryMask("CCTV-1","央视","","");
+        int s=FullDiscoveryProgressPolicy.coreCategoryMask("湖南卫视","卫视","","");
+        int l=FullDiscoveryProgressPolicy.coreCategoryMask("Shenzhen News","广东","","");
+        org.junit.Assert.assertEquals(1,c);
+        org.junit.Assert.assertEquals(2,s);
+        org.junit.Assert.assertEquals(4,l);
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.coreCategoryMask("Local News","US","",""));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.coreCategoryMask("香港新闻","香港","",""));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.nextPreviewCoreMask(0,c|s|l,0));
+        org.junit.Assert.assertEquals(1,FullDiscoveryProgressPolicy.nextPreviewCoreMask(0,c,1));
+        org.junit.Assert.assertEquals(5,FullDiscoveryProgressPolicy.nextPreviewCoreMask(c,c|l,1));
+        org.junit.Assert.assertEquals(7,FullDiscoveryProgressPolicy.nextPreviewCoreMask(c|l,s,1));
+        org.junit.Assert.assertEquals(7,FullDiscoveryProgressPolicy.nextPreviewCoreMask(7,c,1));
+    }
+
     @org.junit.Test public void earlyIdlePreviewCanRefreshOnNextTicker() {
         org.junit.Assert.assertEquals(4000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,1));
         org.junit.Assert.assertEquals(4000L,FullDiscoveryProgressPolicy.previewReloadIntervalMs(false,16));
