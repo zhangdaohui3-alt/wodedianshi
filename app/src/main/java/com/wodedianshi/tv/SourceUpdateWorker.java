@@ -284,6 +284,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
+              .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0)
               .putInt("source_initial_index_attempted",0)
               .putBoolean("source_initial_index_bypassed",slowPlayback)
               .putInt("source_initial_index_ready",0)
@@ -1196,6 +1197,7 @@ public class SourceUpdateWorker extends Worker {
         update.putInt("source_initial_progress_unavailable_feeds",stillUnavailable);
       }
       int previewLevel=0, previousPreviewLevel=0;
+      int previewMilestone=0, previousPreviewMilestone=0;
       if(initialDiscoveryChain){
         // Only count a source feed as done after its entire page was probed and
         // end-of-feed was observed. A successful HTTP response alone is not done.
@@ -1260,6 +1262,9 @@ public class SourceUpdateWorker extends Worker {
         previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
         previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,saved.length(),
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
+        previousPreviewMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
+        previewMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(previousPreviewMilestone,saved.length(),
+            (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
         int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
         update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
             .putInt("source_initial_progress_percent",progressPercent)
@@ -1419,7 +1424,7 @@ public class SourceUpdateWorker extends Worker {
             committedStagingAt=android.os.SystemClock.elapsedRealtime();
           }
         }
-        if(!slowPlayback&&previewLevel>previousPreviewLevel){
+        if(!slowPlayback&&(previewLevel>previousPreviewLevel||previewMilestone>previousPreviewMilestone)){
           // First commit staging and cursors. A failed preview never loses that work.
           noteInitialStage("正在发布阶段性已预检频道");
           JSONArray priorRows=new JSONArray();
@@ -1427,7 +1432,8 @@ public class SourceUpdateWorker extends Worker {
           JSONArray preview=preservePreviouslyPublishedChannels(saved,priorRows);
           com.wodedianshi.tv.db.AppStateEditor previewState=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel);
+                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,previewLevel)
+                  .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,previewMilestone);
           int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
               getApplicationContext(),preview,roomSnapshot.catalogueVersion,false,pauseRequested,previewState);
           if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
