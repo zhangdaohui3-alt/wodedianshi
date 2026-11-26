@@ -24,6 +24,15 @@ public final class DiscoveryBatchPolicy {
         return initial?(viewing?VIEWING_PROBES_PER_SLICE:INITIAL_PAGE_SIZE):ordinaryLimit;
     }
 
+    // Bound the initial wait for a durable first-watch preview. This changes
+    // only the admitted window, not the immutable page size or fingerprint.
+    // After a small initial network budget, resume full throughput even if
+    // no usable channels have been found.
+    static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
+        if(viewing)return VIEWING_PROBES_PER_SLICE;
+        return stagedChannels<16&&checkedUrls<48?6:INITIAL_PAGE_SIZE;
+    }
+
     /** Independent partial page checkpoints enable fair rotation. */
     public static String initialBatchPrefix(int feedIndex) {
         return "source_initial_page_"+feedIndex+"_";
