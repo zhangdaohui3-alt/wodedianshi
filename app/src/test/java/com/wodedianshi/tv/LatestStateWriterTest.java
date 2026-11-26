@@ -21,6 +21,21 @@ public class LatestStateWriterTest {
         assertTrue(queue.isEmpty());
     }
 
+    @Test public void clearedResumeSupersedesQueuedStationAndAllowsNewSelection() {
+        LatestStateWriter<String> state = new LatestStateWriter<>();
+        ArrayDeque<Runnable> queue = new ArrayDeque<>();
+        ArrayList<String> writes = new ArrayList<>();
+        state.initialize("old");
+        state.offer("removed", queue::add, writes::add);
+        state.offer("", queue::add, writes::add);
+        queue.remove().run();
+        assertEquals(Arrays.asList(""), writes);
+        assertEquals("", state.initialize("stale disk"));
+        state.offer("new", queue::add, writes::add);
+        queue.remove().run();
+        assertEquals(Arrays.asList("","new"), writes);
+    }
+
     @Test public void failedValueCanBeOfferedAgain() {
         LatestStateWriter<String> state = new LatestStateWriter<>();
         ArrayDeque<Runnable> queue = new ArrayDeque<>();
