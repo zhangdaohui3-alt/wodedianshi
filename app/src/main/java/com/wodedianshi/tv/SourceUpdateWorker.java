@@ -1410,7 +1410,8 @@ public class SourceUpdateWorker extends Worker {
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=saved.getJSONObject(rowIndex);
           stagedCoreMask|=FullDiscoveryProgressPolicy.coreCategoryMask(
-              row.optString("name"),row.optString("group"),row.optString("tvgName"),row.optString("tvgId"));
+              row.optString("name"),row.optString("group"),row.optString("tvgName"),row.optString("tvgId"),
+              hasChinaScope(row));
         }
         previousPreviewCoreMask=roomInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
         previewCoreMask=FullDiscoveryProgressPolicy.nextPreviewCoreMask(previousPreviewCoreMask,stagedCoreMask,
@@ -1460,7 +1461,7 @@ public class SourceUpdateWorker extends Worker {
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=saved.getJSONObject(i);
           fresh.add(row.optString("name"),row.optString("group"),
-              row.optString("tvgName"),row.optString("tvgId"));
+              row.optString("tvgName"),row.optString("tvgId"),hasChinaScope(row));
         }
         update.putString(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY,
             fresh.summary("本次预检入库目录（合并旧频道之前，非实播验证）"));
@@ -2279,6 +2280,12 @@ public class SourceUpdateWorker extends Worker {
     if(!broadcaster.isEmpty())return broadcaster;
     String canonical=canonicalName(entry.name);
     return canonical.startsWith("CCTV-")||canonical.endsWith("卫视")?canonical:entry.name;
+  }
+  private static boolean hasChinaScope(JSONObject channel){
+    JSONArray scopes=channel.optJSONArray("sourceScopes");
+    if(scopes!=null)for(int i=0;i<scopes.length();i++)
+      if("china".equals(scopes.optString(i)))return true;
+    return false;
   }
   private void addBackupSourceScope(JSONObject channel,String url,String scope)throws JSONException{
     if(channel==null||url==null||url.isEmpty())return;
