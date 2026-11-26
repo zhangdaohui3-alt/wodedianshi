@@ -2532,11 +2532,16 @@ public class SourceUpdateWorker extends Worker {
   // Sniff the response body as well as the URL: some IPTV gateways expose
   // HLS manifests through extensionless or tokenized endpoint URLs.
   private ProbeResult probe(String address,long deadline){
-    return probe(address,deadline,slowPlayback,pauseRequested);
+    return probe(address,deadline,slowPlayback,pauseRequested,
+        getInputData().getBoolean("initial_discovery_chain",false)&&!slowPlayback);
   }
   // Same production HTTP path, callable by host loopback regression tests.
   static ProbeResult probe(String address,long deadline,boolean slowPlayback,
       java.util.function.BooleanSupplier pauseRequested){
+    return probe(address,deadline,slowPlayback,pauseRequested,false);
+  }
+  static ProbeResult probe(String address,long deadline,boolean slowPlayback,
+      java.util.function.BooleanSupplier pauseRequested,boolean initialIdle){
     ProbeResult result=new ProbeResult();
     result.paced=slowPlayback;
     long started=android.os.SystemClock.elapsedRealtime();
@@ -2559,13 +2564,17 @@ public class SourceUpdateWorker extends Worker {
         // Select a rendition only after every required sample for that rendition
         // passes. A stale second segment in a high-bitrate rendition must not
         // prevent trying a healthy lower-bitrate sibling within the same budget.
-        for(HlsVariantPolicy.Variant candidate:variants){
+        for(int variantIndex=0;variantIndex<variants.size();variantIndex++){
+          HlsVariantPolicy.Variant candidate=variants.get(variantIndex);
           if(probeDeadlineReached(deadline,pauseRequested))return result;
+          final long renditionDeadline=SourceProbeTimePolicy.initialRenditionDeadline(
+              initialIdle&&!slowPlayback,variantIndex+1<variants.size(),
+              android.os.SystemClock.elapsedRealtime(),deadline);
           try{
             String candidateManifestUrl=candidate.url;
             String candidateManifest=manifest;
             if(!candidate.url.equals(manifestUrl)){
-              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,deadline,slowPlayback,pauseRequested);
+              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested);
               byte[] variant=variantResponse==null?null:variantResponse.bytes;
               if(variant==null||variant.length==0)continue;
               candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
@@ -2579,13 +2588,13 @@ public class SourceUpdateWorker extends Worker {
             // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
             byte[] aesKey=null;
             if(resources.aes128Encrypted){
-              aesKey=fetchSample(resources.encryptionKeyUrl,32,deadline,slowPlayback,pauseRequested);
+              aesKey=fetchSample(resources.encryptionKeyUrl,32,renditionDeadline,slowPlayback,pauseRequested);
               if(aesKey==null||aesKey.length!=16)continue;
             }
             // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
             // AES-128 maps require their explicit IV and must validate after decryption.
             if(resources.initializationUrl!=null){
-              SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,deadline,slowPlayback,pauseRequested);
+              SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,renditionDeadline,slowPlayback,pauseRequested);
               byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
               if(initialization==null)continue;
               if(resources.aes128Encrypted){
@@ -2596,7 +2605,7 @@ public class SourceUpdateWorker extends Worker {
             }
             String candidateSegmentUrl=candidateSegments.get(0);
             long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
-            SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,deadline,slowPlayback,pauseRequested);
+            SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,renditionDeadline,slowPlayback,pauseRequested);
             byte[] candidateSample=candidateSampleResponse==null?null:candidateSampleResponse.bytes;
             if(candidateSample==null)continue;
             if(resources.aes128Encrypted){
@@ -2610,7 +2619,7 @@ public class SourceUpdateWorker extends Worker {
             if(candidateSegments.size()>1){
               boolean secondSegmentOk=false;
                 String secondUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(1)).toString();
-                SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,deadline,slowPlayback,pauseRequested);
+                SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,renditionDeadline,slowPlayback,pauseRequested);
                 byte[] second=secondResponse==null?null:secondResponse.bytes;
                 if(resources.aes128Encrypted&&second!=null){
                   byte[] secondIv=resources.encryptionIv!=null
@@ -2621,7 +2630,7 @@ public class SourceUpdateWorker extends Worker {
                 }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
               if(!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))continue;
             }
-            if(probeDeadlineReached(deadline,pauseRequested))return result;
+            if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
             result.socketTimedOut=false;
             result.valid=true;result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
@@ -2636,6 +2645,11 @@ public class SourceUpdateWorker extends Worker {
             result.socketTimedOut=true;
           }catch(java.io.IOException unavailable){
             // A broken rendition must not reject the rest of the master.
+          }finally{
+            // Budget exhaustion of a rendition is uncertainty, not a dead
+            // endpoint. A later fully validated sibling clears this flag.
+            if(!result.valid&&android.os.SystemClock.elapsedRealtime()>=renditionDeadline)
+              result.socketTimedOut=true;
           }
         }
         return result;
