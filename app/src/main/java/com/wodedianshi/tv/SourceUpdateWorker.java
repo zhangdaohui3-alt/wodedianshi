@@ -285,6 +285,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
+                .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
                 .remove(initialFeedFailureReasonKey(feed))
@@ -496,12 +497,33 @@ public class SourceUpdateWorker extends Worker {
       boolean[] inspectedFeeds=new boolean[feeds.length];
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
       if(initialDiscoveryChain){
+        final long recheckClock=System.currentTimeMillis();
         for(int i=0;i<feeds.length;i++){
           inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
           // Deferred pages are ineligible only during viewing; keep their true
           // completion flags false so priority stages and publication cannot skip them.
           attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferPageForIdle(true,slowPlayback,
               roomBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(i),false));
+          if(!inspectedFeeds[i]&&!attemptedFeedsThisRun[i]
+              &&roomInt(DiscoveryBatchPolicy.initialTransientRecheckKey(i),-1)
+                  ==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
+            long admittedAt=0L;
+            try{admittedAt=Long.parseLong(roomString(
+                DiscoveryBatchPolicy.initialTransientRecheckAtKey(i),"0"));}
+            catch(NumberFormatException ignored){}
+            attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.transientRecheckCooling(admittedAt,recheckClock);
+          }
+        }
+        if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
+            SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+            SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
+            &&SourceDiscoveryPriorityPolicy.nextFeed(initialNextFeedIndex,inspectedFeeds,
+                attemptedFeedsThisRun,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage)<0){
+          // All remaining feeds in the current priority stage are cooling.
+          // Do not treat this as exhaustion, or retry the same request in a loop.
+          enqueueInitialContinuation(DiscoveryBatchPolicy.TRANSIENT_RECHECK_COOLDOWN_MS/1000L);
+          return Result.success();
         }
       }
       int routineStart=manualRefresh?Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
@@ -1217,7 +1239,8 @@ public class SourceUpdateWorker extends Worker {
         nextBatchScanned=transientRecheck;
         transientRecheck=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
         // Recheck only in idle; never loop on an unavailable server during playback.
-        update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true);
+        update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true)
+            .putLong(DiscoveryBatchPolicy.initialTransientRecheckAtKey(pageFeed),System.currentTimeMillis());
         if(slowPlayback)viewingDeferred=true;
         android.util.Log.i("MyTVSourceDiscovery","transient_page_recheck feed="+pageFeed
             +" resume_position="+nextBatchScanned);
@@ -1306,7 +1329,8 @@ public class SourceUpdateWorker extends Worker {
         for(FeedBatch batch:feedBatches){
           if(!batch.success)continue;
           if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index))
-              .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(batch.index));
+              .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(batch.index))
+              .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(batch.index));
           if(!initialDiscoveryChain && recoveredDirectoryScanned(batch)
               && roomBoolean(initialFeedUnavailableKey(batch.index),false)){
             // The same indexed directory has reached EOF after processing its
@@ -1565,7 +1589,8 @@ public class SourceUpdateWorker extends Worker {
               .remove(initialAcquiredVersionKey(feed))
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
-                .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed));
+                .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
+                .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(feed));
         }
         failedBuildReset.remove(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY)
             .remove(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY)
