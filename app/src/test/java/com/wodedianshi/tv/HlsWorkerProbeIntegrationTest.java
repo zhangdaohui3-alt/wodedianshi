@@ -277,6 +277,7 @@ public class HlsWorkerProbeIntegrationTest {
             assertTrue(result.valid);
             assertFalse(result.socketTimedOut);
             assertEquals(350,result.score);
+            assertTrue(result.provisional);
         }finally{releaseTail.countDown();serverThread.shutdownNow();}
     }
 }
