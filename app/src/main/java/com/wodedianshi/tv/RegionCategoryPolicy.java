@@ -17,7 +17,12 @@ final class RegionCategoryPolicy {
         String combinedName = (name == null ? "" : name) + " "
                 + (tvgName == null ? "" : tvgName) + " "
                 + (tvgId == null ? "" : tvgId);
-        return catalogueScope(combinedName, group, requestedScope);
+        String scope=catalogueScope(combinedName, group, requestedScope);
+        // Country-qualified EPG IDs are metadata, not playback URLs.
+        if("global".equals(scope)&&tvgId!=null
+                &&tvgId.trim().toLowerCase(Locale.ROOT).matches("[a-z0-9][a-z0-9._-]*\\.cn"))
+            return "china";
+        return scope;
     }
 
     static String catalogueScope(String name, String group, String requestedScope) {
@@ -27,7 +32,10 @@ final class RegionCategoryPolicy {
         String normalizedGroup = normalize(group);
         // Aggregated M3U feeds often classify local county stations under
         // "中国大陆 · 新闻" instead of putting the province in each channel name.
-        if (normalizedGroup.contains("中国大陆") || normalizedGroup.contains("mainland china")) {
+        if (normalizedGroup.contains("中国大陆") || normalizedGroup.contains("mainland china")
+                || normalizedGroup.equals("china") || normalizedGroup.equals("中国")
+                || normalizedGroup.equals("中华人民共和国")
+                || normalizedGroup.matches("^(?:china|中国)\\s*[·|;:/\\-]\\s*.+$")) {
             return "china";
         }
         if (!ChannelNamePolicy.provinceForLocalChannel(metadata).isEmpty()) return "china";
