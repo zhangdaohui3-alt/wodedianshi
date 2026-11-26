@@ -72,6 +72,18 @@ public class RegionCategoryPolicyTest {
         assertEquals("custom",RegionCategoryPolicy.catalogueScope("Unknown TV","China","","CountyNews.cn","custom"));
     }
 
+    @Test public void recognizesOnlyBoundedQualityQualifiedChineseEpgIds() {
+        for(String quality:new String[]{"HD","SD","FHD","UHD","4K","8K","720p","1080i","1080p","2160p"})
+            assertEquals("china",RegionCategoryPolicy.catalogueScope("County News","Local","","CountyNews.cn@"+quality,"global"));
+        for(String invalid:new String[]{"CountyNews.cn@foreign","CountyNews.cn@HD.example","CountyNews.cn.example@HD","CountyNews.us@HD","https://example.cn@HD","CountyNews.cn@HD@SD"})
+            assertEquals("global",RegionCategoryPolicy.catalogueScope("Unknown TV","News","",invalid,"global"));
+        assertEquals("custom",RegionCategoryPolicy.catalogueScope("County News","Local","","CountyNews.cn@HD","custom"));
+        assertEquals(0,ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+            SourceDiscoveryFeedCatalog.MIXED_MAINLAND_FEED_INDEX,
+            RegionCategoryPolicy.catalogueScope("County News","Local","","CountyNews.cn@HD","global"),
+            "County News","Local","","CountyNews.cn@HD"));
+    }
+
     @Test public void separatesHongKongMacauAndTaiwanSubcategories() {
         assertEquals("香港", RegionCategoryPolicy.subcategory("RTHK", "Hong Kong"));
         assertEquals("澳门", RegionCategoryPolicy.subcategory("TDM", "MO"));
