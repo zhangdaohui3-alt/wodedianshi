@@ -1196,6 +1196,7 @@ public class SourceUpdateWorker extends Worker {
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       int originDeferred=0,provisionalAccepted=0;
+      long consumedSampleRequests=0L,consumedSampleBytes=0L;
       boolean idleWaveTimedOut=false;
       boolean viewingDeferred=false;
       final int priorChinaValidated=initialDiscoveryChain
@@ -1307,6 +1308,12 @@ public class SourceUpdateWorker extends Worker {
               measured=probe(e.url,addressDeadline);
               measuredAt=android.os.SystemClock.elapsedRealtime();
             }
+          }
+          // Count only fresh results actually consumed by this ordered owner.
+          // Speculative abandoned work and cached observations are not included.
+          if(!reuse){
+            consumedSampleRequests+=measured.sampleRequests;
+            consumedSampleBytes+=measured.sampleBytes;
           }
           // A completed positive observation can be reused on the next slice
           // even if a new user action prevents this slice from committing.
@@ -1509,7 +1516,7 @@ public class SourceUpdateWorker extends Worker {
       }
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" consumed_sample_requests="+consumedSampleRequests+" consumed_sample_bytes="+consumedSampleBytes+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -1936,7 +1943,8 @@ public class SourceUpdateWorker extends Worker {
               discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback)
               +"\n并发任务提交 "+idleWave.launched+" 条 · 并发任务实测峰值 "+idleWave.peakProbes.get()
               +" · 独立串行检测 "+idleWave.serialProbes+" 条（任务数，非同时网络连接数）"
-              +"\n本批初步媒体筛查通过 "+provisionalAccepted+" 条（尚未证明真实播放质量）");
+              +"\n本批初步媒体筛查通过 "+provisionalAccepted+" 条（尚未证明真实播放质量）"
+              +"\n已消费新检测：采样请求 "+consumedSampleRequests+" 次 · 应用层读取 "+consumedSampleBytes+" 字节（不含未消费任务及网络协议开销）");
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
@@ -2962,6 +2970,7 @@ public class SourceUpdateWorker extends Worker {
     int width,height;
     long latencyMs;
     long bitrate;
+    long sampleRequests,sampleBytes;
   }
   // Keep the persisted preflight-score index bounded. Discovery feeds can rotate
   // thousands of URLs over time; an unbounded JSON object would slow every update
@@ -3057,7 +3066,7 @@ public class SourceUpdateWorker extends Worker {
       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       try{
         initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested,
-            false,initialIdle&&!slowPlayback&&!playlistUrl);
+            false,initialIdle&&!slowPlayback&&!playlistUrl,result);
         result.firstRequestReached=initialResponse!=null;
       }catch(TransientProbeHttpException failure){
         // A redirect may have reached a different origin. Do not penalize the
@@ -3105,7 +3114,7 @@ public class SourceUpdateWorker extends Worker {
             String candidateManifestUrl=candidate.url;
             String candidateManifest=manifest;
             if(!candidate.url.equals(manifestUrl)){
-              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested);
+              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
               byte[] variant=variantResponse==null?null:variantResponse.bytes;
               if(variant==null||variant.length==0)continue;
               candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
@@ -3119,14 +3128,14 @@ public class SourceUpdateWorker extends Worker {
             // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
             byte[] aesKey=null;
             if(resources.aes128Encrypted){
-              aesKey=fetchSample(resources.encryptionKeyUrl,32,renditionDeadline,slowPlayback,pauseRequested);
+              aesKey=fetchSample(resources.encryptionKeyUrl,32,renditionDeadline,slowPlayback,pauseRequested,result);
               if(aesKey==null||aesKey.length!=16)continue;
             }
             // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
             // AES-128 maps require their explicit IV and must validate after decryption.
             if(resources.initializationUrl!=null&&!(initialIdle&&!slowPlayback&&!resources.aes128Encrypted
                 &&confirmedClearMaps.contains(resources.initializationUrl))){
-              SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,renditionDeadline,slowPlayback,pauseRequested);
+              SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
               byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
               if(initialization==null)continue;
               if(resources.aes128Encrypted){
@@ -3140,7 +3149,7 @@ public class SourceUpdateWorker extends Worker {
             }
             String candidateSegmentUrl=candidateSegments.get(0);
             long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
-            SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,renditionDeadline,slowPlayback,pauseRequested);
+            SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
             byte[] candidateSample=candidateSampleResponse==null?null:candidateSampleResponse.bytes;
             if(candidateSample==null)continue;
             if(resources.aes128Encrypted){
@@ -3155,7 +3164,7 @@ public class SourceUpdateWorker extends Worker {
               boolean secondSegmentOk=false;
                 String secondUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(1)).toString();
                 SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,renditionDeadline,slowPlayback,pauseRequested,
-                    initialIdle&&!slowPlayback&&!resources.aes128Encrypted);
+                    initialIdle&&!slowPlayback&&!resources.aes128Encrypted,false,result);
                 byte[] second=secondResponse==null?null:secondResponse.bytes;
                 if(resources.aes128Encrypted&&second!=null){
                   byte[] secondIv=resources.encryptionIv!=null
@@ -3254,8 +3263,8 @@ public class SourceUpdateWorker extends Worker {
       android.os.SystemClock.sleep(Math.min(remaining,SourceProbeTimePolicy.VIEWING_SAMPLE_PAUSE_POLL_MS));
     }
   }
-  private static byte[] fetchSample(String address,int maxBytes,long deadline,boolean slowPlayback,java.util.function.BooleanSupplier pauseRequested)throws Exception{
-    SampleResponse response=fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested);
+  private static byte[] fetchSample(String address,int maxBytes,long deadline,boolean slowPlayback,java.util.function.BooleanSupplier pauseRequested,ProbeResult result)throws Exception{
+    SampleResponse response=fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,false,false,result);
     return response==null?null:response.bytes;
   }
   private static final class TransientProbeHttpException extends IOException {
@@ -3266,15 +3275,9 @@ public class SourceUpdateWorker extends Worker {
       this.code=code;this.origin=InitialOriginCooldownPolicy.origin(responseUrl);
     }
   }
-  private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,java.util.function.BooleanSupplier pauseRequested)throws Exception{
-    return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,false);
-  }
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
-      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia)throws Exception{
-    return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,stopOnConfirmedMedia,false);
-  }
-  private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
-      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs)throws Exception{
+      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs,
+      ProbeResult result)throws Exception{
     HttpURLConnection c=null;
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return null;
@@ -3295,6 +3298,7 @@ public class SourceUpdateWorker extends Worker {
       // Read one sentinel byte beyond the retained sample to distinguish an
       // exact-length resource from a longer segment truncated at the sample cap.
       c.setRequestProperty("Range","bytes=0-"+maxBytes);
+      result.sampleRequests++;
       int code=c.getResponseCode();
       if(probeDeadlineReached(deadline,pauseRequested))return null;
       if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
@@ -3312,6 +3316,7 @@ public class SourceUpdateWorker extends Worker {
           if(length==0)break;
           long readStarted=slowPlayback?android.os.SystemClock.elapsedRealtime():0L;
           n=in.read(buffer,0,length);
+          if(n>0)result.sampleBytes+=n;
           long readElapsed=slowPlayback?android.os.SystemClock.elapsedRealtime()-readStarted:0L;
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
