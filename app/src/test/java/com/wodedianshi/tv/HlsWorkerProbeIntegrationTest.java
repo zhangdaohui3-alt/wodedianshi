@@ -212,4 +212,33 @@ public class HlsWorkerProbeIntegrationTest {
             assertEquals(640,result.width);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    assertTrue(reader.readLine().startsWith("GET /live.m3u8 "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+                    out.flush();
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/live.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(result.valid);
+            assertTrue(result.transientNetworkFailure);
+            assertTrue(result.firstOriginPressure);
+            assertFalse(result.firstRequestFailed);
+        }finally{serverThread.shutdownNow();}
+    }
 }
