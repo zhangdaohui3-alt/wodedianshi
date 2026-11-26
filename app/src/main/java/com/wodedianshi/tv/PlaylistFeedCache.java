@@ -364,11 +364,12 @@ public final class PlaylistFeedCache {
                 pruneOldEntries(directory, cached);
                 return cached;
             }
-            if (status < 200 || status >= 300) {
-                throw new IOException("Playlist HTTP " + status);
+            if (!SourceProbeTimePolicy.fullDirectoryResponse(status,connection.getHeaderField("Content-Range"))) {
+                throw new IOException("Playlist HTTP " + status + " is not a complete response");
             }
 
             long declaredLength = connection.getContentLength();
+            String responseEncoding=connection.getHeaderField("Content-Encoding");
             if (declaredLength > maxBytes) {
                 throw new IOException("Playlist exceeds cache size limit");
             }
@@ -405,7 +406,10 @@ public final class PlaylistFeedCache {
                 output.flush();
                 fileOutput.getFD().sync();
             }
-            if (copied == 0L || !isPlaylistFile(temporary)) {
+            if (!SourceProbeTimePolicy.completeFullDirectoryBody(copied,declaredLength,responseEncoding)) {
+                throw new IOException("Playlist body length mismatch");
+            }
+            if (!isPlaylistFile(temporary)) {
                 throw new IOException("Downloaded resource is not a valid M3U playlist");
             }
 
