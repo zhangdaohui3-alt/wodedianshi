@@ -280,6 +280,13 @@ public class SourceProbeTimePolicyTest {
         }
     }
 
+    @Test public void ordinaryInitialIdleTimeoutDoesNotRepeatAnIdenticalEndpoint() {
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(1,true));
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(2,true));
+        assertTrue(SourceProbeTimePolicy.retryInconclusiveWithinSlice(1,false));
+        assertFalse(SourceProbeTimePolicy.retryInconclusiveWithinSlice(2,false));
+    }
+
     @Test public void usesPerRequestMaximumWhenDeadlineIsFarAway() {
         assertEquals(2500, SourceProbeTimePolicy.boundedTimeoutMillis(20_000L, 1_000L, 2500));
     }
