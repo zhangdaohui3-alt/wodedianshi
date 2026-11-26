@@ -4,6 +4,18 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class DiscoveryBatchPolicyTest {
+    @org.junit.Test public void newCoreCategoryYieldsOnlyAtDrainedSmallIdlePreviewBoundary() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,3,7,1,false));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.yieldForNewCorePreview(false,512,1,3,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,513,1,3,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,3,7,1,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(true,17,3,7,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,3,3,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,3,7,0,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,17,-1,7,1,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForNewCorePreview(false,0,3,7,1,false));
+    }
+
     @org.junit.Test public void missingCoreCategoryExtendsRotationButNotSmallProbeWindow() {
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.preferCoreCoverage(5,20,-1));
         org.junit.Assert.assertTrue(DiscoveryBatchPolicy.preferCoreCoverage(16,48,3));
