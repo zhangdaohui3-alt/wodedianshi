@@ -1866,6 +1866,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(isRemotePlaybackLockActive())return;
     // 点播期间暂停直播，避免目录和电影播放时主频道仍在后台发声/占用解码器。
     if(currentVodPanel!=null||vodCatalogueDialog!=null)return;
+    activeVodCategory="电影";activeVodQuery="";currentVodRenderedCategory="";
     resumeLiveAfterVod=(player!=null&&player.getPlayWhenReady())||libVlcEngine!=null
         ||liveVlcReleaseContinuation!=null;
     // Revoke the live item BEFORE pause: synchronous or queued old Media3
