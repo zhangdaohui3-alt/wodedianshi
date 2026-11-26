@@ -305,4 +305,11 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(1));
         assertTrue(SourceUpdateSchedulePolicy.hasValidatedDiscoverySources(24));
     }
+
+    @Test public void provisionalEvidenceExpiresBeforeFullPreflight(){
+        assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,true,1000L,61000L));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,true,1000L,61001L));
+        assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,1000L,61001L));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(false,true,1000L,16001L));
+    }
 }
