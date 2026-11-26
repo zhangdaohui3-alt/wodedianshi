@@ -6059,7 +6059,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     long now=android.os.SystemClock.elapsedRealtime();
-    if(now>=request.waitUntil){
+    if(SingleChannelRefreshPolicy.requestExpired(now,request.waitUntil)){
       cancelSingleChannelRefresh();toast("等待安全刷新超时，原线路未改变");return;
     }
     if(!hasWindowFocus()||fullscreenControlsVisible||fullscreenRemoteDialogOpen
@@ -6074,11 +6074,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         SourceUpdateWorker.SingleRefreshResult result=null;
         Exception failure=null;
         try{
-          if(android.os.SystemClock.elapsedRealtime()>=request.waitUntil)
-            throw new SourceProbeTimePolicy.PausedException();
+          java.util.function.BooleanSupplier cancelled=()->SingleChannelRefreshPolicy.shouldCancelRequest(
+              request.cancelled,admittedPressure,SourceUpdateActivityPolicy.pressureGeneration(),
+              android.os.SystemClock.elapsedRealtime(),request.waitUntil);
+          SourceProbeTimePolicy.checkPaused(cancelled);
           result=SourceUpdateWorker.refreshSingleChannelForVisibleChannel(getApplicationContext(),
-              request.key,request.group,request.tvgId,request.tvgName,request.activeUrl,
-              ()->request.cancelled||SourceUpdateActivityPolicy.pressureGeneration()!=admittedPressure);
+              request.key,request.group,request.tvgId,request.tvgName,request.activeUrl,cancelled);
         }catch(Exception error){failure=error;}
         final SourceUpdateWorker.SingleRefreshResult outcome=result;
         final Exception error=failure;
@@ -6109,7 +6110,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         toast("频道快照已变化，请重新刷新");
       else if(error instanceof SourceProbeTimePolicy.PausedException
           ||error instanceof SourceProbeTimePolicy.PublicationPausedException)
-        toast("刷新已取消，原线路未改变");
+        toast(SingleChannelRefreshPolicy.requestExpired(android.os.SystemClock.elapsedRealtime(),request.waitUntil)
+            ?"频道刷新超时，原线路未改变":"刷新已取消，原线路未改变");
       else{android.util.Log.w("MyTVSourceDiscovery","single-channel refresh failed",error);toast("刷新未完成，保留原有线路");}
       return;
     }
