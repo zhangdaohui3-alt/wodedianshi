@@ -128,6 +128,13 @@ public final class SourceProbeTimePolicy {
                 ||error instanceof java.io.EOFException;
     }
 
+    /** A temporary transport failure with a retained checkpoint does not
+     * justify a second full download in the same idle slice. */
+    static boolean deferRangeFallback(java.io.IOException failure,boolean checkpointRetained) {
+        return checkpointRetained&&(failure instanceof java.net.SocketTimeoutException
+                ||transientProbeNetworkException(failure));
+    }
+
     /** A socket timeout is not proof that a stream is invalid, even before the total budget. */
     public static boolean initialProbeInconclusive(boolean socketTimedOut,long finishedAt,long addressDeadline) {
         return socketTimedOut || finishedAt>=addressDeadline;
