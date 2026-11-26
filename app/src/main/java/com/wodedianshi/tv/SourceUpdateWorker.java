@@ -2776,8 +2776,16 @@ public class SourceUpdateWorker extends Worker {
       IdleProbeWavePolicy wavePolicy=new IdleProbeWavePolicy(limit);
       for(int i=offset;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
-        if((initial&&entry.savedSource)||(!entry.url.startsWith("http://")&&!entry.url.startsWith("https://")))break;
-        String endpoint=SourceSelectionPolicy.endpointKey(entry.url),host=probeHost(entry.url);
+        if(initial&&entry.savedSource)break;
+        boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
+        String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
+        // An already measured or unsupported row cannot issue another network
+        // request in the owner loop. Bridge only these deterministic gaps, and
+        // keep the original row order/cursor. Never bridge cooling, expiring
+        // cache entries, unresolved duplicates or host-limited fresh probes.
+        if(initial&&i!=offset&&IdleProbeWavePolicy.canBridgeKnownRow(http,measured.containsKey(endpoint)))continue;
+        if(!http)break;
+        String host=probeHost(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(allowOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))break;
         if(i!=offset){
