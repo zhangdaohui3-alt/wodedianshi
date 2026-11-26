@@ -54,14 +54,14 @@ public class DiscoveryBatchPolicyTest {
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.yieldForFirstMainlandPreview(false,false,0,1,1,false));
     }
 
-    @org.junit.Test public void quickAcquisitionCanEnterBoundedFirstWatchProbeInSameSlice() {
-        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10000L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,10001L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,true,48,1L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,false,48,1L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,0,1L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,-1,1L));
-        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,false,48,-1L));
+    @org.junit.Test public void quickAcquisitionCanEnterBoundedIdleProbeInSameSlice() {
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,48,10000L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,48,10001L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(true,48,1L));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,48,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,0,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,-1,1L));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(false,48,-1L));
     }
 
     @org.junit.Test public void acquisitionMarkerRequiresExactNonemptyBodyVersion() {
