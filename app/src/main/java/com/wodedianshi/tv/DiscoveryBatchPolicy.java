@@ -1,0 +1,101 @@
+package com.wodedianshi.tv;
+
+/**
+ * Tracks progress inside an immutable discovery batch by position, not URL.
+ * A playlist may legitimately list the same endpoint under several channel
+ * identities, so URL-based resume keys can jump over unprocessed entries.
+ */
+public final class DiscoveryBatchPolicy {
+    private DiscoveryBatchPolicy() {}
+
+    // Fixed across idle/viewing transitions so partial page fingerprints stay
+    // stable. Only the number of probes admitted per slice changes.
+    static final int INITIAL_PAGE_SIZE=48;
+    // Manual refresh processes more new candidates without reducing the existing
+    // saved-route health-check allotment or changing the routine maintenance page.
+    static final int MANUAL_PAGE_SIZE=INITIAL_PAGE_SIZE;
+    /** Revalidate at a new directory, not on every continuation of its page. */
+    static boolean manualRevalidateDirectory(int cursor,String partialFingerprint) {
+        return cursor<=0&&(partialFingerprint==null||partialFingerprint.isEmpty());
+    }
+    static final int VIEWING_PROBES_PER_SLICE=2;
+    static final long VIEWING_SUCCESS_DELAY_SECONDS=5L;
+    static int probeLimit(boolean initial,boolean viewing,int ordinaryLimit) {
+        return initial?(viewing?VIEWING_PROBES_PER_SLICE:INITIAL_PAGE_SIZE):ordinaryLimit;
+    }
+
+    // Bound the initial wait for a durable first-watch preview. This changes
+    // only the admitted window, not the immutable page size or fingerprint.
+    // After a small initial network budget, resume full throughput even if
+    // no usable channels have been found.
+    static boolean isEarlyFirstWatch(int stagedChannels,int checkedUrls) {
+        return stagedChannels<16&&checkedUrls<48;
+    }
+
+    // Only combine quick acquisition with the bounded six-position first-watch
+    // slice. Slow downloads and stable viewing retain separate work requests.
+    static boolean canProbeAfterQuickAcquisition(boolean early,boolean viewing,
+            int indexedEntries,long elapsedMs) {
+        return early&&!viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
+    }
+
+    /** Stop only at a drained wave boundary after a first useful mainland
+     * preview has been merged in memory. Commit the contiguous prefix through
+     * the normal staging and publication transaction; never discard a suffix. */
+    static boolean yieldForFirstMainlandPreview(boolean early,boolean viewing,
+            int previousMainlandValidated,int newlyValidated,int stagedRows,boolean wavePending) {
+        return early&&!viewing&&previousMainlandValidated<=0
+                &&newlyValidated>0&&stagedRows>0&&!wavePending;
+    }
+
+    static int firstWatchProbeLimit(boolean viewing,int stagedChannels,int checkedUrls) {
+        if(viewing)return VIEWING_PROBES_PER_SLICE;
+        return isEarlyFirstWatch(stagedChannels,checkedUrls)?6:INITIAL_PAGE_SIZE;
+    }
+
+    /** Independent partial page checkpoints enable fair rotation. */
+    public static String initialBatchPrefix(int feedIndex) {
+        return "source_initial_page_"+feedIndex+"_";
+    }
+
+    /** Persist with the exact partial-page checkpoint; never treat it as EOF. */
+    static String initialIdleRecheckKey(int feedIndex) {
+        return initialBatchPrefix(feedIndex)+"idle_recheck";
+    }
+
+    static boolean deferPageForIdle(boolean initial,boolean viewing,boolean pending) {
+        return initial&&viewing&&pending;
+    }
+
+    /** A paced inconclusive candidate has not had its unrestricted probe turn. */
+    static boolean holdInconclusiveCandidate(boolean initial,boolean viewing,boolean savedSource) {
+        return initial&&viewing&&!savedSource;
+    }
+
+    /** A prepared index belongs to one exact body, not simply its URL. */
+    public static boolean isPreparedInitialFeed(String preparedVersion,String currentVersion) {
+        return currentVersion!=null&&!currentVersion.isEmpty()&&currentVersion.equals(preparedVersion);
+    }
+
+    /** Never apply an offset to a different or unidentified feed body. */
+    public static int cursorForVersion(int cursor, String savedVersion, String currentVersion) {
+        return cursor > 0 && currentVersion != null && !currentVersion.isEmpty()
+                && currentVersion.equals(savedVersion) ? cursor : 0;
+    }
+
+    public static int scannedForBatch(String fingerprint, String previousFingerprint,
+            int previousScanned, int candidateCount) {
+        if (candidateCount <= 0 || fingerprint == null
+                || !fingerprint.equals(previousFingerprint)) return 0;
+        return Math.max(0, Math.min(previousScanned, candidateCount));
+    }
+
+    public static int startIndex(int scanned, int candidateCount) {
+        if (candidateCount <= 0 || scanned >= candidateCount) return 0;
+        return Math.max(0, scanned);
+    }
+
+    public static int remaining(int scanned, int candidateCount) {
+        return Math.max(0, candidateCount - Math.max(0, scanned));
+    }
+}
