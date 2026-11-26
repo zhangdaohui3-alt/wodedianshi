@@ -42,7 +42,7 @@ public class SourceUpdateWorker extends Worker {
   private static void retainCompletedInitialSuccess(String key,ProbeResult result,
       long finishedAt,long addressDeadline,long batchDeadline){
     if(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(result.valid,
-        result.socketTimedOut,finishedAt,addressDeadline,batchDeadline))
+        result.socketTimedOut||result.transientNetworkFailure,finishedAt,addressDeadline,batchDeadline))
       rememberInitialProbe(key,result,finishedAt);
   }
   private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
@@ -1049,9 +1049,9 @@ public class SourceUpdateWorker extends Worker {
             if(e.savedSource)savedScanned--;else discoveryScanned--;
             break;
           }
-          if(!reuse&&(measured.socketTimedOut||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
+          if(!reuse&&(measured.socketTimedOut||measured.transientNetworkFailure||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
-            // Socket timeouts and unsuccessful paced validations are inconclusive: do not promote,
+            // Timeouts, transient network failures and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
             initialTimeouts++;
             if(DiscoveryBatchPolicy.holdInconclusiveCandidate(initialDiscoveryChain,slowPlayback,e.savedSource)){
@@ -2483,6 +2483,7 @@ public class SourceUpdateWorker extends Worker {
   static final class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
+    boolean transientNetworkFailure;
     boolean paced;
     int score;
     int width,height;
@@ -2663,6 +2664,7 @@ public class SourceUpdateWorker extends Worker {
             }
             if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
             result.socketTimedOut=false;
+            result.transientNetworkFailure=false;
             result.valid=true;result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
             int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
@@ -2676,6 +2678,9 @@ public class SourceUpdateWorker extends Worker {
             result.socketTimedOut=true;
           }catch(java.io.IOException unavailable){
             // A broken rendition must not reject the rest of the master.
+            if(unavailable instanceof TransientProbeHttpException
+                ||SourceProbeTimePolicy.transientProbeNetworkException(unavailable))
+              result.transientNetworkFailure=true;
           }finally{
             // Budget exhaustion of a rendition is uncertainty, not a dead
             // endpoint. A later fully validated sibling clears this flag.
@@ -2693,6 +2698,11 @@ public class SourceUpdateWorker extends Worker {
       result.score=350+SourceQualityScorer.preflightSpeedBonus(result.paced,initialBytes.length,result.latencyMs);
       return result;
     }catch(java.net.SocketTimeoutException timeout){result.socketTimedOut=true;return result;}
+    catch(java.io.IOException unavailable){
+      result.transientNetworkFailure=unavailable instanceof TransientProbeHttpException
+          ||SourceProbeTimePolicy.transientProbeNetworkException(unavailable);
+      return result;
+    }
     catch(Exception e){return result;}
   }
   // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
@@ -2740,6 +2750,9 @@ public class SourceUpdateWorker extends Worker {
     SampleResponse response=fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested);
     return response==null?null:response.bytes;
   }
+  private static final class TransientProbeHttpException extends IOException {
+    TransientProbeHttpException(int code){super("Temporary media HTTP "+code);}
+  }
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,java.util.function.BooleanSupplier pauseRequested)throws Exception{
     HttpURLConnection c=null;
     try{
@@ -2761,7 +2774,10 @@ public class SourceUpdateWorker extends Worker {
       // Read one sentinel byte beyond the retained sample to distinguish an
       // exact-length resource from a longer segment truncated at the sample cap.
       c.setRequestProperty("Range","bytes=0-"+maxBytes);
-      int code=c.getResponseCode();if(probeDeadlineReached(deadline,pauseRequested)||code<200||code>=400)return null;
+      int code=c.getResponseCode();
+      if(probeDeadlineReached(deadline,pauseRequested))return null;
+      if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code);
+      if(code<200||code>=400)return null;
       boolean rangeIncomplete=code==HttpURLConnection.HTTP_PARTIAL
           &&HlsProbeValidationPolicy.isIncompleteContentRange(c.getHeaderField("Content-Range"),maxBytes);
       String type=c.getContentType();
