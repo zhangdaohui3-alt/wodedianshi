@@ -64,7 +64,7 @@ final class ChannelNamePolicy {
         {"江西", "南昌", "景德镇", "萍乡", "九江", "新余", "鹰潭", "赣州", "吉安", "宜春", "抚州", "上饶", "FUZHOU", "NANCHANG", "JINGDEZHEN", "PINGXIANG", "JIUJIANG", "XINYU", "YINGTAN", "GANZHOU", "JIAN", "YICHUN", "SHANGRAO"},
         {"山东", "济南", "青岛", "淄博", "枣庄", "东营", "烟台", "潍坊", "济宁", "泰安", "威海", "日照", "临沂", "德州", "聊城", "滨州", "菏泽", "JINAN", "QINGDAO", "ZIBO", "ZAOZHUANG", "DONGYING", "YANTAI", "WEIFANG", "JINING", "TAIAN", "WEIHAI", "RIZHAO", "LINYI", "DEZHOU", "LIAOCHENG", "BINZHOU", "HEZE"},
         {"河南", "郑州", "开封", "洛阳", "平顶山", "安阳", "鹤壁", "新乡", "焦作", "濮阳", "许昌", "漯河", "三门峡", "南阳", "商丘", "信阳", "周口", "驻马店", "ZHENGZHOU", "KAIFENG", "LUOYANG", "PINGDINGSHAN", "ANYANG", "HEBI", "XINXIANG", "JIAOZUO", "PUYANG", "XUCHANG", "LUOHE", "SANMENXIA", "NANYANG", "SHANGQIU", "XINYANG", "ZHOUKOU", "ZHUMADIAN"},
-        {"湖北", "武汉", "黄石", "十堰", "宜昌", "襄阳", "鄂州", "荆门", "孝感", "荆州", "黄冈", "咸宁", "随州", "恩施", "WUHAN", "HUANGSHI", "SHIYAN", "YICHANG", "XIANGYANG", "EZHOU", "JINGMEN", "XIAOGAN", "JINGZHOU", "HUANGGANG", "XIANNING", "SUIZHOU", "ENSHI"},
+        {"湖北", "武汉", "黄石", "十堰", "宜昌", "襄阳", "鄂州", "荆门", "孝感", "荆州", "黄冈", "咸宁", "随州", "恩施", "仙桃", "潜江", "天门", "XIANTAO", "QIANJIANG", "TIANMEN", "WUHAN", "HUANGSHI", "SHIYAN", "YICHANG", "XIANGYANG", "EZHOU", "JINGMEN", "XIAOGAN", "JINGZHOU", "HUANGGANG", "XIANNING", "SUIZHOU", "ENSHI"},
         {"湖南", "长沙", "株洲", "湘潭", "衡阳", "邵阳", "岳阳", "常德", "张家界", "益阳", "郴州", "永州", "怀化", "娄底", "CHANGSHA", "ZHUZHOU", "XIANGTAN", "HENGYANG", "SHAOYANG", "YUEYANG", "CHANGDE", "ZHANGJIAJIE", "YIYANG", "CHENZHOU", "YONGZHOU", "HUAIHUA", "LOUDI", "湘西"},
         {"广东", "广州", "深圳", "珠海", "汕头", "佛山", "韶关", "湛江", "肇庆", "江门", "茂名", "惠州", "梅州", "汕尾", "河源", "阳江", "清远", "东莞", "中山", "潮州", "揭阳", "云浮", "GUANGZHOU", "SHENZHEN", "ZHUHAI", "SHANTOU", "FOSHAN", "SHAOGUAN", "ZHANJIANG", "ZHAOQING", "JIANGMEN", "MAOMING", "HUIZHOU", "MEIZHOU", "SHANWEI", "HEYUAN", "YANGJIANG", "QINGYUAN", "DONGGUAN", "ZHONGSHAN", "CHAOZHOU", "JIEYANG", "YUNFU"},
         {"广西", "南宁", "柳州", "桂林", "梧州", "北海", "防城港", "钦州", "贵港", "玉林", "百色", "贺州", "河池", "来宾", "崇左", "YULIN", "NANNING", "LIUZHOU", "GUILIN", "WUZHOU", "BEIHAI", "QINZHOU", "GUIGANG", "BAISE", "HEZHOU", "HECHI", "LAIBIN", "CHONGZUO"},
@@ -185,7 +185,9 @@ final class ChannelNamePolicy {
         {"浙江","宁波","NINGBO"},{"浙江","温州","WENZHOU"},{"浙江","绍兴","SHAOXING"},
         {"广东","广州","GUANGZHOU"},{"广东","深圳","SHENZHEN"},{"广东","珠海","ZHUHAI"},
         {"广东","佛山","FOSHAN"},{"四川","成都","CHENGDU"},{"四川","广元","GUANGYUAN"},
-        {"湖北","武汉","WUHAN"},{"湖北","襄阳","XIANGYANG"},{"湖南","长沙","CHANGSHA"},
+        {"湖北","武汉","WUHAN"},{"湖北","襄阳","XIANGYANG"},
+        {"湖北","仙桃","XIANTAO"},{"湖北","潜江","QIANJIANG"},{"湖北","天门","TIANMEN"},
+        {"湖南","长沙","CHANGSHA"},
         {"山东","济南","JINAN"},{"山东","青岛","QINGDAO"},{"河南","郑州","ZHENGZHOU"},
         {"陕西","西安","XIAN"},{"陕西","榆林","YULIN"},{"广西","玉林","YULIN"},
         {"安徽","合肥","HEFEI"},{"安徽","宿州","SUZHOU"},{"辽宁","朝阳","CHAOYANG"},
@@ -277,6 +279,21 @@ final class ChannelNamePolicy {
         String text=metadata==null?"":metadata.toLowerCase(Locale.ROOT);
         // Generic "Local" is a worldwide playlist group, not China evidence.
         return chinaScope&&(text.contains("地方")||text.contains("local"));
+    }
+
+    /** Single source for recognized Chinese locality names and the UI picker.
+     * This includes selected county-level stations already in the alias table,
+     * not an assertion of complete administrative or playable-channel coverage. */
+    static String[] localitiesForProvince(String province) {
+        for (String[] row : LOCAL_CITY_ALIASES) {
+            if (!row[0].equals(province)) continue;
+            java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+            for (int i = 1; i < row.length; i++)
+                if (hasCjkCharacter(row[i])) names.add(row[i]);
+            if (names.isEmpty()) names.add(row[0]);
+            return names.toArray(new String[0]);
+        }
+        return new String[0];
     }
 
     static boolean matchesLocalCity(String metadata, String province, String city) {
