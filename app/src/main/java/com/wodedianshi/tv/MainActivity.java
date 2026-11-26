@@ -6247,17 +6247,37 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.SAVED){
       synchronized(channels){
         synchronized(cataloguePersistLock){
-          for(Map.Entry<String,Set<String>> entry:outcome.addedRoutes.entrySet()){
-            request.channel.addBackupSource(entry.getKey(),"");
-            for(String scope:entry.getValue())request.channel.addBackupSource(entry.getKey(),scope);
-            channelsByUrl.putIfAbsent(entry.getKey(),request.channel);
+          Channel channel=request.channel;
+          String playing=request.activeUrl;
+          // Patch only the visible channel and only exact retired URLs. Keep
+          // its current source by URL even if the picker previously re-ranked.
+          boolean coherent=channel.backups!=null&&channel.backups.contains(playing);
+          for(Map.Entry<String,String> replacement:outcome.replacedRoutes.entrySet()){
+            if(!coherent||!channel.backups.contains(replacement.getKey())
+                ||replacement.getKey().equals(playing)
+                ||channel.backups.contains(replacement.getValue())){coherent=false;break;}
           }
-          catalogueMutationGeneration++;
+          if(coherent){
+            for(Map.Entry<String,String> replacement:outcome.replacedRoutes.entrySet()){
+              String retired=replacement.getKey(),incoming=replacement.getValue();
+              channel.backups.set(channel.backups.indexOf(retired),incoming);
+              channel.backupSourceScopes.remove(retired);
+              if(channelsByUrl.get(retired)==channel)channelsByUrl.remove(retired);
+            }
+            for(Map.Entry<String,Set<String>> entry:outcome.addedRoutes.entrySet()){
+              channel.addBackupSource(entry.getKey(),"");
+              for(String scope:entry.getValue())channel.addBackupSource(entry.getKey(),scope);
+              channelsByUrl.putIfAbsent(entry.getKey(),channel);
+            }
+            channel.activeSource=channel.backups.indexOf(playing);
+            catalogueMutationGeneration++;
+          }
         }
       }
-      toast("刷新完成：新增 "+outcome.added+" 条通过预检的线路，已保存；可打开换源菜单");
+      int replaced=outcome.replacedRoutes.size();
+      toast("刷新完成：新增 "+(outcome.added-replaced)+" 条，替换 "+replaced+" 条失效备用线路，已保存；当前播放不变");
     }else if(outcome.status==SourceUpdateWorker.SingleRefreshResult.Status.FULL){
-      toast("已有 8 条线路，本次保留原线路；择优替换尚未启用");
+      toast("已搜索新线路，但没有符合安全淘汰条件的备用线路，原线路保留");
     }else{
       toast("本轮未找到通过预检的新线路"+(outcome.bounded?"（搜索范围有限）":"")+"，原线路保留");
     }
