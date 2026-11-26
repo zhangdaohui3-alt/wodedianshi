@@ -74,6 +74,11 @@ final class SnapshotCategoryIndex {
         }
     }
 
+    /** Geographic and ordinary categories must never share positional cache entries. */
+    static List<String> scopeKey(String category,String province,String city,String geoScope,String country){
+        return java.util.Arrays.asList(category,province,city,geoScope,geoScope==null?null:country);
+    }
+
     private void ensureVersion(long mutation,int count){
         if(epoch!=mutation||size!=count){
             scopes.clear();localMembership=null;epoch=mutation;size=count;
