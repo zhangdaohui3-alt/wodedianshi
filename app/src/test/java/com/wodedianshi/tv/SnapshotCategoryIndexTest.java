@@ -7,6 +7,31 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SnapshotCategoryIndexTest {
+    @Test public void preparedGeoMembershipIsExactImmutableAndVersioned(){
+        java.util.Map<String,java.util.Set<String>> geo=new java.util.HashMap<>();
+        java.util.Set<String> keys=new java.util.HashSet<>(Arrays.asList("one","two"));
+        geo.put("geo:countries:us",keys);
+        geo.put("geo:cities:us-phoenix",new java.util.HashSet<>(Arrays.asList("two")));
+        SnapshotCategoryIndex.LocalMembership membership=new SnapshotCategoryIndex.LocalMembership(
+            10,java.util.Collections.emptyList(),java.util.Collections.emptyMap(),
+            java.util.Collections.emptyMap(),geo);
+        keys.clear();geo.clear();
+        assertEquals(new java.util.HashSet<>(Arrays.asList("one","two")),membership.geoKeys("geo:countries:us"));
+        assertEquals(java.util.Collections.singleton("two"),membership.geoKeys("geo:cities:us-phoenix"));
+        assertTrue(membership.geoKeys("geo:subdivisions:us-az").isEmpty());
+        assertNull(new SnapshotCategoryIndex.LocalMembership(10,java.util.Collections.emptyList(),
+            java.util.Collections.emptyMap()).geoKeys("geo:countries:us"));
+        assertFalse(new SnapshotCategoryIndex.PreparedLocal(7,membership).matches(8,10));
+    }
+
+    @Test public void countryScopeUsesTheExistingExactTvgSuffixSemantics(){
+        assertEquals("geo:countries:us",GeoPlaylistCachePolicy.countryScopeForTvgId(" Example.US "));
+        assertEquals("geo:countries:cn",GeoPlaylistCachePolicy.countryScopeForTvgId("Example.cn"));
+        assertEquals("",GeoPlaylistCachePolicy.countryScopeForTvgId("Example.cn@HD"));
+        assertEquals("",GeoPlaylistCachePolicy.countryScopeForTvgId("Example.us.extra"));
+        assertEquals("",GeoPlaylistCachePolicy.countryScopeForTvgId(null));
+    }
+
     @Test public void preparedFixedCategoriesPreserveOrderAndDistinguishEmptyFromUnknown(){
         java.util.Map<String,List<Integer>> fixed=new java.util.HashMap<>();
         ArrayList<Integer> cctv=new ArrayList<>(Arrays.asList(6,2,4));
