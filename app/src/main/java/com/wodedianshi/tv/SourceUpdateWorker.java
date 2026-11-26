@@ -624,18 +624,36 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain){
         final long recheckClock=System.currentTimeMillis();
         final long[] recheckRemaining=new long[feeds.length];
+        // One small, consistent Room read instead of 2–4 individual SELECTs
+        // per directory. This snapshot is local to admission of this slice.
+        ArrayList<String> feedStateKeys=new ArrayList<>(feeds.length*4);
         for(int i=0;i<feeds.length;i++){
-          inspectedFeeds[i]=roomBoolean(initialFeedDoneKey(i),false);
+          feedStateKeys.add(initialFeedDoneKey(i));
+          feedStateKeys.add(DiscoveryBatchPolicy.initialIdleRecheckKey(i));
+          feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
+          feedStateKeys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
+        }
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        Map<String,String> feedState=new HashMap<>();
+        for(com.wodedianshi.tv.db.AppStateEntity state:
+            com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
+                .appStateDao().getValues(feedStateKeys))
+          feedState.put(state.key,state.stateValue);
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        for(int i=0;i<feeds.length;i++){
+          inspectedFeeds[i]=Boolean.parseBoolean(feedState.get(initialFeedDoneKey(i)));
           // Deferred pages are ineligible only during viewing; keep their true
           // completion flags false so priority stages and publication cannot skip them.
           attemptedFeedsThisRun[i]=DiscoveryBatchPolicy.deferPageForIdle(true,slowPlayback,
-              roomBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(i),false));
+              Boolean.parseBoolean(feedState.get(DiscoveryBatchPolicy.initialIdleRecheckKey(i))));
+          int transientState=-1;
+          try{transientState=Integer.parseInt(feedState.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
+          catch(NumberFormatException ignored){}
           if(!inspectedFeeds[i]&&!attemptedFeedsThisRun[i]
-              &&roomInt(DiscoveryBatchPolicy.initialTransientRecheckKey(i),-1)
-                  ==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
+              &&transientState==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
             long admittedAt=0L;
-            try{admittedAt=Long.parseLong(roomString(
-                DiscoveryBatchPolicy.initialTransientRecheckAtKey(i),"0"));}
+            try{admittedAt=Long.parseLong(feedState.get(
+                DiscoveryBatchPolicy.initialTransientRecheckAtKey(i)));}
             catch(NumberFormatException ignored){}
             recheckRemaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,recheckClock);
             attemptedFeedsThisRun[i]=recheckRemaining[i]>0L;
@@ -1779,7 +1797,7 @@ public class SourceUpdateWorker extends Worker {
       final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
       if(initialDiscoveryChain)update.putString(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,
           FullDiscoveryProgressPolicy.throughputStatus(probeStartedAt-sliceStartedAt,
-              probesFinishedAt-probeStartedAt,commitStartedAt-probesFinishedAt,checked,
+              probesFinishedAt-probeStartedAt,commitStartedAt-probesFinishedAt,checked+reusedPreflights,
               discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback));
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
