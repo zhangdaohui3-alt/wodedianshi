@@ -118,6 +118,13 @@ final class ChannelNamePolicy {
     };
 
     static String provinceForLocalChannel(String metadata) {
+        String evidence = localProvinceEvidence(metadata);
+        return evidence == null ? "" : evidence;
+    }
+
+    /** Null means contradictory geographic evidence; empty means unresolved.
+     * Strict single-station matching must not treat conflict as missing metadata. */
+    static String localProvinceEvidence(String metadata) {
         String normalized = normalize(metadata);
         if (normalized.isEmpty()) return "";
         String upper = metadata.toUpperCase(Locale.ROOT);
@@ -130,7 +137,7 @@ final class ChannelNamePolicy {
                     && !("海南".equals(province) && normalized.contains("海南州")))
                     || (english.contains(" ") ? upper.contains(english)
                     : containsNormalizedAlias(upper, english, normalized))) {
-                if (!explicit.isEmpty() && !explicit.equals(province)) return "";
+                if (!explicit.isEmpty() && !explicit.equals(province)) return null;
                 explicit = province;
                 explicitRow = row;
             }
@@ -152,13 +159,13 @@ final class ChannelNamePolicy {
                     // actually owns that alias; unrelated explicit metadata
                     // must not turn a contradictory city into a local station.
                     if (explicitRow >= 0 && !java.util.Arrays.asList(
-                            NORMALIZED_LOCAL_CITY_ALIASES[explicitRow]).contains(alias)) return "";
+                            NORMALIZED_LOCAL_CITY_ALIASES[explicitRow]).contains(alias)) return null;
                     ambiguous = true;
                     continue;
                 }
                 // A province marker is not evidence for a contradictory unique city.
-                if (!explicit.isEmpty() && !explicit.equals(province)) return "";
-                if (!inferred.isEmpty() && !inferred.equals(province)) return "";
+                if (!explicit.isEmpty() && !explicit.equals(province)) return null;
+                if (!inferred.isEmpty() && !inferred.equals(province)) return null;
                 inferred = province;
             }
         }
