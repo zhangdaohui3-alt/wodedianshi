@@ -1957,6 +1957,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Revoke the live item BEFORE pause: synchronous or queued old Media3
     // callbacks must not recover the live edge, play(), or start another source.
     currentMediaId="";
+    cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     clearPendingRemoteZap();
     pauseStableDiscovery();
@@ -5346,6 +5347,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void exitFullScreenPlayback(){
     if(!fullScreenPlayback||rootLayout==null)return;
+    cancelSingleChannelRefresh();
     closeFullscreenChannelMenu();
     fullScreenPlayback=false;
     clearPendingRemoteZap();
@@ -6790,6 +6792,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void stopFailedLiveSession(String reason){
     clearPendingRemoteZap();
+    cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     if(liveVlcReleaseContinuation!=null){
       libVlcReleaseCallbacks.remove(liveVlcReleaseContinuation);
@@ -6901,6 +6904,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       toast("旧播放器仍在使用资源，请稍后重试");return;
     }
     if(selected<0||selected>=channels.size())return;
+    cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     Channel requested=channels.get(selected);
     saveCriticalEngineStage("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
@@ -7606,6 +7610,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // A terminal failure is not an in-flight operation. Discard pending starts,
     // never execute them, and leave process-wide decoder quarantine closed.
     if(decoderReleaseUnconfirmed){
+      cancelSingleChannelRefresh();
       ++liveTuneRequestSerial;
       liveVlcReleaseContinuation=null;
       revokePendingVodStart();
@@ -7911,6 +7916,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   /** Revoke all pending playback before closing dialogs, whose dismissal can otherwise resume live. */
   private void stopAllPlayersForLock(){
+    cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     ++playbackGeneration;
     currentMediaId="";
