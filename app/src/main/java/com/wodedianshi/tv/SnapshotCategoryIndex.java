@@ -21,7 +21,12 @@ final class SnapshotCategoryIndex {
         final int count;
         private final java.util.Map<String,List<Integer>> provinces;
         private final List<Integer> allLocal;
+        private final java.util.Map<String,List<Integer>> fixedCategories;
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince){
+            this(count,local,byProvince,Collections.emptyMap());
+        }
+        LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
+                java.util.Map<String,List<Integer>> fixed){
             this.count=count;
             if(byProvince.size()>MAX_PROVINCES)throw new IllegalArgumentException("Province index limit");
             java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
@@ -29,7 +34,12 @@ final class SnapshotCategoryIndex {
                 copy.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
             allLocal=Collections.unmodifiableList(new ArrayList<>(local));
             provinces=Collections.unmodifiableMap(copy);
+            java.util.Map<String,List<Integer>> categories=new java.util.HashMap<>();
+            for(java.util.Map.Entry<String,List<Integer>> entry:fixed.entrySet())
+                categories.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+            fixedCategories=Collections.unmodifiableMap(categories);
         }
+        List<Integer> fixedCategory(String category){return fixedCategories.get(category);}
         List<Integer> candidates(String province){
             if(province==null)return allLocal;
             List<Integer> found=provinces.get(province);
