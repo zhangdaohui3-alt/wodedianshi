@@ -334,6 +334,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Probe scores are parsed on a background Room read, then published read-only.
   private volatile org.json.JSONObject cachedProbeScoreJson=new org.json.JSONObject();
   private volatile long indexedPlaybackScoreVersion=-1L;
+  private volatile String indexedPlaybackQualityRevision="";
 
   private volatile long catalogueFilterGeneration=0L;
   private volatile int lastFilteredMatchCount=0;
@@ -819,8 +820,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // Restore the complete score cache from the same validated catalogue
       // on the startup worker. A quality read failure must not block TV startup.
       try{
+        String qualityRevision=readQualityOnlyRevision();
         org.json.JSONObject indexed=readIndexedPlaybackScores(channels,roomSnapshot.catalogueVersion,()->isFinishing()||isDestroyed());
-        if(indexed!=null){cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
+        if(indexed!=null&&qualityRevision.equals(readQualityOnlyRevision())){
+          cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;
+          indexedPlaybackQualityRevision=qualityRevision;
+        }
       }catch(Exception qualityFailure){android.util.Log.w("MyTVStartup","Indexed quality restore deferred; compatibility cache retained",qualityFailure);}
       int sourceCount=countChannelSources();
       logCatalogueMemory("room_restore_ready",roomSnapshot.channelCount,sourceCount,
@@ -905,7 +910,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
     publishProbeScores(roomSourceProbeJson);
-    indexedPlaybackScoreVersion=-1L;
+    indexedPlaybackScoreVersion=-1L;indexedPlaybackQualityRevision="";
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
     roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
@@ -8662,6 +8667,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         +" sources="+urls.size()+" scores="+(scores==null?0:scores.length()));
     return scores;
   }
+  private String readQualityOnlyRevision(){
+    return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
+        SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,"");
+  }
   private void reloadRoomSourceMetrics(){
     String probe=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
@@ -8818,17 +8827,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           if(!recoveryRead&&RoomCatalogueReloadPolicy.isUnchanged(loadedRoomCatalogueVersion,
               checkpoint==null?null:Long.valueOf(checkpoint.completedAt))){
-            if(indexedPlaybackScoreVersion!=loadedRoomCatalogueVersion&&
+            final String qualityRevision=readQualityOnlyRevision();
+            if(SourceUpdateSchedulePolicy.needsIndexedQualityReload(indexedPlaybackScoreVersion,
+                loadedRoomCatalogueVersion,indexedPlaybackQualityRevision,qualityRevision)&&
                 com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext())){
               final long scoreVersion=loadedRoomCatalogueVersion;
               ArrayList<Channel> retained;
               synchronized(channels){retained=new ArrayList<>(channels);}
               org.json.JSONObject indexed=readIndexedPlaybackScores(retained,scoreVersion,cancelled);
-              if(indexed!=null)uiHandler.post(()->{
+              if(indexed!=null&&qualityRevision.equals(readQualityOnlyRevision()))uiHandler.post(()->{
                 if(!cancelled.getAsBoolean()&&activityStarted
                     &&expectedMutationGeneration==catalogueMutationGeneration
                     &&scoreVersion==loadedRoomCatalogueVersion){
                   cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=scoreVersion;
+                  indexedPlaybackQualityRevision=qualityRevision;
                 }
               });
             }
@@ -8864,7 +8876,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(generation!=backgroundCatalogueReloadGeneration)return;
           long preparationStarted=android.os.SystemClock.elapsedRealtime();
           final PreparedRoomCatalogue prepared=prepareRoomCatalogue(refreshed,roomSnapshot.favorites,cancelled);
-          final org.json.JSONObject indexedScores=readIndexedPlaybackScores(prepared.entries,roomSnapshot.catalogueVersion,cancelled);
+          final String qualityRevision=readQualityOnlyRevision();
+          org.json.JSONObject readScores=readIndexedPlaybackScores(prepared.entries,roomSnapshot.catalogueVersion,cancelled);
+          final org.json.JSONObject indexedScores=qualityRevision.equals(readQualityOnlyRevision())?readScores:null;
           android.util.Log.i("MyTVStartup","room_reload_prepare_ms="
               +(android.os.SystemClock.elapsedRealtime()-preparationStarted)
               +" entries="+prepared.entries.size()+" sources="+prepared.byUrl.size());
@@ -8974,7 +8988,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                     new SnapshotCategoryIndex.PreparedLocal(catalogueMembershipGeneration,prepared.localMembership);
               }
               loadedRoomCatalogueVersion=roomSnapshot.catalogueVersion;
-              if(indexedScores!=null){cachedProbeScoreJson=indexedScores;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;}
+              if(indexedScores!=null){cachedProbeScoreJson=indexedScores;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;
+                indexedPlaybackQualityRevision=qualityRevision;}
               if(!selectedIdentity.isEmpty()){
                 Integer found=prepared.positionByIdentity.get(selectedIdentity);
                 if(found==null)found=prepared.positionByNameGroup.get(
