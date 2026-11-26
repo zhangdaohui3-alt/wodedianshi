@@ -424,6 +424,7 @@ public class SourceUpdateWorker extends Worker {
               .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
               .remove("source_initial_discovery_fingerprint")
               .remove("source_initial_discovery_scanned")
+              .remove(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY)
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0)
               .putInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0)
@@ -1775,6 +1776,10 @@ public class SourceUpdateWorker extends Worker {
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
       final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
+      if(initialDiscoveryChain)update.putString(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,
+          FullDiscoveryProgressPolicy.throughputStatus(probeStartedAt-sliceStartedAt,
+              probesFinishedAt-probeStartedAt,commitStartedAt-probesFinishedAt,checked,
+              discoveryProbesValid,stagedSizeAfterProbe-previousStagedSize,slowPlayback));
       noteInitialStage(initialDiscoveryComplete?"正在发布完整快照":"正在保存本批已完成进度");
       if(initialDiscoveryChain&&!initialDiscoveryComplete){
         if(finalRanking)com.wodedianshi.tv.db.RoomCatalogueBuildStore.replace(
