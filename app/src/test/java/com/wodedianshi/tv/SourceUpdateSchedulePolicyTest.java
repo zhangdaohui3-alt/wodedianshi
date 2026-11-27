@@ -360,4 +360,30 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16001L));
         assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L));
     }
+
+    @Test public void qualityRecheckUsesRemainingIdleBudgetWithoutExceedingPageLimit(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        java.util.HashMap<String,String> current=new java.util.HashMap<>();
+        pending.add("removed");
+        for(int i=0;i<100;i++){
+            pending.add("k"+i);current.put("k"+i,"https://example.invalid/"+i);
+        }
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
+        assertEquals(48,selected.size());
+        assertEquals("https://example.invalid/0",selected.get(0));
+        assertEquals("https://example.invalid/47",selected.get(47));
+        int fast=0,slow=0;
+        long now=1000L,end=91000L;
+        for(String url:selected){
+            if(SourceProbeTimePolicy.initialAddressDeadline(end,now)==0L)break;
+            fast++;now+=1000L;
+        }
+        now=1000L;
+        for(String url:selected){
+            if(SourceProbeTimePolicy.initialAddressDeadline(end,now)==0L)break;
+            slow++;now+=15000L;
+        }
+        assertEquals(48,fast);assertEquals(6,slow);
+        assertEquals(101,pending.size());
+    }
 }
