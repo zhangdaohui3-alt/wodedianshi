@@ -267,6 +267,36 @@ public class HlsWorkerProbeIntegrationTest {
         }
     }
 
+    @Test public void productionRecheckExtendsHealthyBatchThenStopsAtNewPressure()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(int i=0;i<48;i++)replyRecheck(server,"/live"+i+".ts",200,transportSample());
+                replyRecheck(server,"/live48.ts",429,new byte[0]);
+                return null;
+            });
+            List<String> order=new ArrayList<>();
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(int i=0;i<96;i++){
+                String url="http://127.0.0.1:"+server.getLocalPort()+"/live"+i+".ts";
+                order.add(url);pending.add(StableKey.url(url));
+            }
+            SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertTrue(result.extended);
+            assertEquals(49,result.checked);
+            assertEquals(48,result.completed.size());
+            assertEquals(49L,result.sampleRequests);
+            assertEquals(48L*transportSample().length,result.sampleBytes);
+            assertEquals(48,pending.size());
+            assertEquals(StableKey.url(order.get(49)),pending.iterator().next());
+            assertTrue(pending.contains(StableKey.url(order.get(48))));
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void productionRecheckStopsBeforeAnyNetworkWhenPlaybackResumes(){
         String url="http://127.0.0.1:1/never.ts";
         LinkedHashSet<String> pending=new LinkedHashSet<>(Collections.singleton(StableKey.url(url)));
