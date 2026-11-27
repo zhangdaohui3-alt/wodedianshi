@@ -41,8 +41,23 @@ public final class SourceUpdateSchedulePolicy {
     // a slow origin cannot force a new request into the final partial budget.
     static final int PROVISIONAL_DAILY_LIMIT=DiscoveryBatchPolicy.INITIAL_PAGE_SIZE;
 
+    // Real stable output is stronger availability evidence than another
+    // structural sample, but cannot replace a measured throughput score.
+    // Defer only the extra quality pass, for a short freshness window.
+    static final long STABLE_RECHECK_GRACE_MS=6L*60L*60L*1000L;
+    static boolean deferRecentlyStableRecheck(String lastEvent,long lastStable,long updated,long now){
+        return "stable".equals(lastEvent)&&lastStable>0L&&lastStable==updated
+                &&now>=lastStable&&now-lastStable<STABLE_RECHECK_GRACE_MS;
+    }
+
     static java.util.ArrayList<String> selectProvisionalRechecks(
             java.util.Set<String> pending,java.util.Map<String,String> current) {
+        return selectProvisionalRechecks(pending,current,key->false);
+    }
+
+    static java.util.ArrayList<String> selectProvisionalRechecks(
+            java.util.Set<String> pending,java.util.Map<String,String> current,
+            java.util.function.Predicate<String> temporarilyDeferred) {
         java.util.ArrayList<String> selected=new java.util.ArrayList<>();
         // Oldest route gets the first opportunity; thereafter take one route
         // per origin per round, preserving FIFO within each origin. A cluster
@@ -50,7 +65,7 @@ public final class SourceUpdateSchedulePolicy {
         java.util.LinkedHashMap<String,java.util.ArrayDeque<String>> byOrigin=new java.util.LinkedHashMap<>();
         for(String key:pending){
             String url=current.get(key);
-            if(url==null||url.isEmpty())continue;
+            if(url==null||url.isEmpty()||temporarilyDeferred.test(key))continue;
             String origin=InitialOriginCooldownPolicy.origin(url);
             byOrigin.computeIfAbsent(origin,ignored->new java.util.ArrayDeque<>()).addLast(url);
         }
