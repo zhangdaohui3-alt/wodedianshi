@@ -419,9 +419,33 @@ public class HlsWorkerProbeIntegrationTest {
                     SystemClock.elapsedRealtime()+15000L,false,()->false);
             served.get(12,TimeUnit.SECONDS);
             assertFalse(empty.valid);assertTrue(empty.inconclusive());
+            assertTrue(empty.emptyLiveWindow);assertFalse(empty.incompleteManifest);
+            assertTrue(empty.recoverableCoreWindow());assertTrue(empty.deterministicEvidenceLimit());
             assertFalse(ended.valid);assertFalse(ended.inconclusive());
+            assertFalse(ended.recoverableCoreWindow());
             assertEquals(1L,empty.sampleRequests);assertEquals(1L,ended.sampleRequests);
         }finally{serverThread.shutdownNow();}
+    }
+
+    @Test public void onlyTemporaryCoreWindowQualifiesForExistingBoundedReplay(){
+        SourceUpdateWorker.ProbeResult unsupported=new SourceUpdateWorker.ProbeResult();
+        unsupported.unsupportedPreflight=true;
+        assertFalse(unsupported.recoverableCoreWindow());
+        SourceUpdateWorker.ProbeResult capped=new SourceUpdateWorker.ProbeResult();
+        capped.incompleteManifest=true;
+        assertFalse(capped.recoverableCoreWindow());
+        SourceUpdateWorker.ProbeResult pending=new SourceUpdateWorker.ProbeResult();
+        pending.emptyLiveWindow=true;
+        assertTrue(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(pending.recoverableCoreWindow(),
+                0,0,0,1));
+        assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(pending.recoverableCoreWindow(),
+                96,0,0,1));
+        assertFalse(DiscoveryBatchPolicy.shouldRecheckCoreTimeout(pending.recoverableCoreWindow(),
+                0,0,1,1));
+        int marker=DiscoveryBatchPolicy.noteTransientRecheck(DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK,2);
+        assertTrue(DiscoveryBatchPolicy.shouldReplayTransientSuffix(marker,4,4));
+        assertEquals(DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED,
+                DiscoveryBatchPolicy.noteTransientRecheck(DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED,2));
     }
 
     @Test public void shortIdentityHttpBodyCannotEstablishCompleteMediaEvidence()throws Exception{
