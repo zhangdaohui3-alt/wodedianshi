@@ -465,6 +465,25 @@ public class PlaylistFeedIndexTest {
         assertEquals(62,PlaylistFeedIndex.indexedEntryCount(feed));
     }
 
+    @Test public void existingRawIndexMustWaitForIdleWhenOrderedCheckpointSurvives() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
+                +"#EXTINF:-1,CCTV-1\nhttps://example.invalid/backup\n"
+                +"#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n");
+        String raw="feed:body-digest";
+        String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
+        PlaylistFeedIndex.readPage(feed,0,1,row->{});
+        assertEquals(3,PlaylistFeedIndex.indexedEntryCount(feed));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.requiresIdleCoverageRepair(feed,raw,ordered,0,1));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.requiresIdleCoverageRepair(feed,raw,ordered,1,0));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.requiresIdleCoverageRepair(feed,raw,raw,1,0));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.requiresIdleCoverageRepair(feed,"changed",ordered,1,0));
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(2,PlaylistFeedIndex.readInitialPage(feed,1,2,page::add,()->false));
+        assertEquals("CCTV-2",page.get(0).name);
+        assertEquals("https://example.invalid/backup",page.get(1).url);
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.requiresIdleCoverageRepair(feed,raw,ordered,1,0));
+    }
+
     @Test public void pausedCoverageUpgradeRetainsUsableRawIndex() throws Exception {
         File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
                 +"#EXTBURL:https://example.invalid/backup\n"
