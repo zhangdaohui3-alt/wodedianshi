@@ -21,6 +21,22 @@ public final class FullDiscoveryProgressPolicy {
                 && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
     }
 
+    // Acquisition records are durable version markers, not a second catalogue.
+    // A cache file can later be evicted; the worker must still verify it before use.
+    static String initialAcquiredVersionKey(int index) {
+        return "source_initial_acquired_version_"+index;
+    }
+
+    static int recordedAcquisitions(java.util.Map<String,String> state,int from,int to) {
+        int count=0;
+        if(state==null)return count;
+        for(int i=Math.max(0,from);i<to;i++){
+            String version=state.get(initialAcquiredVersionKey(i));
+            if(version!=null&&!version.isEmpty())count++;
+        }
+        return count;
+    }
+
     /** WorkManager completion is not proof that a Room snapshot was published. */
     public static boolean hasPublishedInitialSnapshot(long completedAt) {
         return completedAt>0L;
