@@ -572,7 +572,7 @@ public final class PlaylistFeedCache {
      * This is admission guidance, not a persistent inventory or validity
      * certificate. Completed directories do not consume this reserve. */
     static boolean[] initialCachePressure(Context context,String[] feeds,boolean[] completed,
-            String[] acquiredVersions,boolean[] prepared)throws IOException {
+            String[] acquiredVersions,boolean[] prepared,boolean[] orderedReady)throws IOException {
         if(feeds==null||completed==null||acquiredVersions==null
                 ||feeds.length!=completed.length||feeds.length!=acquiredVersions.length)return null;
         File[] bodies=new File[feeds.length];
@@ -587,7 +587,13 @@ public final class PlaylistFeedCache {
         }
         reconcilePreparedBodies(bodies,completed,prepared);
         if(!initialCacheNeedsDrain(bytes))return null;
-        return initialPressureDrainCandidates(bodies,acquiredVersions);
+        boolean[] available=initialPressureDrainCandidates(bodies,acquiredVersions);
+        if(orderedReady!=null&&orderedReady.length==bodies.length){
+            for(int i=0;i<bodies.length;i++)
+                orderedReady[i]=available[i]&&matchingAcquiredBody(bodies[i],acquiredVersions[i])!=null
+                        &&PlaylistFeedIndex.hasCoverageOrder(bodies[i]);
+        }
+        return available;
     }
 
     /** Only downgrade absent-body preparation hints during the existing
