@@ -3302,9 +3302,13 @@ public class SourceUpdateWorker extends Worker {
             String candidateSegmentUrl=candidateSegments.get(0);
             long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
             boolean reusableClear=initialIdle&&!slowPlayback&&!resources.aes128Encrypted;
+            // Require a distinct second media resource before shortening the
+            // first TS sample. A single-segment playlist retains full preflight.
+            boolean screenFirst=reusableClear&&candidateSegments.size()>1;
             ClearSegmentEvidence evidence=reusableClear?confirmedClearFirstSegments.get(candidateSegmentUrl):null;
+            if(evidence!=null&&evidence.provisional&&!screenFirst)evidence=null;
             if(evidence==null){
-              SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
+              SampleResponse candidateSampleResponse=fetchSampleResponse(candidateSegmentUrl,32768,renditionDeadline,slowPlayback,pauseRequested,false,screenFirst,result);
               byte[] candidateSample=candidateSampleResponse==null?null:candidateSampleResponse.bytes;
               if(candidateSample==null)continue;
               if(resources.aes128Encrypted){
@@ -3316,7 +3320,7 @@ public class SourceUpdateWorker extends Worker {
               }else if(!looksLikeHlsSegment(candidateSample))continue;
               if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
               evidence=new ClearSegmentEvidence(candidateSample.length,
-                  Math.max(1L,android.os.SystemClock.elapsedRealtime()-candidateSegmentStart));
+                  Math.max(1L,android.os.SystemClock.elapsedRealtime()-candidateSegmentStart),candidateSampleResponse.earlyDirectTs);
               if(reusableClear)confirmedClearFirstSegments.put(candidateSegmentUrl,evidence);
             }
             if(candidateSegments.size()>1){
@@ -3340,11 +3344,13 @@ public class SourceUpdateWorker extends Worker {
             result.incompleteManifest=false;
             result.incompleteSample=false;
             result.unsupportedPreflight=false;
-            result.valid=true;result.width=candidate.width;result.height=candidate.height;
+            result.valid=true;result.provisional=evidence.provisional;
+            result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
             int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
             int bandwidth=(int)Math.min(500L,candidate.bandwidth/12000L);
-            int speed=SourceQualityScorer.preflightSpeedBonus(result.paced,evidence.bytes,evidence.elapsedMs);
+            // A short structural sample is not a throughput measurement.
+            int speed=SourceQualityScorer.preflightSpeedBonus(result.paced||result.provisional,evidence.bytes,evidence.elapsedMs);
             int latencyPenalty=SourceQualityScorer.preflightLatencyPenalty(result.paced,result.latencyMs);
             result.score=500+resolution+bandwidth+speed-latencyPenalty+300+120;
             return result;
@@ -3394,7 +3400,8 @@ public class SourceUpdateWorker extends Worker {
   private static final class ClearSegmentEvidence {
     final int bytes;
     final long elapsedMs;
-    ClearSegmentEvidence(int bytes,long elapsedMs){this.bytes=bytes;this.elapsedMs=elapsedMs;}
+    final boolean provisional;
+    ClearSegmentEvidence(int bytes,long elapsedMs,boolean provisional){this.bytes=bytes;this.elapsedMs=elapsedMs;this.provisional=provisional;}
   }
   private static class SampleResponse{
     final byte[] bytes;
