@@ -327,6 +327,33 @@ public class HlsWorkerProbeIntegrationTest {
         }
     }
 
+    @Test public void unresolvedAliasDoesNotConsumeAnotherNetworkOpportunity()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress(InetAddress.getByName("localhost"),0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/range.ts?token=One",416,new byte[0]);
+                replyRecheck(server,"/range.ts?token=Two",200,transportSample());
+                return null;
+            });
+            String base="http://localhost:"+server.getLocalPort()+"/range.ts?token=";
+            String unresolved=base+"One",alias=unresolved.replace("localhost","LOCALHOST"),distinct=base+"Two";
+            List<String> order=Arrays.asList(unresolved,alias,distinct);
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(String url:order)pending.add(StableKey.url(url));
+            SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertEquals(2,result.checked);
+            assertEquals(2L,result.sampleRequests);
+            assertEquals(1,result.conclusive);
+            assertEquals(0,result.reused);
+            assertEquals(Collections.singleton(distinct),result.completed.keySet());
+            assertEquals(Arrays.asList(StableKey.url(alias),StableKey.url(unresolved)),new ArrayList<>(pending));
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void exhaustedNetworkQuotaCanStillCompleteLaterConfirmedAlias()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
