@@ -2363,18 +2363,17 @@ public class SourceUpdateWorker extends Worker {
         continue;
       }
       if(unresolvedEndpoints.contains(endpoint))continue;
-      if(checked>=limit){
-        // No further network admissions. An unmeasured row need not hide
-        // a later alias of a full positive result already in this slice.
-        // The bounded candidate list, stage deadline and conclusive cap
-        // still apply; skipped rows retain their original queue positions.
-        if(successfulEndpoints.isEmpty())break;
+      long deadline=checked>=limit
+          ||(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))
+          ?0L:SourceUpdateSchedulePolicy.qualityRecheckDeadline(stageDeadline,now,tailUsed,
+              lastProbeHealthy,checked,positive,sampleRequests,sampleBytes);
+      if(deadline==0L){
+        // Every exhausted network budget uses the same cache-only tail.
+        // A fresh row must not hide later full evidence from this slice or
+        // the same-version retry cache. Keep a nominal commit margin.
+        if(stageDeadline-now<2000L||(successfulEndpoints.isEmpty()&&catalogueVersion==null))break;
         continue;
       }
-      if(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))break;
-      long deadline=SourceUpdateSchedulePolicy.qualityRecheckDeadline(stageDeadline,now,tailUsed,
-          lastProbeHealthy,checked,positive,sampleRequests,sampleBytes);
-      if(deadline==0L)break;
       String origin=InitialOriginCooldownPolicy.origin(url);
       if(recheckOrigins.cooling(origin,now)){
         // Not attempted: retain the original queue position and quality.
