@@ -13,7 +13,7 @@ public class SourceDiscoveryAcceptancePolicyTest {
     }
 
     @Test public void semanticVersionForcesRescanOfLegacyUnvalidatedStaging() {
-        assertEquals("validated-new-candidates-v3",
+        assertEquals("validated-new-candidates-v4",
                 SourceDiscoveryAcceptancePolicy.BUILD_POLICY_VERSION);
     }
 }
