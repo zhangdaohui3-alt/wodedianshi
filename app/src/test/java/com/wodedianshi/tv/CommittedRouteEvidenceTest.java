@@ -31,6 +31,30 @@ public class CommittedRouteEvidenceTest {
         assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,same,"CCTV-1"));
     }
 
+    @Test public void coverageRequiresAtLeastOneRetainedPositiveNonProvisionalRoute() throws Exception {
+        String first="https://example.invalid/first",second="https://example.invalid/second";
+        JSONObject row=new JSONObject().put("url",first)
+            .put("sources",new JSONArray().put(first).put(second));
+        JSONObject scores=new JSONObject();
+        java.util.Set<String> provisional=new java.util.HashSet<>();
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(null,scores,provisional));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.legacyUrl(first),200);
+        scores.put(StableKey.url(second),-10);
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.url(first),200);
+        provisional.add(StableKey.url(first));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.url(second),100);
+        assertTrue(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        row.put("sources",new JSONArray().put(first));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        provisional.clear();
+        assertTrue(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        row.put("sources",new JSONArray());
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+    }
+
     @Test public void retainedRouteReuseRequiresCurrentPositiveNonProvisionalScore() throws Exception {
         String url="https://example.invalid/live";
         String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
