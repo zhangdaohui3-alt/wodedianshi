@@ -519,8 +519,10 @@ public final class PlaylistFeedCache {
      * disk footprint leaves insufficient headroom for one maximum body.
      * This is admission guidance, not a persistent inventory or validity
      * certificate. Completed directories do not consume this reserve. */
-    static boolean[] initialCachePressure(Context context,String[] feeds,boolean[] completed)throws IOException {
-        if(feeds==null||completed==null||feeds.length!=completed.length)return null;
+    static boolean[] initialCachePressure(Context context,String[] feeds,boolean[] completed,
+            String[] acquiredVersions)throws IOException {
+        if(feeds==null||completed==null||acquiredVersions==null
+                ||feeds.length!=completed.length||feeds.length!=acquiredVersions.length)return null;
         File[] bodies=new File[feeds.length];
         long bytes=0L;
         for(int i=0;i<feeds.length;i++){
@@ -535,10 +537,14 @@ public final class PlaylistFeedCache {
         boolean[] available=new boolean[feeds.length];
         for(int i=0;i<bodies.length;i++){
             File body=bodies[i];
-            available[i]=body!=null&&matchesBody(readProperties(new File(body.getPath()+".properties")),body)
-                &&PlaylistFeedIndex.indexedEntryCount(body)>=0;
+            available[i]=hasAcquiredInitialIndex(body,acquiredVersions[i]);
         }
         return available;
+    }
+
+    static boolean hasAcquiredInitialIndex(File body,String acquiredVersion)throws IOException {
+        return matchingAcquiredBody(body,acquiredVersion)!=null
+                &&PlaylistFeedIndex.indexedEntryCount(body)>=0;
     }
 
     static boolean initialCacheNeedsDrain(long unfinishedBytes){
