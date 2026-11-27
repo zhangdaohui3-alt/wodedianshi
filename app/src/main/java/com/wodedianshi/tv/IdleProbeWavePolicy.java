@@ -61,17 +61,24 @@ final class IdleProbeWavePolicy {
             hosts.computeIfAbsent(host==null?"":host,k->new java.util.ArrayDeque<>()).add(entry);
         }
         java.util.ArrayList<T> ordered=new java.util.ArrayList<>(entries.size());
-        for(java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> hosts:groups.values()){
-            while(!hosts.isEmpty()){
-                java.util.Iterator<java.util.ArrayDeque<T>> iterator=hosts.values().iterator();
-                while(iterator.hasNext()){
-                    java.util.ArrayDeque<T> queue=iterator.next();
-                    ordered.add(queue.removeFirst());
-                    if(queue.isEmpty())iterator.remove();
-                }
+        for(java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> hosts:groups.values())
+            drainRoundRobin(hosts,ordered);
+        return ordered;
+    }
+
+    /** The caller owns these queues; drain in insertion order without
+     * reclassifying rows into groups already known to the caller. */
+    private static <T> void drainRoundRobin(
+            java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> groups,
+            java.util.List<T> ordered){
+        while(!groups.isEmpty()){
+            java.util.Iterator<java.util.ArrayDeque<T>> iterator=groups.values().iterator();
+            while(iterator.hasNext()){
+                java.util.ArrayDeque<T> queue=iterator.next();
+                ordered.add(queue.removeFirst());
+                if(queue.isEmpty())iterator.remove();
             }
         }
-        return ordered;
     }
 
     /** Within a fixed priority group, try one address for each distinct station
@@ -114,10 +121,13 @@ final class IdleProbeWavePolicy {
                     String host=hostOf.apply(entry);
                     byHost.computeIfAbsent(host==null?"":host,k->new java.util.ArrayList<>()).add(entry);
                 }
-                java.util.ArrayList<T> balanced=new java.util.ArrayList<>(round.size());
-                for(java.util.ArrayList<T> hostRows:byHost.values())
-                    balanced.addAll(interleaveHosts(hostRows,regionOf,entry->0));
-                ordered.addAll(interleaveHosts(balanced,hostOf,entry->0));
+                java.util.LinkedHashMap<String,java.util.ArrayDeque<T>> balanced=new java.util.LinkedHashMap<>();
+                for(java.util.Map.Entry<String,java.util.ArrayList<T>> host:byHost.entrySet()){
+                    java.util.ArrayList<T> hostRows=host.getValue();
+                    balanced.put(host.getKey(),new java.util.ArrayDeque<>(
+                            hostRows.size()==1?hostRows:interleaveHosts(hostRows,regionOf,entry->0)));
+                }
+                drainRoundRobin(balanced,ordered);
             }
         }
         return ordered;
