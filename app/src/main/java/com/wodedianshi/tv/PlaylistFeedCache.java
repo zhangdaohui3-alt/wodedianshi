@@ -164,7 +164,7 @@ public final class PlaylistFeedCache {
             if(offset>0L&&offset==total){
                 // The bytes and strong validator are complete. Digest in a
                 // separate bounded slice, even during confirmed stable playback.
-                return publishRangeBody(directory,cached,partial,checkpoint,oldTag,paused,deadline);
+                return publishRangeBody(context,directory,cached,partial,checkpoint,oldTag,paused,deadline);
             }
             connection=(HttpURLConnection)new URL(feedUrl).openConnection();
             connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
@@ -244,7 +244,7 @@ public final class PlaylistFeedCache {
                 // Give a large completed range its own fresh validation slice.
                 if(!SourceProbeTimePolicy.fitsLiveDirectory(length))return null;
             }
-            return publishRangeBody(directory,cached,partial,checkpoint,tag,paused,deadline);
+            return publishRangeBody(context,directory,cached,partial,checkpoint,tag,paused,deadline);
         }finally{
             if(connection!=null)connection.disconnect();
             checkpointTemp.delete();
@@ -253,7 +253,7 @@ public final class PlaylistFeedCache {
         }
     }
 
-    private static File publishRangeBody(File directory,File cached,File partial,File checkpoint,
+    private static File publishRangeBody(Context context,File directory,File cached,File partial,File checkpoint,
             String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
         checkDownloadBudget(paused,deadline);
         // No partial body is ever parsed or published.
@@ -596,13 +596,13 @@ public final class PlaylistFeedCache {
     }
 
     private static void pruneWithPreference(File directory,File keep,long budget,
-            java.util.function.Supplier<java.util.Set<String>> preference) {
+            java.util.function.Supplier<java.util.Set<String>> preferenceSupplier) {
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
         if (files == null || files.length == 0) return;
         long total = 0L;
         for (File file : files) total += cacheEntrySize(file);
         if (total <= budget) return;
-        java.util.Set<String> preferred=preference.get();
+        java.util.Set<String> preferred=preferenceSupplier.get();
         java.util.Arrays.sort(files, (left, right) -> {
             int preference=Boolean.compare(preferred.contains(left.getName()),preferred.contains(right.getName()));
             return preference!=0?preference:Long.compare(lastAccess(left),lastAccess(right));
