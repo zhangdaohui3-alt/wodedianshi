@@ -70,6 +70,23 @@ public final class HlsVariantPolicy {
         return parseBounded(manifest,finalManifestUrl,MAX_VARIANTS+1);
     }
 
+    /** Idle full-quality passes preserve the four highest-ranked renditions,
+     * but rotate four fallback slots across all other distinct renditions.
+     * The ninth item witnesses incomplete coverage and is never requested.
+     * The day is a stateless selector, not a promise that a skipped day ran. */
+    static ArrayList<Variant> parseWithRotatingFallback(String manifest,String finalManifestUrl,long day)throws Exception {
+        if(day<0L)return parseWithOverflow(manifest,finalManifestUrl);
+        ArrayList<Variant> all=parseBounded(manifest,finalManifestUrl,Integer.MAX_VALUE);
+        if(all.size()<=MAX_VARIANTS)return all;
+        int fixed=MAX_VARIANTS/2;
+        int tail=all.size()-fixed;
+        int start=(int)((day%tail)*fixed%tail);
+        ArrayList<Variant> selected=new ArrayList<>(MAX_VARIANTS+1);
+        selected.addAll(all.subList(0,fixed));
+        for(int i=0;i<=fixed;i++)selected.add(all.get(fixed+(start+i)%tail));
+        return selected;
+    }
+
     private static ArrayList<Variant> parseBounded(String manifest,String finalManifestUrl,int limit)throws Exception {
         ArrayList<Variant> variants = new ArrayList<>();
         if (manifest == null || finalManifestUrl == null) return variants;
