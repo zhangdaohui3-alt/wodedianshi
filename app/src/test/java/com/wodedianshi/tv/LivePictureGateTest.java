@@ -36,6 +36,15 @@ public class LivePictureGateTest {
         assertTrue(gate.reveal(current,"source"));
     }
 
+    @Test public void matchingMediaButPreAssignmentFrameCannotReveal(){
+        LivePictureGate gate=new LivePictureGate();
+        Object player=new Object();
+        gate.arm(player,"current",100L);
+        assertFalse(gate.revealRendered(player,"current",99L));
+        assertTrue(gate.revealRendered(player,"current",100L));
+        assertFalse(gate.revealRendered(player,"current",101L));
+    }
+
     @Test public void releaseInvalidatesQueuedCallbacks(){
         LivePictureGate gate=new LivePictureGate();
         Object engine=new Object();
