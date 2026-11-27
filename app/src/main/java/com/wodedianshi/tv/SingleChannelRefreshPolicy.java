@@ -19,38 +19,49 @@ public final class SingleChannelRefreshPolicy {
      * rejects a candidate rather than resolving it by guesswork. */
     public static boolean matchesStation(String name,String group,String tvgId,String tvgName,
             String candidateName,String candidateGroup,String candidateId,String candidateGuide) {
-        String region=RegionCategoryPolicy.subcategory(metadata(name,tvgName,tvgId),group);
-        String otherRegion=RegionCategoryPolicy.subcategory(
-                metadata(candidateName,candidateGuide,candidateId),candidateGroup);
-        if(!region.equals(otherRegion))return false;
-        String first=ChannelNamePolicy.consistentBroadcaster(name,tvgName,tvgId);
-        String second=ChannelNamePolicy.consistentBroadcaster(candidateName,candidateGuide,candidateId);
-        if(first==null||second==null)return false;
-        if(!first.isEmpty()||!second.isEmpty())
-            return region.isEmpty()&&!first.isEmpty()&&first.equals(second);
-        String firstMeta=metadata(name,tvgName,tvgId)+" "+safe(group);
-        String secondMeta=metadata(candidateName,candidateGuide,candidateId)+" "+safe(candidateGroup);
-        String province=ChannelNamePolicy.localProvinceEvidence(firstMeta);
-        String otherProvince=ChannelNamePolicy.localProvinceEvidence(secondMeta);
-        // A contradictory location cannot fall back to matching EPG IDs.
-        if(province==null||otherProvince==null)return false;
-        if(!province.isEmpty()&&!otherProvince.isEmpty()&&!province.equals(otherProvince))return false;
-        String city=ChannelNamePolicy.localCityEvidence(firstMeta,province);
-        String otherCity=ChannelNamePolicy.localCityEvidence(secondMeta,otherProvince);
-        if(city==null||otherCity==null)return false;
-        if(!city.isEmpty()&&!otherCity.isEmpty()&&!city.equals(otherCity))return false;
-        // Prefer the established strong city/station identity. An exact
-        // display translation may also bridge English and Chinese labels.
-        String a=localIdentity(name,tvgName,tvgId,group);
-        String b=localIdentity(candidateName,candidateGuide,candidateId,candidateGroup);
-        if(!a.isEmpty()&&!b.isEmpty())return a.equals(b);
-        String id=ChannelIdentityPolicy.normalizeTvgId(tvgId);
-        String otherId=ChannelIdentityPolicy.normalizeTvgId(candidateId);
-        // Require exact stable EPG IDs AND a matching specific display/guide
-        // label for other stations; generic labels alone are never enough.
-        return !id.isEmpty()&&id.equals(otherId)
-                &&(sameLabel(name,candidateName)||sameLabel(name,candidateGuide)
-                    ||sameLabel(tvgName,candidateName)||sameLabel(tvgName,candidateGuide));
+        return new StationMatcher(name,group,tvgId,tvgName)
+                .matches(candidateName,candidateGroup,candidateId,candidateGuide);
+    }
+
+    /** Prepare the immutable target once for a bounded search, not once per
+     * candidate row. Preserve the existing conservative matching precedence. */
+    static final class StationMatcher {
+        private final String name,guide,region,broadcaster,province,city,identity,id;
+        StationMatcher(String name,String group,String tvgId,String tvgName){
+            this.name=name;this.guide=tvgName;
+            String meta=metadata(name,tvgName,tvgId);
+            region=RegionCategoryPolicy.subcategory(meta,group);
+            broadcaster=ChannelNamePolicy.consistentBroadcaster(name,tvgName,tvgId);
+            String localMeta=meta+" "+safe(group);
+            province=broadcaster!=null&&broadcaster.isEmpty()
+                    ?ChannelNamePolicy.localProvinceEvidence(localMeta):null;
+            city=province==null?null:ChannelNamePolicy.localCityEvidence(localMeta,province);
+            identity=city==null?"":localIdentity(name,tvgName,tvgId,group);
+            id=ChannelIdentityPolicy.normalizeTvgId(tvgId);
+        }
+        boolean matches(String candidateName,String candidateGroup,String candidateId,String candidateGuide){
+            String candidateMeta=metadata(candidateName,candidateGuide,candidateId);
+            String otherRegion=RegionCategoryPolicy.subcategory(candidateMeta,candidateGroup);
+            if(!region.equals(otherRegion)||broadcaster==null)return false;
+            String second=ChannelNamePolicy.consistentBroadcaster(candidateName,candidateGuide,candidateId);
+            if(second==null)return false;
+            if(!broadcaster.isEmpty()||!second.isEmpty())
+                return region.isEmpty()&&!broadcaster.isEmpty()&&broadcaster.equals(second);
+            if(province==null||city==null)return false;
+            String secondMeta=candidateMeta+" "+safe(candidateGroup);
+            String otherProvince=ChannelNamePolicy.localProvinceEvidence(secondMeta);
+            if(otherProvince==null)return false;
+            if(!province.isEmpty()&&!otherProvince.isEmpty()&&!province.equals(otherProvince))return false;
+            String otherCity=ChannelNamePolicy.localCityEvidence(secondMeta,otherProvince);
+            if(otherCity==null)return false;
+            if(!city.isEmpty()&&!otherCity.isEmpty()&&!city.equals(otherCity))return false;
+            String b=localIdentity(candidateName,candidateGuide,candidateId,candidateGroup);
+            if(!identity.isEmpty()&&!b.isEmpty())return identity.equals(b);
+            String otherId=ChannelIdentityPolicy.normalizeTvgId(candidateId);
+            return !id.isEmpty()&&id.equals(otherId)
+                    &&(sameLabel(name,candidateName)||sameLabel(name,candidateGuide)
+                        ||sameLabel(guide,candidateName)||sameLabel(guide,candidateGuide));
+        }
     }
 
     private static String localIdentity(String name,String guide,String id,String group){
