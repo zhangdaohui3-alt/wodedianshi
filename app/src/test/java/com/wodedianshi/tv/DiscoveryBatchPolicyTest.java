@@ -343,6 +343,18 @@ public class DiscoveryBatchPolicyTest {
         assertEquals(1L<<47,DiscoveryBatchPolicy.noteReplayPosition(0L,47,48));
     }
 
+    @Test public void manualPriorityClassifiesOnceAndPreservesStableWithinRankOrder(){
+        java.util.List<String> page=new java.util.ArrayList<>(java.util.Arrays.asList("2a","0a","1a","0b","2b","1b"));
+        java.util.List<String> expected=new java.util.ArrayList<>(page);
+        expected.sort(java.util.Comparator.comparingInt(s->s.charAt(0)-'0'));
+        java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        DiscoveryBatchPolicy.stablePrioritySort(page,s->{calls.incrementAndGet();return s.charAt(0)-'0';});
+        org.junit.Assert.assertEquals(expected,page);
+        org.junit.Assert.assertEquals(6,calls.get());
+        DiscoveryBatchPolicy.stablePrioritySort(page,s->0);
+        org.junit.Assert.assertEquals(expected,page);
+    }
+
     @Test public void priorCoveragePrefersUncoveredWithinGeographicPriority(){
         java.util.List<String> raw=java.util.Arrays.asList("0-covered","0-new","1-covered","1-new","0-new2");
         java.util.ArrayList<String> page=new java.util.ArrayList<>(raw);
