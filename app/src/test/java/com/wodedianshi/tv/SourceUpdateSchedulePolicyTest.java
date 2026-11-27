@@ -372,8 +372,13 @@ public class SourceUpdateSchedulePolicyTest {
         long now=1700000000000L,day=86400000L;
         assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(false,0L,now));
         assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,0L,now));
-        assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day-1));
+        long hour=60L*60L*1000L;
+        assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day-hour-1));
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day-hour));
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day-90000L));
         assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+day));
+        assertFalse(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now+60000L));
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckDue(true,now,now-1L));
         assertFalse(SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(now,0L,now+day));
     }
 
