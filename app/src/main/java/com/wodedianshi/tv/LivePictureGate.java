@@ -4,20 +4,31 @@ package com.wodedianshi.tv;
 final class LivePictureGate {
     private Object owner;
     private String mediaId;
+    private long earliestRenderAt;
 
     void cover() {
         owner=null;
         mediaId=null;
+        earliestRenderAt=0L;
     }
 
     void arm(Object currentOwner,String currentMediaId) {
+        arm(currentOwner,currentMediaId,0L);
+    }
+
+    void arm(Object currentOwner,String currentMediaId,long assignedAt) {
         owner=currentOwner;
         mediaId=currentMediaId;
+        earliestRenderAt=assignedAt;
     }
 
     boolean reveal(Object eventOwner,String eventMediaId) {
+        return revealRendered(eventOwner,eventMediaId,Long.MAX_VALUE);
+    }
+
+    boolean revealRendered(Object eventOwner,String eventMediaId,long renderedAt) {
         if(owner==null||owner!=eventOwner||mediaId==null||mediaId.isEmpty()
-                ||!mediaId.equals(eventMediaId))return false;
+                ||!mediaId.equals(eventMediaId)||renderedAt<earliestRenderAt)return false;
         cover(); // A duplicate event must not reopen an invalidated handoff.
         return true;
     }
