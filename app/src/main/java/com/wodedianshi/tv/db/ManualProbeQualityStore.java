@@ -56,6 +56,24 @@ public final class ManualProbeQualityStore {
             throw new RoomCatalogueReader.StaleSnapshotException();
     }
 
+    /** Capture compatibility evidence only for an unindexed manual base.
+     * Use the same checked snapshot transaction, not a separate pre-read. */
+    static void captureLegacyManualSeedInTransaction(AppDatabase db,String owner,long now,BooleanSupplier paused){
+        RoomCatalogueBuildStore.requireManualOwner(db,owner);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        AppStateDao state=db.appStateDao();
+        if("true".equals(state.getValue(PUBLISHED_READY_KEY))){
+            state.remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
+            state.remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
+        }else{
+            String scores=state.getValue("source_probe_scores_v1");
+            String streaks=state.getValue("source_probe_failure_streaks_v1");
+            state.put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,scores==null?"{}":scores,now));
+            state.put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,streaks==null?"{}":streaks,now));
+        }
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+    }
+
     public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
         ensure(RoomDatabaseProvider.get(context),owner,paused);
     }
