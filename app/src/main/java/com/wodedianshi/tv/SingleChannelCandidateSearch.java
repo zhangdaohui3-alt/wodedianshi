@@ -158,8 +158,7 @@ final class SingleChannelCandidateSearch {
             String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
             if(endpoint.isEmpty()||seen.contains(endpoint))return;
             if(!matcher.matches(entry.name,entry.group,entry.tvgId,entry.tvgName))return;
-            if(SingleChannelRefreshPolicy.appendCandidates(
-                    java.util.Collections.emptyList(),java.util.Collections.singletonList(entry.url),1).isEmpty())return;
+            if(!SingleChannelRefreshPolicy.validCandidateUrl(entry.url))return;
             seen.add(endpoint);
             String scope=RegionCategoryPolicy.catalogueScope(entry.name,entry.group,entry.tvgName,entry.tvgId,feedScope);
             result.add(new Candidate(entry.url,scope));
