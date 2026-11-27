@@ -5,6 +5,41 @@ import java.util.ArrayList;
 import static org.junit.Assert.*;
 
 public class HlsVariantPolicyTest {
+    @Test public void rotatingFallbackKeepsFourBestAndEventuallyOffersEveryDistinctTail()throws Exception{
+        StringBuilder master=new StringBuilder("#EXTM3U\n");
+        for(int i=0;i<17;i++){
+            master.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(2000000-i*10000)
+                    .append("\n/v").append(i).append(".m3u8\n");
+            master.append("#EXT-X-STREAM-INF:BANDWIDTH=1\n/v").append(i).append(".m3u8\n");
+        }
+        java.util.Set<String> offered=new java.util.HashSet<>();
+        String base="https://cdn.example/master.m3u8";
+        for(long day=0;day<13;day++){
+            ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parseWithRotatingFallback(master.toString(),base,day);
+            assertEquals(9,variants.size());
+            java.util.Set<String> distinct=new java.util.HashSet<>();
+            for(int i=0;i<9;i++){
+                assertTrue(distinct.add(variants.get(i).url));
+                if(i<4)assertEquals("https://cdn.example/v"+i+".m3u8",variants.get(i).url);
+                if(i<8)offered.add(variants.get(i).url);
+            }
+        }
+        assertEquals(17,offered.size());
+        ArrayList<HlsVariantPolicy.Variant> initial=HlsVariantPolicy.parseWithOverflow(master.toString(),base);
+        for(int i=0;i<9;i++)assertEquals("https://cdn.example/v"+i+".m3u8",initial.get(i).url);
+        assertEquals(8,HlsVariantPolicy.parse(master.toString(),base).size());
+    }
+
+    @Test public void rotatingFallbackDoesNotReorderSmallMasters()throws Exception{
+        String master="#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=10\n/a.m3u8\n"
+                +"#EXT-X-STREAM-INF:BANDWIDTH=20\n/b.m3u8\n";
+        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parseWithRotatingFallback(
+                master,"https://cdn.example/master.m3u8",100L);
+        assertEquals(2,variants.size());
+        assertEquals("https://cdn.example/b.m3u8",variants.get(0).url);
+        assertEquals("https://cdn.example/a.m3u8",variants.get(1).url);
+    }
+
     @Test public void duplicateRenditionsDoNotConsumeTheDistinctAttemptLimit() throws Exception {
         StringBuilder master = new StringBuilder("#EXTM3U\n");
         for (int i = 0; i < 12; i++) {
