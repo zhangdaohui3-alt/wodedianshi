@@ -372,6 +372,19 @@ public class SourceUpdateSchedulePolicyTest {
             assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(event,at,at,at));
     }
 
+    @Test public void onlyHealthyCheapIdleBatchesExtendTheRecheckQuota(){
+        assertEquals(96,SourceUpdateSchedulePolicy.PROVISIONAL_FAST_LIMIT);
+        assertTrue(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,36,30000L,192L,2097152L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(47,47,1000L,47L,1000L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,35,1000L,48L,1000L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,48,30001L,48L,1000L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,48,1000L,193L,1000L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,48,1000L,48L,2097153L));
+        assertTrue(SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(383L,4194303L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(384L,0L));
+        assertFalse(SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(0L,4194304L));
+    }
+
     @Test public void recheckSharesOnlyFullPositiveEvidenceForEquivalentEndpoints(){
         assertTrue(SourceUpdateSchedulePolicy.reusableFullRecheck(true,false,false,false,100L,101L));
         assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(false,false,false,false,100L,101L));
