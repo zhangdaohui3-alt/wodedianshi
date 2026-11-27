@@ -1170,7 +1170,7 @@ public class SourceUpdateWorker extends Worker {
       // existing saved backup; three independent failures are needed.
       JSONObject probeFailureStreaks=new JSONObject();
       HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
-      JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
+      Map<String,JSONObject> observedQoe=SourceMemoryStore.playbackSnapshot(getApplicationContext());
       // A failed/empty initial page cannot merge any new identities. Final
       // ranking and progress still operate on the authoritative staging rows.
       for(int i=0;(!initialDiscoveryChain||!candidates.isEmpty())&&i<saved.length();i++){
@@ -2404,18 +2404,15 @@ public class SourceUpdateWorker extends Worker {
           +" pending=0 membership_ms="+membershipMs+" sample_requests=0 sample_bytes=0");
       return Result.success();
     }
-    // Use only exact-key persisted playback evidence. Legacy entries without
-    // an explicit last event, malformed history and future timestamps fail open
-    // to the ordinary probe. Never remove a pending key or alter its score here.
-    JSONObject playbackHistory;
-    try{playbackHistory=new JSONObject(roomString("source_qoe_v1","{}"));}
-    catch(JSONException malformed){playbackHistory=new JSONObject();}
-    final JSONObject observedPlayback=playbackHistory;
+    // Use a fixed view of exact-key playback evidence. Missing events,
+    // malformed history and future timestamps fail open to ordinary probes.
+    // Never remove a pending key or alter its score here.
+    final Map<String,JSONObject> observedPlayback=SourceMemoryStore.playbackSnapshot(context);
     final long evidenceNow=System.currentTimeMillis();
     final int[] stableDeferred={0};
     ArrayList<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->{
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      JSONObject metric=observedPlayback.optJSONObject(key);
+      JSONObject metric=observedPlayback.get(key);
       boolean defer=metric!=null&&SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(
           metric.optString("lastEvent",""),metric.optLong("lastStable",0L),
           metric.optLong("updated",0L),evidenceNow);
@@ -2640,7 +2637,7 @@ public class SourceUpdateWorker extends Worker {
     }
     JSONObject finalScores=com.wodedianshi.tv.db.ManualProbeQualityStore.readManualRankingScores(
         getApplicationContext(),manualId,needed,pauseRequested);
-    rankCatalogueRows(rows,allRowIndices(rows),finalScores,new JSONObject(roomString("source_qoe_v1","{}")));
+    rankCatalogueRows(rows,allRowIndices(rows),finalScores,SourceMemoryStore.playbackSnapshot(getApplicationContext()));
     String reconciledStructure=null;
     long reconciledVersion=-1L;
     if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId)){
@@ -2692,12 +2689,12 @@ public class SourceUpdateWorker extends Worker {
     return ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<rows.length();}public Integer next(){return index++;}};
   }
   private void rankCatalogueRows(JSONArray saved,Iterable<Integer> rankingRows,JSONObject measuredScores,
-      JSONObject observedQoe)throws JSONException {
+      Map<String,JSONObject> observedQoe)throws JSONException {
       // The score inputs do not change during this ranking pass. Share a small
       // bounded cache and one recency clock across all rows, not across merges.
       final long rankingTime=System.currentTimeMillis();
       java.util.Comparator<String> bestFirst=SourceRankingRetentionPolicy.boundedBestFirst(
-          url->SourceQualityScorer.rankScore(url,measuredScores,observedQoe::optJSONObject,rankingTime),1024);
+          url->SourceQualityScorer.rankScore(url,measuredScores,observedQoe::get,rankingTime),1024);
       for(int i:rankingRows){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -3633,11 +3630,11 @@ public class SourceUpdateWorker extends Worker {
     scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,result.provisional,prior,result.score):-500.0);
   }
   private String scoreKey(String url){return StableKey.url(url);}
-  private java.util.Comparator<String> rankingComparator(JSONObject probes,JSONObject qoe){
+  private java.util.Comparator<String> rankingComparator(JSONObject probes,Map<String,JSONObject> qoe){
     // Scores can change between probe merges, so never share this cache across
     // operations. Freeze recency time within a comparison to keep it consistent.
     final long now=System.currentTimeMillis();
-    return SourceRankingRetentionPolicy.memoizedBestFirst(url->SourceQualityScorer.rankScore(url,probes,qoe::optJSONObject,now));
+    return SourceRankingRetentionPolicy.memoizedBestFirst(url->SourceQualityScorer.rankScore(url,probes,qoe::get,now));
   }
   // Sniff the response body as well as the URL: some IPTV gateways expose
   // HLS manifests through extensionless or tokenized endpoint URLs.
