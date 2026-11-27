@@ -75,17 +75,7 @@ public final class ManualProbeQualityStore {
                 // The compatibility JSON is not authoritative once full indexed
                 // quality has been published. Copy bounded pages in the same
                 // transaction, so a crash cannot seed a partial new round.
-                String after="";
-                for(;;){
-                    SourceProbeTimePolicy.checkPublicationPaused(paused);
-                    List<ManualProbeQualityEntity> page=db.manualProbeQualityDao().page(PUBLISHED_OWNER,after,256);
-                    if(page.isEmpty())break;
-                    List<ManualProbeQualityEntity> copy=new ArrayList<>(page.size());
-                    for(ManualProbeQualityEntity row:page)
-                        copy.add(new ManualProbeQualityEntity(owner,row.sourceKey,row.score,row.failureStreak));
-                    writeInTransaction(db,owner,copy,paused);
-                    after=page.get(page.size()-1).sourceKey;
-                }
+                copyQualityInTransaction(db,PUBLISHED_OWNER,owner,paused);
             }else writeInTransaction(db,owner,rows,paused);
             db.appStateDao().put(new AppStateEntity(READY_KEY,owner,System.currentTimeMillis()));
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
@@ -242,21 +232,31 @@ public final class ManualProbeQualityStore {
         requireInitialTransaction(db);
         if(!"true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))
             throw new IllegalStateException("Initial quality not initialized");
-        String after="";
-        for(;;){
-            SourceProbeTimePolicy.checkPublicationPaused(paused);
-            List<ManualProbeQualityEntity> page=db.manualProbeQualityDao().page(INITIAL_OWNER,after,256);
-            if(page.isEmpty())break;
-            List<ManualProbeQualityEntity> copy=new ArrayList<>(page.size());
-            for(ManualProbeQualityEntity row:page)
-                copy.add(new ManualProbeQualityEntity(PUBLISHED_OWNER,row.sourceKey,row.score,row.failureStreak));
-            db.manualProbeQualityDao().put(copy);
-            after=page.get(page.size()-1).sourceKey;
-        }
+        copyQualityInTransaction(db,INITIAL_OWNER,PUBLISHED_OWNER,paused);
         db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
         clearInitialInTransaction(db);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         db.manualProbeQualityDao().removeEmptyRows(PUBLISHED_OWNER);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+    }
+
+    /** Keep cancellation between bounded key ranges, but let SQLite copy
+     * values directly instead of materializing two Java entity lists per page.
+     * Existing callers own the transaction and validate build ownership. */
+    static void copyQualityInTransaction(AppDatabase db,String source,String target,BooleanSupplier paused){
+        if(!db.inTransaction()||source.equals(target))
+            throw new IllegalStateException("Quality copy requires distinct owners in transaction");
+        ManualProbeQualityDao dao=db.manualProbeQualityDao();
+        String after="";
+        for(;;){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<String> page=dao.pageKeys(source,after,256);
+            if(page.isEmpty())break;
+            String through=page.get(page.size()-1);
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            dao.copyRange(source,target,after,through);
+            after=through;
+        }
         SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
