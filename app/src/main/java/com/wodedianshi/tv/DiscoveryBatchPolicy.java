@@ -193,6 +193,40 @@ public final class DiscoveryBatchPolicy {
         return count>0&&scanned>=count&&marker>=0&&marker<count;
     }
 
+    // One bounded mask per immutable page; -1 preserves conservative legacy
+    // suffix replay when an older or malformed checkpoint lacks exact positions.
+    static String initialReplayMaskKey(int feedIndex) {
+        return initialBatchPrefix(feedIndex)+"replay_mask";
+    }
+    static long resumeReplayMask(String stored,int marker,int count) {
+        if(marker==NO_TRANSIENT_RECHECK)return 0L;
+        if(count<=0||count>INITIAL_PAGE_SIZE||count>62)return -1L;
+        try {
+            long mask=Long.parseLong(stored);
+            if(mask<=0L||(mask>>>count)!=0L)return -1L;
+            if(marker>=0&&(marker>=count||(mask&(1L<<marker))==0L))return -1L;
+            return mask;
+        }catch(NumberFormatException invalid){return -1L;}
+    }
+    static long noteReplayPosition(long mask,int position,int count) {
+        if(mask<0L||count>INITIAL_PAGE_SIZE||position<0||position>=count)return -1L;
+        return mask|(1L<<position);
+    }
+    // A deferred endpoint can have multiple distinct station/metadata rows.
+    // Keep all of its aliases in the replay suffix, without replaying other URLs.
+    static <T> long includeReplayAliases(long mask,java.util.List<T> page,
+            java.util.function.Function<T,String> endpoint) {
+        if(mask<0L||page.size()>INITIAL_PAGE_SIZE)return -1L;
+        java.util.HashSet<String> needed=new java.util.HashSet<>();
+        for(int i=0;i<page.size();i++)if((mask&(1L<<i))!=0L)needed.add(endpoint.apply(page.get(i)));
+        for(int i=0;i<page.size();i++)if(needed.contains(endpoint.apply(page.get(i))))mask|=1L<<i;
+        return mask;
+    }
+    static boolean skipReplayPosition(int marker,long mask,int position) {
+        return marker==TRANSIENT_RECHECK_USED&&mask>0L&&position>=0&&position<INITIAL_PAGE_SIZE
+                &&(mask&(1L<<position))==0L;
+    }
+
     /** Persist with the exact partial-page checkpoint; never treat it as EOF. */
     static String initialIdleRecheckKey(int feedIndex) {
         return initialBatchPrefix(feedIndex)+"idle_recheck";
