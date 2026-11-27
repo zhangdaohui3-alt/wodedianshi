@@ -633,9 +633,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     }
   }
-  private int sourceQualityScore(String source){
-    return SourceQualityScorer.labelScore(source);
-  }
   private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density);}
   // Mouse hover and D-pad focus are independent states. Hover never steals or clears focus.
   private boolean isCurrentPlayingRow(View view){
@@ -8174,14 +8171,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     org.json.JSONObject measured=cachedProbeScoreJson;
     long now=System.currentTimeMillis();
     for(String url:urls){
-      int label=sourceQualityScore(url);
-      try{
-        String key=StableKey.url(url),legacyKey=StableKey.legacyUrl(url);
-        double probeScore=measured.has(key)?measured.optDouble(key,0.0):measured.optDouble(legacyKey,0.0);
-        double adjustment=SourceQualityScorer.isFailedProbeScore(probeScore)?0.0:
-            SourceMemoryStore.qoeAdjustment(key,legacyKey,now);
-        scores.put(url,probeScore+adjustment+label*0.01);
-      }catch(Exception malformedUrl){scores.put(url,label*0.01);}
+      try{scores.put(url,SourceMemoryStore.rankedScore(url,measured,now));}
+      catch(Exception malformedUrl){scores.put(url,SourceQualityScorer.labelScore(url)*0.01);}
     }
     return scores;
   }
