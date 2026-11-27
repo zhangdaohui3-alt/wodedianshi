@@ -23,8 +23,8 @@ public final class SingleChannelRefreshPolicy {
         String otherRegion=RegionCategoryPolicy.subcategory(
                 metadata(candidateName,candidateGuide,candidateId),candidateGroup);
         if(!region.equals(otherRegion))return false;
-        String first=broadcaster(name,tvgName,tvgId);
-        String second=broadcaster(candidateName,candidateGuide,candidateId);
+        String first=ChannelNamePolicy.consistentBroadcaster(name,tvgName,tvgId);
+        String second=ChannelNamePolicy.consistentBroadcaster(candidateName,candidateGuide,candidateId);
         if(first==null||second==null)return false;
         if(!first.isEmpty()||!second.isEmpty())
             return region.isEmpty()&&!first.isEmpty()&&first.equals(second);
@@ -60,25 +60,6 @@ public final class SingleChannelRefreshPolicy {
         return ChannelIdentityPolicy.localStationIdentity(translated,guide);
     }
 
-    // null denotes contradictory recognized broadcaster labels.
-    private static String broadcaster(String... fields){
-        String found="";
-        for(String field:fields){
-            String value=ChannelNamePolicy.canonicalBroadcasterName(safe(field),"","","");
-            if(value.isEmpty()){
-                // The broad discovery identity recognizes these traditional
-                // CCTV labels, but canonicalBroadcasterName does not.
-                // Limit this fallback to an exact national channel label.
-                String alias=safe(field).trim();
-                if(alias.matches("中央(?:电视台)?(?:十[一二三四五六七]|十|[一二三四五六七八九])套"))
-                    value=SourceDiscoveryIdentityPolicy.canonicalName(alias);
-            }
-            if(value.isEmpty())continue;
-            if(!found.isEmpty()&&!found.equals(value))return null;
-            found=value;
-        }
-        return found;
-    }
     private static String metadata(String name,String guide,String id){
         return safe(name)+" "+safe(guide)+" "+safe(id);
     }
