@@ -110,7 +110,7 @@ public class InitialQualityTransactionTest {
             });
             db.appStateDao().put(new AppStateEntity("old_scores","invalid json",1L));
             db.appStateDao().put(new AppStateEntity("old_streaks","invalid json",1L));
-            ManualProbeQualityStore.ensureInitial(db,"old_scores","old_streaks",()->false);
+            ManualProbeQualityStore.ensureInitial(db,()->false);
             assertTrue(ManualProbeQualityStore.hasInitial(db));
             assertNull(db.manualProbeQualityDao().find(initial,"key"));
             assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,"key").score);
@@ -127,16 +127,22 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
-    @Test public void initialLegacySeedAndRoomOnlyManualSeedHaveIndependentRules()throws Exception{
+    @Test public void freshInitialAndManualSeedsIgnoreLegacyJson()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
         try{
             db.appStateDao().put(new AppStateEntity("old_scores","{\"a\":900}",1L));
             db.appStateDao().put(new AppStateEntity("old_streaks","{\"b\":2}",1L));
-            ManualProbeQualityStore.ensureInitial(db,"old_scores","old_streaks",()->false);
+            ManualProbeQualityStore.ensureInitial(db,()->false);
             String initial=ManualProbeQualityStore.INITIAL_OWNER;
-            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(initial,"a").score);
-            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(initial,"b").failureStreak);
+            assertTrue(ManualProbeQualityStore.hasInitial(db));
+            assertNull(db.manualProbeQualityDao().find(initial,"a"));
+            assertNull(db.manualProbeQualityDao().find(initial,"b"));
+            // A newly committed observation survives initialization retries.
+            db.runInTransaction(()->ManualProbeQualityStore.writeInitialInTransaction(db,
+                Collections.singletonList(new ManualProbeQualityEntity(initial,"a",1200,1)),()->false));
+            ManualProbeQualityStore.ensureInitial(db,()->false);
+            assertEquals(Integer.valueOf(1200),db.manualProbeQualityDao().find(initial,"a").score);
             db.runInTransaction(()->ManualProbeQualityStore.clearInitialInTransaction(db));
             String manual="manual-test";
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,manual,1L));
