@@ -740,6 +740,7 @@ public class SourceUpdateWorker extends Worker {
       boolean[] failedForCoverage=new boolean[feeds.length];
       boolean acquisitionYield=false;
       boolean[] availableUnderPressure=null;
+      String[] acquiredVersions=new String[feeds.length];
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         InitialFeedAdmission admission=readInitialFeedAdmission(feeds,slowPlayback);
@@ -751,6 +752,7 @@ public class SourceUpdateWorker extends Worker {
         System.arraycopy(admission.failed,0,failedForCoverage,0,feeds.length);
         acquisitionYield=admission.acquisitionYield;
         availableUnderPressure=admission.availableUnderPressure;
+        acquiredVersions=admission.acquiredVersions;
         final long[] recheckRemaining=admission.remaining;
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
@@ -836,7 +838,7 @@ public class SourceUpdateWorker extends Worker {
             cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
           }
           String acquiredVersion=initialDiscoveryChain&&!slowPlayback
-              ?roomString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feedIndex),""):"";
+              ?acquiredVersions[feedIndex]:"";
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
               acquiredVersion,PlaylistFeedCache.contentVersion(cachedFeed)))){
             // Restore the derived index from the exact committed body first.
@@ -863,7 +865,8 @@ public class SourceUpdateWorker extends Worker {
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
-            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds);
+            acquiredVersions[feedIndex]=PlaylistFeedCache.contentVersion(cachedFeed);
+            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions);
             // Yield to another fresh eligible directory before deep scans; retain
             // immediate first-watch and the ordinary probe budget when none remains.
             int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(feedIndex,
@@ -4052,9 +4055,11 @@ public class SourceUpdateWorker extends Worker {
     final long[] remaining;
     boolean acquisitionYield;
     boolean[] availableUnderPressure;
+    final String[] acquiredVersions;
     InitialFeedAdmission(int count){
       completed=new boolean[count];deferred=new boolean[count];
       visited=new boolean[count];failed=new boolean[count];prepared=new boolean[count];remaining=new long[count];
+      acquiredVersions=new String[count];
     }
   }
   /** One consistent Room read for both admission and the post-commit delay
@@ -4080,6 +4085,7 @@ public class SourceUpdateWorker extends Worker {
       admission.completed[i]=Boolean.parseBoolean(state.get(initialFeedDoneKey(i)));
       admission.failed[i]=positiveFeedState(state,initialFeedFailureCountKey(i));
       String acquired=state.get(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
+      admission.acquiredVersions[i]=acquired;
       admission.prepared[i]=acquired!=null&&!acquired.isEmpty();
       admission.visited[i]=admission.failed[i]
           ||positiveFeedState(state,feedCursorKey(i))
@@ -4099,7 +4105,7 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     if(!viewing){
-      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed);}
+      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed,admission.acquiredVersions);}
       catch(IOException unavailable){android.util.Log.w("MyTVSourceDiscovery","initial_cache_inventory_unavailable");}
     }
     return admission;
