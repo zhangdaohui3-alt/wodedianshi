@@ -1173,7 +1173,7 @@ public class SourceUpdateWorker extends Worker {
       final boolean indexedInitial=initialDiscoveryChain;
       if(indexedInitial&&!com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext()))
         com.wodedianshi.tv.db.ManualProbeQualityStore.ensureInitial(getApplicationContext(),
-            new JSONObject(roomString(scoresKey,"{}")),new JSONObject(roomString(streaksKey,"{}")),pauseRequested);
+            scoresKey,streaksKey,pauseRequested);
       final boolean indexedQuality=manualRefresh||indexedPublished||indexedInitial;
       final String qualityOwner=manualRefresh?manualId:indexedInitial?
           com.wodedianshi.tv.db.ManualProbeQualityStore.INITIAL_OWNER:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
