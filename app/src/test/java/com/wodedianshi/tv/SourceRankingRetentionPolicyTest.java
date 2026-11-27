@@ -96,4 +96,45 @@ public class SourceRankingRetentionPolicyTest {
         org.junit.Assert.assertEquals(1,SourceRankingRetentionPolicy.restoreSelectedIndex(reordered,"https://EXAMPLE.invalid:443/a"));
         org.junit.Assert.assertEquals(0,SourceRankingRetentionPolicy.restoreSelectedIndex(reordered,"https://example.invalid/a?token=other"));
     }
+
+    @Test public void sharedRankingMatchesRowLocalOrderAcrossTwentyThousandRoutePositions(){
+        java.util.concurrent.atomic.AtomicInteger oldCalls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger newCalls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.ToDoubleFunction<String> score=url->url.hashCode()%11;
+        java.util.Comparator<String> shared=SourceRankingRetentionPolicy.boundedBestFirst(url->{
+            newCalls.incrementAndGet();return score.applyAsDouble(url);
+        },1024);
+        for(int i=0;i<5000;i++){
+            String active="https://example.invalid/shared/"+(i%16);
+            String primary="https://example.invalid/primary/"+i;
+            java.util.List<String> input=Arrays.asList(active,primary,
+                "https://example.invalid/shared/"+((i+1)%16),
+                "https://example.invalid/shared/"+((i+2)%16));
+            java.util.Comparator<String> old=SourceRankingRetentionPolicy.memoizedBestFirst(url->{
+                oldCalls.incrementAndGet();return score.applyAsDouble(url);
+            });
+            java.util.ArrayList<String> expected=new java.util.ArrayList<>(input);
+            expected.sort(old);
+            expected=new java.util.ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(expected,primary,active,3));
+            expected.sort(old);
+            java.util.ArrayList<String> actual=new java.util.ArrayList<>(input);
+            actual.sort(shared);
+            java.util.List<String> retained=SourceRankingRetentionPolicy.retainRequiredAndBest(actual,primary,active,3);
+            if(!actual.equals(retained)){actual=new java.util.ArrayList<>(retained);actual.sort(shared);}
+            assertEquals(expected,actual);
+        }
+        assertEquals(20000,oldCalls.get());
+        assertEquals(5016,newCalls.get());
+    }
+
+    @Test public void boundedRankingEvictsOldEvidenceAndRetainsComparatorOrder(){
+        java.util.Map<String,Integer> calls=new java.util.HashMap<>();
+        java.util.Comparator<String> cmp=SourceRankingRetentionPolicy.boundedBestFirst(url->{
+            calls.put(url,calls.getOrDefault(url,0)+1);return url.charAt(0);
+        },2);
+        org.junit.Assert.assertTrue(cmp.compare("b","a")<0);
+        org.junit.Assert.assertTrue(cmp.compare("c","b")<0);
+        org.junit.Assert.assertTrue(cmp.compare("a","b")>0);
+        assertEquals(Integer.valueOf(2),calls.get("a"));
+    }
 }
