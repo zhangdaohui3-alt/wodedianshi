@@ -16,6 +16,21 @@ public final class SourceRankingRetentionPolicy {
                 scores.computeIfAbsent(a,key->score.applyAsDouble(key)));
     }
 
+    /** A complete ranking pass has immutable scores and a fixed clock.
+     * Reuse calculations across channels with a bounded access-order cache,
+     * rather than allocate a separate cache for every row. */
+    static java.util.Comparator<String> boundedBestFirst(
+            java.util.function.ToDoubleFunction<String> score,int capacity) {
+        final int limit=Math.max(1,capacity);
+        java.util.LinkedHashMap<String,Double> scores=new java.util.LinkedHashMap<String,Double>(16,0.75f,true){
+            @Override protected boolean removeEldestEntry(java.util.Map.Entry<String,Double> eldest){
+                return size()>limit;
+            }
+        };
+        return (a,b)->Double.compare(scores.computeIfAbsent(b,key->score.applyAsDouble(key)),
+                scores.computeIfAbsent(a,key->score.applyAsDouble(key)));
+    }
+
     /**
      * Input is already quality-ranked from best to worst. Required URLs are retained
      * even when they fall below the cap; remaining slots are filled in ranked order.
