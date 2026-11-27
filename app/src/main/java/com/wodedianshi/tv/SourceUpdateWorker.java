@@ -3462,7 +3462,14 @@ public class SourceUpdateWorker extends Worker {
             if(resources.requiresUnsupportedPreflight()){
               result.unsupportedPreflight=true;continue;
             }
-            if(candidateSegments.isEmpty())continue;
+            if(candidateSegments.isEmpty()){
+              // A live media playlist can temporarily have no available
+              // segments (startup, encoder gap, LL-HLS publication delay).
+              // Keep it unconfirmed, not a permanent negative observation.
+              if(HlsMediaPlaylistPolicy.isEmptyLiveWindow(candidateManifest))
+                result.incompleteManifest=true;
+              continue;
+            }
             // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
             byte[] aesKey=null;
             if(resources.aes128Encrypted){
@@ -3687,6 +3694,11 @@ public class SourceUpdateWorker extends Worker {
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
+      String encoding=c.getHeaderField("Content-Encoding");
+      // A transparently decoded body cannot be compared with compressed
+      // wire length. Only use an explicit identity/unencoded HTTP length.
+      int promised=!partial&&(encoding==null||"identity".equalsIgnoreCase(encoding.trim()))
+          ?c.getContentLength():-1;
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[stopOnConfirmedMedia?1024:SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
         while(total<=maxBytes){
@@ -3696,7 +3708,11 @@ public class SourceUpdateWorker extends Worker {
           if(stopOnDirectTs&&total<4096)length=Math.min(length,4096-total);
           if(length==0)break;
           long readStarted=slowPlayback?android.os.SystemClock.elapsedRealtime():0L;
-          n=in.read(buffer,0,length);
+          try{n=in.read(buffer,0,length);}
+          catch(IOException brokenBody){
+            if(promised>=0&&total<promised)result.incompleteSample=true;
+            throw brokenBody;
+          }
           if(n>0)result.sampleBytes+=n;
           long readElapsed=slowPlayback?android.os.SystemClock.elapsedRealtime()-readStarted:0L;
           if(probeDeadlineReached(deadline,pauseRequested))return null;
@@ -3731,6 +3747,9 @@ public class SourceUpdateWorker extends Worker {
         }
         if(probeDeadlineReached(deadline,pauseRequested))return null;
         byte[] received=out.toByteArray();
+        if(promised>=0&&received.length<=maxBytes&&received.length<promised){
+          result.incompleteSample=true;return null;
+        }
         if(partial&&!HlsProbeValidationPolicy.prefixBodyMatches(prefixRange,received.length,maxBytes)){
           result.incompleteSample=true;return null;
         }
