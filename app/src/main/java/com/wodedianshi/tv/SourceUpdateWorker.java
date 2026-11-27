@@ -1255,6 +1255,8 @@ public class SourceUpdateWorker extends Worker {
           initialDiscoveryChain,manualRefresh,slowPlayback);
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       int originDeferred=0,provisionalAccepted=0;
+      int uncertainSocket=0,uncertainTransport=0,uncertainBudget=0,uncertainMedia=0;
+      int uncertainPaced=0;
       long consumedSampleRequests=0L,consumedSampleBytes=0L;
       boolean idleWaveTimedOut=false;
       boolean viewingDeferred=false;
@@ -1401,6 +1403,15 @@ public class SourceUpdateWorker extends Worker {
             // Timeouts, transient network failures and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
             initialTimeouts++;
+            // Mutually exclusive primary reasons for consumed inconclusive results.
+            // Cancellation and deferral are not media failures or socket timeouts.
+            switch(measured.uncertainReason(boundedAddressBudget&&measuredAt>=addressDeadline)){
+              case 1: uncertainSocket++;break;
+              case 2: uncertainTransport++;break;
+              case 3: uncertainBudget++;break;
+              case 4: uncertainMedia++;break;
+              default: uncertainPaced++;break;
+            }
             if(DiscoveryBatchPolicy.holdInconclusiveCandidate(initialDiscoveryChain,slowPlayback,e.savedSource)){
               if(pageFeed<0)throw new IllegalStateException("Missing initial recheck page");
               viewingDeferred=true;
@@ -1590,7 +1601,7 @@ public class SourceUpdateWorker extends Worker {
       }
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_budget="+initialTimeouts+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" consumed_sample_requests="+consumedSampleRequests+" consumed_sample_bytes="+consumedSampleBytes+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_total="+initialTimeouts+" socket_timeout="+uncertainSocket+" transport="+uncertainTransport+" address_budget="+uncertainBudget+" media_uncertain="+uncertainMedia+" paced_uncertain="+uncertainPaced+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" consumed_sample_requests="+consumedSampleRequests+" consumed_sample_bytes="+consumedSampleBytes+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -3338,6 +3349,13 @@ public class SourceUpdateWorker extends Worker {
     boolean socketTimedOut;
     boolean transientNetworkFailure,incompleteManifest,incompleteSample,unsupportedPreflight,emptyLiveWindow;
     boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample||unsupportedPreflight||emptyLiveWindow;}
+    // Diagnostics only: one primary reason per already-inconclusive result.
+    int uncertainReason(boolean budgetExpired){
+      if(socketTimedOut)return 1;
+      if(transientNetworkFailure)return 2;
+      if(budgetExpired)return 3;
+      return inconclusive()?4:5;
+    }
     // Reuse the existing bounded domestic-core suffix replay for a genuinely
     // temporary empty live window, but not for a deterministic parser limit.
     boolean recoverableCoreWindow(){return socketTimedOut||emptyLiveWindow;}
