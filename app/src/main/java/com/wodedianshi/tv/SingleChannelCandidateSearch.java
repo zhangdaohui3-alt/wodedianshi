@@ -195,6 +195,12 @@ final class SingleChannelCandidateSearch {
         return page.scanned;
     }
 
+    // A positional cursor describes both the body and its physical row order.
+    // Raw streaming and raw indexes share the same order.
+    static String scanVersion(String bodyVersion,File body){
+        return PlaylistFeedIndex.initialProbeVersion(bodyVersion,PlaylistFeedIndex.hasCoverageOrder(body));
+    }
+
     static int resumeOffset(String savedVersion,String actualVersion,int savedOffset){
         return actualVersion!=null&&!actualVersion.isEmpty()&&actualVersion.equals(savedVersion)
                 ?Math.max(0,savedOffset):0;
@@ -254,7 +260,7 @@ final class SingleChannelCandidateSearch {
             int candidateLimit=Math.min(MAX_PER_FEED,candidateBudget-result.candidates.size());
             ArrayList<Candidate> local=new ArrayList<>();
             try{
-                String version=PlaylistFeedCache.contentVersion(body);
+                String version=scanVersion(PlaylistFeedCache.contentVersion(body),body);
                 org.json.JSONObject prior=cursors.optJSONObject(feedKey);
                 int offset=prior==null?0:resumeOffset(prior.optString("version"),version,prior.optInt("offset"));
                 int indexedCount=PlaylistFeedIndex.indexedEntryCount(body);
@@ -275,7 +281,7 @@ final class SingleChannelCandidateSearch {
                 }
                 result.rowsScanned+=scanned;
                 if(scanned>=rowLimit||local.size()>=candidateLimit)result.bounded=true;
-                if(!version.equals(PlaylistFeedCache.contentVersion(body))){
+                if(!version.equals(scanVersion(PlaylistFeedCache.contentVersion(body),body))){
                     result.missingFeeds++;continue;
                 }
                 cursors.put(feedKey,new org.json.JSONObject().put("version",version)
