@@ -515,7 +515,7 @@ public final class PlaylistFeedCache {
         }
     }
 
-    /** Return currently usable unfinished initial indexes only when their
+    /** Return locally recoverable unfinished initial bodies only when their
      * disk footprint leaves insufficient headroom for one maximum body.
      * This is admission guidance, not a persistent inventory or validity
      * certificate. Completed directories do not consume this reserve. */
@@ -534,11 +534,16 @@ public final class PlaylistFeedCache {
             }
         }
         if(!initialCacheNeedsDrain(bytes))return null;
-        boolean[] available=new boolean[feeds.length];
-        for(int i=0;i<bodies.length;i++){
-            File body=bodies[i];
-            available[i]=hasAcquiredInitialIndex(body,acquiredVersions[i]);
-        }
+        return recoverableInitialBodies(bodies,acquiredVersions);
+    }
+
+    /** Admission only: the idle owner validates/builds the derived index
+     * before reading a page. A missing index must not make an exact acquired
+     * body disposable or force a new network acquisition. */
+    static boolean[] recoverableInitialBodies(File[] bodies,String[] acquiredVersions)throws IOException {
+        boolean[] available=new boolean[bodies.length];
+        for(int i=0;i<bodies.length;i++)
+            available[i]=matchingAcquiredBody(bodies[i],acquiredVersions[i])!=null;
         return available;
     }
 
