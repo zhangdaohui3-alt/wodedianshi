@@ -141,10 +141,23 @@ public final class DiscoveryBatchPolicy {
     static <T> void prioritizeUncovered(java.util.List<T> rows,long covered,
             java.util.function.ToIntFunction<T> priority) {
         if(covered<=0L||rows.size()>INITIAL_PAGE_SIZE)return;
+        stablePriorityPartition(rows,covered,priority);
+    }
+
+    /** Stable geographic ordering with one classification per row, rather
+     * than repeating metadata analysis during comparator calls. */
+    static <T> void stablePrioritySort(java.util.List<T> rows,java.util.function.ToIntFunction<T> priority){
+        if(rows.size()<2)return;
+        stablePriorityPartition(rows,0L,priority);
+    }
+
+    private static <T> void stablePriorityPartition(java.util.List<T> rows,long covered,
+            java.util.function.ToIntFunction<T> priority){
         java.util.TreeMap<Integer,java.util.ArrayList<T>> groups=new java.util.TreeMap<>();
         for(int i=0;i<rows.size();i++){
             T row=rows.get(i);
-            int rank=2*priority.applyAsInt(row)+((covered&(1L<<i))!=0L?1:0);
+            int priorityRank=priority.applyAsInt(row);
+            int rank=covered==0L?priorityRank:2*priorityRank+((covered&(1L<<i))!=0L?1:0);
             groups.computeIfAbsent(rank,k->new java.util.ArrayList<>()).add(row);
         }
         rows.clear();
