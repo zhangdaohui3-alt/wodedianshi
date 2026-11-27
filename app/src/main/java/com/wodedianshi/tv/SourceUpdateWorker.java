@@ -596,7 +596,10 @@ public class SourceUpdateWorker extends Worker {
             // Decode one record to check the sidecar without allocating all entries.
             PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
             count=PlaylistFeedIndex.indexedEntryCount(cached);
-            if(count>=0)preparedVersion=PlaylistFeedCache.contentVersion(cached);
+            if(count>=0){
+              PlaylistFeedCache.trimPreparedInitial(cached);
+              preparedVersion=PlaylistFeedCache.contentVersion(cached);
+            }
           }catch(Exception failure){
             if(failure instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean())
               return deferredViewingResult(manual,initialDiscoveryChain);
@@ -3120,6 +3123,10 @@ public class SourceUpdateWorker extends Worker {
   private void commitInitialAcquisition(int index,File cached) throws IOException {
     String version=PlaylistFeedCache.contentVersion(cached);
     if(PlaylistFeedIndex.indexedEntryCount(cached)<0)throw new IOException("Prepared directory index unavailable");
+    SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+    // Defer additional eviction work while playing; the idle preparation path
+    // accounts for the newly generated index before recording acquisition.
+    if(!slowPlayback)PlaylistFeedCache.trimPreparedInitial(cached);
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(index),version)
