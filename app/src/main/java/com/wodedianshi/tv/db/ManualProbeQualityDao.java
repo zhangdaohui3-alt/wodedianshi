@@ -10,6 +10,14 @@ import java.util.List;
 public interface ManualProbeQualityDao {
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey IN (:keys)")
     List<ManualProbeQualityEntity> load(String owner,List<String> keys);
+    // Select the private row even when both values are null. Only a missing
+    // private row inherits the corresponding published row.
+    @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey IN (:keys) "
+        + "UNION ALL SELECT p.* FROM manual_probe_quality p "
+        + "WHERE p.owner=:published AND p.sourceKey IN (:keys) "
+        + "AND NOT EXISTS (SELECT 1 FROM manual_probe_quality r "
+        + "WHERE r.owner=:owner AND r.sourceKey=p.sourceKey)")
+    List<ManualProbeQualityEntity> loadInherited(String owner,String published,List<String> keys);
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey=:key LIMIT 1")
     ManualProbeQualityEntity find(String owner,String key);
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
