@@ -846,7 +846,7 @@ public class SourceUpdateWorker extends Worker {
               acquiredVersion,PlaylistFeedCache.contentVersion(cachedFeed)))){
             // Restore the derived index from the exact committed body first.
             // Evicted or changed bodies still require ordinary acquisition.
-            cachedFeed=PlaylistFeedCache.findAcquiredInitialBody(getApplicationContext(),feed,acquiredVersion);
+            cachedFeed=PlaylistFeedCache.findAcquiredInitialBody(getApplicationContext(),feed,acquiredVersion,pauseRequested);
             if(cachedFeed!=null){
               noteInitialStage("复用已保存目录并恢复索引 "+(feedIndex+1)+"/"+feeds.length);
             }else{
