@@ -375,6 +375,32 @@ public class HlsWorkerProbeIntegrationTest {
         assertEquals(Collections.singleton(StableKey.url(url)),pending);
     }
 
+    @Test public void idleRenditionFallbackReusesConfirmedFirstAsDistinctSecond()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            String low=media("low").replace("/low2.ts","/high1.ts");
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/master.m3u8",200,bytes(MASTER));
+                replyRecheck(server,"/high.m3u8",200,bytes(media("high")));
+                replyRecheck(server,"/high1.ts",200,transportSample());
+                replyRecheck(server,"/high2.ts",200,bytes("not media"));
+                replyRecheck(server,"/low.m3u8",200,bytes(low));
+                replyRecheck(server,"/low1.ts",200,transportSample());
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(12,TimeUnit.SECONDS);
+            assertTrue(result.valid);assertEquals(640,result.width);
+            assertEquals(6L,result.sampleRequests);
+            assertEquals(bytes(MASTER).length+bytes(media("high")).length+bytes(low).length
+                    +2L*transportSample().length+bytes("not media").length,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
