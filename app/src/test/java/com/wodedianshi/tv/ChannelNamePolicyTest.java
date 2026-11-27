@@ -58,6 +58,16 @@ public class ChannelNamePolicyTest {
         assertEquals("Local News",ChannelNamePolicy.canonicalLocalDisplayName("Local News","","","US"));
     }
 
+    @Test public void chinesePresentationAliasesKeepUnknownAndLocalNamesConservative(){
+        assertEquals("凤凰卫视中文台",ChannelNamePolicy.chineseDisplayName("Phoenix Chinese Channel","","","Hong Kong"));
+        assertEquals("翡翠台",ChannelNamePolicy.chineseDisplayName("TVB Jade","","","Hong Kong"));
+        assertEquals("BBC新闻",ChannelNamePolicy.chineseDisplayName("BBC News","","","UK"));
+        assertEquals("BBC News Arabic",ChannelNamePolicy.chineseDisplayName("BBC News Arabic","","",""));
+        assertEquals("深圳新闻",ChannelNamePolicy.chineseDisplayName("Shenzhen News","","","China"));
+        assertEquals("Fuzhou News",ChannelNamePolicy.chineseDisplayName("Fuzhou News","","","China"));
+        assertEquals("厦门新闻",ChannelNamePolicy.chineseDisplayName("厦门新闻","","","China"));
+    }
+
     @Test public void genericForeignLocalGroupIsNotDomesticEvidence() {
         assertFalse(ChannelNamePolicy.isDomesticLocalLabel("Local News US",false));
         assertFalse(ChannelNamePolicy.isDomesticLocalLabel("Local News",false));
