@@ -223,17 +223,8 @@ public final class SourceMemoryStore {
     }
 
     /** Published metrics are read here only; never expose mutable JSON to callers. */
-    public static double qoeAdjustment(String key, String legacy, long now) {
-        JSONObject m=qoe.get(key);
-        if(m==null)m=qoe.get(legacy);
-        if(m==null||m.optInt("attempts",0)<2)return 0.0d;
-        int attempts=Math.max(1,m.optInt("attempts",0));
-        int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-        double adjustment=SourceQoeScoringPolicy.adjustment(attempts,m.optInt("ready",0),
-            m.optInt("firstFrames",0),m.optInt("stablePlays",0),m.optInt("failures",0),
-            m.optInt("buffers",0),m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),codecWarnings);
-        return adjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now)
-            +SourceQoeScoringPolicy.recentSuccessBonus(m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
+    static double rankedScore(String url,JSONObject probes,long now){
+        return SourceQualityScorer.rankScore(url,probes,qoe::get,now);
     }
 
     private static void write(Context context, String key, String value) {
