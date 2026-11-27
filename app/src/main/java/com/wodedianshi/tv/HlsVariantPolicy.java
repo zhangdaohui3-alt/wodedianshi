@@ -63,6 +63,9 @@ public final class HlsVariantPolicy {
     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
         ArrayList<Variant> variants = new ArrayList<>();
         if (manifest == null || finalManifestUrl == null) return variants;
+        // Most live media playlists have no master renditions. Avoid splitting
+        // the same large body once here and again in the media parser.
+        if (!manifest.contains("#EXT-X-STREAM-INF:")) return variants;
         String[] lines = manifest.replace("\r", "").split("\n");
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
