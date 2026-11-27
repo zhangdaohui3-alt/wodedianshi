@@ -1214,10 +1214,11 @@ public class SourceUpdateWorker extends Worker {
         // Coverage ordering and committed-route reuse must see the same
         // authoritative scores BEFORE page admission/fingerprint selection.
         LinkedHashSet<String> needed=new LinkedHashSet<>();
+        Set<JSONObject> collected=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
         for(Entry entry:candidates){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           needed.add(entry.url);
-          collectQualityUrls(needed,byIdentity.get(entry.mergeIdentity()));
+          collectQualityUrlsOnce(needed,collected,byIdentity.get(entry.mergeIdentity()));
         }
         com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
             manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
@@ -1373,21 +1374,17 @@ public class SourceUpdateWorker extends Worker {
         // retained URL rather than substituting the capped compatibility view.
         if(indexedPublished)for(int i=0;i<saved.length();i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          JSONObject row=saved.getJSONObject(i);needed.add(row.optString("url"));
-          JSONArray urls=row.optJSONArray("sources");
-          if(urls!=null)for(int j=0;j<urls.length();j++)needed.add(urls.optString(j));
+          collectQualityUrls(needed,saved.getJSONObject(i));
         }
+        // Routine already collected every published row above. Manual staging
+        // needs only each distinct target row plus every exact candidate URL.
+        Set<JSONObject> collected=indexedPublished?null:
+            Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
         for(Entry entry:probeCandidates){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           needed.add(entry.url);
-          if(!entry.savedSource){
-            JSONObject target=byIdentity.get(entry.mergeIdentity());
-            if(target!=null){
-              needed.add(target.optString("url"));
-              JSONArray urls=target.optJSONArray("sources");
-              if(urls!=null)for(int i=0;i<urls.length();i++)needed.add(urls.optString(i));
-            }
-          }
+          if(collected!=null&&!entry.savedSource)
+            collectQualityUrlsOnce(needed,collected,byIdentity.get(entry.mergeIdentity()));
         }
         com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
             manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
@@ -2716,6 +2713,10 @@ public class SourceUpdateWorker extends Worker {
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     clearRecentProbeCache();
     return Result.success();
+  }
+  // Call only while preparing an immutable view, before any route merges.
+  static void collectQualityUrlsOnce(Set<String> needed,Set<JSONObject> collected,JSONObject row){
+    if(row!=null&&collected.add(row))collectQualityUrls(needed,row);
   }
   private static void collectQualityUrls(Set<String> needed,JSONObject row){
     if(row==null)return;
