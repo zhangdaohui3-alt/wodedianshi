@@ -13,6 +13,7 @@ public final class ManualProbeQualityStore {
     private ManualProbeQualityStore(){}
     static final String READY_KEY="source_manual_quality_owner_v1";
     public static final String PUBLISHED_OWNER="@published";
+    public static final String INITIAL_OWNER="@initial";
     private static final String PUBLISHED_READY_KEY="source_indexed_quality_published_v1";
 
     public static boolean hasPublished(Context context){
@@ -145,6 +146,29 @@ public final class ManualProbeQualityStore {
         db.manualProbeQualityDao().clearOwner(PUBLISHED_OWNER);
         db.manualProbeQualityDao().publish(owner,PUBLISHED_OWNER);
         db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
+    }
+
+    /** Private first-build scores share the existing table. They become
+     * visible to published readers only with the final catalogue transaction. */
+    static void writeInitialInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,
+            BooleanSupplier paused){
+        requireInitialTransaction(db);
+        for(ManualProbeQualityEntity row:rows)
+            if(!INITIAL_OWNER.equals(row.owner))throw new IllegalArgumentException("Wrong initial quality owner");
+        for(int i=0;i<rows.size();i+=256){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            db.manualProbeQualityDao().put(rows.subList(i,Math.min(i+256,rows.size())));
+        }
+    }
+
+    private static void requireInitialTransaction(AppDatabase db){
+        if(!db.inTransaction()||db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null)
+            throw new IllegalStateException("Initial quality requires independent build transaction");
+    }
+
+    static void clearInitialInTransaction(AppDatabase db){
+        requireInitialTransaction(db);
+        db.manualProbeQualityDao().clearOwner(INITIAL_OWNER);
     }
 
     static void writePublishedInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,
