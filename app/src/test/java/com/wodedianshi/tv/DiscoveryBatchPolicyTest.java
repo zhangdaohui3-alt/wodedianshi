@@ -20,6 +20,16 @@ public class DiscoveryBatchPolicyTest {
         org.junit.Assert.assertFalse(DiscoveryBatchPolicy.shouldReplayTransientSuffix(DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED,48,48));
     }
 
+    @Test public void quickLocalRecoveryUnderPressureConsumesPageBeforeRotation(){
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbePreparedDirectory(false,48,10000,false,true,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbePreparedDirectory(false,48,10000,false,true,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbePreparedDirectory(false,48,10000,false,false,true));
+        org.junit.Assert.assertTrue(DiscoveryBatchPolicy.canProbePreparedDirectory(false,48,10000,true,false,false));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbePreparedDirectory(true,48,1000,true,true,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbePreparedDirectory(false,48,10001,true,true,true));
+        org.junit.Assert.assertFalse(DiscoveryBatchPolicy.canProbePreparedDirectory(false,0,1000,true,true,true));
+    }
+
     @Test public void coolingStageResumesAtEarliestEligibleFeedWithoutSkippingPriority() {
         assertEquals(30000L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,100000L));
         assertEquals(1L,DiscoveryBatchPolicy.transientRecheckRemainingMs(100000L,129999L));
