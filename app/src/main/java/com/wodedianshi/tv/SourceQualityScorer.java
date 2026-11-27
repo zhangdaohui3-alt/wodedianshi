@@ -44,13 +44,12 @@ public final class SourceQualityScorer {
      * History values are read-only observations from the caller's snapshot. */
     static double rankScore(String url,org.json.JSONObject probes,
             java.util.function.Function<String,org.json.JSONObject> history,long now){
-        String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
-        double probe=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacy,0.0);
+        String key=StableKey.url(url);
+        double probe=probes.optDouble(key,0.0);
         double score=probe+labelScore(url)*0.01;
         // A failed current media probe must not be rescued by old playback history.
         if(isFailedProbeScore(probe))return score;
         org.json.JSONObject m=history.apply(key);
-        if(m==null)m=history.apply(legacy);
         if(m==null||m.optInt("attempts",0)<2)return score;
         int attempts=Math.max(1,m.optInt("attempts",0));
         int warnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
