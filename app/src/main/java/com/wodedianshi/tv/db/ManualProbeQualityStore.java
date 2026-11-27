@@ -223,7 +223,12 @@ public final class ManualProbeQualityStore {
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         // Copy only exact preview keys; missing private rows leave inherited
         // published evidence untouched. Nullable private rows still replace.
-        db.manualProbeQualityDao().copyKeys(INITIAL_OWNER,PUBLISHED_OWNER,new ArrayList<>(keys));
+        List<String> page=new ArrayList<>(keys);
+        ManualProbeQualityDao dao=db.manualProbeQualityDao();
+        dao.copyKeys(INITIAL_OWNER,PUBLISHED_OWNER,page);
+        // Published state has no inherited base. A cleared observation is
+        // represented by absence, while its private tombstone remains intact.
+        dao.removeEmptyKeys(PUBLISHED_OWNER,page);
     }
 
     /** Merge all remaining private evidence at final publication.
@@ -295,7 +300,15 @@ public final class ManualProbeQualityStore {
             if(!PUBLISHED_OWNER.equals(row.owner))throw new IllegalArgumentException("Wrong published quality owner");
         for(int i=0;i<rows.size();i+=256){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
-            db.manualProbeQualityDao().put(rows.subList(i,Math.min(i+256,rows.size())));
+            List<ManualProbeQualityEntity> retained=new ArrayList<>();
+            List<String> cleared=new ArrayList<>();
+            for(ManualProbeQualityEntity row:rows.subList(i,Math.min(i+256,rows.size()))){
+                if(row.score==null&&row.failureStreak==null)cleared.add(row.sourceKey);
+                else retained.add(row);
+            }
+            ManualProbeQualityDao dao=db.manualProbeQualityDao();
+            if(!retained.isEmpty())dao.put(retained);
+            if(!cleared.isEmpty())dao.removeKeys(PUBLISHED_OWNER,cleared);
         }
     }
 
