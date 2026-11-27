@@ -411,7 +411,7 @@ public class HlsWorkerProbeIntegrationTest {
     }
 
     @Test public void cappedManifestIsInconclusiveWithoutDependentMediaRequests()throws Exception{
-        byte[] body=new byte[32769];
+        byte[] body=new byte[131073];
         Arrays.fill(body,(byte)' ');
         byte[] prefix=bytes(media("high"));
         System.arraycopy(prefix,0,body,0,prefix.length);
@@ -445,7 +445,48 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(result.socketTimedOut);
             assertFalse(result.transientNetworkFailure);
             assertEquals(1L,result.sampleRequests);
-            assertEquals(32769L,result.sampleBytes);
+            assertEquals(131073L,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
+
+    @Test public void largerConfirmedManifestUsesSameRequestAndValidatesBothSegments()throws Exception{
+        byte[] playlist=new byte[40000];
+        Arrays.fill(playlist,(byte)' ');
+        byte[] marker=bytes("#EXTM3U\n#");
+        byte[] segments=bytes("\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\n/high1.ts\n#EXTINF:5,\n/high2.ts\n");
+        System.arraycopy(marker,0,playlist,0,marker.length);
+        System.arraycopy(segments,0,playlist,playlist.length-segments.length,segments.length);
+        String[] expected={"/large.m3u8","/high1.ts","/high2.ts"};
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(String path:expected){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(socket.getInputStream(),StandardCharsets.US_ASCII));
+                        String start=reader.readLine();
+                        assertNotNull(start);
+                        assertTrue(start,start.startsWith("GET "+path+" "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        byte[] body="/large.m3u8".equals(path)?playlist:transportSample();
+                        OutputStream out=socket.getOutputStream();
+                        out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                        out.write(body);out.flush();
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/large.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(result.valid);
+            assertFalse(result.inconclusive());
+            assertEquals(3L,result.sampleRequests);
+            assertEquals(40000L+2L*transportSample().length,result.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
 }
