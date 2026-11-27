@@ -327,6 +327,38 @@ public class HlsWorkerProbeIntegrationTest {
         }
     }
 
+    @Test public void exhaustedNetworkQuotaCanStillCompleteLaterConfirmedAlias()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress(InetAddress.getByName("localhost"),0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(int i=0;i<47;i++)replyRecheck(server,"/live"+i+".ts",200,transportSample());
+                replyRecheck(server,"/limited.ts",429,new byte[0]);
+                return null;
+            });
+            String base="http://localhost:"+server.getLocalPort();
+            List<String> order=new ArrayList<>();
+            for(int i=0;i<47;i++)order.add(base+"/live"+i+".ts");
+            String limited=base+"/limited.ts",unmeasured=base+"/unmeasured.ts";
+            String alias=order.get(0).replace("localhost","LOCALHOST");
+            order.add(limited);order.add(unmeasured);order.add(alias);
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(String url:order)pending.add(StableKey.url(url));
+            SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(result.extended);
+            assertEquals(48,result.checked);
+            assertEquals(48,result.conclusive);
+            assertEquals(1,result.reused);
+            assertEquals(48L,result.sampleRequests);
+            assertEquals(47L*transportSample().length,result.sampleBytes);
+            assertSame(result.completed.get(order.get(0)),result.completed.get(alias));
+            assertEquals(Arrays.asList(StableKey.url(unmeasured),StableKey.url(limited)),new ArrayList<>(pending));
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void productionRecheckExtendsHealthyBatchThenStopsAtNewPressure()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
