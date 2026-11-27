@@ -297,6 +297,38 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void qualityRetryReusesFreshEvidenceOnlyForSameCatalogueVersion()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/retry.ts",200,transportSample());
+                replyRecheck(server,"/retry.ts",200,transportSample());
+                return null;
+            });
+            String url="http://127.0.0.1:"+server.getLocalPort()+"/retry.ts";
+            List<String> order=Collections.singletonList(url);
+            String key=StableKey.url(url);
+            LinkedHashSet<String> pending=new LinkedHashSet<>(Collections.singleton(key));
+            SourceUpdateWorker.QualityRecheckSlice first=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false,1234567L);
+            assertEquals(1,first.checked);
+            assertTrue(pending.isEmpty());
+            // Simulate transaction rollback: the durable key remains pending.
+            pending.add(key);
+            SourceUpdateWorker.QualityRecheckSlice retry=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false,1234567L);
+            assertEquals(0,retry.checked);assertEquals(1,retry.reused);
+            assertEquals(0L,retry.sampleRequests);assertTrue(pending.isEmpty());
+            pending.add(key);
+            SourceUpdateWorker.QualityRecheckSlice changed=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false,1234568L);
+            assertEquals(1,changed.checked);assertEquals(0,changed.reused);
+            served.get(12,TimeUnit.SECONDS);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void productionRecheckStopsBeforeAnyNetworkWhenPlaybackResumes(){
         String url="http://127.0.0.1:1/never.ts";
         LinkedHashSet<String> pending=new LinkedHashSet<>(Collections.singleton(StableKey.url(url)));
