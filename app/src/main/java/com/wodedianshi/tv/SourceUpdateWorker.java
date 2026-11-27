@@ -2223,12 +2223,29 @@ public class SourceUpdateWorker extends Worker {
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested,catalogueVersion);
-    Map<String,ProbeResult> completed=slice.completed;
-    int conclusive=completed.size();
+    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
+    // Indexed quality supports bounded atomic checkpoints. Compatibility JSON
+    // keeps the old single write to avoid repeated whole-score serialization.
+    java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=indexed?batch->{
+      try{publishQualityRecheckCheckpoint(context,pending,batch,catalogueVersion,true,false);}
+      catch(JSONException malformed){throw new IllegalStateException("Quality checkpoint encoding failed",malformed);}
+    }:null;
+    QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested,catalogueVersion,checkpoint);
+    publishQualityRecheckCheckpoint(context,pending,slice.completed,catalogueVersion,indexed,true);
+    int conclusive=slice.conclusive;
+    android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+slice.checked
+        +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+slice.originDeferred
+        +" stable_deferred="+stableDeferred[0]
+        +" reused_full="+slice.reused+" extended="+slice.extended
+        +" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
+        +" pending="+pending.size()
+        +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
+    return Result.success();
+  }
+  private void publishQualityRecheckCheckpoint(Context context,Set<String> pending,
+      Map<String,ProbeResult> completed,long catalogueVersion,boolean indexed,boolean finished)throws JSONException{
     // Only completed measurements need quality rows. Skipped, timed-out and
     // never-admitted candidates must not incur score hydration or writes.
-    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
     JSONObject scores=new JSONObject(),streaks=new JSONObject();
     HashSet<String> dirty=new HashSet<>();
     if(!completed.isEmpty()){
@@ -2245,35 +2262,29 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(context)
-        .putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(pending).toString())
-        .putLong(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,System.currentTimeMillis());
-    if(conclusive>0){
+        .putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(pending).toString());
+    // A partial checkpoint must not postpone the unfinished queue until tomorrow.
+    if(finished)update.putLong(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,System.currentTimeMillis());
+    if(!completed.isEmpty()){
       if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
           com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
       else update.putString("source_probe_scores_v1",scores.toString());
     }
-    if(conclusive>0)update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
+    if(!completed.isEmpty())update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
         java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
-    android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+slice.checked
-        +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+slice.originDeferred
-        +" stable_deferred="+stableDeferred[0]
-        +" reused_full="+slice.reused+" extended="+slice.extended
-        +" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
-        +" pending="+pending.size()
-        +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
-    return Result.success();
   }
   /** Owner-local network phase; publication remains in the existing caller. */
   static final class QualityRecheckSlice {
     final Map<String,ProbeResult> completed;
-    final int checked,originDeferred,reused;
+    final int checked,originDeferred,reused,conclusive;
     final boolean extended;
     final long sampleRequests,sampleBytes;
     QualityRecheckSlice(Map<String,ProbeResult> completed,int checked,int originDeferred,
-        int reused,long sampleRequests,long sampleBytes,boolean extended){
+        int reused,long sampleRequests,long sampleBytes,boolean extended,int conclusive){
       this.completed=completed;this.checked=checked;this.originDeferred=originDeferred;
       this.reused=reused;this.sampleRequests=sampleRequests;this.sampleBytes=sampleBytes;this.extended=extended;
+      this.conclusive=conclusive;
     }
   }
   static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
@@ -2285,6 +2296,12 @@ public class SourceUpdateWorker extends Worker {
   // initial/manual observations must not authorize a full quality recheck.
   static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
       long stageDeadline,java.util.function.BooleanSupplier paused,Long catalogueVersion){
+    return probeQualityRecheckSlice(selected,pending,stageDeadline,paused,catalogueVersion,null);
+  }
+  static final int QUALITY_CHECKPOINT_SIZE=16;
+  static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
+      long stageDeadline,java.util.function.BooleanSupplier paused,Long catalogueVersion,
+      java.util.function.Consumer<Map<String,ProbeResult>> checkpoint){
     LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
     // Scope positive full evidence to this single idle slice. Exact URL
     // keys still own their queue membership and durable quality records.
@@ -2320,6 +2337,7 @@ public class SourceUpdateWorker extends Worker {
       if(previous!=null){
         completed.put(url,previous);
         pending.remove(StableKey.url(url));conclusive++;reused++;
+        flushQualityCheckpoint(completed,checkpoint,paused);
         continue;
       }
       if(checked>=limit)break;
@@ -2367,10 +2385,18 @@ public class SourceUpdateWorker extends Worker {
       }
       completed.put(url,measured);
       pending.remove(key);conclusive++;
+      flushQualityCheckpoint(completed,checkpoint,paused);
       if(extended&&pressure)break;
     }
     SourceProbeTimePolicy.checkPublicationPaused(paused);
-    return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes,extended);
+    return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes,extended,conclusive);
+  }
+  private static void flushQualityCheckpoint(Map<String,ProbeResult> completed,
+      java.util.function.Consumer<Map<String,ProbeResult>> checkpoint,java.util.function.BooleanSupplier paused){
+    if(checkpoint==null||completed.size()<QUALITY_CHECKPOINT_SIZE)return;
+    SourceProbeTimePolicy.checkPublicationPaused(paused);
+    checkpoint.accept(completed);
+    completed.clear(); // Only after the version-guarded transaction succeeds.
   }
   private Result abortManualStructuralConflict(String manualId){
     com.wodedianshi.tv.db.AppStateEditor status=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
