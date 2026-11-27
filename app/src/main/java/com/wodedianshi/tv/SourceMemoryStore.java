@@ -222,7 +222,11 @@ public final class SourceMemoryStore {
      * repeated source slices need not deserialize the durable history again. */
     static java.util.Map<String,JSONObject> playbackSnapshot(Context context){
         initialize(context);
-        return java.util.Collections.unmodifiableMap(new java.util.HashMap<>(qoe));
+        return freezePlaybackHistory(qoe);
+    }
+
+    static java.util.Map<String,JSONObject> freezePlaybackHistory(java.util.Map<String,JSONObject> history){
+        return java.util.Collections.unmodifiableMap(new java.util.HashMap<>(history));
     }
 
     /** Published metrics are read here only; never expose mutable JSON to callers. */
