@@ -40,6 +40,19 @@ public final class SourceUpdateSchedulePolicy {
     // authoritative. Fast confirmations may use more of the same idle window;
     // a slow origin cannot force a new request into the final partial budget.
     static final int PROVISIONAL_DAILY_LIMIT=DiscoveryBatchPolicy.INITIAL_PAGE_SIZE;
+    static final int PROVISIONAL_FAST_LIMIT=2*PROVISIONAL_DAILY_LIMIT;
+    // Extend only a demonstrably cheap, healthy idle batch. These are
+    // admission thresholds, not hard wire-byte limits; an admitted probe
+    // may consume additional bytes before returning.
+    static boolean permitsFastRecheckExtension(int attempted,int positive,long elapsedMs,
+            long requests,long bytes){
+        return attempted>=PROVISIONAL_DAILY_LIMIT&&positive>=3*attempted/4
+                &&elapsedMs>=0L&&elapsedMs<=30000L
+                &&requests>=0L&&requests<=192L&&bytes>=0L&&bytes<=2L*1024L*1024L;
+    }
+    static boolean permitsExtendedRecheckProbe(long requests,long bytes){
+        return requests>=0L&&requests<384L&&bytes>=0L&&bytes<4L*1024L*1024L;
+    }
 
     // Real stable output is stronger availability evidence than another
     // structural sample, but cannot replace a measured throughput score.
