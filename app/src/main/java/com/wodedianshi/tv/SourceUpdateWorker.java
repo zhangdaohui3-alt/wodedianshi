@@ -833,12 +833,19 @@ public class SourceUpdateWorker extends Worker {
           }else{
             cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
           }
+          String acquiredVersion=initialDiscoveryChain&&!slowPlayback
+              ?roomString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feedIndex),""):"";
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
-              roomString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
-            // The acquisition-only slice is independent of the probe cursor.
-            // Never reuse a marker if eviction or a changed body invalidated it.
-            noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
-            cachedFeed=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feed,feedCursor>0,pauseRequested);
+              acquiredVersion,PlaylistFeedCache.contentVersion(cachedFeed)))){
+            // Restore the derived index from the exact committed body first.
+            // Evicted or changed bodies still require ordinary acquisition.
+            cachedFeed=PlaylistFeedCache.findAcquiredInitialBody(getApplicationContext(),feed,acquiredVersion);
+            if(cachedFeed!=null){
+              noteInitialStage("复用已保存目录并恢复索引 "+(feedIndex+1)+"/"+feeds.length);
+            }else{
+              noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
+              cachedFeed=PlaylistFeedCache.obtainInitialDuringIdle(getApplicationContext(),feed,feedCursor>0,pauseRequested);
+            }
             if(cachedFeed==null){
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
