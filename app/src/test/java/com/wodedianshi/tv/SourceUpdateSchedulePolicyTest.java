@@ -323,6 +323,25 @@ public class SourceUpdateSchedulePolicyTest {
         // With eight ordinary slots, at most two can be reserved.
     }
 
+    @Test public void largePriorityScanStopsOnlyWhenOldestCandidatesAreFound(){
+        int size=20000;
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>(
+                java.util.Arrays.asList("k12","k13","k14","k19999"));
+        java.util.concurrent.atomic.AtomicInteger reads=new java.util.concurrent.atomic.AtomicInteger();
+        assertEquals(java.util.Arrays.asList(12,13,14),
+                SourceUpdateSchedulePolicy.provisionalRecheckPositions(size,i->{
+                    reads.incrementAndGet();return "k"+i;
+                },0,12,pending));
+        assertEquals(3,reads.get());
+        pending.clear();pending.add("missing");pending.add("k19999");pending.add("k13");pending.add("k14");
+        reads.set(0);
+        assertEquals(java.util.Arrays.asList(19999,13,14),
+                SourceUpdateSchedulePolicy.provisionalRecheckPositions(size,i->{
+                    reads.incrementAndGet();return "k"+i;
+                },0,12,pending));
+        assertEquals(size-12,reads.get());
+    }
+
     @Test public void provisionalEvidenceIsBoundedAndRetriesMoveToTail(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         for(int i=0;i<2050;i++)SourceUpdateSchedulePolicy.rememberProvisional(pending,"k"+i);
