@@ -1664,7 +1664,8 @@ public class SourceUpdateWorker extends Worker {
         JSONArray priorRows=new JSONArray();
         roomSnapshot=readPublishedForInitialCommit(priorRows);
         publication=preservePreviouslyPublishedChannels(saved,priorRows);
-        prunePendingForCompletePublication(provisionalKeys,publication);
+        int removed=prunePendingForCompletePublication(provisionalKeys,publication,pauseRequested);
+        android.util.Log.i("MyTVSourceDiscovery","provisional_publication_pruned="+removed+" pending="+provisionalKeys.size());
       }
       // Prepare the full publication and all progress before opening a write transaction.
       int publishedChannelCount=initialIndexed?stagedSizeAfterProbe:publication.length();
@@ -2174,28 +2175,31 @@ public class SourceUpdateWorker extends Worker {
   }
   /** Reuse the existing daily worker/ownership gate, but never download feeds
    * or rewrite the catalogue just to upgrade provisional quality evidence. */
-  private void collectPendingRoute(Set<String> pending,Map<String,String> found,String url){
+  private static void collectPendingRoute(Set<String> pending,Map<String,String> found,String url){
     if(url==null||(!url.startsWith("http://")&&!url.startsWith("https://")))return;
-    String key=scoreKey(url);
+    String key=StableKey.url(url);
     if(pending.contains(key))found.putIfAbsent(key,url);
   }
-  private void prunePendingForCompletePublication(Set<String> pending,JSONArray rows){
-    if(pending.isEmpty())return;
+  static int prunePendingForCompletePublication(Set<String> pending,JSONArray rows,
+      java.util.function.BooleanSupplier paused){
+    if(pending.isEmpty())return 0;
     HashMap<String,String> found=new HashMap<>();
     for(int i=0;i<rows.length()&&found.size()<pending.size();i++){
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
       JSONObject row=rows.optJSONObject(i);
       if(row==null)continue;
       String primary=row.optString("url","");
       collectPendingRoute(pending,found,primary);
       JSONArray sources=row.optJSONArray("sources");
       if(sources!=null)for(int j=0;j<sources.length()&&found.size()<pending.size();j++){
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
         String url=sources.optString(j,"");
         if(!url.equals(primary))collectPendingRoute(pending,found,url);
       }
     }
-    int removed=SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,found.keySet(),true);
-    android.util.Log.i("MyTVSourceDiscovery","provisional_publication_pruned="+removed+" pending="+pending.size());
+    // A partial membership scan must never remove unvisited keys.
+    SourceProbeTimePolicy.checkPublicationPaused(paused);
+    return SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,found.keySet(),true);
   }
   private Result runProvisionalQualityRecheck()throws Exception{
     final Context context=getApplicationContext();
