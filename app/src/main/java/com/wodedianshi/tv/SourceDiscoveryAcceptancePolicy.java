@@ -12,8 +12,9 @@ public final class SourceDiscoveryAcceptancePolicy {
     private SourceDiscoveryAcceptancePolicy() {}
 
     // Changing acceptance semantics requires resetting an in-progress isolated
-    // first-build staging set; otherwise previously staged dead URLs survive.
-    public static final String BUILD_POLICY_VERSION = "validated-new-candidates-v3";
+    // first-build staging set; otherwise old station merge identities or previously
+    // staged dead URLs survive.
+    public static final String BUILD_POLICY_VERSION = "validated-new-candidates-v4";
 
     public static boolean mayPromoteNewCandidate(boolean mediaPreflightPassed) {
         return mediaPreflightPassed;
