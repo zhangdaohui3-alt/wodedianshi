@@ -271,7 +271,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final String ROOM_STATE_LAST_CHANNEL_TVG_ID="last_channel_tvg_id";
   private static final String ROOM_STATE_VOD_FAVORITES="vod_favorites_v1";
   private static final String ROOM_STATE_VOD_HISTORY="vod_history_v1";
-  private static final String ROOM_STATE_SOURCE_PROBE="source_probe_scores_v1";
   private static final LatestStateWriter<LastChannelState> LAST_CHANNEL_WRITER=new LatestStateWriter<>();
   private volatile LastChannelState roomLastChannel=new LastChannelState("","","","","");
   private static final class LastChannelState {
@@ -916,10 +915,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
-    // Indexed Room is authoritative. Do not load a stale compatibility
-    // mirror before the version-checked score restore.
+    // First install starts with unknown scores; the version-checked Room
+    // snapshot supplies authoritative observations when available.
     cachedProbeScoreJson=new org.json.JSONObject();
-    reloadLegacyProbeScoresIfNeeded();
     indexedPlaybackScoreVersion=-1L;indexedPlaybackQualityRevision="";
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
@@ -8170,10 +8168,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void recordSourceMetric(String url,String event,long readyMs){
     SourceMemoryStore.recordMetric(getApplicationContext(),url,event,readyMs);
   }
-  private void publishProbeScores(String raw){
-    try{cachedProbeScoreJson=new org.json.JSONObject(raw);}
-    catch(Exception malformed){cachedProbeScoreJson=new org.json.JSONObject();}
-  }
   private HashMap<String,Double> observedSourceScores(List<String> urls){
     HashMap<String,Double> scores=new HashMap<>();
     if(urls==null||urls.isEmpty())return scores;
@@ -8725,15 +8719,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
         SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,"");
   }
-  private void reloadLegacyProbeScoresIfNeeded(){
-    if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))
-      publishProbeScores(com.wodedianshi.tv.db.AppStateStore.get(
-          getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}"));
-  }
   private void reloadRoomSourceMetrics(){
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
-    // Keep the current read-only indexed cache while the next version loads.
-    reloadLegacyProbeScoresIfNeeded();
+    // Keep the current read-only Room score cache while the next version loads.
   }
 
 
