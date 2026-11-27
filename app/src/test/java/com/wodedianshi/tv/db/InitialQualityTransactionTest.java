@@ -45,6 +45,43 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+    @Test public void manualFinalRankingReadsOnlyRetainedPrivateScores()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String owner="manual-ranking";
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            db.appStateDao().put(new AppStateEntity(ManualProbeQualityStore.READY_KEY,owner,1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_READY_KEY,"true",1L));
+            java.util.List<String> urls=new java.util.ArrayList<>();
+            java.util.List<ManualProbeQualityEntity> quality=new java.util.ArrayList<>();
+            for(int i=0;i<300;i++){
+                String url="https://example.invalid/rank/"+i;
+                urls.add(url);
+                String key=com.wodedianshi.tv.StableKey.url(url);
+                quality.add(new ManualProbeQualityEntity(owner,key,i==150?null:Integer.valueOf(i),2));
+                quality.add(new ManualProbeQualityEntity(ManualProbeQualityStore.PUBLISHED_OWNER,key,999,null));
+            }
+            String historical=com.wodedianshi.tv.StableKey.url("https://example.invalid/historical");
+            String legacy=com.wodedianshi.tv.StableKey.legacyUrl(urls.get(150));
+            quality.add(new ManualProbeQualityEntity(owner,historical,888,3));
+            quality.add(new ManualProbeQualityEntity(owner,legacy,456,null));
+            db.manualProbeQualityDao().put(quality);
+            org.json.JSONObject scores=ManualProbeQualityStore.readManualRankingScores(db,owner,urls,()->false);
+            assertEquals(300,scores.length());
+            assertEquals(299,scores.getInt(com.wodedianshi.tv.StableKey.url(urls.get(299))));
+            assertFalse(scores.has(com.wodedianshi.tv.StableKey.url(urls.get(150))));
+            assertEquals(456,scores.getInt(legacy));
+            assertFalse(scores.has(historical));
+            assertEquals(Integer.valueOf(888),db.manualProbeQualityDao().find(owner,historical).score);
+            db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_READY_KEY);
+            try{
+                ManualProbeQualityStore.readManualRankingScores(db,owner,urls,()->false);
+                fail("Unready owner must not rank");
+            }catch(IllegalStateException expected){}
+        }finally{db.close();}
+    }
+
     @Test public void indexedSeedIgnoresObsoleteMalformedMirrors()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
