@@ -81,9 +81,12 @@ public final class PlaylistFeedIndex {
         }
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
-        if (!isUsableIndex(records, offsets)||(coverage&&!hasCoverageOrder(playlist))) {
-            deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets, paused,coverage);
+        boolean usable = isUsableIndex(records, offsets);
+        if (!usable || (coverage && !hasCoverageOrder(playlist))) {
+            // Keep a usable raw index until the coverage replacement is fully
+            // written. Playback may pause the two-pass build at any point.
+            if (!usable) deleteIndex(records, offsets);
+            buildIndex(playlist, records, offsets, paused, coverage);
         }
 
         // Decode the whole page before invoking the consumer. If a sidecar is
