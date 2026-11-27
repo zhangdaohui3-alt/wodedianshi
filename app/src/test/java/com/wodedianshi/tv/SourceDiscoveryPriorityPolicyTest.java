@@ -180,6 +180,26 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertArrayEquals(new boolean[6],done);
     }
 
+    @Test public void pressurePrefersReadyIndexWithinSameInspectionTier(){
+        boolean[] done=new boolean[6],attempted=new boolean[6],failed=new boolean[6];
+        boolean[] visited={false,false,true,false,false,false};
+        boolean[] prepared={true,true,true,true,true,true};
+        boolean[] available={true,true,true,true,true,true};
+        boolean[] ready={false,true,true,true,true,true};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available,ready));
+        ready[1]=false;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available,ready));
+        visited[0]=true;visited[1]=true;
+        assertEquals(2,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available,ready));
+        attempted[2]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available,ready));
+        assertArrayEquals(new boolean[6],done);
+    }
+
     @Test public void cachePressureGivesUnvisitedCachedPeerFirstTurnWithinSameRegion(){
         boolean[] done=new boolean[6],attempted=new boolean[6],failed=new boolean[6];
         boolean[] visited={true,false,true,false,false,false};
