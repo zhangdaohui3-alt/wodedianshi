@@ -254,8 +254,11 @@ public final class SourceUpdateSchedulePolicy {
     /** Single rule for the owner, initial wave admission and rolling refill.
      * Paced observations cannot stand in for an unpaced quality measurement. */
     static boolean reusableInitialObservation(boolean valid,boolean provisional,boolean paced,
-            boolean viewing,long measuredAt,long now) {
-        return SourceQualityScorer.reusableProbeMode(paced,viewing)
+            boolean viewing,long measuredAt,long now,boolean independentHealth) {
+        // A definitive negative can suppress duplicate discovery, but only a
+        // fresh health measurement may contribute a saved-source failure.
+        return (valid||!independentHealth)
+                &&SourceQualityScorer.reusableProbeMode(paced,viewing)
                 &&canReuseInitialProbe(valid,provisional,measuredAt,now);
     }
 
