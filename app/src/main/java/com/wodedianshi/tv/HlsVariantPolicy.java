@@ -34,6 +34,25 @@ public final class HlsVariantPolicy {
         return manifest != null && manifest.replace(String.valueOf((char)0xFEFF), "").trim().startsWith("#EXTM3U");
     }
 
+    // Byte-first classification matches the existing UTF-8/BOM/trim marker
+    // rule without allocating a decoded string for every binary media sample.
+    private static final String PLAYLIST_MARKER="#EXTM3U";
+    static boolean hasPlaylistMarker(byte[] data) {
+        if(data==null)return false;
+        int matched=0;
+        for(int i=0;i<data.length;){
+            int value=data[i]&0xff;
+            if(value==0xef&&i+2<data.length&&(data[i+1]&0xff)==0xbb&&(data[i+2]&0xff)==0xbf){
+                i+=3;continue;
+            }
+            i++;
+            if(matched==0&&value<=0x20)continue;
+            if(value!=PLAYLIST_MARKER.charAt(matched))return false;
+            if(++matched==PLAYLIST_MARKER.length())return true;
+        }
+        return false;
+    }
+
     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
         ArrayList<Variant> variants = new ArrayList<>();
         if (manifest == null || finalManifestUrl == null) return variants;
