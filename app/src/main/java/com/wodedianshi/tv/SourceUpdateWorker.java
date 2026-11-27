@@ -892,7 +892,13 @@ public class SourceUpdateWorker extends Worker {
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
+          final int[] conflictingBroadcastRows={0};
           PlaylistParser.EntryConsumer consume=source->{
+            // Reject contradictory recognized station labels before spending network budget.
+            // Raw parser positions still count toward the same feed cursor.
+            if(ChannelNamePolicy.consistentBroadcaster(source.name,source.tvgName,source.tvgId)==null){
+              conflictingBroadcastRows[0]++;return;
+            }
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
@@ -963,6 +969,7 @@ public class SourceUpdateWorker extends Worker {
           android.util.Log.i("MyTVSourceDiscovery","feed_index="+feedIndex
               +" cursor="+feedCursor+" parsed="+parsedCount[0]
               +" candidates="+feedCandidates.size()
+              +" broadcaster_conflicts="+conflictingBroadcastRows[0]
               +" mainland_priority_page="
                   +((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               +" local_metadata="+localMetadataCandidates
