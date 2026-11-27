@@ -19,9 +19,8 @@ public final class ChannelIdentityPolicy {
 
     static String identity(String broadcaster, String tvgId, String fallbackIdentity,
                            String localStationIdentity) {
-        String canonical = broadcaster == null ? "" : broadcaster.trim();
-        if (canonical.startsWith("CCTV-")) return canonical + "|cctv";
-        if (canonical.endsWith("卫视")) return canonical.toLowerCase(Locale.ROOT) + "|satellite";
+        String known = broadcasterIdentity(broadcaster);
+        if (!known.isEmpty()) return known;
 
         // For a confidently identified Chinese city station, provider-specific
         // tvg-id namespaces are weaker than the shared province + station label.
@@ -33,6 +32,14 @@ public final class ChannelIdentityPolicy {
         String stableId = normalizeTvgId(tvgId);
         if (!stableId.isEmpty()) return "tvgid:" + stableId;
         return fallbackIdentity == null ? "" : fallbackIdentity;
+    }
+
+    /** The established broadcaster keys take precedence over all other metadata. */
+    static String broadcasterIdentity(String broadcaster) {
+        String canonical = broadcaster == null ? "" : broadcaster.trim();
+        if (canonical.startsWith("CCTV-")) return canonical + "|cctv";
+        if (canonical.endsWith("卫视")) return canonical.toLowerCase(Locale.ROOT) + "|satellite";
+        return "";
     }
 
     public static String localStationIdentity(String name, String tvgName) {
