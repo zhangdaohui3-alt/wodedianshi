@@ -989,7 +989,7 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain){
             ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
                 entry->entry.mergeIdentity(),
-                entry->probeHost(entry.url),entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
+                Entry::host,entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId),
                 entry->ChinaDiscoveryCandidatePolicy.initialCoverageRegion(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
@@ -1426,7 +1426,7 @@ public class SourceUpdateWorker extends Worker {
               initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
               transientRecheck==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED);
           String origin=initialDiscoveryChain&&!slowPlayback
-              ?InitialOriginCooldownPolicy.origin(e.url):"";
+              ?e.origin():"";
           // Do not abandon a launched probe or discard a recent validation.
           // A deferred position must get its ordinary idle replay before EOF.
           if(allowOriginDeferral&&!reuse&&!idleWave.has(endpoint)
@@ -3031,6 +3031,18 @@ public class SourceUpdateWorker extends Worker {
     final String url;
     private String canonicalEndpoint;
     private String canonicalMergeIdentity;
+    private String canonicalHost;
+    private String canonicalOrigin;
+    // Immutable original URL, owner-confined lazy identities. Preserve the
+    // existing independent host and scheme/port semantics.
+    String host(){
+      if(canonicalHost==null)canonicalHost=probeHost(url);
+      return canonicalHost;
+    }
+    String origin(){
+      if(canonicalOrigin==null)canonicalOrigin=InitialOriginCooldownPolicy.origin(url);
+      return canonicalOrigin;
+    }
     // Immutable candidate metadata makes the same key reusable throughout
     // this owner's page preparation, Room lookup and merge.
     String mergeIdentity(){
@@ -3384,9 +3396,9 @@ public class SourceUpdateWorker extends Worker {
         // cache entries, unresolved duplicates or host-limited fresh probes.
         if(initial&&i!=offset&&IdleProbeWavePolicy.canBridgeKnownRow(http,measured.containsKey(endpoint)))continue;
         if(!http)break;
-        String host=probeHost(entry.url);
+        String host=entry.host();
         if(!wavePolicy.canAdd(endpoint,host))break;
-        if(initial&&INITIAL_ORIGINS.requiresSerialProbe(InitialOriginCooldownPolicy.origin(entry.url),now))break;
+        if(initial&&INITIAL_ORIGINS.requiresSerialProbe(entry.origin(),now))break;
         if(i!=offset){
           RecentProbe cached=(initial||!manualProbeCacheOwner.isEmpty())
               ?reusableInitialProbe(endpoint,slowPlayback,now):null;
@@ -3464,10 +3476,10 @@ public class SourceUpdateWorker extends Worker {
         // Cache-only, unresolved duplicate and host/cooldown barriers are
         // still handled by the normal owner. Never jump past fresh work.
         if(pending.containsKey(endpoint)||rollingVisited.contains(endpoint))return;
-        String host=probeHost(entry.url);
+        String host=entry.host();
         if(!active.canAdd(endpoint,host))return;
         now=android.os.SystemClock.elapsedRealtime();
-        if(INITIAL_ORIGINS.requiresSerialProbe(InitialOriginCooldownPolicy.origin(entry.url),now))return;
+        if(INITIAL_ORIGINS.requiresSerialProbe(entry.origin(),now))return;
         if(reusableInitialProbe(endpoint,slowPlayback,now)!=null)return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
         if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
