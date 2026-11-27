@@ -12,6 +12,8 @@ public final class AppStateEditor {
     private final LinkedHashMap<String, String> updates = new LinkedHashMap<>();
     private final LinkedHashSet<String> removals = new LinkedHashSet<>();
     private java.util.List<ManualProbeQualityEntity> publishedQuality;
+    private java.util.List<ManualProbeQualityEntity> initialQuality;
+    private java.util.function.BooleanSupplier initialQualityPaused;
     private java.util.function.BooleanSupplier qualityPaused;
 
     public AppStateEditor(Context context) {
@@ -48,6 +50,12 @@ public final class AppStateEditor {
         publishedQuality=new ArrayList<>(rows);qualityPaused=paused;return this;
     }
 
+    /** Attach private initial quality to the same commit as the staging cursor. */
+    public AppStateEditor putInitialQuality(java.util.List<ManualProbeQualityEntity> rows,
+            java.util.function.BooleanSupplier paused){
+        initialQuality=new ArrayList<>(rows);initialQualityPaused=paused;return this;
+    }
+
     public void apply() {
         AppDatabase db = RoomDatabaseProvider.get(context);
         db.runInTransaction(() -> applyInTransaction(db));
@@ -80,5 +88,6 @@ public final class AppStateEditor {
         if (!deleteKeys.isEmpty()) dao.removeAll(deleteKeys);
         if (!rows.isEmpty()) dao.putAll(rows);
         if(publishedQuality!=null)ManualProbeQualityStore.writePublishedInTransaction(db,publishedQuality,qualityPaused);
+        if(initialQuality!=null)ManualProbeQualityStore.writeInitialInTransaction(db,initialQuality,initialQualityPaused);
     }
 }
