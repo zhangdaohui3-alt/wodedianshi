@@ -972,7 +972,7 @@ public class SourceUpdateWorker extends Worker {
           }
           if(initialDiscoveryChain){
             ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
-                entry->identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName),
+                entry->entry.mergeIdentity(),
                 entry->probeHost(entry.url),entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId),
                 entry->ChinaDiscoveryCandidatePolicy.initialCoverageRegion(
@@ -1165,7 +1165,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialIndexed){
         LinkedHashSet<String> identities=new LinkedHashSet<>();
         for(Entry entry:candidates)if(!entry.savedSource)
-          identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+          identities.add(entry.mergeIdentity());
         for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
             com.wodedianshi.tv.db.RoomCatalogueBuildStore.readInitialByIdentity(getApplicationContext(),previousStagedSize,initialRevision,identities,pauseRequested)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -1232,7 +1232,7 @@ public class SourceUpdateWorker extends Worker {
           IdentityHashMap<JSONObject,Boolean> coverageEvidence=new IdentityHashMap<>();
           covered=DiscoveryBatchPolicy.coveredPositions(candidates,entry->{
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-            JSONObject row=byIdentity.get(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+            JSONObject row=byIdentity.get(entry.mergeIdentity());
             return row!=null&&coverageEvidence.computeIfAbsent(row,
                 key->hasPositiveRetainedCoverage(key,measuredScores,provisionalKeys));
           });
@@ -1287,7 +1287,7 @@ public class SourceUpdateWorker extends Worker {
           Entry e=candidates.get(position);
           e.skipReplay=DiscoveryBatchPolicy.skipReplayPosition(transientRecheck,replayMask,position);
           if(initialDiscoveryChain&&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED&&!e.skipReplay){
-            JSONObject staged=byIdentity.get(identity(e.name,e.group,e.url,e.tvgId,e.tvgName));
+            JSONObject staged=byIdentity.get(e.mergeIdentity());
             e.alreadyStaged=mayReuseRetainedPreflight(measuredScores,provisionalKeys,e.url)
                 &&hasCommittedRouteEvidence(staged,e,canonicalDisplayName(e));
           }
@@ -1310,7 +1310,7 @@ public class SourceUpdateWorker extends Worker {
         if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
         for(Entry entry:probeCandidates)if(!entry.savedSource)
-          identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+          identities.add(entry.mergeIdentity());
         for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
             com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(getApplicationContext(),manualId,identities,pauseRequested)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -1336,7 +1336,7 @@ public class SourceUpdateWorker extends Worker {
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           needed.add(entry.url);
           if(!entry.savedSource){
-            JSONObject target=byIdentity.get(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+            JSONObject target=byIdentity.get(entry.mergeIdentity());
             if(target!=null){
               needed.add(target.optString("url"));
               JSONArray urls=target.optJSONArray("sources");
@@ -1610,7 +1610,7 @@ public class SourceUpdateWorker extends Worker {
         // remain protected by the independent Room retention policy above.
         if(!SourceDiscoveryAcceptancePolicy.mayPromoteNewCandidate(measured.valid))
           continue;
-        String key=identity(e.name,e.group,e.url,e.tvgId,e.tvgName);JSONObject target=byIdentity.get(key);
+        String key=e.mergeIdentity();JSONObject target=byIdentity.get(key);
         if(target!=null){
           String canonical=ChannelNamePolicy.canonicalBroadcasterName(
               e.name,e.tvgName,e.tvgId,e.group);
@@ -3002,9 +3002,18 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isActivityActive();
   }
   static final class Entry{
-    String name,group,scope,tvgId,tvgName;boolean savedSource,skipReplay,alreadyStaged;
+    final String name,group,tvgId,tvgName;
+    String scope;boolean savedSource,skipReplay,alreadyStaged;
     final String url;
     private String canonicalEndpoint;
+    private String canonicalMergeIdentity;
+    // Immutable candidate metadata makes the same key reusable throughout
+    // this owner's page preparation, Room lookup and merge.
+    String mergeIdentity(){
+      if(canonicalMergeIdentity==null)
+        canonicalMergeIdentity=SourceDiscoveryIdentityPolicy.identity(name,group,url,tvgId,tvgName);
+      return canonicalMergeIdentity;
+    }
     // Candidate identities belong to the serial source-work owner. The HTTP
     // task receives the original immutable URL, never this normalized key.
     String endpoint(){
