@@ -180,6 +180,28 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertArrayEquals(new boolean[6],done);
     }
 
+    @Test public void cachePressureGivesUnvisitedCachedPeerFirstTurnWithinSameRegion(){
+        boolean[] done=new boolean[6],attempted=new boolean[6],failed=new boolean[6];
+        boolean[] visited={true,false,true,false,false,false};
+        boolean[] prepared={true,true,true,true,true,false};
+        boolean[] available={true,true,true,true,true,false};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available));
+        visited[1]=true;
+        // Do not jump to HMT/international first turns while mainland
+        // still has eligible cached work under pressure.
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available));
+        visited[1]=false;failed[1]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available));
+        java.util.Arrays.fill(attempted,0,3,true);
+        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,
+            prepared,failed,3,4,false,false,false,available));
+        assertArrayEquals(new boolean[6],done);
+        assertArrayEquals(new boolean[]{true,true,true,false,false,false},attempted);
+    }
+
     @Test public void cachePressureDrainsEligibleIndexedDirectoriesBeforeNewAcquisition(){
         boolean[] done=new boolean[6],attempted=new boolean[6],visited=new boolean[6],failed=new boolean[6];
         boolean[] prepared={false,true,true,true,false,false};
