@@ -194,4 +194,37 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+
+    @Test public void boundedSqlCopyPreservesValuesOverridesAndUnrelatedKeys(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String source="copy-source",target="copy-target";
+            java.util.List<ManualProbeQualityEntity> rows=new java.util.ArrayList<>();
+            for(int n=0;n<513;n++)rows.add(new ManualProbeQualityEntity(source,
+                String.format(java.util.Locale.ROOT,"k%04d",n),n==256?null:Integer.valueOf(n),n==256?null:Integer.valueOf(2)));
+            rows.add(new ManualProbeQualityEntity(target,"k0256",999,3));
+            rows.add(new ManualProbeQualityEntity(target,"unrelated",700,null));
+            db.manualProbeQualityDao().put(rows);
+            try{
+                db.runInTransaction(()->{
+                    ManualProbeQualityStore.copyQualityInTransaction(db,source,target,()->false);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertNull(db.manualProbeQualityDao().find(target,"k0512"));
+            assertEquals(Integer.valueOf(999),db.manualProbeQualityDao().find(target,"k0256").score);
+            db.runInTransaction(()->ManualProbeQualityStore.copyQualityInTransaction(db,source,target,()->false));
+            assertEquals(514,db.manualProbeQualityDao().page(target,"",600).size());
+            assertEquals(Integer.valueOf(0),db.manualProbeQualityDao().find(target,"k0000").score);
+            assertEquals(Integer.valueOf(512),db.manualProbeQualityDao().find(target,"k0512").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(target,"k0255").failureStreak);
+            assertNull(db.manualProbeQualityDao().find(target,"k0256").score);
+            assertNull(db.manualProbeQualityDao().find(target,"k0256").failureStreak);
+            assertEquals(Integer.valueOf(700),db.manualProbeQualityDao().find(target,"unrelated").score);
+            assertEquals(513,db.manualProbeQualityDao().page(source,"",600).size());
+        }finally{db.close();}
+    }
+
 }
