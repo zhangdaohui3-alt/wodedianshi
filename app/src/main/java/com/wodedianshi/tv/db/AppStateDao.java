@@ -13,6 +13,9 @@ public interface AppStateDao {
     @Query("SELECT * FROM app_state WHERE key IN (:keys)")
     java.util.List<AppStateEntity> getValues(java.util.List<String> keys);
 
+    @Query("SELECT * FROM app_state WHERE key >= :start AND key < :end ORDER BY key")
+    java.util.List<AppStateEntity> getKeyRange(String start, String end);
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void put(AppStateEntity value);
 
