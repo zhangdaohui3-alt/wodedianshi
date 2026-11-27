@@ -1,0 +1,281 @@
+package com.wodedianshi.tv;
+
+/**
+ * Honest first-build progress: each configured feed is one unit of work,
+ * with fractional progress from the indexed cursor of the active feed.
+ * A percentage of work completed is not a prediction of remaining time,
+ * and 100% is reserved for a successfully published complete Room snapshot.
+ */
+public final class FullDiscoveryProgressPolicy {
+    private FullDiscoveryProgressPolicy() {}
+
+    // Do not hold the first playable preview behind every mainland download.
+    // At most two bootstrap acquisitions, then normal fair paged discovery.
+    public static int bootstrapIndexLimit(int mainlandCount) {
+        return Math.max(0,Math.min(2,mainlandCount));
+    }
+    /** Acquisition attempts are separate from the final verified-build percent. */
+    public static boolean isMainlandIndexPhase(int attempted, int mainlandCount,
+            int checked, long indexedEntries, boolean complete) {
+        return !complete && checked <= 0 && indexedEntries <= 0
+                && Math.max(0,attempted) < bootstrapIndexLimit(mainlandCount);
+    }
+
+    // Acquisition records are durable version markers, not a second catalogue.
+    // A cache file can later be evicted; the worker must still verify it before use.
+    static String initialAcquiredVersionKey(int index) {
+        return "source_initial_acquired_version_"+index;
+    }
+
+    static int recordedAcquisitions(java.util.Map<String,String> state,int from,int to) {
+        int count=0;
+        if(state==null)return count;
+        for(int i=Math.max(0,from);i<to;i++){
+            String version=state.get(initialAcquiredVersionKey(i));
+            if(version!=null&&!version.isEmpty())count++;
+        }
+        return count;
+    }
+
+    /** WorkManager completion is not proof that a Room snapshot was published. */
+    public static boolean hasPublishedInitialSnapshot(long completedAt) {
+        return completedAt>0L;
+    }
+
+    /** During first build, a selected but stopped station must not restart discovery-blocking playback. */
+    static boolean shouldResumeAfterBackground(long completedAt,boolean selectedLive,boolean liveSessionOwned) {
+        return selectedLive&&(hasPublishedInitialSnapshot(completedAt)||liveSessionOwned);
+    }
+
+    /** Finishing discovery is independent of permission to replace live rows. */
+    public static boolean awaitingIdleFinalization(boolean allFeedsInspected, boolean viewing) {
+        return allFeedsInspected && viewing;
+    }
+
+    public static boolean canPublishInitialSnapshot(boolean allFeedsInspected,
+            boolean hasValidatedSource, boolean viewing) {
+        return allFeedsInspected && hasValidatedSource && !viewing;
+    }
+
+    // Small builds keep the established complete-array path. A potential
+    // final page or unknown historical category mask must also read all rows.
+    static boolean mayUseIndexedInitialRows(int rows,int stagedCoreMask,boolean potentialFinal) {
+        return rows>1024&&stagedCoreMask>=0&&!potentialFinal;
+    }
+
+    static int indexedInitialRowCount(int baseCount,int loadedRows,int workingRows) {
+        if(baseCount<=0||loadedRows<0||loadedRows>baseCount||workingRows<loadedRows)
+            throw new IllegalArgumentException("Invalid sparse initial staging count");
+        return Math.addExact(baseCount,workingRows-loadedRows);
+    }
+
+    // Bounded, opportunistic cache. Room is authoritative after every commit.
+    public static boolean canRetainStaging(int rows,boolean viewing) {
+        return rows>=0&&rows<=(viewing?512:1024);
+    }
+    public static boolean canReuseStaging(int rows,String revision,String durableRevision,long savedAt,long now) {
+        return canRetainStaging(rows,false)&&revision!=null&&!revision.isEmpty()
+                &&revision.equals(durableRevision)&&savedAt>=0L&&now>=savedAt&&now-savedAt<=60000L;
+    }
+
+    /** A fresh empty staging set can be initialized during stable viewing.
+     * Never clear a populated staging build while the viewer is watching. */
+    public static boolean canResetInitialStaging(boolean stableViewing,int stagedRows) {
+        return !stableViewing || stagedRows==0;
+    }
+
+    /** The optional idle bootstrap must not block the bounded viewing path. */
+    public static boolean shouldRunIdleBootstrap(boolean stableViewing,int attempted,
+            int mainlandCount,int checked,long indexedEntries,boolean complete) {
+        return !stableViewing&&isMainlandIndexPhase(attempted,mainlandCount,checked,indexedEntries,complete);
+    }
+
+    // Small early snapshots may be published under an existing healthy viewing
+    // lease. Larger/full publications retain the idle-only barrier.
+    static final int MAX_VIEWING_PREVIEW_ROWS=512;
+    static boolean canPublishPreview(boolean viewing,int stagedRows,int existingRows) {
+        return !viewing||(stagedRows>=0&&existingRows>=0
+                &&(long)stagedRows+existingRows<=MAX_VIEWING_PREVIEW_ROWS);
+    }
+
+    /** The early idle previews are small. Refresh at most once per progress
+     * ticker rather than holding newly verified channels for fifteen seconds.
+     * Keep the original throttle while viewing or once the early set is larger. */
+    static long previewReloadIntervalMs(boolean viewing,int milestone) {
+        return !viewing&&milestone>0&&milestone<=16?4000L:15000L;
+    }
+
+    // Independent category milestones. Staged mask is committed with the
+    // probe checkpoint; published mask only with the atomic live snapshot.
+    static final String STAGED_CORE_MASK_KEY="source_initial_staged_core_mask";
+    static final String PREVIEW_CORE_MASK_KEY="source_initial_preview_core_mask";
+    static final int CORE_CCTV=1,CORE_SATELLITE=2,CORE_LOCAL=4,ALL_CORE=7;
+
+    static int coreCategoryMask(String name,String group,String tvgName,String tvgId) {
+        return coreCategoryMask(name,group,tvgName,tvgId,false);
+    }
+
+    static int coreCategoryMask(String name,String group,String tvgName,String tvgId,boolean chinaScope) {
+        String metadata=safe(name)+" "+safe(tvgName)+" "+safe(tvgId);
+        if(RegionCategoryPolicy.isHongKongMacauTaiwan(metadata,group))return 0;
+        if(ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group).startsWith("CCTV-"))
+            return CORE_CCTV;
+        if(ChannelNamePolicy.isSatellite(metadata,group))return CORE_SATELLITE;
+        return ChannelNamePolicy.isDomesticLocalLabel(metadata+" "+safe(group),chinaScope)?CORE_LOCAL:0;
+    }
+
+    static int nextPreviewCoreMask(int previous,int stagedMask,int mainlandValidated) {
+        return mainlandValidated>0 ? (previous|stagedMask)&ALL_CORE : previous&ALL_CORE;
+    }
+
+    static final String INITIAL_BUILD_STARTED_AT_KEY="source_initial_build_started_at_v1";
+    /** Calendar elapsed time, not CPU or network time. Older builds have no
+     * trustworthy start timestamp; never invent one at upgrade. */
+    static String buildDurationStatus(long started,long completed,boolean active,long now){
+        if(started<=0L)return "首次建库总历时：无起始记录（旧版或尚未开始）";
+        if(completed<=0L&&!active)return "首次建库总历时：本轮未完成，暂无完整记录";
+        long end=completed>0L?completed:now;
+        if(end<started)return "首次建库总历时：设备时间异常，无法计算";
+        long seconds=(end-started)/1000L;
+        return "首次建库"+(completed>0L?"完成历时":"已历时")+"："+(seconds/3600L)+"小时"
+            +((seconds/60L)%60L)+"分"+(seconds%60L)+"秒（含暂停、调度、退出期间；受系统时间调整影响）";
+    }
+    static final String THROUGHPUT_STATUS_KEY="source_initial_throughput_status_v1";
+    /** Last committed detection slice only; excludes scheduler waits and commit time. */
+    static String throughputStatus(long preparationMs,long probeMs,long finalizeMs,int checked,int validated,int netChannels,boolean viewing){
+        long prep=Math.max(0L,preparationMs),probe=Math.max(0L,probeMs),finish=Math.max(0L,finalizeMs);
+        long elapsed=prep+probe+finish;
+        int count=Math.max(0,checked);
+        String rate=elapsed>0L?String.format(java.util.Locale.ROOT,"%.1f",count*60000.0/elapsed):"未测得";
+        return "最近已保存检测批次（"+(viewing?"稳定播放低速":"空闲")+"）"
+            +"：准备 "+prep+"ms · 检测/合并 "+probe+"ms · 提交前整理 "+finish+"ms"
+            +"\n处理线路 "+count+" 条 · 预检通过 "+Math.max(0,validated)+" 次 · 暂存频道净增 "+netChannels
+            +"\n本批处理速率 "+rate+" 条/分钟（含复用；不含调度等待、独立目录准备批次及提交耗时）";
+    }
+
+    public static final String PREVIEW_LEVEL_KEY = "source_initial_preview_level";
+    // More frequent early publication, then geometric growth to bound
+    // database work. Existing watermark values remain valid on upgrade.
+    public static final String PREVIEW_MILESTONE_KEY = "source_initial_preview_milestone";
+    private static final int[] PREVIEW_MILESTONES={1,4,8,12,14,16,20,24,32,64,96,128,192,256,384,512,1024,2048,4096,8192};
+    static int nextPreviewMilestone(int previous,int stagedChannels,int mainlandValidated) {
+        if(mainlandValidated<=0)return previous;
+        int reached=previous;
+        for(int milestone:PREVIEW_MILESTONES){
+            if(milestone>stagedChannels)break;
+            reached=Math.max(reached,milestone);
+        }
+        return reached;
+    }
+
+    // At most two extra publications: an early useful set, then mainland coverage.
+    // A milestone is not a completed full build and does not change the probe policy.
+    public static int nextPreviewLevel(int previous, int stagedChannels,
+            int mainlandValidated, boolean mainlandInspected) {
+        if (stagedChannels <= 0 || mainlandValidated <= 0) return previous;
+        if (mainlandInspected) return Math.max(previous, 2);
+        return stagedChannels >= 12 ? Math.max(previous, 1) : previous;
+    }
+
+    public static final String PUBLISHED_COVERAGE_KEY = "source_initial_published_coverage_v1";
+    public static final String FRESH_COVERAGE_KEY = "source_initial_fresh_coverage_v1";
+    private static final String[] PROVINCES = {"北京","天津","河北","山西","内蒙古","辽宁","吉林",
+        "黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南",
+        "广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
+
+    /** Counts catalogue rows, not real-world playable channels or unique successful probes.
+     * Retained old rows are intentionally included, with no claim of fresh validation. */
+    public static final class Coverage {
+        private int total, cctv, satellite, local, unresolvedLocal;
+        private final java.util.Set<String> provinces = new java.util.HashSet<>();
+
+        public void add(String name, String group, String tvgName, String tvgId) {
+            add(name,group,tvgName,tvgId,false);
+        }
+
+        public void add(String name, String group, String tvgName, String tvgId, boolean chinaScope) {
+            total++;
+            String metadata = safe(name) + " " + safe(tvgName) + " " + safe(tvgId);
+            if (RegionCategoryPolicy.isHongKongMacauTaiwan(metadata, group)) return;
+            String broadcaster = ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
+            if (broadcaster.startsWith("CCTV-")) { cctv++; return; }
+            if (ChannelNamePolicy.isSatellite(metadata, group)) { satellite++; return; }
+            String all = (metadata + " " + safe(group)).toLowerCase(java.util.Locale.ROOT);
+            String province = ChannelNamePolicy.provinceForLocalChannel(all);
+            if (!province.isEmpty()) {
+                local++;
+                provinces.add(province);
+            } else if (all.contains("地方") || all.contains("local")) {
+                // A generic foreign "Local" group is not evidence of China.
+                if (chinaScope || all.contains("地方") || all.contains("中国") || all.contains("china")
+                        || all.contains(".cn")) {
+                    local++;
+                    unresolvedLocal++;
+                }
+            }
+        }
+
+        public int provinceCount() { return provinces.size(); }
+        public int cctvCount() { return cctv; }
+        public int satelliteCount() { return satellite; }
+        public int localCount() { return local; }
+
+        public String summary() {
+            return summary("首次发布目录（含保留旧频道，非实播验证）");
+        }
+
+        public String summary(String label) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String province : PROVINCES) if (!provinces.contains(province)) missing.add(province);
+            String warning = cctv == 0 || satellite == 0 || local == 0 || !missing.isEmpty()
+                    ? "覆盖有缺口，待补查" : "各省级地区均有记录，仍待实播验收";
+            return label + "：" + total + " 条"
+                    + "\n央视 " + cctv + " · 卫视 " + satellite + " · 识别地方台 " + local
+                    + "\n省级地区覆盖 " + provinceCount() + "/31 · 地方台省份未识别 " + unresolvedLocal
+                    + "\n" + warning + (missing.isEmpty() ? "" : "；无已识别地方台记录：" + String.join("、", missing));
+        }
+    }
+
+    private static String safe(String value) { return value == null ? "" : value; }
+
+
+    /** One feed contributes at most 10,000 basis points, including partial pages. */
+    public static int feedProgress(int cursor, int entries) {
+        if (entries <= 0 || cursor <= 0) return 0;
+        return (int)Math.min(10000L, 10000L * cursor / entries);
+    }
+
+    public static int overallBasisPoints(boolean[] finished, int[] partial, boolean published) {
+        if (published) return 10000;
+        if (finished == null || finished.length == 0) return 0;
+        long work = 0;
+        for (int i = 0; i < finished.length; i++) {
+            work += finished[i] ? 10000 : partial != null && i < partial.length
+                    ? Math.max(0, Math.min(10000, partial[i])) : 0;
+        }
+        return (int)Math.min(9999L, work / finished.length);
+    }
+
+    public static int overallPercent(boolean[] finished, int[] partial, boolean published) {
+        return overallBasisPoints(finished,partial,published)/100;
+    }
+
+    public static String formatIncompleteProgress(int basisPoints) {
+        return String.format(java.util.Locale.ROOT,"%.2f%%",
+                Math.max(0,Math.min(9999,basisPoints))/100.0);
+    }
+
+    public static int percent(int completedFeeds, int totalFeeds,
+            int activeCursor, int activeFeedEntries, boolean published) {
+        if (published) return 100;
+        if (totalFeeds <= 0) return 0;
+        int done = Math.max(0, Math.min(completedFeeds, totalFeeds));
+        double current = 0d;
+        if (done < totalFeeds && activeFeedEntries > 0) {
+            current = Math.min(1d, Math.max(0d,
+                    (double) Math.max(0, activeCursor) / activeFeedEntries));
+        }
+        int measured = (int)Math.floor(100d * (done + current) / totalFeeds);
+        return Math.max(0, Math.min(99, measured));
+    }
+}
