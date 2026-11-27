@@ -37,6 +37,7 @@ public class SourceUpdateWorker extends Worker {
   private static final LinkedHashMap<String,RecentProbe> INITIAL_PROBES=
       new LinkedHashMap<>(64,0.75f,true);
   private static final int INITIAL_PROBE_CACHE_CAP=1024;
+  private static long initialProbeEarliestExpiry=Long.MAX_VALUE;
   private static final InitialOriginCooldownPolicy INITIAL_ORIGINS=new InitialOriginCooldownPolicy();
   private static final InitialNetworkConcurrencyPolicy INITIAL_NETWORK=new InitialNetworkConcurrencyPolicy();
   private static final class RecentProbe {
@@ -53,8 +54,11 @@ public class SourceUpdateWorker extends Worker {
   private static void rememberInitialProbe(String key,ProbeResult result,long at){
     INITIAL_PROBES.put(key,new RecentProbe(result,at));
     final long now=android.os.SystemClock.elapsedRealtime();
-    SourceUpdateSchedulePolicy.trimInitialProbeCache(INITIAL_PROBES,INITIAL_PROBE_CACHE_CAP,
-        entry->SourceUpdateSchedulePolicy.canReuseInitialProbe(entry.result.valid,entry.result.provisional,entry.at,now));
+    initialProbeEarliestExpiry=Math.min(initialProbeEarliestExpiry,
+        SourceUpdateSchedulePolicy.initialProbeExpiry(result.valid,result.provisional,at));
+    initialProbeEarliestExpiry=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(
+        INITIAL_PROBES,INITIAL_PROBE_CACHE_CAP,initialProbeEarliestExpiry,now,
+        entry->SourceUpdateSchedulePolicy.initialProbeExpiry(entry.result.valid,entry.result.provisional,entry.at));
   }
   private static void retainCompletedInitialSuccess(String key,ProbeResult result,
       long finishedAt,long addressDeadline,long batchDeadline){
@@ -481,7 +485,7 @@ public class SourceUpdateWorker extends Worker {
             return deferInitialDirectory("已有暂存目录，等待空闲重建，保留观看");
           // Empty staging initialization is only a small state transaction.
           // It must not block first discovery forever on a playing seed channel.
-          INITIAL_PROBES.clear();INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();
+          INITIAL_PROBES.clear();initialProbeEarliestExpiry=Long.MAX_VALUE;INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();
           LIVE_DIRECTORY_RETRY_AFTER.clear();
           discardStagingReuse();
           // Start from an empty isolated Room staging set. The live catalogue is
@@ -2122,7 +2126,7 @@ public class SourceUpdateWorker extends Worker {
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
       if(!initialDiscoveryChain)return Result.success();
-      if(initialDiscoveryComplete){INITIAL_PROBES.clear();INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();discardStagingReuse();}
+      if(initialDiscoveryComplete){INITIAL_PROBES.clear();initialProbeEarliestExpiry=Long.MAX_VALUE;INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();discardStagingReuse();}
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
