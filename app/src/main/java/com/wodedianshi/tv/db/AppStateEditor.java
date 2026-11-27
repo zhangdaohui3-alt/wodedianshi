@@ -14,6 +14,8 @@ public final class AppStateEditor {
     private java.util.List<ManualProbeQualityEntity> publishedQuality;
     private java.util.List<ManualProbeQualityEntity> initialQuality;
     private java.util.function.BooleanSupplier initialQualityPaused;
+    private java.util.Set<String> initialPreviewUrls;
+    private java.util.function.BooleanSupplier initialPreviewPaused;
     private java.util.function.BooleanSupplier qualityPaused;
 
     public AppStateEditor(Context context) {
@@ -56,6 +58,12 @@ public final class AppStateEditor {
         initialQuality=new ArrayList<>(rows);initialQualityPaused=paused;return this;
     }
 
+    /** Only the preview snapshot publisher supplies retained route URLs. */
+    public AppStateEditor putInitialPreviewQuality(java.util.Collection<String> urls,
+            java.util.function.BooleanSupplier paused){
+        initialPreviewUrls=new LinkedHashSet<>(urls);initialPreviewPaused=paused;return this;
+    }
+
     public void apply() {
         AppDatabase db = RoomDatabaseProvider.get(context);
         db.runInTransaction(() -> applyInTransaction(db));
@@ -89,5 +97,6 @@ public final class AppStateEditor {
         if (!rows.isEmpty()) dao.putAll(rows);
         if(publishedQuality!=null)ManualProbeQualityStore.writePublishedInTransaction(db,publishedQuality,qualityPaused);
         if(initialQuality!=null)ManualProbeQualityStore.writeInitialInTransaction(db,initialQuality,initialQualityPaused);
+        if(initialPreviewUrls!=null)ManualProbeQualityStore.publishInitialPreviewInTransaction(db,initialPreviewUrls,initialPreviewPaused);
     }
 }
