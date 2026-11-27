@@ -344,6 +344,9 @@ public class PlaylistFeedIndexTest {
             assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(body));
             assertEquals(body,PlaylistFeedCache.matchingAcquiredBody(body,version));
             org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,version));
+            org.junit.Assert.assertArrayEquals(new boolean[]{true,false,false,false},
+                PlaylistFeedCache.recoverableInitialBodies(
+                    new File[]{body,body,body,null},new String[]{version,"old-version","",version}));
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,"different-version"));
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,""));
             assertEquals(1,PlaylistFeedIndex.readPage(body,0,1,ignored->{}));
@@ -353,6 +356,8 @@ public class PlaylistFeedIndexTest {
             org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,null));
             try(FileOutputStream out=new FileOutputStream(body,true)){out.write(10);}
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,version));
+            org.junit.Assert.assertArrayEquals(new boolean[]{false},
+                PlaylistFeedCache.recoverableInitialBodies(new File[]{body},new String[]{version}));
             org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,version));
         }finally{
             File[] children=dir.listFiles();
