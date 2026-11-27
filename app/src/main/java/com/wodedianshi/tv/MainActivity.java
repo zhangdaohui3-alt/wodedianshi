@@ -68,6 +68,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void quarantineMedia3Release(String detail){
     decoderReleaseUnconfirmed=true;
     DECODER_OWNERSHIP.quarantine(decoderOwnerToken);
+    // A late release error must close the same admission gate immediately.
+    setSourceUpdatePlaybackActive(true);
     saveLiveDiagnostic("MEDIA3_RELEASE_UNCONFIRMED",detail);
   }
   // Media3 may report a timeout through onPlayerError rather than throw.
@@ -8002,13 +8004,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         saveLiveDiagnostic("VLC_RELEASE_CALLBACK_ERROR",failure.getClass().getSimpleName());
       }
     }
-    if(SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(
-        player!=null||libVlcEngine!=null,
-        vodPlayer!=null||vodFallbackBackend!=null||currentVodPanel!=null,
-        !libVlcReleaseCallbacks.isEmpty()||liveVlcReleaseContinuation!=null||pendingVodStartAfterRelease!=null,
-        libVlcReleaseInProgress||pendingVlcTeardowns>0||PROCESS_VLC_TEARDOWNS.get()>0,
-        decoderReleaseUnconfirmed,DECODER_OWNERSHIP.availableTo(decoderOwnerToken)))
-      setSourceUpdatePlaybackActive(false);
+    if(sourceUpdatePlaybackMayClear())setSourceUpdatePlaybackActive(false);
     reloadDeferredCatalogueIfIdle();
   }
   private void releaseLibVlcEngine(Runnable afterRelease){
@@ -9056,9 +9052,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(fullscreenControlsVisible)scheduleFullscreenControlsHide();
     }
   }
+  // One admission rule for normal stop, failed tune, VOD exit, lock and
+  // lifecycle teardown. A caller's request to clear is not proof of idle.
+  private boolean sourceUpdatePlaybackMayClear(){
+    return SourceUpdateActivityPolicy.mayClearAfterDecoderHandoff(
+        player!=null||libVlcEngine!=null,
+        vodPlayer!=null||vodFallbackBackend!=null||(activityStarted&&currentVodPanel!=null),
+        !libVlcReleaseCallbacks.isEmpty()||liveVlcReleaseContinuation!=null||pendingVodStartAfterRelease!=null,
+        libVlcReleaseInProgress||pendingVlcTeardowns>0||PROCESS_VLC_TEARDOWNS.get()>0,
+        decoderReleaseUnconfirmed,DECODER_OWNERSHIP.availableTo(decoderOwnerToken));
+  }
   private void setSourceUpdatePlaybackActive(boolean active){
     SourceUpdateActivityPolicy.notePressure(android.os.SystemClock.elapsedRealtime());
-    SourceUpdateActivityPolicy.setPlaybackActive(active||PROCESS_VLC_TEARDOWNS.get()>0||decoderReleaseUnconfirmed);
+    SourceUpdateActivityPolicy.setPlaybackActive(active||!sourceUpdatePlaybackMayClear());
   }
   protected void onStop(){cancelSingleChannelRefresh();revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=FullDiscoveryProgressPolicy.shouldResumeAfterBackground(roomFullRebuildCompletedAt,currentVodPanel==null&&selected>=0&&selected<channels.size(),!decoderReleaseUnconfirmed&&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null));cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){cancelSingleChannelRefresh();activityStarted=false;clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();invalidateVodPosterSession();vodPosterCache.evictAll();revokePendingVodStart();stopLiveUiStallProbe();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
