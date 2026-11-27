@@ -20,10 +20,12 @@ import java.util.List;
 public final class PlaylistFeedIndex {
     private static final int LEGACY_OFFSET_INDEX_MAGIC = 0x4D545649; // MTVI
     private static final int OFFSET_INDEX_MAGIC = 0x4D54564A; // MTVJ: length-prefixed UTF-8
+    private static final int COVERAGE_INDEX_MAGIC = 0x4D54564B; // MTVK: station-first initial index
+    private static final int COVERAGE_IDENTITY_LIMIT = 16384;
     private static final int MAX_FIELD_BYTES = 1024 * 1024;
 
     private static boolean supportedMagic(int magic) {
-        return magic == LEGACY_OFFSET_INDEX_MAGIC || magic == OFFSET_INDEX_MAGIC;
+        return magic == LEGACY_OFFSET_INDEX_MAGIC || magic == OFFSET_INDEX_MAGIC || magic == COVERAGE_INDEX_MAGIC;
     }
     private static final long OFFSET_HEADER_BYTES = 12L;
 
@@ -44,6 +46,27 @@ public final class PlaylistFeedIndex {
     public static int readPage(File playlist, int startEntry, int maxEntries,
                                PlaylistParser.EntryConsumer consumer,
                                java.util.function.BooleanSupplier paused) throws IOException {
+        return readPage(playlist,startEntry,maxEntries,consumer,paused,false);
+    }
+
+    static int readInitialPage(File playlist,int startEntry,int maxEntries,
+            PlaylistParser.EntryConsumer consumer,java.util.function.BooleanSupplier paused)throws IOException {
+        return readPage(playlist,startEntry,maxEntries,consumer,paused,true);
+    }
+
+    static boolean hasCoverageOrder(File playlist){
+        if(playlist==null)return false;
+        File records=new File(playlist.getAbsolutePath()+".index-data");
+        File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
+        if(!isUsableIndex(records,offsets))return false;
+        try(RandomAccessFile input=new RandomAccessFile(offsets,"r")){
+            return input.readInt()==COVERAGE_INDEX_MAGIC;
+        }catch(IOException invalid){return false;}
+    }
+
+    private static int readPage(File playlist,int startEntry,int maxEntries,
+            PlaylistParser.EntryConsumer consumer,java.util.function.BooleanSupplier paused,
+            boolean coverage) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
         if (playlist == null || !playlist.isFile() || startEntry < 0
                 || maxEntries <= 0 || consumer == null) {
@@ -51,9 +74,9 @@ public final class PlaylistFeedIndex {
         }
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
-        if (!isUsableIndex(records, offsets)) {
+        if (!isUsableIndex(records, offsets)||(coverage&&!hasCoverageOrder(playlist))) {
             deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets, paused);
+            buildIndex(playlist, records, offsets, paused,coverage);
         }
 
         // Decode the whole page before invoking the consumer. If a sidecar is
@@ -65,7 +88,7 @@ public final class PlaylistFeedIndex {
             throw pausedRead; // Cancellation is not corruption; retain the valid sidecars.
         } catch (IOException corruptIndex) {
             deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets, paused);
+            buildIndex(playlist, records, offsets, paused,coverage);
             // A second failure is a real I/O/source-data problem; preserve the cursor.
             page = readIndexedPage(records, offsets, startEntry, maxEntries, paused);
         }
@@ -187,7 +210,7 @@ public final class PlaylistFeedIndex {
     }
 
     private static void buildIndex(File playlist, File records, File offsets,
-            java.util.function.BooleanSupplier paused) throws IOException {
+            java.util.function.BooleanSupplier paused,boolean coverage) throws IOException {
         File recordsTemporary = new File(records.getAbsolutePath() + ".tmp");
         File offsetsTemporary = new File(offsets.getAbsolutePath() + ".tmp");
         final long[] written = new long[1];
@@ -203,13 +226,13 @@ public final class PlaylistFeedIndex {
                      new java.io.BufferedOutputStream(recordRaw,32768));
              java.io.DataOutputStream offsetFile = new java.io.DataOutputStream(
                      new java.io.BufferedOutputStream(offsetRaw,32768))) {
-            offsetFile.writeInt(OFFSET_INDEX_MAGIC);
+            offsetFile.writeInt(coverage?COVERAGE_INDEX_MAGIC:OFFSET_INDEX_MAGIC);
             offsetFile.writeLong(0L); // Filled after the complete index is written.
             String header = reader.readLine();
             if (header == null || !header.replace("\uFEFF", "").trim().startsWith("#EXTM3U")) {
                 throw new IOException("Cached resource is not a valid M3U playlist");
             }
-            PlaylistParser.parseEach(reader, 0, Integer.MAX_VALUE, source -> {
+            PlaylistParser.EntryConsumer write=source->{
                 try {
                     offsetFile.writeLong(recordPosition[0]);
                     recordPosition[0] = Math.addExact(recordPosition[0],writeRecord(recordFile, source));
@@ -217,7 +240,38 @@ public final class PlaylistFeedIndex {
                 } catch (IOException error) {
                     throw new IndexWriteFailure(error);
                 }
-            }, paused);
+            };
+            if(!coverage)PlaylistParser.parseEach(reader,0,Integer.MAX_VALUE,write,paused);
+            else {
+                // First occurrences are scheduling candidates, not validated
+                // stations. Keep every backup, even ambiguous or repeated rows.
+                java.util.HashSet<String> seen=new java.util.HashSet<>();
+                java.util.BitSet firstPositions=new java.util.BitSet();
+                int[] position={0};
+                int total=PlaylistParser.parseEach(reader,0,Integer.MAX_VALUE,source->{
+                    int ordinal=position[0]++;
+                    if(seen.size()>=COVERAGE_IDENTITY_LIMIT)return;
+                    String id=SourceDiscoveryIdentityPolicy.identity(source.name,source.group,
+                        source.url,source.tvgId,source.tvgName);
+                    if(id.length()<=512&&seen.add(id)){
+                        firstPositions.set(ordinal);
+                        write.accept(source);
+                    }
+                },paused);
+                seen.clear();
+                position[0]=0;
+                // Re-read the same immutable local body, not the remote URL.
+                // The bitset avoids re-normalizing identities on the second pass.
+                try(BufferedReader backupReader=new BufferedReader(new InputStreamReader(
+                        new FileInputStream(playlist),StandardCharsets.UTF_8),8192)){
+                    backupReader.readLine();
+                    int repeated=PlaylistParser.parseEach(backupReader,0,Integer.MAX_VALUE,source->{
+                        if(!firstPositions.get(position[0]++))write.accept(source);
+                    },paused);
+                    if(repeated!=total||written[0]!=total)
+                        throw new IOException("Coverage index candidate count mismatch");
+                }
+            }
             SourceProbeTimePolicy.checkPaused(paused);
             recordFile.flush();
             offsetFile.flush();
