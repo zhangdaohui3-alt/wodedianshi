@@ -3467,7 +3467,9 @@ public class SourceUpdateWorker extends Worker {
         SampleResponse manifestResponse=initialResponse;
         String manifest=HlsVariantPolicy.decodePlaylist(initialBytes);
         String manifestUrl=manifestResponse.finalUrl;
-        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
+        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parseWithOverflow(manifest,manifestUrl);
+        boolean untestedRenditions=variants.size()>HlsVariantPolicy.MAX_VARIANTS;
+        if(untestedRenditions)variants.remove(variants.size()-1);
         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
         // Select a rendition only after every required sample for that rendition
         // passes. A stale second segment in a high-bitrate rendition must not
@@ -3610,6 +3612,9 @@ public class SourceUpdateWorker extends Worker {
               result.socketTimedOut=true;
           }
         }
+        // Exhausting a bounded selection is not evidence against the
+        // untested distinct renditions. A successful sibling returned above.
+        if(untestedRenditions)result.unsupportedPreflight=true;
         return result;
       }
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
