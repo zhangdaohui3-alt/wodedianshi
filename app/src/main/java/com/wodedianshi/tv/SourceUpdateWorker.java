@@ -1384,8 +1384,23 @@ public class SourceUpdateWorker extends Worker {
           if(collected!=null&&!entry.savedSource)
             collectQualityUrlsOnce(needed,collected,byIdentity.get(entry.mergeIdentity()));
         }
-        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
-            manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
+        if(manualRefresh&&!manualSavedOnly){
+          HashSet<String> ownPositive=new HashSet<>();
+          com.wodedianshi.tv.db.ManualProbeQualityStore.loadManualUrls(getApplicationContext(),qualityOwner,needed,
+              manualQualityLoaded,measuredScores,probeFailureStreaks,ownPositive,pauseRequested);
+          // A current-round private positive and the committed exact route
+          // association together prove that this discovery work is redundant.
+          // Never skip saved health checks or new metadata/scope associations.
+          for(Entry entry:probeCandidates){
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            if(!entry.savedSource&&ownPositive.contains(scoreKey(entry.url)))
+              entry.alreadyStaged=hasCommittedRouteEvidence(byIdentity.get(entry.mergeIdentity()),
+                  entry,canonicalDisplayName(entry));
+          }
+        }else{
+          com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
+              manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
+        }
       }
       // Use independent rotating cursors and a fixed per-run budget for discovery
       // and saved-source health checks. A moving 5,000-item window combined with one
