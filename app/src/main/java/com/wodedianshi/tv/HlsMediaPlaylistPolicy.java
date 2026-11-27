@@ -25,19 +25,21 @@ public final class HlsMediaPlaylistPolicy {
         public final long firstMediaSequenceNumber;
         public final boolean unsupportedEncryption;
         public final boolean skippedMediaByteRange;
+        private final boolean unsupportedMediaUri;
         boolean requiresUnsupportedPreflight(){
             return unsupportedInitializationByteRange||unsupportedInitializationMap||unsupportedEncryption
-                    ||(mediaUrls.isEmpty()&&skippedMediaByteRange);
+                    ||unsupportedMediaUri||(mediaUrls.isEmpty()&&skippedMediaByteRange);
         }
         public final ArrayList<String> mediaUrls;
         public final ArrayList<Long> mediaSequenceNumbers;
         Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
-                  String iv, long firstSequence, boolean encryptionUnsupported, boolean skippedRange, ArrayList<String> media, ArrayList<Long> sequences) {
+                  String iv, long firstSequence, boolean encryptionUnsupported, boolean skippedRange, boolean invalidMedia, ArrayList<String> media, ArrayList<Long> sequences) {
             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
             unsupportedInitializationMap=mapUnsupported;
             aes128Encrypted=aes128; encryptionKeyUrl=keyUrl; encryptionIv=iv;
             firstMediaSequenceNumber=firstSequence;
             unsupportedEncryption=encryptionUnsupported; skippedMediaByteRange=skippedRange;
+            unsupportedMediaUri=invalidMedia;
             mediaUrls=media; mediaSequenceNumbers=sequences;
         }
     }
@@ -49,10 +51,10 @@ public final class HlsMediaPlaylistPolicy {
         boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
         boolean activeKeyHasExplicitIv = false, hasFirstSequence = false;
         boolean awaitingSegment=false, segmentGap=false, segmentRange=false, clearMediaSeen=false;
-        boolean skippedMediaRange=false;
+        boolean skippedMediaRange=false,unsupportedMediaUri=false;
         long mediaSequence = 0L, nextSequence = 0L, firstSequence = 0L;
         if (playlist == null || finalPlaylistUrl == null)
-            return new Resources(null,false,false,false,null,null,0L,false,false,media,sequences);
+            return new Resources(null,false,false,false,null,null,0L,false,false,false,media,sequences);
         String[] lines = playlist.replace("\\r", "").split("\\n");
         URL base=new URL(finalPlaylistUrl);
         // Continue scanning the bounded playlist after the media URL cap is reached: key
@@ -119,7 +121,11 @@ public final class HlsMediaPlaylistPolicy {
                     String uri=uriAttribute(attrs);
                     if(uri!=null){
                         clearMediaSeen=true;
-                        if(media.size()<MAX_MEDIA_SEGMENTS&&addUnique(media,resolve(uri,base)))sequences.add(-1L);
+                        if(media.size()<MAX_MEDIA_SEGMENTS){
+                            String resolved=resolve(uri,base);
+                            if(resolved==null)unsupportedMediaUri=true;
+                            else if(addUnique(media,resolved))sequences.add(-1L);
+                        }
                     }
                 }
             } else if(line.startsWith("#EXTINF:")) {
@@ -132,10 +138,13 @@ public final class HlsMediaPlaylistPolicy {
                 // Skipped resources still consume a sequence; comments do not.
                 if(activeKeyUrl==null)clearMediaSeen=true;
                 if(segmentRange&&!segmentGap)skippedMediaRange=true;
-                if(!segmentGap&&!segmentRange&&media.size()<MAX_MEDIA_SEGMENTS
-                        &&addUnique(media,resolve(line,base))){
-                    sequences.add(nextSequence);
-                    if(!hasFirstSequence){firstSequence=nextSequence;hasFirstSequence=true;}
+                if(!segmentGap&&!segmentRange&&media.size()<MAX_MEDIA_SEGMENTS){
+                    String resolved=resolve(line,base);
+                    if(resolved==null)unsupportedMediaUri=true;
+                    else if(addUnique(media,resolved)){
+                        sequences.add(nextSequence);
+                        if(!hasFirstSequence){firstSequence=nextSequence;hasFirstSequence=true;}
+                    }
                 }
                 if(nextSequence==Long.MAX_VALUE)unsupportedEncryption=true;
                 else nextSequence++;
@@ -144,7 +153,7 @@ public final class HlsMediaPlaylistPolicy {
         }
         if(aes128&&!hasFirstSequence)unsupportedEncryption=true;
         return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,
-                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,skippedMediaRange,media,sequences);
+                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,skippedMediaRange,unsupportedMediaUri,media,sequences);
     }
 
     /** Only a recognizable open live media window qualifies; an empty
@@ -172,8 +181,14 @@ public final class HlsMediaPlaylistPolicy {
     private static String uriAttribute(String attributes) {
         return attribute(URI_ATTRIBUTE,attributes);
     }
-    private static String resolve(String uri,URL base)throws Exception {
-        return uri==null||uri.isEmpty()?null:new URL(base,uri).toString();
+    private static String resolve(String uri,URL base){
+        if(uri==null||uri.isEmpty())return null;
+        try{
+            URL resolved=new URL(base,uri);
+            String scheme=resolved.getProtocol();
+            return ("http".equalsIgnoreCase(scheme)||"https".equalsIgnoreCase(scheme))
+                    &&!resolved.getHost().isEmpty()?resolved.toString():null;
+        }catch(java.net.MalformedURLException invalid){return null;}
     }
     private static boolean addUnique(ArrayList<String> values,String value) {
         if(value==null||values.contains(value)||values.size()>=MAX_MEDIA_SEGMENTS)return false;
