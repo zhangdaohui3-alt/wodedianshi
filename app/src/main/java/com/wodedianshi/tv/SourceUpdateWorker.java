@@ -954,6 +954,7 @@ public class SourceUpdateWorker extends Worker {
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
           final int[] conflictingBroadcastRows={0};
+          final String directoryScope=scopeForFeed(feed);
           PlaylistParser.EntryConsumer consume=source->{
             // Reject contradictory recognized station labels before spending network budget.
             // Raw parser positions still count toward the same feed cursor.
@@ -961,7 +962,7 @@ public class SourceUpdateWorker extends Worker {
               conflictingBroadcastRows[0]++;return;
             }
             String scope=RegionCategoryPolicy.catalogueScope(
-                source.name,source.group,source.tvgName,source.tvgId,scopeForFeed(feed));
+                source.name,source.group,source.tvgName,source.tvgId,directoryScope);
             feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           };
@@ -981,11 +982,9 @@ public class SourceUpdateWorker extends Worker {
             // discovery already partitions by a refinement of this rank in
             // coverageFirst below; pre-sorting there cannot alter order within
             // any final rank and repeats expensive metadata classification.
-            feedCandidates.sort((aEntry,bEntry)->Integer.compare(
-                ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
-                    aEntry.scope,aEntry.name,aEntry.group,aEntry.tvgName,aEntry.tvgId),
-                ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
-                    bEntry.scope,bEntry.name,bEntry.group,bEntry.tvgName,bEntry.tvgId)));
+            DiscoveryBatchPolicy.stablePrioritySort(feedCandidates,
+                entry->ChinaDiscoveryCandidatePolicy.initialProbePriority(feedIndex,
+                    entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
           }
           if(initialDiscoveryChain){
             ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
