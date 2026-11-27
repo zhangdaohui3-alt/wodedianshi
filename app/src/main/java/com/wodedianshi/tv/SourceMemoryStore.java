@@ -14,6 +14,7 @@ public final class SourceMemoryStore {
     private static final String QOE = "source_qoe_v1";
     private static final long LAST_GOOD_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L;
     private static final int MAX_ENTRIES = 500;
+    private static final int MAX_QOE_ENTRIES = 4096;
     private static final Object LOCK = new Object();
     private static final ExecutorService WRITER = Executors.newSingleThreadExecutor();
     private static JSONObject lastGood = new JSONObject();
@@ -44,11 +45,12 @@ public final class SourceMemoryStore {
                 while (keys.hasNext()) {
                     String key = keys.next();
                     JSONObject entry = persisted.optJSONObject(key);
-                    if (entry != null) qoe.put(key, entry);
+                    if (entry != null && key.startsWith("v2:")) qoe.put(key, entry);
                 }
             } catch (Exception malformed) {
                 android.util.Log.w("MyTVSourceMemory", "Invalid stored QoE history", malformed);
             }
+            trimPlaybackHistory(qoe, MAX_QOE_ENTRIES);
             try { lastGood = new JSONObject(savedGood); }
             catch (Exception malformed) { lastGood = new JSONObject(); }
             try { cooldowns = new JSONObject(savedCooldowns); }
@@ -202,6 +204,7 @@ public final class SourceMemoryStore {
                         qoeFlushQueued=true;
                         WRITER.execute(() -> {
                             qoeFlushQueued=false;
+                            trimPlaybackHistory(qoe, MAX_QOE_ENTRIES);
                             write(application,QOE,new JSONObject(qoe).toString());
                         });
                     }
@@ -217,6 +220,18 @@ public final class SourceMemoryStore {
     /** Published metrics are read here only; never expose mutable JSON to callers. */
     static double rankedScore(String url,JSONObject probes,long now){
         return SourceQualityScorer.rankScore(url,probes,qoe::get,now);
+    }
+
+    /** Writer-owned map; foreground readers only access immutable entries.
+     * Bound optional playback evidence, not the channel or probe catalogue.
+     * Sort only on overflow and remove the oldest observations in one pass. */
+    static void trimPlaybackHistory(java.util.Map<String,JSONObject> history,int capacity) {
+        int excess=history.size()-Math.max(0,capacity);
+        if(excess<=0)return;
+        java.util.ArrayList<String> oldest=new java.util.ArrayList<>(history.keySet());
+        oldest.sort(java.util.Comparator.<String>comparingLong(
+            key->history.get(key).optLong("updated",0L)).thenComparing(key->key));
+        for(int i=0;i<excess;i++)history.remove(oldest.get(i));
     }
 
     private static void write(Context context, String key, String value) {
