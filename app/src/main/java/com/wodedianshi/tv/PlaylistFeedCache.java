@@ -587,13 +587,7 @@ public final class PlaylistFeedCache {
         }
         reconcilePreparedBodies(bodies,completed,prepared);
         if(!initialCacheNeedsDrain(bytes))return null;
-        boolean[] available=initialPressureDrainCandidates(bodies,acquiredVersions);
-        if(orderedReady!=null&&orderedReady.length==bodies.length){
-            for(int i=0;i<bodies.length;i++)
-                orderedReady[i]=available[i]&&matchingAcquiredBody(bodies[i],acquiredVersions[i])!=null
-                        &&PlaylistFeedIndex.hasCoverageOrder(bodies[i]);
-        }
-        return available;
+        return initialPressureDrainCandidates(bodies,acquiredVersions,orderedReady);
     }
 
     /** Only downgrade absent-body preparation hints during the existing
@@ -627,7 +621,13 @@ public final class PlaylistFeedCache {
     }
 
     static boolean[] initialPressureDrainCandidates(File[] bodies,String[] acquiredVersions){
+        return initialPressureDrainCandidates(bodies,acquiredVersions,null);
+    }
+
+    static boolean[] initialPressureDrainCandidates(File[] bodies,String[] acquiredVersions,boolean[] orderedReady){
         boolean[] available=new boolean[bodies.length];
+        boolean reportReady=orderedReady!=null&&orderedReady.length==bodies.length;
+        if(reportReady)java.util.Arrays.fill(orderedReady,false);
         for(int i=0;i<bodies.length;i++){
             File body=bodies[i];
             String version=acquiredVersions[i];
@@ -636,7 +636,11 @@ public final class PlaylistFeedCache {
             // Matching metadata proves the committed version. Missing or
             // invalid metadata merits local repair before a new acquisition.
             // A known different version must not masquerade as recoverable.
-            available[i]=!matchesBody(metadata,body)||matchesRecoveredAcquisition(body,metadata,version);
+            boolean valid=matchesBody(metadata,body);
+            boolean exact=valid&&DiscoveryBatchPolicy.isPreparedInitialFeed(
+                    version,body.getName()+":"+metadata.getProperty("bodySha256"));
+            available[i]=!valid||exact;
+            if(reportReady&&exact)orderedReady[i]=PlaylistFeedIndex.hasCoverageOrder(body);
         }
         return available;
     }
