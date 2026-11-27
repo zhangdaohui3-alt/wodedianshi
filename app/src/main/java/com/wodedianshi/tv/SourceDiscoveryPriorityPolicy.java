@@ -65,6 +65,27 @@ public final class SourceDiscoveryPriorityPolicy {
         return nextEligibleFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd,preferCore);
     }
 
+    /** After first-watch/core coverage, prepare fresh directory bodies within
+     * the next eligible region before probing more pages of prepared bodies.
+     * Prior failed acquisitions retain ordinary fair rotation; prepared
+     * markers are scheduling hints only, never proof of a current cache file. */
+    static int nextInitialFeed(int start,boolean[] completed,boolean[] attempted,
+            boolean[] visited,boolean[] prepared,boolean[] failed,int mainlandEnd,
+            int regionEnd,boolean preferCore,boolean viewing) {
+        int ordinary=nextCoverageFeed(start,completed,attempted,visited,mainlandEnd,regionEnd,preferCore);
+        if(ordinary<0||preferCore||viewing||prepared==null||failed==null
+                ||prepared.length!=completed.length||failed.length!=completed.length)return ordinary;
+        int size=completed.length;
+        int china=bound(mainlandEnd,size),regions=Math.max(china,bound(regionEnd,size));
+        int from=ordinary<china?0:ordinary<regions?china:regions;
+        int to=ordinary<china?china:ordinary<regions?regions:size;
+        for(int d=0;d<to-from;d++){
+            int i=from+(ordinary-from+d)%(to-from);
+            if(!completed[i]&&!attempted[i]&&!prepared[i]&&!failed[i])return i;
+        }
+        return ordinary;
+    }
+
     /** Select from the highest-priority eligible stage. A temporarily deferred
      * feed remains unfinished in the durable state; the mask below is local
      * to selection and must never be used for progress or final publication. */
