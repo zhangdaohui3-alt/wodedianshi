@@ -362,6 +362,33 @@ public class PlaylistFeedIndexTest {
         assertEquals(62,PlaylistFeedIndex.indexedEntryCount(feed));
     }
 
+    @Test public void pausedCoverageUpgradeRetainsUsableRawIndex() throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
+                +"#EXTBURL:https://example.invalid/backup\n"
+                +"#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n");
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(3,PlaylistFeedIndex.readPage(feed,0,3,page::add));
+        assertEquals("https://example.invalid/backup",page.get(1).url);
+        page.clear();
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        try {
+            PlaylistFeedIndex.readInitialPage(feed,0,3,page::add,()->checks.incrementAndGet()>=2);
+            org.junit.Assert.fail("Expected coverage build pause");
+        } catch(SourceProbeTimePolicy.PausedException expected) {}
+        assertEquals(0,page.size());
+        assertEquals(3,PlaylistFeedIndex.indexedEntryCount(feed));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.hasCoverageOrder(feed));
+        org.junit.Assert.assertFalse(new File(feed.getPath()+".index-data.tmp").exists());
+        org.junit.Assert.assertFalse(new File(feed.getPath()+".index-offsets.tmp").exists());
+        assertEquals(3,PlaylistFeedIndex.readExistingPage(feed,0,3,page::add,()->false));
+        assertEquals("https://example.invalid/backup",page.get(1).url);
+        page.clear();
+        assertEquals(3,PlaylistFeedIndex.readInitialPage(feed,0,3,page::add,()->false));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(feed));
+        assertEquals("CCTV-2",page.get(1).name);
+        assertEquals("https://example.invalid/backup",page.get(2).url);
+    }
+
     @Test public void orderedProbeVersionCannotResumeLegacyRawPosition(){
         String raw="feed:body-digest";
         String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
