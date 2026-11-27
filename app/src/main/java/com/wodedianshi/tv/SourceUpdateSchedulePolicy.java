@@ -58,7 +58,16 @@ public final class SourceUpdateSchedulePolicy {
     static java.util.ArrayList<String> selectProvisionalRechecks(
             java.util.Set<String> pending,java.util.Map<String,String> current,
             java.util.function.Predicate<String> temporarilyDeferred) {
+        return provisionalRecheckOrder(pending,current,temporarilyDeferred,PROVISIONAL_DAILY_LIMIT);
+    }
+
+    /** The owner can refill skipped slots from the bounded pending backlog;
+     * the network admission count, not the candidate count, caps work. */
+    static java.util.ArrayList<String> provisionalRecheckOrder(
+            java.util.Set<String> pending,java.util.Map<String,String> current,
+            java.util.function.Predicate<String> temporarilyDeferred,int limit) {
         java.util.ArrayList<String> selected=new java.util.ArrayList<>();
+        limit=Math.max(0,Math.min(PROVISIONAL_RECHECK_CAP,limit));
         // Oldest route gets the first opportunity; thereafter take one route
         // per origin per round, preserving FIFO within each origin. A cluster
         // of slow siblings cannot occupy every early slot of the idle budget.
@@ -70,7 +79,7 @@ public final class SourceUpdateSchedulePolicy {
             byOrigin.computeIfAbsent(origin,ignored->new java.util.ArrayDeque<>()).addLast(url);
         }
         java.util.ArrayDeque<java.util.ArrayDeque<String>> rounds=new java.util.ArrayDeque<>(byOrigin.values());
-        while(!rounds.isEmpty()&&selected.size()<PROVISIONAL_DAILY_LIMIT){
+        while(!rounds.isEmpty()&&selected.size()<limit){
             java.util.ArrayDeque<String> routes=rounds.removeFirst();
             selected.add(routes.removeFirst());
             if(!routes.isEmpty())rounds.addLast(routes);
