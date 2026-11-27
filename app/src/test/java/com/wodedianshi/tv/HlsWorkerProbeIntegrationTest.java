@@ -215,6 +215,69 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void productionRecheckSkipsThrottledSiblingAndReusesOnlyEquivalentPositive()throws Exception{
+        ExecutorService servers=Executors.newFixedThreadPool(2);
+        try(ServerSocket limited=new ServerSocket();ServerSocket healthy=new ServerSocket()){
+            limited.bind(new InetSocketAddress("127.0.0.1",0));
+            healthy.bind(new InetSocketAddress(InetAddress.getByName("localhost"),0));
+            limited.setSoTimeout(10000);healthy.setSoTimeout(10000);
+            Future<?> first=servers.submit(()->{
+                replyRecheck(limited,"/limited.ts",429,new byte[0]);
+                return null;
+            });
+            Future<?> second=servers.submit(()->{
+                replyRecheck(healthy,"/live.ts?token=One",200,transportSample());
+                replyRecheck(healthy,"/live.ts?token=Two",200,transportSample());
+                return null;
+            });
+            String blocked="http://127.0.0.1:"+limited.getLocalPort()+"/limited.ts";
+            String sibling="http://127.0.0.1:"+limited.getLocalPort()+"/sibling.ts";
+            String base="http://localhost:"+healthy.getLocalPort()+"/live.ts?token=";
+            String good=base+"One",alias=good.replace("localhost","LOCALHOST"),distinct=base+"Two";
+            List<String> order=Arrays.asList(blocked,good,sibling,alias,distinct);
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(String url:order)pending.add(StableKey.url(url));
+            SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
+            first.get(12,TimeUnit.SECONDS);second.get(12,TimeUnit.SECONDS);
+            assertEquals(3,result.checked);
+            assertEquals(1,result.originDeferred);
+            assertEquals(1,result.reused);
+            assertEquals(3L,result.sampleRequests);
+            assertEquals(2L*transportSample().length,result.sampleBytes);
+            assertEquals(new HashSet<>(Arrays.asList(good,alias,distinct)),result.completed.keySet());
+            assertSame(result.completed.get(good),result.completed.get(alias));
+            assertNotSame(result.completed.get(good),result.completed.get(distinct));
+            assertEquals(Arrays.asList(StableKey.url(sibling),StableKey.url(blocked)),new ArrayList<>(pending));
+        }finally{servers.shutdownNow();}
+    }
+
+    private static void replyRecheck(ServerSocket server,String path,int status,byte[] body)throws Exception{
+        try(Socket socket=server.accept()){
+            socket.setSoTimeout(5000);
+            BufferedReader reader=new BufferedReader(new InputStreamReader(socket.getInputStream(),StandardCharsets.US_ASCII));
+            String request=reader.readLine();
+            assertNotNull(request);assertTrue(request,request.startsWith("GET "+path+" "));
+            for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+            OutputStream out=socket.getOutputStream();
+            out.write(bytes("HTTP/1.1 "+status+(status==200?" OK":" Too Many Requests")
+                    +"\r\nContent-Type: application/octet-stream\r\nContent-Length: "+body.length
+                    +"\r\nConnection: close\r\n\r\n"));
+            out.write(body);out.flush();
+        }
+    }
+
+    @Test public void productionRecheckStopsBeforeAnyNetworkWhenPlaybackResumes(){
+        String url="http://127.0.0.1:1/never.ts";
+        LinkedHashSet<String> pending=new LinkedHashSet<>(Collections.singleton(StableKey.url(url)));
+        try{
+            SourceUpdateWorker.probeQualityRecheckSlice(Collections.singletonList(url),pending,
+                    SystemClock.elapsedRealtime()+90000L,()->true);
+            fail("expected playback cancellation");
+        }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+        assertEquals(Collections.singleton(StableKey.url(url)),pending);
+    }
+
     @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
