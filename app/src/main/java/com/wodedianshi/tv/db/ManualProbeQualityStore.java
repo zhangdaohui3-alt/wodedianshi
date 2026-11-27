@@ -62,7 +62,7 @@ public final class ManualProbeQualityStore {
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             if(url==null||url.isEmpty())continue;
-            keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
+            keys.add(StableKey.url(url));
             if(keys.size()>=256){
                 readScorePage(db,owner,keys,scores,inherit,paused);
                 keys.clear();
@@ -125,8 +125,8 @@ public final class ManualProbeQualityStore {
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             if(url==null||url.isEmpty())continue;
-            for(String key:new String[]{StableKey.url(url),StableKey.legacyUrl(url)})
-                if(!loaded.contains(key))keys.add(key);
+            String key=StableKey.url(url);
+            if(!loaded.contains(key))keys.add(key);
         }
         List<String> list=new ArrayList<>(keys);
         ManualProbeQualityDao dao=db.manualProbeQualityDao();
@@ -209,7 +209,7 @@ public final class ManualProbeQualityStore {
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             if(url==null||url.isEmpty())continue;
-            keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
+            keys.add(StableKey.url(url));
             if(keys.size()>=256){
                 publishPreviewPage(db,keys,paused);keys.clear();
             }
