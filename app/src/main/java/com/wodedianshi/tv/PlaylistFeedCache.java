@@ -668,14 +668,6 @@ public final class PlaylistFeedCache {
     }
 
     private static String sha256(String value) throws IOException {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder(digest.length * 2);
-            for (byte item : digest) result.append(String.format("%02x", item & 0xff));
-            return result.toString();
-        } catch (Exception error) {
-            throw new IOException("SHA-256 is unavailable", error);
-        }
+        return hex(newDigest().digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 }
