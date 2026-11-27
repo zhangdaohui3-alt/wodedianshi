@@ -848,13 +848,21 @@ public class HlsWorkerProbeIntegrationTest {
     }
 
     @Test public void largerConfirmedManifestUsesSameRequestAndValidatesBothSegments()throws Exception{
+        assertLargeManifestUsesSameResponse("/large.m3u8","bytes=0-131072");
+    }
+
+    @Test public void extensionlessManifestUsesSameResponseWithoutLargerRange()throws Exception{
+        assertLargeManifestUsesSameResponse("/live","bytes=0-32768");
+    }
+
+    private void assertLargeManifestUsesSameResponse(String root,String range)throws Exception{
         byte[] playlist=new byte[40000];
         Arrays.fill(playlist,(byte)' ');
         byte[] marker=bytes("#EXTM3U\n#");
         byte[] segments=bytes("\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\n/high1.ts\n#EXTINF:5,\n/high2.ts\n");
         System.arraycopy(marker,0,playlist,0,marker.length);
         System.arraycopy(segments,0,playlist,playlist.length-segments.length,segments.length);
-        String[] expected={"/large.m3u8","/high1.ts","/high2.ts"};
+        String[] expected={root,"/high1.ts","/high2.ts"};
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
             server.bind(new InetSocketAddress("127.0.0.1",0));
@@ -867,8 +875,12 @@ public class HlsWorkerProbeIntegrationTest {
                         String start=reader.readLine();
                         assertNotNull(start);
                         assertTrue(start,start.startsWith("GET "+path+" "));
-                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
-                        byte[] body="/large.m3u8".equals(path)?playlist:transportSample();
+                        String requestedRange=null;
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){
+                            if(header.regionMatches(true,0,"Range:",0,6))requestedRange=header.substring(6).trim();
+                        }
+                        if(root.equals(path))assertEquals(range,requestedRange);
+                        byte[] body=root.equals(path)?playlist:transportSample();
                         OutputStream out=socket.getOutputStream();
                         out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
                                 +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
@@ -878,7 +890,7 @@ public class HlsWorkerProbeIntegrationTest {
                 return null;
             });
             SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
-                    "http://127.0.0.1:"+server.getLocalPort()+"/large.m3u8",
+                    "http://127.0.0.1:"+server.getLocalPort()+root,
                     SystemClock.elapsedRealtime()+15000L,false,()->false,true);
             served.get(15,TimeUnit.SECONDS);
             assertTrue(result.valid);
