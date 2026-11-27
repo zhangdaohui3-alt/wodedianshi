@@ -12,36 +12,52 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=28,manifest=Config.NONE)
 public class InitialQualityTransactionTest {
-    @Test public void manualSeedCapturesLegacyOnlyWhenUnindexedAndRollsBack()throws Exception{
+    @Test public void manualOverlayInheritsWithoutCopyAndPublishesAtomically()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
         try{
-            String owner="manual-capture";
-            String scores=RoomCatalogueBuildStore.MANUAL_SCORES_KEY,streaks=RoomCatalogueBuildStore.MANUAL_STREAKS_KEY;
-            db.appStateDao().put(new AppStateEntity("source_probe_scores_v1","{\"a\":900}",1L));
-            db.appStateDao().put(new AppStateEntity("source_probe_failure_streaks_v1","{\"b\":2}",1L));
-            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
-            db.runInTransaction(()->ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,2L,()->false));
-            assertEquals("{\"a\":900}",db.appStateDao().getValue(scores));
-            assertEquals("{\"b\":2}",db.appStateDao().getValue(streaks));
-            db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_OWNER_KEY);
+            String owner="manual-sparse",initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            String a="https://example.invalid/a",b="https://example.invalid/b",c="https://example.invalid/c";
+            String ak=com.wodedianshi.tv.StableKey.url(a),bk=com.wodedianshi.tv.StableKey.url(b),ck=com.wodedianshi.tv.StableKey.url(c);
             db.runInTransaction(()->{
-                ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false);
+                ManualProbeQualityStore.seedInitialInTransaction(db,java.util.Arrays.asList(
+                    new ManualProbeQualityEntity(initial,ak,900,2),
+                    new ManualProbeQualityEntity(initial,bk,800,3),
+                    new ManualProbeQualityEntity(initial,ck,700,1)),()->false);
                 ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
             });
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            ManualProbeQualityStore.ensure(db,owner,()->false);
+            assertTrue(db.manualProbeQualityDao().page(owner,"",10).isEmpty());
+            org.json.JSONObject scores=new org.json.JSONObject(),streaks=new org.json.JSONObject();
+            java.util.List<String> urls=java.util.Arrays.asList(a,b,c);
+            ManualProbeQualityStore.loadUrls(db,owner,urls,new java.util.HashSet<>(),scores,streaks,()->false);
+            assertEquals(900,scores.getInt(ak));assertEquals(2,streaks.getInt(ak));
+            db.runInTransaction(()->ManualProbeQualityStore.writeInTransaction(db,owner,java.util.Arrays.asList(
+                new ManualProbeQualityEntity(owner,ak,1200,null),
+                new ManualProbeQualityEntity(owner,bk,null,null)),()->false));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_READY_KEY,"true",1L));
+            scores=ManualProbeQualityStore.readManualRankingScores(db,owner,urls,()->false);
+            assertEquals(1200,scores.getInt(ak));assertFalse(scores.has(bk));assertEquals(700,scores.getInt(ck));
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,ak).score);
             try{
                 db.runInTransaction(()->{
-                    ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,3L,()->false);
+                    ManualProbeQualityStore.publishInTransaction(db,owner,()->false);
                     throw new IllegalStateException("rollback");
                 });
                 fail("Expected rollback");
             }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
-            assertEquals("{\"a\":900}",db.appStateDao().getValue(scores));
-            db.runInTransaction(()->ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,4L,()->false));
-            assertNull(db.appStateDao().getValue(scores));
-            assertNull(db.appStateDao().getValue(streaks));
-            assertEquals("{\"a\":900}",db.appStateDao().getValue("source_probe_scores_v1"));
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,ak).score);
+            assertNotNull(db.manualProbeQualityDao().find(owner,bk));
+            db.runInTransaction(()->{
+                ManualProbeQualityStore.publishInTransaction(db,owner,()->false);
+                RoomCatalogueBuildStore.clearManualInTransaction(db,owner);
+            });
+            assertEquals(Integer.valueOf(1200),db.manualProbeQualityDao().find(published,ak).score);
+            assertNull(db.manualProbeQualityDao().find(published,ak).failureStreak);
+            assertNull(db.manualProbeQualityDao().find(published,bk));
+            assertEquals(Integer.valueOf(700),db.manualProbeQualityDao().find(published,ck).score);
+            assertTrue(db.manualProbeQualityDao().page(owner,"",10).isEmpty());
         }finally{db.close();}
     }
 
@@ -104,13 +120,14 @@ public class InitialQualityTransactionTest {
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"invalid json",1L));
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"invalid json",1L));
             ManualProbeQualityStore.ensure(db,manual,()->false);
-            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(manual,"key").score);
-            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(manual,"key").failureStreak);
+            assertNull(db.manualProbeQualityDao().find(manual,"key"));
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,"key").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(published,"key").failureStreak);
             assertNull(db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY));
         }finally{db.close();}
     }
 
-    @Test public void unindexedSeedStillReadsLegacyScoresAndStreaks()throws Exception{
+    @Test public void initialLegacySeedAndRoomOnlyManualSeedHaveIndependentRules()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
         try{
@@ -126,8 +143,10 @@ public class InitialQualityTransactionTest {
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{\"a\":900}",1L));
             db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{\"b\":2}",1L));
             ManualProbeQualityStore.ensure(db,manual,()->false);
-            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(manual,"a").score);
-            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(manual,"b").failureStreak);
+            assertNull(db.manualProbeQualityDao().find(manual,"a"));
+            assertNull(db.manualProbeQualityDao().find(manual,"b"));
+            assertNull(db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY));
+            assertNull(db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY));
         }finally{db.close();}
     }
 
