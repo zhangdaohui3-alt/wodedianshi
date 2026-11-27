@@ -1801,15 +1801,19 @@ public class SourceUpdateWorker extends Worker {
       // Capture dirty rows BEFORE trimming the legacy compatibility cache.
       if(indexedPublished)update.putPublishedQuality(
           com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
-      // Keep the bounded compatibility view for interim preview playback.
-      // It is no longer the authoritative initial quality store.
-      JSONObject compatibleInitialScores=indexedInitial?
-          mergeCompatibilityQuality(new JSONObject(roomString(scoresKey,"{}")),measuredScores,manualQualityDirty):measuredScores;
-      JSONObject compatibleInitialStreaks=indexedInitial?
-          mergeCompatibilityQuality(new JSONObject(roomString(streaksKey,"{}")),probeFailureStreaks,manualQualityDirty):probeFailureStreaks;
-      if(!manualRefresh){
-        trimProbeScores(compatibleInitialScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
-        trimProbeScores(compatibleInitialStreaks,savedPool,probeCandidates,false,Collections.emptySet());
+      // Only legacy published readers still require a compatibility mirror.
+      // After the first indexed preview/final commit, Room rows are the
+      // authority; do not parse, trim or serialize the old JSON each slice.
+      final boolean maintainLegacyQuality=SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(
+          manualRefresh,publishedQualityAvailable);
+      if(maintainLegacyQuality){
+        JSONObject compatibleScores=indexedInitial?
+            mergeCompatibilityQuality(new JSONObject(roomString(scoresKey,"{}")),measuredScores,manualQualityDirty):measuredScores;
+        JSONObject compatibleStreaks=indexedInitial?
+            mergeCompatibilityQuality(new JSONObject(roomString(streaksKey,"{}")),probeFailureStreaks,manualQualityDirty):probeFailureStreaks;
+        trimProbeScores(compatibleScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
+        trimProbeScores(compatibleStreaks,savedPool,probeCandidates,false,Collections.emptySet());
+        update.putString(scoresKey,compatibleScores.toString()).putString(streaksKey,compatibleStreaks.toString());
       }
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
@@ -1866,7 +1870,6 @@ public class SourceUpdateWorker extends Worker {
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       if(!manualRefresh){
-        update.putString(scoresKey,compatibleInitialScores.toString()).putString(streaksKey,compatibleInitialStreaks.toString());
         update.putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(provisionalKeys).toString());
       }
       if(initialDiscoveryChain){
