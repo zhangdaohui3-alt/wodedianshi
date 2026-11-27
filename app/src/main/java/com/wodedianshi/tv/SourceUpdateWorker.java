@@ -2207,17 +2207,30 @@ public class SourceUpdateWorker extends Worker {
     if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
         com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,selected,new HashSet<>(),scores,streaks,pauseRequested);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    int checked=0,conclusive=0;
+    int checked=0,conclusive=0,originDeferred=0;
+    // Reuse the bounded cooldown policy, but keep routine evidence local to
+    // this slice: a temporary outage must not blacklist a saved source.
+    InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
     for(String url:selected){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,android.os.SystemClock.elapsedRealtime());
+      long now=android.os.SystemClock.elapsedRealtime();
+      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
       if(deadline==0L)break;
+      String origin=InitialOriginCooldownPolicy.origin(url);
+      if(recheckOrigins.cooling(origin,now)){
+        // Not attempted: retain the original queue position and quality.
+        originDeferred++;continue;
+      }
       checked++;
       ProbeResult measured=probe(url,deadline,false,pauseRequested,false);
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      long finishedAt=android.os.SystemClock.elapsedRealtime();
       String key=scoreKey(url);
+      if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
+      else recheckOrigins.observe(origin,SourceSelectionPolicy.endpointKey(url),finishedAt,
+          measured.firstRequestFailed,measured.firstRequestReached);
       if(measured.inconclusive()
-          ||android.os.SystemClock.elapsedRealtime()>=deadline){
+          ||finishedAt>=deadline){
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         continue;
       }
@@ -2237,7 +2250,8 @@ public class SourceUpdateWorker extends Worker {
         java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
-        +" selected="+selected.size()+" conclusive="+conclusive+" pending="+pending.size()
+        +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+originDeferred
+        +" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
   }
