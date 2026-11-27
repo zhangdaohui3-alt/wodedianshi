@@ -61,6 +61,14 @@ public final class SourceUpdateSchedulePolicy {
         return provisionalRecheckOrder(pending,current,temporarilyDeferred,PROVISIONAL_DAILY_LIMIT);
     }
 
+    /** Only a completed positive full sample can be shared by equivalent
+     * endpoint aliases in the same bounded idle recheck. Never share failures,
+     * provisional evidence or a cancelled/expired observation. */
+    static boolean reusableFullRecheck(boolean valid,boolean inconclusive,boolean paced,
+            boolean provisional,long finishedAt,long deadline){
+        return valid&&!inconclusive&&!paced&&!provisional&&finishedAt>=0L&&finishedAt<deadline;
+    }
+
     /** The owner can refill skipped slots from the bounded pending backlog;
      * the network admission count, not the candidate count, caps work. */
     static java.util.ArrayList<String> provisionalRecheckOrder(
