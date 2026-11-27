@@ -162,4 +162,21 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(5,done,tried,visited,prepared,failed,3,4,false,false,false));
         assertArrayEquals(new boolean[6],done);
     }
+
+    @Test public void preparedDirectoriesReceiveFirstTurnAcrossRegionsBeforeDeepScan(){
+        boolean[] done=new boolean[6],attempted=new boolean[6],failed=new boolean[6];
+        boolean[] prepared={true,true,true,true,true,true};
+        boolean[] visited={true,true,false,false,false,false};
+        assertEquals(2,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,false));
+        visited[2]=true;
+        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,true,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,true,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,true));
+        visited[3]=true;attempted[4]=true;
+        assertEquals(5,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,false));
+        visited[5]=true;failed[4]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,false));
+        assertArrayEquals(new boolean[6],done);
+    }
 }
