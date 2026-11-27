@@ -313,4 +313,33 @@ public class DiscoveryBatchPolicyTest {
         assertTrue(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,100,all));
         assertTrue(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,513,-1));
     }
+
+    @Test public void exactReplayKeepsOnlyUncertainPositionsAndTheirEndpointAliases(){
+        int count=6;
+        long mask=DiscoveryBatchPolicy.noteReplayPosition(0L,1,count);
+        mask=DiscoveryBatchPolicy.noteReplayPosition(mask,4,count);
+        assertEquals(mask,DiscoveryBatchPolicy.resumeReplayMask(Long.toString(mask),1,count));
+        mask=DiscoveryBatchPolicy.includeReplayAliases(mask,
+                java.util.Arrays.asList("ok","slow","ok2","slow","other","ok3"),s->s);
+        int replay=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
+        assertFalse(DiscoveryBatchPolicy.skipReplayPosition(replay,mask,1));
+        assertTrue(DiscoveryBatchPolicy.skipReplayPosition(replay,mask,2));
+        assertFalse(DiscoveryBatchPolicy.skipReplayPosition(replay,mask,3));
+        assertFalse(DiscoveryBatchPolicy.skipReplayPosition(replay,mask,4));
+        assertTrue(DiscoveryBatchPolicy.skipReplayPosition(replay,mask,5));
+        assertEquals(mask,DiscoveryBatchPolicy.resumeReplayMask(Long.toString(mask),replay,count));
+        assertFalse(DiscoveryBatchPolicy.skipReplayPosition(1,mask,2));
+    }
+
+    @Test public void missingOrMalformedReplayMaskPreservesConservativeLegacySuffix(){
+        int replay=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
+        assertEquals(-1L,DiscoveryBatchPolicy.resumeReplayMask("",replay,48));
+        assertEquals(-1L,DiscoveryBatchPolicy.resumeReplayMask("4",1,48));
+        assertEquals(-1L,DiscoveryBatchPolicy.resumeReplayMask("256",replay,3));
+        assertEquals(-1L,DiscoveryBatchPolicy.resumeReplayMask("1",replay,49));
+        assertEquals(0L,DiscoveryBatchPolicy.resumeReplayMask("128",DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK,48));
+        assertEquals(-1L,DiscoveryBatchPolicy.noteReplayPosition(-1L,2,48));
+        assertFalse(DiscoveryBatchPolicy.skipReplayPosition(replay,-1L,2));
+        assertEquals(1L<<47,DiscoveryBatchPolicy.noteReplayPosition(0L,47,48));
+    }
 }
