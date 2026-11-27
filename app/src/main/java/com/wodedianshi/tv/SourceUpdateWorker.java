@@ -1228,8 +1228,14 @@ public class SourceUpdateWorker extends Worker {
         long covered=DiscoveryBatchPolicy.readCoverageMask(
             roomString(batchPrefix+"coverage_order",""),rawFingerprint,candidates.size());
         if(covered<0L&&!rawFingerprint.equals(previousDiscoveryFingerprint)){
-          covered=DiscoveryBatchPolicy.coveredPositions(candidates,
-              entry->byIdentity.containsKey(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName)));
+          // A staged row alone is not evidence of a usable route.
+          IdentityHashMap<JSONObject,Boolean> coverageEvidence=new IdentityHashMap<>();
+          covered=DiscoveryBatchPolicy.coveredPositions(candidates,entry->{
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            JSONObject row=byIdentity.get(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+            return row!=null&&coverageEvidence.computeIfAbsent(row,
+                key->hasPositiveRetainedCoverage(key,measuredScores,provisionalKeys));
+          });
         }
         if(covered>=0L){
           coverageOrder=rawFingerprint+":"+covered;
@@ -3196,6 +3202,18 @@ public class SourceUpdateWorker extends Worker {
     // keys; an evicted score or a later negative observation is not proof.
     double score=scores.optDouble(key,Double.NaN);
     return Double.isFinite(score)&&score>0.0;
+  }
+  /** Scheduling hint only, not proof of successful playback. */
+  static boolean hasPositiveRetainedCoverage(JSONObject row,JSONObject scores,Set<String> provisional){
+    if(row==null)return false;
+    JSONArray routes=row.optJSONArray("sources");
+    if(routes==null)return false;
+    for(int i=0;i<routes.length();i++){
+      String url=routes.optString(i,"");
+      if((url.startsWith("http://")||url.startsWith("https://"))
+          &&mayReuseRetainedPreflight(scores,provisional,url))return true;
+    }
+    return false;
   }
   static boolean hasCommittedRouteEvidence(JSONObject staged,Entry entry,String displayName){
     if(staged==null||entry==null||entry.savedSource
