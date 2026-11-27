@@ -1627,6 +1627,8 @@ public class SourceUpdateWorker extends Worker {
           transientRecheck,nextBatchScanned,candidates.size())){
         nextBatchScanned=transientRecheck;
         replayMask=DiscoveryBatchPolicy.includeReplayAliases(replayMask,candidates,Entry::endpoint);
+        // An earlier alias may also have lacked conclusive evidence.
+        if(replayMask>0L)nextBatchScanned=Math.min(nextBatchScanned,Long.numberOfTrailingZeros(replayMask));
         transientRecheck=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
         // Recheck only in idle; never loop on an unavailable server during playback.
         update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true)
