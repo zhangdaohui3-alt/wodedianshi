@@ -372,6 +372,23 @@ public class SourceUpdateSchedulePolicyTest {
             assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(event,at,at,at));
     }
 
+    @Test public void recheckSharesOnlyFullPositiveEvidenceForEquivalentEndpoints(){
+        assertTrue(SourceUpdateSchedulePolicy.reusableFullRecheck(true,false,false,false,100L,101L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(false,false,false,false,100L,101L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(true,true,false,false,100L,101L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(true,false,true,false,100L,101L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(true,false,false,true,100L,101L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableFullRecheck(true,false,false,false,101L,101L));
+        String original="https://example.invalid/live?token=One";
+        String alias="https://EXAMPLE.invalid:443/live?token=One";
+        assertEquals(SourceSelectionPolicy.endpointKey(original),SourceSelectionPolicy.endpointKey(alias));
+        assertNotEquals(StableKey.url(original),StableKey.url(alias));
+        for(String different:java.util.Arrays.asList("https://example.invalid/live?token=one",
+                "https://example.invalid/Live?token=One","https://example.invalid:444/live?token=One",
+                "https://user@example.invalid/live?token=One"))
+            assertNotEquals(SourceSelectionPolicy.endpointKey(original),SourceSelectionPolicy.endpointKey(different));
+    }
+
     @Test public void cooledCandidatesCanBeReplacedWithoutIncreasingProbeBudget(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         java.util.HashMap<String,String> current=new java.util.HashMap<>();
