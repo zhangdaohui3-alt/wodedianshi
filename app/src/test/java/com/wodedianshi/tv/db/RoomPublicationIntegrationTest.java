@@ -57,6 +57,44 @@ public class RoomPublicationIntegrationTest {
                 .put("group","央视").put("sources",new JSONArray().put(url));
     }
 
+    @Test public void lightweightRouteScanMatchesPagedCatalogueAndRejectsChangedVersion()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            JSONArray rows=new JSONArray();
+            for(int i=0;i<205;i++){
+                String primary="https://example.invalid/primary/"+i;
+                String backup="https://example.invalid/backup/"+i;
+                rows.put(channel("Route "+i,primary).put("sources",new JSONArray().put(primary).put(backup)));
+            }
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,base,false,
+                    ()->false,new AppStateEditor(context));
+            RoomCatalogueReader.Snapshot full=RoomCatalogueReader.read(context);
+            java.util.Set<String> expected=new java.util.HashSet<>();
+            for(RoomCatalogueReader.ChannelRecord record:full.channels){
+                expected.add(record.url);expected.addAll(record.sources);
+            }
+            java.util.Set<String> actual=new java.util.HashSet<>();
+            assertEquals(Long.valueOf(full.catalogueVersion),
+                    RoomCatalogueReader.visitRouteUrls(context,url->{actual.add(url);return false;},()->false));
+            assertEquals(expected,actual);
+            assertEquals(410,actual.size());
+            java.util.concurrent.atomic.AtomicInteger visited=new java.util.concurrent.atomic.AtomicInteger();
+            assertEquals(Long.valueOf(full.catalogueVersion),
+                    RoomCatalogueReader.visitRouteUrls(context,url->{visited.incrementAndGet();return true;},()->false));
+            assertEquals(1,visited.get());
+            ChannelDao dao=RoomDatabaseProvider.get(context).channelDao();
+            try{
+                RoomCatalogueReader.visitRouteUrls(context,url->{
+                    dao.touchCatalogueCheckpoint(MasterCatalogueRepository.MIGRATION_KEY,full.catalogueVersion+1);
+                    return true;
+                },()->false);
+                fail("even an early match must reject changed catalogue");
+            }catch(RoomCatalogueReader.StaleSnapshotException expectedConflict){}
+            assertEquals(205,RoomCatalogueReader.read(context).channelCount);
+        });
+    }
+
     @Test public void interruptedFinalPublicationRollsBackRowsProgressAndStagingAcrossReopen()throws Exception {
         isolated(context->{
             RoomCatalogueWriter.initializeEmptyCatalogue(context);
