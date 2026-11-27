@@ -491,7 +491,7 @@ public final class RoomCatalogueWriter {
             if (progress != null) progress.applyInTransaction(db);
             if(manualOwner!=null){
                 if(manualOwner.equals(db.appStateDao().getValue(ManualProbeQualityStore.READY_KEY)))
-                    ManualProbeQualityStore.publishInTransaction(db,manualOwner);
+                    ManualProbeQualityStore.publishInTransaction(db,manualOwner,paused);
                 RoomCatalogueBuildStore.clearManualInTransaction(db,manualOwner);
             }
             // Every full directory commit may change structure. Do not relax the
