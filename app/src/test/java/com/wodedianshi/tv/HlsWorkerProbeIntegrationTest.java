@@ -189,6 +189,14 @@ public class HlsWorkerProbeIntegrationTest {
     }
 
     @Test public void idleSiblingFallbackReusesOnlyConfirmedClearInitialization()throws Exception{
+        assertIdleSiblingFallbackReusesOnlyConfirmedClearInitialization(true);
+    }
+
+    @Test public void fullIdleSiblingFallbackReusesOnlyConfirmedClearInitialization()throws Exception{
+        assertIdleSiblingFallbackReusesOnlyConfirmedClearInitialization(false);
+    }
+
+    private void assertIdleSiblingFallbackReusesOnlyConfirmedClearInitialization(boolean initialIdle)throws Exception{
         String[] expected={"/master.m3u8","/high.m3u8","/init.mp4","/high1.ts","/high2.ts",
                 "/low.m3u8","/low1.ts","/low2.ts"};
         byte[] init={0,0,0,16,'f','t','y','p',0,0,0,0,0,0,0,0,
@@ -228,7 +236,7 @@ public class HlsWorkerProbeIntegrationTest {
             });
             SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
                     "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
-                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,initialIdle);
             served.get(15,TimeUnit.SECONDS);
             assertTrue(result.valid);
             assertEquals(640,result.width);
@@ -428,6 +436,14 @@ public class HlsWorkerProbeIntegrationTest {
     }
 
     @Test public void idleRenditionFallbackReusesConfirmedFirstAsDistinctSecond()throws Exception{
+        assertIdleRenditionFallbackReusesConfirmedFirstAsDistinctSecond(true);
+    }
+
+    @Test public void fullIdleRenditionFallbackReusesConfirmedFirstAsDistinctSecond()throws Exception{
+        assertIdleRenditionFallbackReusesConfirmedFirstAsDistinctSecond(false);
+    }
+
+    private void assertIdleRenditionFallbackReusesConfirmedFirstAsDistinctSecond(boolean initialIdle)throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
             server.bind(new InetSocketAddress("127.0.0.1",0));
@@ -444,7 +460,7 @@ public class HlsWorkerProbeIntegrationTest {
             });
             SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
                     "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
-                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,initialIdle);
             served.get(12,TimeUnit.SECONDS);
             assertTrue(result.valid);assertEquals(640,result.width);
             assertEquals(6L,result.sampleRequests);
@@ -728,6 +744,14 @@ public class HlsWorkerProbeIntegrationTest {
     }
 
     @Test public void idleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond()throws Exception{
+        assertIdleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond(true);
+    }
+
+    @Test public void fullIdleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond()throws Exception{
+        assertIdleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond(false);
+    }
+
+    private void assertIdleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond(boolean initialIdle)throws Exception{
         String[] expected={"/master.m3u8","/high.m3u8","/shared.ts","/high2.ts",
                 "/low.m3u8","/low2.ts"};
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
@@ -760,7 +784,7 @@ public class HlsWorkerProbeIntegrationTest {
             });
             SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
                     "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
-                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,initialIdle);
             served.get(15,TimeUnit.SECONDS);
             assertTrue(result.valid);
             assertEquals(640,result.width);
@@ -1046,7 +1070,7 @@ public class HlsWorkerProbeIntegrationTest {
         String[] roots={"/direct.ts","/null.ts","/healthy.m3u8","/master.m3u8",
                 "/bad.m3u8","/busy.ts","/range.m3u8"};
         String[] fullRequests={"/direct.ts","/null.ts","/healthy.m3u8","/healthy1.ts","/healthy2.ts",
-                "/master.m3u8","/high.m3u8","/shared.ts","/high2.ts","/low.m3u8","/shared.ts","/low2.ts",
+                "/master.m3u8","/high.m3u8","/shared.ts","/high2.ts","/low.m3u8","/low2.ts",
                 "/bad.m3u8","/bad1.ts","/bad2.ts","/busy.ts","/range.m3u8"};
         String[] fastRequests={"/direct.ts","/null.ts","/healthy.m3u8","/healthy1.ts","/healthy2.ts",
                 "/master.m3u8","/high.m3u8","/shared.ts","/high2.ts","/low.m3u8","/low2.ts",
@@ -1127,14 +1151,14 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(observed[0][2].provisional);assertTrue(observed[1][2].provisional);
             assertFalse(observed[0][3].provisional);assertTrue(observed[1][3].provisional);
             assertFalse(observed[1][4].provisional);
-            assertEquals(17L,requests[0]);assertEquals(16L,requests[1]);
+            assertEquals(16L,requests[0]);assertEquals(16L,requests[1]);
             long expectedFullBytes=0;
             for(String path:fullRequests)expectedFullBytes+=bodies.get(path).length;
             assertEquals(expectedFullBytes,bodyBytes[0]);
             // A fragmented confirmation read can consume up to 375+1024
             // bytes before finding two complete packets. Use that safe bound.
             assertTrue("full="+bodyBytes[0]+" fast="+bodyBytes[1],
-                    bodyBytes[0]-bodyBytes[1]>=3L*28672L+32768L+2L*(8192L-1399L));
+                    bodyBytes[0]-bodyBytes[1]>=3L*28672L+2L*(8192L-1399L));
             System.out.println("mixed_probe_comparison full_requests="+requests[0]
                     +" fast_requests="+requests[1]+" full_body_bytes="+bodyBytes[0]
                     +" fast_body_bytes="+bodyBytes[1]);
