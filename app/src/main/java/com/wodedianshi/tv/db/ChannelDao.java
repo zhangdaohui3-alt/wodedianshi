@@ -154,6 +154,23 @@ public interface ChannelDao {
     @Query("SELECT * FROM channels ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
     List<ChannelWithSources> getAllChannelsPage(int limit, int offset);
 
+    // Recheck membership does not need source scores, scopes, order or metadata.
+    // A transaction keeps the projected parent and relation reads consistent.
+    final class RouteMembership {
+        public String id;
+        public String name;
+        public String legacyKey;
+        public String primaryUrl;
+        @androidx.room.Relation(entity = BackupSourceEntity.class,
+                parentColumn = "id", entityColumn = "channelId", projection = {"url"})
+        public List<String> urls;
+    }
+
+    @Transaction
+    @Query("SELECT id, name, legacyKey, primaryUrl FROM channels "
+            + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
+    List<RouteMembership> getRouteMembershipPage(int limit, int offset);
+
     @Query("SELECT COUNT(*) FROM channels WHERE categoryId = :categoryId")
     int countChannelsInCategory(String categoryId);
 
