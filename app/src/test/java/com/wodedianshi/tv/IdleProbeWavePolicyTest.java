@@ -112,6 +112,10 @@ public class IdleProbeWavePolicyTest {
         assertFalse(IdleProbeWavePolicy.canStart(false,73001L,90000L,90000L));
         assertFalse(IdleProbeWavePolicy.canStart(false,91000L,90000L,90000L));
         assertTrue(IdleProbeWavePolicy.canStart(true,1000L,16000L,90000L));
+        assertTrue(IdleProbeWavePolicy.canStart(true,15999L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(true,16000L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(true,17000L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(true,-1L,16000L,90000L));
         assertFalse(IdleProbeWavePolicy.canStart(true,1000L,89000L,90000L));
     }
     @Test public void hostLimitAndGlobalLimitAreIndependent() {
