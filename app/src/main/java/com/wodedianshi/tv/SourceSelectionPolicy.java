@@ -83,6 +83,27 @@ public final class SourceSelectionPolicy {
         }
     }
 
+    /** Explicit user feedback concerns this station/endpoint association, not
+     * the endpoint's transport quality or another station's use of the URL. */
+    static String channelBlockKey(String identity,String url) {
+        if(identity==null||identity.isEmpty()||url==null||url.trim().isEmpty())return "";
+        return "station:"+StableKey.channelIdentity(identity)+":"+StableKey.url(endpointKey(url));
+    }
+
+    static boolean isUserBlocked(Set<String> records,String identity,String url) {
+        if(records==null||url==null||url.isEmpty())return false;
+        String key=channelBlockKey(identity,url);
+        // Preserve old explicit URL blocks without expanding them to other aliases.
+        return records.contains(url)||(!key.isEmpty()&&records.contains(key));
+    }
+
+    static Set<String> blockedUrls(Set<String> records,String identity,List<String> sources) {
+        Set<String> result=new java.util.HashSet<>();
+        if(sources!=null)for(String url:sources)
+            if(isUserBlocked(records,identity,url))result.add(url);
+        return result;
+    }
+
     /** A stale menu must not modify another channel or silently select a changed URL. */
     public static int resolveManualSelection(Object menuChannel, Object selectedChannel,
             List<String> currentSources, String requestedUrl) {
