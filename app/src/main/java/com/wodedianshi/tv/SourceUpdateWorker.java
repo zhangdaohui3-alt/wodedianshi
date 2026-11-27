@@ -1235,6 +1235,8 @@ public class SourceUpdateWorker extends Worker {
       // cursor could skip most saved URLs forever as the window changed between runs.
       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
+      final boolean boundedAddressBudget=SourceProbeTimePolicy.usesBoundedAddressBudget(
+          initialDiscoveryChain,manualRefresh,slowPlayback);
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
       int originDeferred=0,provisionalAccepted=0;
       long consumedSampleRequests=0L,consumedSampleBytes=0L;
@@ -1308,11 +1310,11 @@ public class SourceUpdateWorker extends Worker {
           long measuredAt=clock;
           boolean prefetched=idleWave.has(endpoint);
           boolean parallelOutcome=false;
-          if(initialDiscoveryChain&&!reuse&&!prefetched){
+          if(boundedAddressBudget&&!reuse&&!prefetched){
             addressDeadline=SourceProbeTimePolicy.initialAddressDeadline(probeDeadline,clock);
             if(addressDeadline==0L){
-              // Do not start a new probe with a shortened budget at the tail.
-              discoveryScanned--;
+              // Preserve the exact saved or discovery cursor at the stage tail.
+              if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
               break;
             }
           }
@@ -1378,7 +1380,7 @@ public class SourceUpdateWorker extends Worker {
             INITIAL_NETWORK.observe(origin,measuredAt,
                 measured.firstRequestFailed,measured.firstRequestReached);
           }
-          if(!reuse&&(measured.inconclusive()||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
+          if(!reuse&&(measured.inconclusive()||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(boundedAddressBudget
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
             // Timeouts, transient network failures and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
