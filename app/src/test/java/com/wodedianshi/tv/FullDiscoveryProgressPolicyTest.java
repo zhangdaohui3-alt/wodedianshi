@@ -275,4 +275,17 @@ public class FullDiscoveryProgressPolicyTest {
     @Test public void completedPercentRequiresActualPublication() {
         assertEquals(100, FullDiscoveryProgressPolicy.percent(0, 20, 0, 0, true));
     }
+
+    @org.junit.Test public void acquisitionRecordsAreIndependentOfInspectionAndPublication(){
+        java.util.Map<String,String> state=new java.util.HashMap<>();
+        state.put(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(0),"body-a");
+        state.put(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(1),"");
+        state.put(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(3),"body-b");
+        state.put("source_initial_feed_done_2","true");
+        org.junit.Assert.assertEquals(2,FullDiscoveryProgressPolicy.recordedAcquisitions(state,0,4));
+        org.junit.Assert.assertEquals(1,FullDiscoveryProgressPolicy.recordedAcquisitions(state,0,2));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.recordedAcquisitions(null,0,4));
+        org.junit.Assert.assertEquals(0,FullDiscoveryProgressPolicy.overallBasisPoints(new boolean[4],new int[4],false));
+        org.junit.Assert.assertFalse(FullDiscoveryProgressPolicy.hasPublishedInitialSnapshot(0L));
+    }
 }
