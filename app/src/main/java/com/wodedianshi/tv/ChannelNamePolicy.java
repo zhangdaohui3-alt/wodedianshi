@@ -274,6 +274,28 @@ final class ChannelNamePolicy {
         return province.equals(candidateProvince)?translated:raw;
     }
 
+    /** UI-only aliases: never use these labels as merge identities or change
+     * the stored station name, EPG metadata, source URL or favorite key. */
+    static String chineseDisplayName(String name,String tvgName,String tvgId,String group){
+        String local=canonicalLocalDisplayName(name,tvgName,tvgId,group);
+        if(local.isEmpty()||hasCjkCharacter(local))return local;
+        switch(local.trim().replaceAll("\\s+"," ").toUpperCase(Locale.ROOT)){
+            case "PHOENIX CHINESE CHANNEL": return "凤凰卫视中文台";
+            case "PHOENIX INFO NEWS CHANNEL": return "凤凰卫视资讯台";
+            case "PHOENIX HONG KONG CHANNEL": return "凤凰卫视香港台";
+            case "RTHK TV 31": return "港台电视31";
+            case "RTHK TV 32": return "港台电视32";
+            case "TVB JADE": return "翡翠台";
+            case "TVB PEARL": return "明珠台";
+            case "TVBS NEWS": return "TVBS新闻台";
+            case "BBC NEWS": return "BBC新闻";
+            case "CNN": return "CNN新闻";
+            case "AL JAZEERA ENGLISH": return "半岛电视台英语频道";
+            case "NHK WORLD-JAPAN": return "NHK日本国际频道";
+            default: return local;
+        }
+    }
+
     static boolean isDomesticLocalLabel(String metadata,boolean chinaScope) {
         if(!provinceForLocalChannel(metadata).isEmpty())return true;
         String text=metadata==null?"":metadata.toLowerCase(Locale.ROOT);
