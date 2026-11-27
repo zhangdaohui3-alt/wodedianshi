@@ -12,6 +12,55 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=28,manifest=Config.NONE)
 public class InitialQualityTransactionTest {
+    @Test public void indexedSeedIgnoresObsoleteMalformedMirrors()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            db.runInTransaction(()->{
+                ManualProbeQualityStore.seedInitialInTransaction(db,Collections.singletonList(
+                    new ManualProbeQualityEntity(initial,"key",900,2)),()->false);
+                ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
+            });
+            db.appStateDao().put(new AppStateEntity("old_scores","invalid json",1L));
+            db.appStateDao().put(new AppStateEntity("old_streaks","invalid json",1L));
+            ManualProbeQualityStore.ensureInitial(db,"old_scores","old_streaks",()->false);
+            assertTrue(ManualProbeQualityStore.hasInitial(db));
+            assertNull(db.manualProbeQualityDao().find(initial,"key"));
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,"key").score);
+            db.runInTransaction(()->ManualProbeQualityStore.clearInitialInTransaction(db));
+            String manual="manual-test";
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,manual,1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"invalid json",1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"invalid json",1L));
+            ManualProbeQualityStore.ensure(db,manual,()->false);
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(manual,"key").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(manual,"key").failureStreak);
+            assertNull(db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY));
+        }finally{db.close();}
+    }
+
+    @Test public void unindexedSeedStillReadsLegacyScoresAndStreaks()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            db.appStateDao().put(new AppStateEntity("old_scores","{\"a\":900}",1L));
+            db.appStateDao().put(new AppStateEntity("old_streaks","{\"b\":2}",1L));
+            ManualProbeQualityStore.ensureInitial(db,"old_scores","old_streaks",()->false);
+            String initial=ManualProbeQualityStore.INITIAL_OWNER;
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(initial,"a").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(initial,"b").failureStreak);
+            db.runInTransaction(()->ManualProbeQualityStore.clearInitialInTransaction(db));
+            String manual="manual-test";
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,manual,1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{\"a\":900}",1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{\"b\":2}",1L));
+            ManualProbeQualityStore.ensure(db,manual,()->false);
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(manual,"a").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(manual,"b").failureStreak);
+        }finally{db.close();}
+    }
+
     @Test public void privateQualityCommitsAndRollsBackWithProgressWithoutChangingPublished() {
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
