@@ -2162,11 +2162,7 @@ public class SourceUpdateWorker extends Worker {
     if(snapshot==null)return Result.retry();
     // Only discard missing keys after a complete, version-consistent read.
     pending.retainAll(current.keySet());
-    ArrayList<String> selected=new ArrayList<>();
-    for(String key:pending){
-      selected.add(current.get(key));
-      if(selected.size()>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
-    }
+    ArrayList<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
     final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
     JSONObject scores=new JSONObject(indexed?"{}":roomString("source_probe_scores_v1","{}"));
     JSONObject streaks=new JSONObject(indexed?"{}":roomString("source_probe_failure_streaks_v1","{}"));
@@ -2204,7 +2200,8 @@ public class SourceUpdateWorker extends Worker {
         java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(snapshot.catalogueVersion,pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
-        +" conclusive="+conclusive+" pending="+pending.size());
+        +" selected="+selected.size()+" conclusive="+conclusive+" pending="+pending.size()
+        +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
   }
   private Result abortManualStructuralConflict(String manualId){
