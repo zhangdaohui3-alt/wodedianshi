@@ -57,31 +57,41 @@ public final class ManualProbeQualityStore {
     }
 
     public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
-        AppDatabase db=RoomDatabaseProvider.get(context);
+        ensure(RoomDatabaseProvider.get(context),owner,paused);
+    }
+
+    static void ensure(AppDatabase db,String owner,BooleanSupplier paused)throws JSONException{
         if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
-        String a=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
-        String b=db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
-        JSONObject scores=new JSONObject(a==null?"{}":a),streaks=new JSONObject(b==null?"{}":b);
-        Set<String> keys=new HashSet<>();
-        Iterator<String> it=scores.keys();while(it.hasNext())keys.add(it.next());
-        it=streaks.keys();while(it.hasNext())keys.add(it.next());
-        List<ManualProbeQualityEntity> rows=changes(owner,keys,scores,streaks);
-        db.runInTransaction(()->{
+        db.runInTransaction((java.util.concurrent.Callable<Void>)()->{
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             RoomCatalogueBuildStore.requireManualOwner(db,owner);
-            if(owner.equals(db.appStateDao().getValue(READY_KEY)))return;
+            if(owner.equals(db.appStateDao().getValue(READY_KEY)))return null;
             db.manualProbeQualityDao().clearOwner(owner);
             if("true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY))){
-                // The compatibility JSON is not authoritative once full indexed
-                // quality has been published. Copy bounded pages in the same
-                // transaction, so a crash cannot seed a partial new round.
                 copyQualityInTransaction(db,PUBLISHED_OWNER,owner,paused);
-            }else writeInTransaction(db,owner,rows,paused);
+            }else writeInTransaction(db,owner,legacyRows(db,owner,
+                RoomCatalogueBuildStore.MANUAL_SCORES_KEY,RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,paused),paused);
             db.appStateDao().put(new AppStateEntity(READY_KEY,owner,System.currentTimeMillis()));
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
             SourceProbeTimePolicy.checkPublicationPaused(paused);
+            return null;
         });
+    }
+
+    // Read compatibility state only after the transaction determines it is
+    // authoritative. A stale or malformed mirror cannot block indexed seeding.
+    private static List<ManualProbeQualityEntity> legacyRows(AppDatabase db,String owner,
+            String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        String a=db.appStateDao().getValue(scoresKey),b=db.appStateDao().getValue(streaksKey);
+        JSONObject scores=new JSONObject(a==null?"{}":a),streaks=new JSONObject(b==null?"{}":b);
+        Set<String> keys=new HashSet<>();
+        Iterator<String> it=scores.keys();
+        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
+        it=streaks.keys();
+        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
+        return changes(owner,keys,scores,streaks);
     }
 
     public static void loadUrls(Context context,String owner,Collection<String> urls,Set<String> loaded,
@@ -163,18 +173,22 @@ public final class ManualProbeQualityStore {
         return "true".equals(db.appStateDao().getValue(INITIAL_READY_KEY));
     }
 
-    /** The caller supplies the current build's legacy compatibility state.
-     * Never overwrite an already initialized build on restart. */
-    public static void ensureInitial(Context context,JSONObject scores,JSONObject streaks,BooleanSupplier paused){
-        AppDatabase db=RoomDatabaseProvider.get(context);
-        if(hasInitial(context))return;
-        Set<String> keys=new HashSet<>();
-        Iterator<String> it=scores.keys();
-        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
-        it=streaks.keys();
-        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
-        List<ManualProbeQualityEntity> rows=changes(INITIAL_OWNER,keys,scores,streaks);
-        db.runInTransaction(()->seedInitialInTransaction(db,rows,paused));
+    /** Never read a legacy mirror if indexed published quality is authoritative. */
+    public static void ensureInitial(Context context,String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
+        ensureInitial(RoomDatabaseProvider.get(context),scoresKey,streaksKey,paused);
+    }
+
+    static void ensureInitial(AppDatabase db,String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
+        if(hasInitial(db))return;
+        db.runInTransaction((java.util.concurrent.Callable<Void>)()->{
+            requireInitialTransaction(db);
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            if(hasInitial(db))return null;
+            List<ManualProbeQualityEntity> rows="true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY))
+                ?Collections.emptyList():legacyRows(db,INITIAL_OWNER,scoresKey,streaksKey,paused);
+            seedInitialInTransaction(db,rows,paused);
+            return null;
+        });
     }
 
     static void seedInitialInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,BooleanSupplier paused){
