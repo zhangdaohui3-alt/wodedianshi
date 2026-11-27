@@ -1259,7 +1259,8 @@ public class SourceUpdateWorker extends Worker {
           e.skipReplay=DiscoveryBatchPolicy.skipReplayPosition(transientRecheck,replayMask,position);
           if(initialDiscoveryChain&&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED&&!e.skipReplay){
             JSONObject staged=byIdentity.get(identity(e.name,e.group,e.url,e.tvgId,e.tvgName));
-            e.alreadyStaged=hasCommittedRouteEvidence(staged,e,canonicalDisplayName(e));
+            e.alreadyStaged=mayReuseRetainedPreflight(measuredScores,provisionalKeys,e.url)
+                &&hasCommittedRouteEvidence(staged,e,canonicalDisplayName(e));
           }
           probeCandidates.add(e);discoveryIndex++;
         }
@@ -3164,6 +3165,15 @@ public class SourceUpdateWorker extends Worker {
   /** Only reuse an already accepted route association from THIS build's
    * committed staging. New provenance, metadata enrichment, URL aliases,
    * routine refresh and designated rechecks still follow normal probes. */
+  static boolean mayReuseRetainedPreflight(JSONObject scores,Set<String> provisional,String url){
+    if(scores==null||provisional==null||url==null||url.isEmpty())return false;
+    String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
+    if(provisional.contains(key)||provisional.contains(legacy))return false;
+    // Require the exact current score rather than falling back to old hashed
+    // keys; an evicted score or a later negative observation is not proof.
+    double score=scores.optDouble(key,Double.NaN);
+    return Double.isFinite(score)&&score>0.0;
+  }
   static boolean hasCommittedRouteEvidence(JSONObject staged,Entry entry,String displayName){
     if(staged==null||entry==null||entry.savedSource
         ||!ChannelCatalogueScopePolicy.isRetainableScope(entry.scope)
