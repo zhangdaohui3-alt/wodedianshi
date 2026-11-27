@@ -29,6 +29,15 @@ public class LivePagePolicyTest {
         assertFalse(LivePagePolicy.canAdvance(2, 97, 48));
     }
 
+    @Test public void pagingRejectsOverlappingClicksAndBoundariesWithoutDisablingControls(){
+        assertTrue(LivePagePolicy.canRequestPage(1,0,97,48,false));
+        assertTrue(LivePagePolicy.canRequestPage(0,1,97,48,false));
+        assertFalse(LivePagePolicy.canRequestPage(2,1,97,48,true));
+        assertFalse(LivePagePolicy.canRequestPage(1,1,97,48,false));
+        assertFalse(LivePagePolicy.canRequestPage(-1,0,97,48,false));
+        assertFalse(LivePagePolicy.canRequestPage(3,2,97,48,false));
+    }
+
     @Test public void emptyOrInvalidPageSizeIsSafe() {
         assertEquals(1, LivePagePolicy.pageCount(0, 48));
         assertEquals(1, LivePagePolicy.pageCount(20, 0));
