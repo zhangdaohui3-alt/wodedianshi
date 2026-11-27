@@ -1170,12 +1170,10 @@ public class SourceUpdateWorker extends Worker {
       Set<Entry> priorityRechecks=Collections.newSetFromMap(new IdentityHashMap<Entry,Boolean>());
       ArrayList<Entry> priorityOrder=new ArrayList<>();
       if(!initialDiscoveryChain&&!manualRefresh&&!foregroundAtStart&&!provisionalKeys.isEmpty()){
-        ArrayList<String> savedKeys=new ArrayList<>(savedPool.size());
-        for(Entry entry:savedPool){
+        for(int position:SourceUpdateSchedulePolicy.provisionalRecheckPositions(savedPool.size(),positionIndex->{
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          savedKeys.add(scoreKey(entry.url));
-        }
-        for(int position:SourceUpdateSchedulePolicy.provisionalRecheckPositions(savedKeys,savedScanStart,savedWindow,provisionalKeys)){
+          return scoreKey(savedPool.get(positionIndex).url);
+        },savedScanStart,savedWindow,provisionalKeys)){
           Entry entry=savedPool.get(position);
           priorityRechecks.add(entry);priorityOrder.add(entry);
         }
