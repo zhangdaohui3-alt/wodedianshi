@@ -6160,7 +6160,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // While the parental overlay is active, consume all keys delivered to this app window.
     // Android reserves HOME for the system; ordinary apps cannot reliably intercept it.
     if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return true;
-    if(fullScreenPlayback&&event.getKeyCode()==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing())closeFullscreenChannelMenu();else exitFullScreenPlayback();}return true;}
+    // Android tracks Back from down to uncancelled up. Do not change the live
+    // page on down or pass the same key to PlayerView: one gesture, one action.
+    // A focusable PopupWindow handles its own Back gesture and dismisses only itself.
+    if(event.getKeyCode()==KeyEvent.KEYCODE_BACK)return super.dispatchKeyEvent(event);
     if(fullScreenPlayback&&!fullscreenRemoteDialogOpen&&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())){
       int key=event.getKeyCode();
       if(key==KeyEvent.KEYCODE_MENU||key==KeyEvent.KEYCODE_SETTINGS){
@@ -6616,17 +6619,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(categoryMenuItems.getChildCount()>0)categoryMenuItems.getChildAt(0).requestFocus();
   }
   @Override public void onBackPressed(){
-    if(remoteParentLockManager!=null&&remoteParentLockManager.isLocked())return;
-    if(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()){closeFullscreenChannelMenu();return;}
-    if(fullScreenPlayback){exitFullScreenPlayback();return;}
-    // First Back from the channel pane returns focus to the left category menu.
-    // A second Back while already in that menu exits the app as expected.
+    if(isAnyPlaybackLockActive())return;
     View focused=rootLayout==null?null:rootLayout.findFocus();
-    if(categoryPane!=null&&!isInsideView(focused,categoryPane)){
-      focusActiveLeftMenuItem();
-      return;
+    boolean liveAvailable=activityStarted&&!isFinishing()&&!isDestroyed()
+        &&currentVodPanel==null&&vodPlayer==null&&vodFallbackBackend==null
+        &&!decoderReleaseUnconfirmed&&selected>=0&&selected<channels.size()
+        &&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null);
+    switch(LiveBackPolicy.choose(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing(),
+        fullScreenPlayback,categoryPane!=null,isInsideView(focused,categoryPane),liveAvailable)){
+      case CLOSE_MENU: closeFullscreenChannelMenu();return;
+      case EXIT_FULLSCREEN: exitFullScreenPlayback();return;
+      // Only restore the layout; keep the current live engine and source.
+      case RETURN_FULLSCREEN: enterFullScreenPlayback();return;
+      case FOCUS_CATEGORY: focusActiveLeftMenuItem();return;
+      default: super.onBackPressed();
     }
-    super.onBackPressed();
   }
 
   // Keep a small, user-shareable live diagnostic trail. Query strings and full
