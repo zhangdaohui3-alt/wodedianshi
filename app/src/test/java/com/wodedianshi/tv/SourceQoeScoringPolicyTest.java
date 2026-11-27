@@ -22,6 +22,38 @@ public class SourceQoeScoringPolicyTest {
         assertTrue(renderedAndStable > readyOnly);
     }
 
+    @Test public void videoSourceNeedsAConfirmedRenderedFirstFrameForStableSuccess() {
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                true, false, true, true));
+        assertTrue(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                true, true, true, true));
+    }
+
+    @Test public void audioOnlySourceNeedsAdvancingSelectedAudio() {
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, true, false));
+        assertTrue(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, true, true));
+        assertFalse(SourceQoeScoringPolicy.hasConfirmedOutputForStablePlay(
+                false, false, false, true));
+    }
+
+    @Test public void recentSuccessBonusUsesOnlyVerifiedPlaybackAndDecays() {
+        assertEquals(100.0d, SourceQoeScoringPolicy.recentSuccessBonus(1000L, 0L, 1000L), 0.0d);
+        assertEquals(96.0d, SourceQoeScoringPolicy.recentSuccessBonus(1000L, 0L,
+                1000L + 3600000L), 0.0001d);
+        assertEquals(0.0d, SourceQoeScoringPolicy.recentSuccessBonus(0L, 0L, 1000L), 0.0d);
+    }
+
+    @Test public void sourceHistoryWeightUsesSharedThirtyDayHalfLifeAndFloor() {
+        long day = 24L * 60L * 60L * 1000L;
+        assertEquals(1.0d, SourceQoeScoringPolicy.historyWeight(1000L, 1000L), 0.0d);
+        assertEquals(0.5d, SourceQoeScoringPolicy.historyWeight(1000L, 1000L + 30L * day), 0.0001d);
+        assertEquals(0.12d, SourceQoeScoringPolicy.historyWeight(1000L,
+                1000L + 365L * day), 0.0001d);
+        assertEquals(0.12d, SourceQoeScoringPolicy.historyWeight(0L, 1000L), 0.0d);
+    }
+
     @Test public void codecWarningsRemainSmallAndNeverBecomeFailures() {
         double clean = SourceQoeScoringPolicy.adjustment(4, 4, 4, 2, 0, 0, 1000L, 500L, 0);
         double warning = SourceQoeScoringPolicy.adjustment(4, 4, 4, 2, 0, 0, 1000L, 500L, 1);
