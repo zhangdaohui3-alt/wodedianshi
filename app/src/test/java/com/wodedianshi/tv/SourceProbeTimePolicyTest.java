@@ -179,6 +179,21 @@ public class SourceProbeTimePolicyTest {
                 SourceProbeTimePolicy.sampleReadTimeoutCap(true)));
     }
 
+    @Test public void pacingPathsShareRoundingWithoutSharingLimitsOrAccounting(){
+        for(long elapsed:new long[]{-1L,0L,1L,40L,125L,Long.MAX_VALUE}){
+            for(int bytes:new int[]{-1,0,1,33,4096,262144}){
+                long expected=SourceProbeTimePolicy.liveDirectoryPacingMillis(bytes,elapsed);
+                assertEquals(expected,SourceProbeTimePolicy.liveFullDirectoryPacingMillis(bytes,elapsed));
+                assertEquals(expected,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(bytes,elapsed));
+            }
+        }
+        assertEquals(8000L,SourceProbeTimePolicy.liveDirectoryPacingMillis(Long.MAX_VALUE,0L));
+        assertEquals(256000L,SourceProbeTimePolicy.liveFullDirectoryPacingMillis(Long.MAX_VALUE,0L));
+        assertEquals(250L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,16384L));
+        assertEquals(84L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,49152L));
+        assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,1L));
+    }
+
     @Test public void viewingSamplePacingCountsOnlyCurrentChunkReadTime() {
         assertEquals(125L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L));
         assertEquals(85L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,40L));
