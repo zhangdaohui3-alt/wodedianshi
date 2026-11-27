@@ -503,6 +503,17 @@ public class PlaylistFeedIndexTest {
         org.junit.Assert.assertTrue(PlaylistFeedIndex.preferCoverageOrder(raw,"",0,3));
     }
 
+    @Test public void viewingRecoveryMustNotDowngradeStartedCoverageOrder(){
+        String raw="feed:body-digest";
+        String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.needsCoverageRecovery(raw,ordered,48,0));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.needsCoverageRecovery(raw,ordered,0,3));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.needsCoverageRecovery(raw,ordered,0,0));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.needsCoverageRecovery(raw,raw,48,3));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.needsCoverageRecovery("changed",ordered,48,3));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.needsCoverageRecovery("",ordered,48,3));
+    }
+
     @Test public void orderedProbeVersionCannotResumeLegacyRawPosition(){
         String raw="feed:body-digest";
         String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
