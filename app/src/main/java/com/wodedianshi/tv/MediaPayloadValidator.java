@@ -28,29 +28,45 @@ public final class MediaPayloadValidator {
             boolean valid=true,mediaPayload=false;
             for(int i=0;i<8;i++){
                 int at=offset+i*188;
-                if(!isValidTransportStreamPacket(data,at)||(data[at+1]&0x80)!=0){
+                if(!isCleanTransportStreamPacket(data,at)){
                     valid=false;break;
                 }
-                int pid=((data[at+1]&0x1f)<<8)|(data[at+2]&0xff);
-                int control=(data[at+3]>>>4)&3;
-                if(pid>0&&pid<0x1fff&&(control==1||control==3))mediaPayload=true;
+                if(hasNonNullPayload(data,at,true))mediaPayload=true;
             }
             if(valid&&mediaPayload)return true;
         }
         return false;
     }
 
-    /** Positive TS packet evidence remains valid when more bytes are appended. */
+    /** Positive TS packet evidence remains valid when more bytes are appended.
+     * Null-only or transport-error packets cannot establish a usable sample.
+     * After finding structural alignment, allow subsequent aligned clean pairs
+     * to establish evidence when a sample starts with null or damaged packets.
+     * A PAT/control-table payload remains structural evidence, not decoded AV. */
     static boolean hasTransportStreamPackets(byte[] data) {
         if (data == null || data.length < 376) return false;
-        int maxOffset = Math.min(187, data.length - 1);
-        for (int offset = 0; offset <= maxOffset; offset++) {
-            if (isValidTransportStreamPacket(data, offset)
-                    && isValidTransportStreamPacket(data, offset + 188)) {
-                return true;
+        for (int offset=0;offset<188&&offset+376<=data.length;offset++) {
+            if(!isValidTransportStreamPacket(data,offset)
+                    ||!isValidTransportStreamPacket(data,offset+188))continue;
+            boolean previousClean=false,previousPayload=false;
+            for(int at=offset;at+188<=data.length;at+=188){
+                boolean clean=isCleanTransportStreamPacket(data,at);
+                boolean payload=clean&&hasNonNullPayload(data,at,false);
+                if(previousClean&&clean&&(previousPayload||payload))return true;
+                previousClean=clean;previousPayload=payload;
             }
         }
         return false;
+    }
+
+    private static boolean isCleanTransportStreamPacket(byte[] data,int offset){
+        return isValidTransportStreamPacket(data,offset)&&(data[offset+1]&0x80)==0;
+    }
+
+    private static boolean hasNonNullPayload(byte[] data,int offset,boolean excludePat){
+        int pid=((data[offset+1]&0x1f)<<8)|(data[offset+2]&0xff);
+        int control=(data[offset+3]>>>4)&3;
+        return pid<0x1fff&&(!excludePat||pid!=0)&&(control==1||control==3);
     }
 
     private static boolean isValidTransportStreamPacket(byte[] data, int offset) {
