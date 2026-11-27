@@ -847,6 +847,7 @@ public class SourceUpdateWorker extends Worker {
             // Restore the derived index from the exact committed body first.
             // Evicted or changed bodies still require ordinary acquisition.
             cachedFeed=PlaylistFeedCache.findAcquiredInitialBody(getApplicationContext(),feed,acquiredVersion,pauseRequested);
+            boolean restoredLocalBody=cachedFeed!=null;
             if(cachedFeed!=null){
               noteInitialStage("复用已保存目录并恢复索引 "+(feedIndex+1)+"/"+feeds.length);
             }else{
@@ -879,9 +880,10 @@ public class SourceUpdateWorker extends Worker {
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
                 SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,availableUnderPressure);
-            if(nextPreparation!=feedIndex||!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(slowPlayback,
+            if(!DiscoveryBatchPolicy.canProbePreparedDirectory(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
-                android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
+                android.os.SystemClock.elapsedRealtime()-sliceStartedAt,nextPreparation==feedIndex,
+                restoredLocalBody,availableUnderPressure!=null))
               return continueAfterAcquisition();
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           }
@@ -943,7 +945,12 @@ public class SourceUpdateWorker extends Worker {
             PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
             PlaylistFeedCache.trimPreparedInitial(getApplicationContext(),cachedFeed);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-            return continueAfterAcquisition();
+            // Fast local upgrades can use the same existing bounded probe path.
+            // Slow preparation remains a separate slice.
+            if(!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(slowPlayback,
+                PlaylistFeedIndex.indexedEntryCount(cachedFeed),
+                android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
+              return continueAfterAcquisition();
           }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
           final boolean coverageOrderForRead=initialDiscoveryChain&&PlaylistFeedIndex.hasCoverageOrder(cachedFeed);
