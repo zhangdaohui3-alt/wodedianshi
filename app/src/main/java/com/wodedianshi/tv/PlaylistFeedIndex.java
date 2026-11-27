@@ -54,6 +54,13 @@ public final class PlaylistFeedIndex {
         return readPage(playlist,startEntry,maxEntries,consumer,paused,true);
     }
 
+    /** Acquisition identity stays the body version; a probe cursor additionally
+     * identifies its deterministic record order. Legacy raw cursors reset only
+     * when the order actually changes. */
+    static String initialProbeVersion(String bodyVersion,boolean coverage){
+        return coverage?bodyVersion+"|station-first-v1":bodyVersion;
+    }
+
     static boolean hasCoverageOrder(File playlist){
         if(playlist==null)return false;
         File records=new File(playlist.getAbsolutePath()+".index-data");
@@ -251,6 +258,8 @@ public final class PlaylistFeedIndex {
                 int total=PlaylistParser.parseEach(reader,0,Integer.MAX_VALUE,source->{
                     int ordinal=position[0]++;
                     if(seen.size()>=COVERAGE_IDENTITY_LIMIT)return;
+                    // Conflicting station labels cannot claim the first slot.
+                    if(ChannelNamePolicy.consistentBroadcaster(source.name,source.tvgName,source.tvgId)==null)return;
                     String id=SourceDiscoveryIdentityPolicy.identity(source.name,source.group,
                         source.url,source.tvgId,source.tvgName);
                     if(id.length()<=512&&seen.add(id)){
