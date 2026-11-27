@@ -499,8 +499,7 @@ public final class PlaylistFeedCache {
         if(matched!=null)return matched;
         // A crash between publishing a complete body and its sidecar must
         // not force a download of the exact committed acquisition again.
-        if(acquiredVersion==null||!acquiredVersion.startsWith(body.getName()+":")
-                ||!body.isFile()||body.length()<=0L||body.length()>MAX_BYTES)return null;
+        if(!canAttemptInitialIdentityRepair(body,acquiredVersion))return null;
         File metadata=new File(body.getPath()+".properties");
         if(matchesBody(readProperties(metadata),body)||!isPlaylistFile(body))return null;
         Properties recovered=recoveredBodyMetadata(body,paused,true);
@@ -588,7 +587,7 @@ public final class PlaylistFeedCache {
         }
         reconcilePreparedBodies(bodies,completed,prepared);
         if(!initialCacheNeedsDrain(bytes))return null;
-        return recoverableInitialBodies(bodies,acquiredVersions);
+        return initialPressureDrainCandidates(bodies,acquiredVersions);
     }
 
     /** Only downgrade absent-body preparation hints during the existing
@@ -608,6 +607,31 @@ public final class PlaylistFeedCache {
         boolean[] available=new boolean[bodies.length];
         for(int i=0;i<bodies.length;i++)
             available[i]=matchingAcquiredBody(bodies[i],acquiredVersions[i])!=null;
+        return available;
+    }
+
+    /** Scheduling hint only, not an acquired identity: a bounded body in
+     * the exact saved slot may be repairable even without valid metadata. */
+    static boolean canAttemptInitialIdentityRepair(File body,String acquiredVersion){
+        if(body==null||acquiredVersion==null||!body.isFile()
+                ||body.length()<=0L||body.length()>MAX_BYTES)return false;
+        String prefix=body.getName()+":";
+        return acquiredVersion.startsWith(prefix)
+                &&acquiredVersion.substring(prefix.length()).matches("[0-9a-f]{64}");
+    }
+
+    static boolean[] initialPressureDrainCandidates(File[] bodies,String[] acquiredVersions){
+        boolean[] available=new boolean[bodies.length];
+        for(int i=0;i<bodies.length;i++){
+            File body=bodies[i];
+            String version=acquiredVersions[i];
+            if(!canAttemptInitialIdentityRepair(body,version))continue;
+            Properties metadata=readProperties(new File(body.getPath()+".properties"));
+            // Matching metadata proves the committed version. Missing or
+            // invalid metadata merits local repair before a new acquisition.
+            // A known different version must not masquerade as recoverable.
+            available[i]=!matchesBody(metadata,body)||matchesRecoveredAcquisition(body,metadata,version);
+        }
         return available;
     }
 
