@@ -3207,15 +3207,14 @@ public class SourceUpdateWorker extends Worker {
         result.provisional=true;
         return result;
       }
-      String initialText=new String(initialBytes,"UTF-8").replace("\\uFEFF","");
-      boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
+      boolean hlsPlaylist=HlsVariantPolicy.hasPlaylistMarker(initialBytes);
       if(playlistUrl||hlsPlaylist){
         if(!hlsPlaylist)return result;
         // A capped manifest can hide a later key/map change or missing segment.
         // Do not issue dependent requests or penalize a source on partial metadata.
         if(initialResponse.truncated){result.incompleteManifest=true;return result;}
         SampleResponse manifestResponse=initialResponse;
-        String manifest=initialText;
+        String manifest=HlsVariantPolicy.decodePlaylist(initialBytes);
         String manifestUrl=manifestResponse.finalUrl;
         ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parse(manifest,manifestUrl);
         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
@@ -3241,9 +3240,9 @@ public class SourceUpdateWorker extends Worker {
               SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested,false,false,result,true);
               byte[] variant=variantResponse==null?null:variantResponse.bytes;
               if(variant==null||variant.length==0)continue;
-              candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
-              if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
+              if(!HlsVariantPolicy.hasPlaylistMarker(variant))continue;
               if(variantResponse.truncated){result.incompleteManifest=true;continue;}
+              candidateManifest=HlsVariantPolicy.decodePlaylist(variant);
               candidateManifestUrl=variantResponse.finalUrl;
             }
             HlsMediaPlaylistPolicy.Resources resources=
@@ -3472,7 +3471,7 @@ public class SourceUpdateWorker extends Worker {
           out.write(buffer,0,n);total+=n;
           if(allowManifestExpansion&&total>=maxBytes){
             allowManifestExpansion=false;
-            if(HlsVariantPolicy.isPlaylist(new String(out.toByteArray(),java.nio.charset.StandardCharsets.UTF_8)))
+            if(HlsVariantPolicy.hasPlaylistMarker(out.toByteArray()))
               maxBytes=manifestLimit;
           }
           // Inspect at most once after a small prefix is available. If not TS,
