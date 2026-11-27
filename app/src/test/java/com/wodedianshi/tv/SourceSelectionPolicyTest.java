@@ -225,4 +225,20 @@ public class SourceSelectionPolicyTest {
         assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(0, 0, 0));
         assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(3, -1, 0));
     }
+
+    @org.junit.Test public void explicitBlockIsScopedToStationAndEndpoint(){
+        String url="https://example.org/live?token=A";
+        String alias="https://EXAMPLE.org:443/live?token=A";
+        java.util.Set<String> records=new java.util.HashSet<>();
+        records.add(SourceSelectionPolicy.channelBlockKey("CCTV-1|cctv",url));
+        org.junit.Assert.assertTrue(SourceSelectionPolicy.isUserBlocked(records,"CCTV-1|cctv",alias));
+        org.junit.Assert.assertFalse(SourceSelectionPolicy.isUserBlocked(records,"CCTV-10|cctv",url));
+        org.junit.Assert.assertFalse(SourceSelectionPolicy.isUserBlocked(records,"CCTV-1|cctv","https://example.org/live?token=B"));
+        org.junit.Assert.assertEquals(java.util.Collections.singleton(alias),
+            SourceSelectionPolicy.blockedUrls(records,"CCTV-1|cctv",java.util.Arrays.asList(alias,"https://example.org/other")));
+        records.remove(SourceSelectionPolicy.channelBlockKey("CCTV-1|cctv",alias));
+        org.junit.Assert.assertFalse(SourceSelectionPolicy.isUserBlocked(records,"CCTV-1|cctv",url));
+        records.add(url);
+        org.junit.Assert.assertTrue(SourceSelectionPolicy.isUserBlocked(records,"CCTV-10|cctv",url));
+    }
 }
