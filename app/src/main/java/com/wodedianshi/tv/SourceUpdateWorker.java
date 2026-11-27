@@ -2217,15 +2217,30 @@ public class SourceUpdateWorker extends Worker {
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
+    // Scope positive full evidence to this single idle slice. Exact URL
+    // keys still own their queue membership and durable quality records.
+    HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    int checked=0,conclusive=0,originDeferred=0;
+    int checked=0,conclusive=0,originDeferred=0,reused=0;
+    long sampleRequests=0L,sampleBytes=0L;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
     // this slice: a temporary outage must not blacklist a saved source.
     InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
     for(String url:selected){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+      // Retain the existing bound on both network attempts and durable
+      // quality updates. Cache reuse never consumes a network attempt.
+      if(conclusive>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
       long now=android.os.SystemClock.elapsedRealtime();
+      if(now>=stageDeadline)break;
+      String endpoint=SourceSelectionPolicy.endpointKey(url);
+      ProbeResult previous=successfulEndpoints.get(endpoint);
+      if(previous!=null){
+        completed.put(url,previous);
+        pending.remove(scoreKey(url));conclusive++;reused++;
+        continue;
+      }
+      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
       long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
       if(deadline==0L)break;
       String origin=InitialOriginCooldownPolicy.origin(url);
@@ -2238,14 +2253,18 @@ public class SourceUpdateWorker extends Worker {
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       long finishedAt=android.os.SystemClock.elapsedRealtime();
       String key=scoreKey(url);
+      sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
       if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
-      else recheckOrigins.observe(origin,SourceSelectionPolicy.endpointKey(url),finishedAt,
+      else recheckOrigins.observe(origin,endpoint,finishedAt,
           measured.firstRequestFailed,measured.firstRequestReached);
       if(measured.inconclusive()
           ||finishedAt>=deadline){
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         continue;
       }
+      if(SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
+          measured.paced,measured.provisional,finishedAt,deadline))
+        successfulEndpoints.put(endpoint,measured);
       completed.put(url,measured);
       pending.remove(key);conclusive++;
     }
@@ -2281,6 +2300,7 @@ public class SourceUpdateWorker extends Worker {
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
         +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+originDeferred
         +" stable_deferred="+stableDeferred[0]
+        +" reused_full="+reused+" sample_requests="+sampleRequests+" sample_bytes="+sampleBytes
         +" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
