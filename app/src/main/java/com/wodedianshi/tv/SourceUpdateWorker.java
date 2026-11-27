@@ -1105,11 +1105,10 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery",
           "merge_preparation_ms="+(android.os.SystemClock.elapsedRealtime()-mergePreparationStartedAt)
               +" staged_rows="+saved.length()+" indexed_identities="+byIdentity.size());
-      ArrayList<String> savedScanUrls=new ArrayList<>(savedPool.size());
-      for(Entry entry:savedPool)savedScanUrls.add(entry.url);
-      ArrayList<String> discoveryScanUrls=new ArrayList<>(candidates.size());
-      for(Entry entry:candidates)discoveryScanUrls.add(entry.url);
-      int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedScanUrls, roomString("source_saved_scan_after_key",""), roomInt("source_saved_scan_cursor",0));
+      int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedPool.size(),position->{
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        return savedPool.get(position).url;
+      },roomString("source_saved_scan_after_key",""),roomInt("source_saved_scan_cursor",0));
       // During a full rebuild every probe slot belongs to newly discovered feed
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
@@ -1666,8 +1665,8 @@ public class SourceUpdateWorker extends Worker {
       update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
           .putInt("source_saved_scan_cursor",!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()
               ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
-          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(discoveryScanUrls,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
-          .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedScanUrls,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
+          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(candidates.size(),position->candidates.get(position).url,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
+          .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedPool.size(),position->savedPool.get(position).url,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
