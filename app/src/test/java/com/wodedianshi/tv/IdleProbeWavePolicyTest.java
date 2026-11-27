@@ -52,6 +52,20 @@ public class IdleProbeWavePolicyTest {
         assertEquals(input.size(),result.size());
     }
 
+    @Test public void candidateNetworkIdentityPreservesHostAndOriginSemantics(){
+        SourceUpdateWorker.Entry entry=new SourceUpdateWorker.Entry("Test","https://EXAMPLE.invalid:8443/live","group");
+        assertEquals("example.invalid",entry.host());
+        assertEquals("https://example.invalid:8443",entry.origin());
+        assertSame(entry.host(),entry.host());
+        assertSame(entry.origin(),entry.origin());
+        SourceUpdateWorker.Entry ordinary=new SourceUpdateWorker.Entry("Test","http://example.invalid/live","group");
+        assertEquals(entry.host(),ordinary.host());
+        assertEquals("http://example.invalid:80",ordinary.origin());
+        SourceUpdateWorker.Entry invalid=new SourceUpdateWorker.Entry("Test","invalid","group");
+        assertEquals("",invalid.host());
+        assertEquals("",invalid.origin());
+    }
+
     @Test public void coverageBeforeBackupsKeepsEveryRouteAndPriority(){
         java.util.List<String> input=Arrays.asList("0Aa1","0Ab2","0Aa3","0Ba1","0Cc1","0Cb2","1Za1","1Za1");
         java.util.List<String> expected=Arrays.asList("0Aa1","0Cc1","0Ba1","0Ab2","0Cb2","0Aa3","1Za1","1Za1");
