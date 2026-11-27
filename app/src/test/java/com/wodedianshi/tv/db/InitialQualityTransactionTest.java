@@ -94,4 +94,37 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+
+    @Test public void indexedRebuildInheritsPublishedOnlyUntilPrivateObservation()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            String url="https://example.invalid/live",key=com.wodedianshi.tv.StableKey.url(url);
+            String untouchedUrl="https://example.invalid/other",other=com.wodedianshi.tv.StableKey.url(untouchedUrl);
+            db.runInTransaction(()->{
+                ManualProbeQualityStore.seedInitialInTransaction(db,java.util.Arrays.asList(
+                    new ManualProbeQualityEntity(initial,key,900,2),
+                    new ManualProbeQualityEntity(initial,other,700,null)),()->false);
+                ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
+            });
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,
+                Collections.singletonList(new ManualProbeQualityEntity(initial,key,100,9)),()->false));
+            assertNull(db.manualProbeQualityDao().find(initial,key));
+            org.json.JSONObject scores=new org.json.JSONObject(),streaks=new org.json.JSONObject();
+            ManualProbeQualityStore.loadUrls(db,initial,Collections.singletonList(url),new java.util.HashSet<>(),scores,streaks,()->false);
+            assertEquals(900,scores.getInt(key));
+            assertEquals(2,streaks.getInt(key));
+            db.runInTransaction(()->ManualProbeQualityStore.writeInitialInTransaction(db,
+                Collections.singletonList(new ManualProbeQualityEntity(initial,key,null,null)),()->false));
+            scores=new org.json.JSONObject();streaks=new org.json.JSONObject();
+            ManualProbeQualityStore.loadUrls(db,initial,Collections.singletonList(url),new java.util.HashSet<>(),scores,streaks,()->false);
+            assertFalse(scores.has(key));assertFalse(streaks.has(key));
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,key).score);
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            assertNull(db.manualProbeQualityDao().find(published,key).score);
+            assertEquals(Integer.valueOf(700),db.manualProbeQualityDao().find(published,other).score);
+        }finally{db.close();}
+    }
+
 }
