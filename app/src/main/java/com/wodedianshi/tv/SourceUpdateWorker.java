@@ -59,7 +59,7 @@ public class SourceUpdateWorker extends Worker {
   private static void retainCompletedInitialSuccess(String key,ProbeResult result,
       long finishedAt,long addressDeadline,long batchDeadline){
     if(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(result.valid,
-        result.socketTimedOut||result.transientNetworkFailure,finishedAt,addressDeadline,batchDeadline))
+        result.inconclusive(),finishedAt,addressDeadline,batchDeadline))
       rememberInitialProbe(key,result,finishedAt);
   }
   private static final HashMap<Integer,Long> LIVE_DIRECTORY_RETRY_AFTER=new HashMap<>();
@@ -189,7 +189,7 @@ public class SourceUpdateWorker extends Worker {
         checked++;
         ProbeResult observation=probe(candidate.url,addressDeadline,viewing,paused,false);
         SourceProbeTimePolicy.checkPaused(paused);
-        if(observation.socketTimedOut||observation.transientNetworkFailure
+        if(observation.inconclusive()
             ||android.os.SystemClock.elapsedRealtime()>=addressDeadline){
           if(checked<=found.cachedCandidates)cachedConclusive=false;
           continue;
@@ -1374,7 +1374,7 @@ public class SourceUpdateWorker extends Worker {
             INITIAL_NETWORK.observe(origin,measuredAt,
                 measured.firstRequestFailed,measured.firstRequestReached);
           }
-          if(!reuse&&(measured.socketTimedOut||measured.transientNetworkFailure||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
+          if(!reuse&&(measured.inconclusive()||SourceQualityScorer.inconclusivePacedProbe(measured.paced,measured.valid)||(initialDiscoveryChain
               &&SourceProbeTimePolicy.initialProbeInconclusive(false,measuredAt,addressDeadline)))){
             // Timeouts, transient network failures and unsuccessful paced validations are inconclusive: do not promote,
             // penalize, cache or increment the retirement streak of a saved route.
@@ -2183,7 +2183,7 @@ public class SourceUpdateWorker extends Worker {
       ProbeResult measured=probe(url,deadline,false,pauseRequested,false);
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       String key=scoreKey(url);
-      if(measured.socketTimedOut||measured.transientNetworkFailure
+      if(measured.inconclusive()
           ||android.os.SystemClock.elapsedRealtime()>=deadline){
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         continue;
@@ -3080,7 +3080,8 @@ public class SourceUpdateWorker extends Worker {
   static final class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
-    boolean transientNetworkFailure;
+    boolean transientNetworkFailure,incompleteManifest;
+    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest;}
     boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
     int score;
@@ -3210,6 +3211,9 @@ public class SourceUpdateWorker extends Worker {
       boolean hlsPlaylist=HlsVariantPolicy.isPlaylist(initialText);
       if(playlistUrl||hlsPlaylist){
         if(!hlsPlaylist)return result;
+        // A capped manifest can hide a later key/map change or missing segment.
+        // Do not issue dependent requests or penalize a source on partial metadata.
+        if(initialResponse.truncated){result.incompleteManifest=true;return result;}
         SampleResponse manifestResponse=initialResponse;
         String manifest=initialText;
         String manifestUrl=manifestResponse.finalUrl;
@@ -3239,6 +3243,7 @@ public class SourceUpdateWorker extends Worker {
               if(variant==null||variant.length==0)continue;
               candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
               if(!HlsVariantPolicy.isPlaylist(candidateManifest))continue;
+              if(variantResponse.truncated){result.incompleteManifest=true;continue;}
               candidateManifestUrl=variantResponse.finalUrl;
             }
             HlsMediaPlaylistPolicy.Resources resources=
@@ -3305,6 +3310,7 @@ public class SourceUpdateWorker extends Worker {
             if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
             result.socketTimedOut=false;
             result.transientNetworkFailure=false;
+            result.incompleteManifest=false;
             result.valid=true;result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
             int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
