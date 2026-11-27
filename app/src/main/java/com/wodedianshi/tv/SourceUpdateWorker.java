@@ -1434,8 +1434,12 @@ public class SourceUpdateWorker extends Worker {
         // A completed speculative result can still be consumed after the batch
         // deadline, but no fresh request may begin after it.
         if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
-            checked,runProbeLimit,false)||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
-            &&!idleWave.has(e.endpoint())))break;
+            checked,runProbeLimit,false)||isStopped())break;
+        if(android.os.SystemClock.elapsedRealtime()>=probeDeadline
+            &&!DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(initialDiscoveryChain,slowPlayback,
+                idleWave.has(e.endpoint()),e.skipReplay||e.alreadyStaged
+                    ||!(e.url.startsWith("http://")||e.url.startsWith("https://"))
+                    ||measuredByEndpoint.containsKey(e.endpoint())))break;
         boolean priorityRecheck=priorityRechecks.contains(e);
         if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
         if(e.skipReplay)continue;
