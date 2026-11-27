@@ -271,4 +271,15 @@ public class ChannelNamePolicyTest {
         assertTrue(ChannelNamePolicy.isSatellite("湖南卫视", null));
         assertFalse(ChannelNamePolicy.isSatellite(null, null));
     }
+
+    @Test public void sharedBroadcasterConflictRejectsContradictoryRecognizedLabels() {
+        assertNull(ChannelNamePolicy.consistentBroadcaster("CCTV-1","CCTV-10",""));
+        assertNull(ChannelNamePolicy.consistentBroadcaster("中央一套","CCTV-10",""));
+        assertNull(ChannelNamePolicy.consistentBroadcaster("湖南卫视","浙江卫视",""));
+        assertNull(ChannelNamePolicy.consistentBroadcaster("CCTV-4","CCTV-4K",""));
+        assertNull(ChannelNamePolicy.consistentBroadcaster("CCTV-4","CCTV-4 Asia",""));
+        assertEquals("CCTV-5+",ChannelNamePolicy.consistentBroadcaster("CCTV-5+","CCTV5Plus.cn",""));
+        assertEquals("CCTV-1",ChannelNamePolicy.consistentBroadcaster("高清频道","CCTV-1",""));
+        assertEquals("",ChannelNamePolicy.consistentBroadcaster("未识别频道","",""));
+    }
 }
