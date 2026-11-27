@@ -615,7 +615,7 @@ public class HlsWorkerProbeIntegrationTest {
                                     +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
                             try{out.write(body);out.flush();}
                             catch(SocketException closed){
-                                if(mode==0||!Arrays.asList("/direct.ts","/healthy2.ts","/low2.ts").contains(path))throw closed;
+                                if(mode==0||!Arrays.asList("/direct.ts","/healthy1.ts","/healthy2.ts","/shared.ts","/low2.ts").contains(path))throw closed;
                             }
                         }
                     }
@@ -646,6 +646,9 @@ public class HlsWorkerProbeIntegrationTest {
                 assertTrue(observed[mode][6].unsupportedPreflight);
             }
             assertFalse(observed[0][0].provisional);assertTrue(observed[1][0].provisional);
+            assertFalse(observed[0][2].provisional);assertTrue(observed[1][2].provisional);
+            assertFalse(observed[0][3].provisional);assertTrue(observed[1][3].provisional);
+            assertFalse(observed[1][4].provisional);
             assertEquals(17L,requests[0]);assertEquals(16L,requests[1]);
             long expectedFullBytes=0;
             for(String path:fullRequests)expectedFullBytes+=bodies.get(path).length;
@@ -653,10 +656,47 @@ public class HlsWorkerProbeIntegrationTest {
             // A fragmented confirmation read can consume up to 375+1024
             // bytes before finding two complete packets. Use that safe bound.
             assertTrue("full="+bodyBytes[0]+" fast="+bodyBytes[1],
-                    bodyBytes[0]-bodyBytes[1]>=28672L+32768L+2L*(8192L-1399L));
+                    bodyBytes[0]-bodyBytes[1]>=3L*28672L+32768L+2L*(8192L-1399L));
             System.out.println("mixed_probe_comparison full_requests="+requests[0]
                     +" fast_requests="+requests[1]+" full_body_bytes="+bodyBytes[0]
                     +" fast_body_bytes="+bodyBytes[1]);
+        }finally{serverThread.shutdownNow();}
+    }
+
+    @Test public void singleSegmentPlaylistDoesNotUseProvisionalFirstScreen()throws Exception{
+        byte[] manifest=bytes("#EXTM3U\n#EXTINF:6,\n/only.ts\n");
+        byte[] media=new byte[32768];
+        for(int at=0;at+188<=media.length;at+=188){
+            media[at]=0x47;media[at+2]=0x20;media[at+3]=0x10;
+        }
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(String path:new String[]{"/single.m3u8","/only.ts"}){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(socket.getInputStream(),StandardCharsets.US_ASCII));
+                        String start=reader.readLine();assertNotNull(start);
+                        assertTrue(start,start.startsWith("GET "+path+" "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        byte[] body=path.endsWith(".m3u8")?manifest:media;
+                        OutputStream out=socket.getOutputStream();
+                        out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                        out.write(body);out.flush();
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/single.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(result.valid);assertFalse(result.provisional);
+            assertEquals(2L,result.sampleRequests);
+            assertEquals((long)manifest.length+media.length,result.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
 }
