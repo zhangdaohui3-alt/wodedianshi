@@ -82,7 +82,8 @@ tasks.withType(Test).configureEach {
         String line = event.message.trim()
         if (line ==~ /room_route_scale channels=\d+ routes=\d+ full_read_ms=\d+ route_scan_ms=\d+ early_exit_ms=\d+ cancelled_after=\d+/ ||
                 line ==~ /mixed_probe_comparison full_requests=\d+ fast_requests=\d+ full_body_bytes=\d+ fast_body_bytes=\d+/ ||
-                line ==~ /room_pending_scale pending=\d+ matched_early_visited=\d+ matched_early_ms=\d+ missing_visited=\d+ missing_ms=\d+/) {
+                line ==~ /room_pending_scale pending=\d+ matched_early_visited=\d+ matched_early_ms=\d+ missing_visited=\d+ missing_ms=\d+/ ||
+                line ==~ /room_route_balanced rounds=\d+ full_median_us=\d+ route_median_us=\d+/) {
             logger.lifecycle(line)
         }
     }
