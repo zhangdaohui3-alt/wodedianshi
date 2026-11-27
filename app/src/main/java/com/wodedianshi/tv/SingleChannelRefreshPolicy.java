@@ -81,6 +81,16 @@ public final class SingleChannelRefreshPolicy {
                 &&!a.matches("(?i)^(?:频道|新闻综合|综合频道|新闻频道|未命名频道|local news|news|channel|unknown)$");
     }
 
+    /** Shared exact URL validation for candidate scans and retention.
+     * A syntactically valid URL is not evidence of media playability. */
+    static boolean validCandidateUrl(String url){
+        if(url==null||!(url.startsWith("http://")||url.startsWith("https://")))return false;
+        try{
+            java.net.URI uri=java.net.URI.create(url);
+            return uri.getHost()!=null&&!uri.getHost().isEmpty();
+        }catch(IllegalArgumentException malformed){return false;}
+    }
+
     public static List<String> appendCandidates(List<String> existing,
             Collection<String> verifiedBestFirst,int maximum){
         ArrayList<String> result=new ArrayList<>();
@@ -89,11 +99,7 @@ public final class SingleChannelRefreshPolicy {
         for(String url:existing)seen.add(SourceSelectionPolicy.endpointKey(url));
         for(String url:verifiedBestFirst){
             if(existing.size()+result.size()>=maximum)break;
-            if(url==null||!(url.startsWith("http://")||url.startsWith("https://")))continue;
-            try{
-                java.net.URI uri=java.net.URI.create(url);
-                if(uri.getHost()==null||uri.getHost().isEmpty())continue;
-            }catch(IllegalArgumentException malformed){continue;}
+            if(!validCandidateUrl(url))continue;
             if(seen.add(SourceSelectionPolicy.endpointKey(url)))result.add(url);
         }
         return result;
@@ -112,7 +118,10 @@ public final class SingleChannelRefreshPolicy {
         eligible.remove(SourceSelectionPolicy.endpointKey(playing));
         HashSet<String> seen=new HashSet<>();
         for(String url:existing)seen.add(SourceSelectionPolicy.endpointKey(url));
-        for(String candidate:appendCandidates(existing,verifiedBestFirst,Integer.MAX_VALUE)){
+        // The original-route set already excludes old and duplicate endpoints.
+        // Validate and consume each candidate once, without an intermediate list.
+        for(String candidate:verifiedBestFirst){
+            if(!validCandidateUrl(candidate))continue;
             String key=SourceSelectionPolicy.endpointKey(candidate);
             if(!seen.add(key))continue;
             if(result.size()<maximum){result.add(candidate);continue;}
