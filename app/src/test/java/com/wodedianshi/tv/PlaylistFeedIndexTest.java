@@ -273,6 +273,34 @@ public class PlaylistFeedIndexTest {
         assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
     }
 
+    @Test public void completedInitialDirectoryYieldsCacheToUnfinishedDirectory() throws Exception {
+        String[] feeds={"https://example.invalid/one","https://example.invalid/two"};
+        java.util.Set<String> all=PlaylistFeedCache.unfinishedInitialCacheNames(
+            feeds,java.util.Collections.emptySet());
+        java.util.Set<String> pending=PlaylistFeedCache.unfinishedInitialCacheNames(
+            feeds,java.util.Collections.singleton(SourceUpdateWorker.initialFeedDoneKey(0)));
+        assertEquals(2,all.size());
+        assertEquals(1,pending.size());
+        all.removeAll(pending);
+        File dir=java.nio.file.Files.createTempDirectory("mytv-unfinished-cache").toFile();
+        try{
+            File completed=new File(dir,all.iterator().next());
+            File unfinished=new File(dir,pending.iterator().next());
+            File keep=new File(dir,"current.m3u");
+            for(File file:new File[]{completed,unfinished,keep})
+                try(FileOutputStream out=new FileOutputStream(file)){out.write(new byte[10]);}
+            unfinished.setLastModified(1L);
+            PlaylistFeedCache.pruneOldEntries(dir,keep,pending,20L);
+            org.junit.Assert.assertFalse(completed.exists());
+            org.junit.Assert.assertTrue(unfinished.exists());
+            org.junit.Assert.assertTrue(keep.exists());
+        }finally{
+            File[] files=dir.listFiles();
+            if(files!=null)for(File file:files)file.delete();
+            dir.delete();
+        }
+    }
+
     @Test public void initialCachePruningPrefersRetainingCandidatesButKeepsBound() throws Exception {
         File dir=java.nio.file.Files.createTempDirectory("mytv-cache-test").toFile();
         try {
