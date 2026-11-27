@@ -150,7 +150,11 @@ public final class ManualProbeQualityStore {
     }
 
     public static boolean hasInitial(Context context){
-        return "true".equals(RoomDatabaseProvider.get(context).appStateDao().getValue(INITIAL_READY_KEY));
+        return hasInitial(RoomDatabaseProvider.get(context));
+    }
+
+    static boolean hasInitial(AppDatabase db){
+        return "true".equals(db.appStateDao().getValue(INITIAL_READY_KEY));
     }
 
     /** The caller supplies the current build's legacy compatibility state.
