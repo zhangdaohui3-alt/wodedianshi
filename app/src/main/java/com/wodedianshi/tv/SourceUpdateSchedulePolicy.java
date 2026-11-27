@@ -60,6 +60,16 @@ public final class SourceUpdateSchedulePolicy {
     }
 
 
+    /** Only a complete, version-guarded publication can prove a pending URL
+     * no longer belongs to the directory. Preserve queue order for survivors. */
+    static int pruneUnretainedProvisional(java.util.Set<String> pending,
+            java.util.Set<String> retained,boolean complete){
+        if(!complete||pending.isEmpty())return 0;
+        int before=pending.size();
+        pending.retainAll(retained);
+        return before-pending.size();
+    }
+
     /** Reserve room for every candidate position, including endpoint aliases.
      * Admission is fixed for the slice so speculative parallel work cannot
      * overflow the durable provisional queue. */
