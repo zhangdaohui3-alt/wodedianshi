@@ -282,4 +282,25 @@ public class ChannelNamePolicyTest {
         assertEquals("CCTV-1",ChannelNamePolicy.consistentBroadcaster("高清频道","CCTV-1",""));
         assertEquals("",ChannelNamePolicy.consistentBroadcaster("未识别频道","",""));
     }
+
+    @Test public void explicitStationIdentityOutranksConflictingDirectoryGroup(){
+        assertEquals("CCTV-1",ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-1","CCTV-1","CCTV1.cn","湖南卫视"));
+        assertEquals("CCTV-4",ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-4","", "CCTV4.cn","CCTV-4K"));
+        assertEquals("湖南卫视",ChannelNamePolicy.canonicalBroadcasterName(
+                "高清频道","Hunan TV","HunanSatelliteTV","浙江卫视"));
+        assertEquals("CCTV-5+",ChannelNamePolicy.canonicalBroadcasterName(
+                "CCTV-5+","", "CCTV5Plus.cn","CCTV-5"));
+        assertEquals("CCTV-1",SourceDiscoveryIdentityPolicy.canonicalName("CCTV-1"));
+        assertEquals("CCTV-1|cctv",SourceDiscoveryIdentityPolicy.identity(
+                "CCTV-1","湖南卫视","https://example.invalid/live","CCTV1.cn","CCTV-1"));
+    }
+
+    @Test public void legacyGroupHintRemainsAvailableWhenExplicitStationIsAbsent(){
+        assertEquals("湖南卫视",ChannelNamePolicy.canonicalBroadcasterName(
+                "高清频道","","","湖南卫视"));
+        assertEquals("",ChannelNamePolicy.canonicalBroadcasterName(
+                "城市新闻","EPG Channel","regional.123","卫视"));
+    }
 }
