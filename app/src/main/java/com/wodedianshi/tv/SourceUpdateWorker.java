@@ -1292,6 +1292,7 @@ public class SourceUpdateWorker extends Worker {
         if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=e.endpoint();
+        String exactScoreKey=null,oldScoreKey=null;
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
@@ -1453,20 +1454,26 @@ public class SourceUpdateWorker extends Worker {
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
-          if(!indexedQuality)storePreflightScore(measuredScores,e.url,measured);
+          if(!indexedQuality){
+            exactScoreKey=scoreKey(e.url);oldScoreKey=legacyScoreKey(e.url);
+            storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
+          }
         }
-        if(!manualRefresh){
-          if(measured.provisional&&measured.valid)
-            SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,scoreKey(e.url));
-          else if(!measured.paced&&!measured.provisional)provisionalKeys.remove(scoreKey(e.url));
+        if(!manualRefresh&&((measured.provisional&&measured.valid)||(!measured.paced&&!measured.provisional))){
+          if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
+          if(measured.provisional)
+            SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,exactScoreKey);
+          else provisionalKeys.remove(exactScoreKey);
         }
         if(indexedQuality){
           // Shared endpoint observations can be consumed by more than one exact URL.
-          storePreflightScore(measuredScores,e.url,measured);
-          manualQualityDirty.add(scoreKey(e.url));manualQualityDirty.add(legacyScoreKey(e.url));
+          if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
+          if(oldScoreKey==null)oldScoreKey=legacyScoreKey(e.url);
+          storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
+          manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
         }
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
-          String streakKey=scoreKey(e.url);
+          String streakKey=exactScoreKey==null?scoreKey(e.url):exactScoreKey;
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
               probeFailureStreaks.optInt(streakKey,0),measured.valid);
           if(streak==0)probeFailureStreaks.remove(streakKey);
@@ -2267,9 +2274,10 @@ public class SourceUpdateWorker extends Worker {
       for(Map.Entry<String,ProbeResult> entry:completed.entrySet()){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         String url=entry.getKey();
-        storePreflightScore(scores,url,entry.getValue());
+        String key=scoreKey(url),legacy=legacyScoreKey(url);
+        storePreflightScore(scores,key,legacy,entry.getValue());
         // Keep the existing failure streak for ordinary health rotation.
-        dirty.add(scoreKey(url));dirty.add(legacyScoreKey(url));
+        dirty.add(key);dirty.add(legacy);
       }
     }
     com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(context)
@@ -3360,8 +3368,7 @@ public class SourceUpdateWorker extends Worker {
       scores.remove(key);
     }
   }
-  private void storePreflightScore(JSONObject scores,String url,ProbeResult result)throws JSONException{
-    String key=scoreKey(url),legacyKey=legacyScoreKey(url);
+  static void storePreflightScore(JSONObject scores,String key,String legacyKey,ProbeResult result)throws JSONException{
     double prior=scores.has(key)?scores.optDouble(key,0.0):scores.optDouble(legacyKey,0.0);
     scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,result.provisional,prior,result.score):-500.0);
     scores.remove(legacyKey);
