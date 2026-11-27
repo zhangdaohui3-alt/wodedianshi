@@ -422,9 +422,7 @@ public class SourceUpdateWorker extends Worker {
               .remove("source_manual_prepared_feed_version")
               .remove("source_manual_saved_pool_fingerprint")
               .remove("source_manual_saved_scanned")
-              .remove(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY)
-              .putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY,roomString("source_probe_scores_v1","{}"))
-              .putString(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,roomString("source_probe_failure_streaks_v1","{}"));
+              .remove(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_READY_KEY);
           for(int i=0;i<feeds.length;i++)
             reset.remove(manualFeedCursorKey(i)).remove(manualFeedCursorKey(i)+"_version");
           for(String key:ManualSavedCoverage.keys())reset.remove(key);
