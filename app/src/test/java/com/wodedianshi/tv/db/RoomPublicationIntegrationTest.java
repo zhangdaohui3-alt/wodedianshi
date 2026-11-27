@@ -300,6 +300,77 @@ public class RoomPublicationIntegrationTest {
                     java.util.Arrays.asList(oldUrl,newUrl),snapshot.catalogueVersion,()->false);
             assertEquals(650,scores.getInt(oldKey));
             assertEquals(900,scores.getInt(newKey));
+
+            // Exercise the same quality-only transaction used by the worker's
+            // 16-result checkpoint. The existing published fixture supplies
+            // real indexed quality rows rather than faking the published flag.
+            String pendingKey="source_probe_provisional_recheck_v1";
+            String revisionKey="source_probe_quality_only_revision_v1";
+            String lastKey="source_probe_provisional_recheck_last_v1";
+            String initialPending=new JSONArray().put(oldKey).put(newKey).toString();
+            String remaining=new JSONArray().put(newKey).toString();
+            long version=snapshot.catalogueVersion;
+            String publishedOwner=ManualProbeQualityStore.PUBLISHED_OWNER;
+            new AppStateEditor(context).putString(pendingKey,initialPending)
+                    .putLong(lastKey,100L).applyAtCatalogueVersion(version,()->false);
+            new AppStateEditor(context).putString(pendingKey,remaining)
+                    .putString(revisionKey,"checkpoint-one")
+                    .putPublishedQuality(java.util.Collections.singletonList(
+                        new ManualProbeQualityEntity(publishedOwner,oldKey,800,2)),()->false)
+                    .applyAtCatalogueVersion(version,()->false);
+            closeProvider();
+            AppDatabase reopened=RoomDatabaseProvider.get(context);
+            assertEquals(remaining,reopened.appStateDao().getValue(pendingKey));
+            assertEquals("checkpoint-one",reopened.appStateDao().getValue(revisionKey));
+            assertEquals("100",reopened.appStateDao().getValue(lastKey));
+            assertEquals(Integer.valueOf(800),reopened.manualProbeQualityDao().find(publishedOwner,oldKey).score);
+            assertEquals(Integer.valueOf(2),reopened.manualProbeQualityDao().find(publishedOwner,oldKey).failureStreak);
+            assertEquals(Integer.valueOf(900),reopened.manualProbeQualityDao().find(publishedOwner,newKey).score);
+
+            // Trigger pause only after BOTH app state and quality row writes
+            // are visible within the transaction, exercising late rollback.
+            java.util.function.BooleanSupplier latePause=()->reopened.inTransaction()
+                    &&"checkpoint-two".equals(reopened.appStateDao().getValue(revisionKey))
+                    &&Integer.valueOf(950).equals(reopened.manualProbeQualityDao().find(publishedOwner,newKey).score);
+            try{
+                new AppStateEditor(context).putString(pendingKey,"[]")
+                        .putString(revisionKey,"checkpoint-two").putLong(lastKey,200L)
+                        .putPublishedQuality(java.util.Collections.singletonList(
+                            new ManualProbeQualityEntity(publishedOwner,newKey,950,null)),latePause)
+                        .applyAtCatalogueVersion(version,latePause);
+                fail("late quality checkpoint must roll back");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+            closeProvider();
+            AppDatabase resumed=RoomDatabaseProvider.get(context);
+            assertEquals(remaining,resumed.appStateDao().getValue(pendingKey));
+            assertEquals("checkpoint-one",resumed.appStateDao().getValue(revisionKey));
+            assertEquals("100",resumed.appStateDao().getValue(lastKey));
+            assertEquals(Integer.valueOf(800),resumed.manualProbeQualityDao().find(publishedOwner,oldKey).score);
+            assertEquals(Integer.valueOf(900),resumed.manualProbeQualityDao().find(publishedOwner,newKey).score);
+            assertEquals(version,RoomCatalogueReader.read(context).catalogueVersion);
+            try{
+                new AppStateEditor(context).putString(pendingKey,"[]")
+                        .putPublishedQuality(java.util.Collections.singletonList(
+                            new ManualProbeQualityEntity(publishedOwner,newKey,950,null)),()->false)
+                        .applyAtCatalogueVersion(base,()->false);
+                fail("stale checkpoint must not consume pending work");
+            }catch(RoomCatalogueReader.StaleSnapshotException expected){}
+            assertEquals(remaining,resumed.appStateDao().getValue(pendingKey));
+            assertEquals(Integer.valueOf(900),resumed.manualProbeQualityDao().find(publishedOwner,newKey).score);
+            new AppStateEditor(context).putString(pendingKey,"[]")
+                    .putString(revisionKey,"checkpoint-two").putLong(lastKey,200L)
+                    .putPublishedQuality(java.util.Collections.singletonList(
+                        new ManualProbeQualityEntity(publishedOwner,newKey,950,null)),()->false)
+                    .applyAtCatalogueVersion(version,()->false);
+            closeProvider();
+            AppDatabase finished=RoomDatabaseProvider.get(context);
+            assertEquals("[]",finished.appStateDao().getValue(pendingKey));
+            assertEquals("checkpoint-two",finished.appStateDao().getValue(revisionKey));
+            assertEquals("200",finished.appStateDao().getValue(lastKey));
+            assertEquals(Integer.valueOf(800),finished.manualProbeQualityDao().find(publishedOwner,oldKey).score);
+            assertEquals(Integer.valueOf(950),finished.manualProbeQualityDao().find(publishedOwner,newKey).score);
+            assertEquals(version,RoomCatalogueReader.read(context).catalogueVersion);
+            assertEquals(2,RoomCatalogueReader.read(context).channelCount);
         });
     }
 
