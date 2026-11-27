@@ -1453,7 +1453,7 @@ public class SourceUpdateWorker extends Worker {
         if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
             checked,runProbeLimit,false)||isStopped())break;
         if(android.os.SystemClock.elapsedRealtime()>=probeDeadline
-            &&!DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(initialDiscoveryChain,slowPlayback,
+            &&!DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(initialDiscoveryChain||manualRefresh,slowPlayback,
                 idleWave.has(e.endpoint()),e.skipReplay||e.alreadyStaged
                     ||!(e.url.startsWith("http://")||e.url.startsWith("https://"))
                     ||measuredByEndpoint.containsKey(e.endpoint())))break;
