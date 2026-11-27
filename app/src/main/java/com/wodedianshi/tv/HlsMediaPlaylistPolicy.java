@@ -24,15 +24,21 @@ public final class HlsMediaPlaylistPolicy {
         public final String encryptionIv;
         public final long firstMediaSequenceNumber;
         public final boolean unsupportedEncryption;
+        public final boolean skippedMediaByteRange;
+        boolean requiresUnsupportedPreflight(){
+            return unsupportedInitializationByteRange||unsupportedInitializationMap||unsupportedEncryption
+                    ||(mediaUrls.isEmpty()&&skippedMediaByteRange);
+        }
         public final ArrayList<String> mediaUrls;
         public final ArrayList<Long> mediaSequenceNumbers;
         Resources(String init, boolean rangeUnsupported, boolean mapUnsupported, boolean aes128, String keyUrl,
-                  String iv, long firstSequence, boolean encryptionUnsupported, ArrayList<String> media, ArrayList<Long> sequences) {
+                  String iv, long firstSequence, boolean encryptionUnsupported, boolean skippedRange, ArrayList<String> media, ArrayList<Long> sequences) {
             initializationUrl=init; unsupportedInitializationByteRange=rangeUnsupported;
             unsupportedInitializationMap=mapUnsupported;
             aes128Encrypted=aes128; encryptionKeyUrl=keyUrl; encryptionIv=iv;
             firstMediaSequenceNumber=firstSequence;
-            unsupportedEncryption=encryptionUnsupported; mediaUrls=media; mediaSequenceNumbers=sequences;
+            unsupportedEncryption=encryptionUnsupported; skippedMediaByteRange=skippedRange;
+            mediaUrls=media; mediaSequenceNumbers=sequences;
         }
     }
 
@@ -43,9 +49,10 @@ public final class HlsMediaPlaylistPolicy {
         boolean unsupportedMapRange = false, unsupportedMap = false, aes128 = false, unsupportedEncryption = false;
         boolean activeKeyHasExplicitIv = false, hasFirstSequence = false;
         boolean awaitingSegment=false, segmentGap=false, segmentRange=false, clearMediaSeen=false;
+        boolean skippedMediaRange=false;
         long mediaSequence = 0L, nextSequence = 0L, firstSequence = 0L;
         if (playlist == null || finalPlaylistUrl == null)
-            return new Resources(null,false,false,false,null,null,0L,false,media,sequences);
+            return new Resources(null,false,false,false,null,null,0L,false,false,media,sequences);
         String[] lines = playlist.replace("\\r", "").split("\\n");
         URL base=new URL(finalPlaylistUrl);
         // Continue scanning the bounded playlist after the media URL cap is reached: key
@@ -104,6 +111,7 @@ public final class HlsMediaPlaylistPolicy {
                 }
             } else if(line.startsWith("#EXT-X-PART:")) {
                 String attrs=line.substring("#EXT-X-PART:".length());
+                if(attrs.contains("BYTERANGE="))skippedMediaRange=true;
                 if(activeKeyUrl!=null) {
                     // This bounded probe does not map LL-HLS parts to media sequence IVs.
                     unsupportedEncryption=true;
@@ -123,6 +131,7 @@ public final class HlsMediaPlaylistPolicy {
             } else if(awaitingSegment&&!line.isEmpty()&&!line.startsWith("#")) {
                 // Skipped resources still consume a sequence; comments do not.
                 if(activeKeyUrl==null)clearMediaSeen=true;
+                if(segmentRange&&!segmentGap)skippedMediaRange=true;
                 if(!segmentGap&&!segmentRange&&media.size()<MAX_MEDIA_SEGMENTS
                         &&addUnique(media,resolve(line,base))){
                     sequences.add(nextSequence);
@@ -135,7 +144,7 @@ public final class HlsMediaPlaylistPolicy {
         }
         if(aes128&&!hasFirstSequence)unsupportedEncryption=true;
         return new Resources(initialization,unsupportedMapRange,unsupportedMap,aes128,aesKeyUrl,
-                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,media,sequences);
+                aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,skippedMediaRange,media,sequences);
     }
 
     private static String attribute(Pattern pattern,String attributes) {
