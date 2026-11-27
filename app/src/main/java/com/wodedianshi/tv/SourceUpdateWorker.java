@@ -597,7 +597,7 @@ public class SourceUpdateWorker extends Worker {
             PlaylistFeedIndex.readInitialPage(cached,0,1,source->{},pauseRequested);
             count=PlaylistFeedIndex.indexedEntryCount(cached);
             if(count>=0){
-              PlaylistFeedCache.trimPreparedInitial(cached);
+              PlaylistFeedCache.trimPreparedInitial(getApplicationContext(),cached);
               preparedVersion=PlaylistFeedCache.contentVersion(cached);
             }
           }catch(Exception failure){
@@ -924,7 +924,7 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain&&!slowPlayback&&!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)){
             noteInitialStage("空闲时整理频道首源顺序 "+(feedIndex+1)+"/"+feeds.length);
             PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
-            PlaylistFeedCache.trimPreparedInitial(cachedFeed);
+            PlaylistFeedCache.trimPreparedInitial(getApplicationContext(),cachedFeed);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             return continueAfterAcquisition();
           }
@@ -3170,7 +3170,7 @@ public class SourceUpdateWorker extends Worker {
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     // Defer additional eviction work while playing; the idle preparation path
     // accounts for the newly generated index before recording acquisition.
-    if(!slowPlayback)PlaylistFeedCache.trimPreparedInitial(cached);
+    if(!slowPlayback)PlaylistFeedCache.trimPreparedInitial(getApplicationContext(),cached);
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(index),version)
@@ -3179,7 +3179,7 @@ public class SourceUpdateWorker extends Worker {
         .putString("source_initial_progress_phase","目录已准备，下一批继续线路初筛")
         .apply();
   }
-  private String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
+  static String initialFeedDoneKey(int index){return "source_initial_feed_done_"+index;}
   private String initialFeedProgressKey(int index){return "source_initial_feed_progress_bp_"+index;}
   private String initialFeedUnavailableKey(int index){return "source_initial_feed_unavailable_"+index;}
   private String initialFeedFailureCountKey(int index){return "source_initial_feed_failure_count_"+index;}
