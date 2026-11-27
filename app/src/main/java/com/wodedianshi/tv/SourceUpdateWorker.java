@@ -906,6 +906,13 @@ public class SourceUpdateWorker extends Worker {
               }
               if(!SourceProbeTimePolicy.fitsLiveFullDirectory(cachedFeed.length()))
                 throw new IOException("Directory exceeds stable-viewing index limit");
+              if(!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)
+                  &&PlaylistFeedIndex.needsCoverageRecovery(PlaylistFeedCache.contentVersion(cachedFeed),
+                      savedProbeVersion,feedCursor,savedPartialScanned)){
+                // The viewing retry branch rotates to another directory
+                // without touching the committed cursor or page fingerprint.
+                throw new IOException("Station-first index recovery deferred until idle");
+              }
               noteInitialStage("低优先级整理目录 "+(feedIndex+1)+"/"+feeds.length);
               PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
               SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
