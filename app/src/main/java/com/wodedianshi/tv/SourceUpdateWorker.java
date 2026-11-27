@@ -1166,9 +1166,19 @@ public class SourceUpdateWorker extends Worker {
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
       final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
       final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
-      final boolean indexedPublished=!manualRefresh&&!initialDiscoveryChain&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
-      final boolean indexedQuality=manualRefresh||indexedPublished;
-      final String qualityOwner=manualRefresh?manualId:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
+      final boolean publishedQualityAvailable=!manualRefresh&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
+      final boolean indexedPublished=!initialDiscoveryChain&&publishedQualityAvailable;
+      // Activate for initial builds without an existing authoritative published
+      // index. Existing indexed-catalogue rebuilds keep the legacy path until
+      // their private seed can reconcile current published and legacy evidence.
+      final boolean indexedInitial=initialDiscoveryChain&&
+          (com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext())||!publishedQualityAvailable);
+      if(indexedInitial&&!com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext()))
+        com.wodedianshi.tv.db.ManualProbeQualityStore.ensureInitial(getApplicationContext(),
+            new JSONObject(roomString(scoresKey,"{}")),new JSONObject(roomString(streaksKey,"{}")),pauseRequested);
+      final boolean indexedQuality=manualRefresh||indexedPublished||indexedInitial;
+      final String qualityOwner=manualRefresh?manualId:indexedInitial?
+          com.wodedianshi.tv.db.ManualProbeQualityStore.INITIAL_OWNER:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
       JSONObject measuredScores=new JSONObject(indexedQuality?"{}":roomString(scoresKey,"{}"));
       // A single failed probe merely reduces its score. It cannot delete an
       // existing saved backup; three independent failures are needed.
@@ -1201,6 +1211,18 @@ public class SourceUpdateWorker extends Worker {
           stagedPositions.put(row,saved.length());indexedPositions.add(entity.sortOrder);
           saved.put(row);byIdentity.put(key,row);
         }
+      }
+      if(indexedInitial){
+        // Coverage ordering and committed-route reuse must see the same
+        // authoritative scores BEFORE page admission/fingerprint selection.
+        LinkedHashSet<String> needed=new LinkedHashSet<>();
+        for(Entry entry:candidates){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          needed.add(entry.url);
+          collectQualityUrls(needed,byIdentity.get(entry.mergeIdentity()));
+        }
+        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
+            manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
       }
       int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedPool.size(),position->{
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -1347,7 +1369,7 @@ public class SourceUpdateWorker extends Worker {
           saved.put(row);byIdentity.put(key,row);
         }
       }
-      if(indexedQuality){
+      if(indexedQuality&&!indexedInitial){
         LinkedHashSet<String> needed=new LinkedHashSet<>();
         // Routine still re-ranks the published snapshot; include every
         // retained URL rather than substituting the capped compatibility view.
@@ -1765,6 +1787,15 @@ public class SourceUpdateWorker extends Worker {
       // full directory sort. A final pass uses the latest saved scoring state.
       Iterable<Integer> rankingRows=(manualRefresh||initialDiscoveryChain&&!finalRanking)?touchedStagedRows:
           allRowIndices(saved);
+      if(indexedInitial&&finalRanking){
+        LinkedHashSet<String> needed=new LinkedHashSet<>();
+        for(int i=0;i<saved.length();i++){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          collectQualityUrls(needed,saved.optJSONObject(i));
+        }
+        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
+            manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
+      }
       rankCatalogueRows(saved,rankingRows,measuredScores,observedQoe);
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
@@ -1772,9 +1803,15 @@ public class SourceUpdateWorker extends Worker {
       // Capture dirty rows BEFORE trimming the legacy compatibility cache.
       if(indexedPublished)update.putPublishedQuality(
           com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
+      // Keep the bounded compatibility view for interim preview playback.
+      // It is no longer the authoritative initial quality store.
+      JSONObject compatibleInitialScores=indexedInitial?
+          mergeCompatibilityQuality(new JSONObject(roomString(scoresKey,"{}")),measuredScores,manualQualityDirty):measuredScores;
+      JSONObject compatibleInitialStreaks=indexedInitial?
+          mergeCompatibilityQuality(new JSONObject(roomString(streaksKey,"{}")),probeFailureStreaks,manualQualityDirty):probeFailureStreaks;
       if(!manualRefresh){
-        trimProbeScores(measuredScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
-        trimProbeScores(probeFailureStreaks,savedPool,probeCandidates,false,Collections.emptySet());
+        trimProbeScores(compatibleInitialScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
+        trimProbeScores(compatibleInitialStreaks,savedPool,probeCandidates,false,Collections.emptySet());
       }
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
@@ -1831,7 +1868,7 @@ public class SourceUpdateWorker extends Worker {
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       if(!manualRefresh){
-        update.putString(scoresKey,measuredScores.toString()).putString(streaksKey,probeFailureStreaks.toString());
+        update.putString(scoresKey,compatibleInitialScores.toString()).putString(streaksKey,compatibleInitialStreaks.toString());
         update.putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(provisionalKeys).toString());
       }
       if(initialDiscoveryChain){
@@ -2177,6 +2214,8 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
+      if(indexedInitial)update.putInitialQuality(
+          com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
       final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
       if(initialDiscoveryChain)update.putString(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,
           FullDiscoveryProgressPolicy.throughputStatus(probeStartedAt-sliceStartedAt,
@@ -2664,6 +2703,20 @@ public class SourceUpdateWorker extends Worker {
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     clearRecentProbeCache();
     return Result.success();
+  }
+  private static void collectQualityUrls(Set<String> needed,JSONObject row){
+    if(row==null)return;
+    needed.add(row.optString("url"));
+    JSONArray urls=row.optJSONArray("sources");
+    if(urls!=null)for(int i=0;i<urls.length();i++)needed.add(urls.optString(i));
+  }
+  static JSONObject mergeCompatibilityQuality(JSONObject compatible,JSONObject authoritative,
+      Set<String> dirty)throws JSONException{
+    for(String key:dirty){
+      if(authoritative.has(key))compatible.put(key,authoritative.get(key));
+      else compatible.remove(key);
+    }
+    return compatible;
   }
   private JSONObject manualCompatibilityScores(JSONArray rows,JSONObject all)throws JSONException{
     JSONObject result=new JSONObject();
