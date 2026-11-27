@@ -3510,10 +3510,15 @@ public class SourceUpdateWorker extends Worker {
               if(reusableClear)confirmedClearFirstSegments.put(candidateSegmentUrl,evidence);
             }
             if(candidateSegments.size()>1){
-              boolean secondSegmentOk=false;
-                String secondUrl=new URL(new URL(candidateManifestUrl),candidateSegments.get(1)).toString();
+              // Parser already resolves and deduplicates media URLs. Only
+              // same-probe clear positive first-segment evidence may satisfy
+              // confirmation of a distinct second URL in a sibling rendition.
+              String secondUrl=candidateSegments.get(1);
+              boolean secondSegmentOk=reusableClear
+                  &&confirmedClearFirstSegments.containsKey(secondUrl);
+              if(!secondSegmentOk){
                 SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,renditionDeadline,slowPlayback,pauseRequested,
-                    initialIdle&&!slowPlayback&&!resources.aes128Encrypted,false,result);
+                    reusableClear,false,result);
                 byte[] second=secondResponse==null?null:secondResponse.bytes;
                 if(resources.aes128Encrypted&&second!=null){
                   byte[] secondIv=resources.encryptionIv!=null
@@ -3522,6 +3527,7 @@ public class SourceUpdateWorker extends Worker {
                   secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
                       second,aesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
                 }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
+              }
               if(!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))continue;
             }
             if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
