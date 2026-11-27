@@ -451,4 +451,17 @@ public class SourceUpdateSchedulePolicyTest {
         pending.remove("old0");
         assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),1));
     }
+
+    @Test public void completePublicationPrunesOnlyUnretainedPendingKeysAndPreservesOrder(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>(
+                java.util.Arrays.asList("old-fallback","removed","shared","new-source","removed-again"));
+        java.util.HashSet<String> retained=new java.util.HashSet<>(
+                java.util.Arrays.asList("new-source","shared","old-fallback","other"));
+        assertEquals(0,SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,retained,false));
+        assertEquals(5,pending.size());
+        assertEquals(2,SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,retained,true));
+        assertEquals(java.util.Arrays.asList("old-fallback","shared","new-source"),new java.util.ArrayList<>(pending));
+        assertEquals(0,SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,retained,true));
+        assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),48));
+    }
 }
