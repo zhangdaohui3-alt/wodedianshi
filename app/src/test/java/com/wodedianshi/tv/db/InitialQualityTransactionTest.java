@@ -128,6 +128,43 @@ public class InitialQualityTransactionTest {
     }
 
 
+    @Test public void inheritedReadAcrossPagesPreservesWholeRowPrecedence()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            java.util.List<String> urls=new java.util.ArrayList<>();
+            java.util.List<ManualProbeQualityEntity> rows=new java.util.ArrayList<>();
+            for(int n=0;n<300;n++){
+                String url="https://example.invalid/inherit/"+n;
+                urls.add(url);
+                String key=com.wodedianshi.tv.StableKey.url(url);
+                if(n%4!=3)rows.add(new ManualProbeQualityEntity(published,key,900,2));
+                if(n%4==1)rows.add(new ManualProbeQualityEntity(initial,key,null,5));
+                if(n%4==2)rows.add(new ManualProbeQualityEntity(initial,key,null,null));
+            }
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
+            db.manualProbeQualityDao().put(rows);
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialPreviewInTransaction(db,Collections.emptyList(),()->false));
+            org.json.JSONObject scores=new org.json.JSONObject(),streaks=new org.json.JSONObject();
+            java.util.Set<String> loaded=new java.util.HashSet<>();
+            ManualProbeQualityStore.loadUrls(db,initial,urls,loaded,scores,streaks,()->false);
+            for(int n=0;n<urls.size();n++){
+                String key=com.wodedianshi.tv.StableKey.url(urls.get(n));
+                assertTrue(loaded.contains(key));
+                assertTrue(loaded.contains(com.wodedianshi.tv.StableKey.legacyUrl(urls.get(n))));
+                if(n%4==0){assertEquals(900,scores.getInt(key));assertEquals(2,streaks.getInt(key));}
+                else if(n%4==1){assertFalse(scores.has(key));assertEquals(5,streaks.getInt(key));}
+                else{assertFalse(scores.has(key));assertFalse(streaks.has(key));}
+            }
+            // Repeated preparation must not overwrite an observation made in memory.
+            String first=com.wodedianshi.tv.StableKey.url(urls.get(0));
+            scores.put(first,1234);
+            ManualProbeQualityStore.loadUrls(db,initial,urls,loaded,scores,streaks,()->false);
+            assertEquals(1234,scores.getInt(first));
+        }finally{db.close();}
+    }
+
     @Test public void previewPublishesOnlyRetainedQualityAndKeepsPrivateBuild()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
