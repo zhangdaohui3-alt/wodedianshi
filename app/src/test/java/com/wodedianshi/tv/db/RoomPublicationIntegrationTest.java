@@ -95,6 +95,64 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void twentyThousandRoutesMatchFullSnapshotWithEarlyExitAndCancellation()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            JSONArray rows=new JSONArray();
+            java.util.Set<String> expected=new java.util.HashSet<>();
+            for(int i=0;i<2500;i++){
+                String primary="https://example.invalid/route/"+i+"/0";
+                JSONArray sources=new JSONArray();
+                for(int j=0;j<8;j++){
+                    String url="https://example.invalid/route/"+i+"/"+j;
+                    sources.put(url);expected.add(url);
+                }
+                rows.put(channel("Scale channel "+i,primary).put("sources",sources));
+            }
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,base,false,
+                    ()->false,new AppStateEditor(context));
+            closeProvider();
+            long fullStart=System.nanoTime();
+            RoomCatalogueReader.Snapshot full=RoomCatalogueReader.read(context);
+            java.util.Set<String> hydrated=new java.util.HashSet<>();
+            for(RoomCatalogueReader.ChannelRecord row:full.channels){
+                hydrated.add(row.url);hydrated.addAll(row.sources);
+            }
+            long fullNanos=System.nanoTime()-fullStart;
+            assertEquals(2500,full.channelCount);
+            assertEquals(expected,hydrated);
+            java.util.Set<String> actual=new java.util.HashSet<>();
+            java.util.concurrent.atomic.AtomicInteger visited=new java.util.concurrent.atomic.AtomicInteger();
+            long routeStart=System.nanoTime();
+            Long version=RoomCatalogueReader.visitRouteUrls(context,url->{
+                visited.incrementAndGet();actual.add(url);return false;
+            },()->false);
+            long routeNanos=System.nanoTime()-routeStart;
+            assertEquals(Long.valueOf(full.catalogueVersion),version);
+            assertEquals(expected,actual);assertEquals(20000,visited.get());
+            visited.set(0);
+            long earlyStart=System.nanoTime();
+            assertEquals(version,RoomCatalogueReader.visitRouteUrls(context,url->{
+                visited.incrementAndGet();return true;
+            },()->false));
+            long earlyNanos=System.nanoTime()-earlyStart;
+            assertEquals(1,visited.get());
+            visited.set(0);
+            try{
+                RoomCatalogueReader.visitRouteUrls(context,url->{
+                    visited.incrementAndGet();return false;
+                },()->visited.get()>=80);
+                fail("cancelled scan must not report a complete membership read");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expectedPause){}
+            assertTrue(visited.get()>=80);assertTrue(visited.get()<20000);
+            System.out.println("room_route_scale channels=2500 routes=20000 full_read_ms="
+                    +fullNanos/1000000L+" route_scan_ms="+routeNanos/1000000L
+                    +" early_exit_ms="+earlyNanos/1000000L+" cancelled_after="+visited.get());
+            assertEquals(version,Long.valueOf(RoomCatalogueReader.read(context).catalogueVersion));
+        });
+    }
+
     @Test public void interruptedFinalPublicationRollsBackRowsProgressAndStagingAcrossReopen()throws Exception {
         isolated(context->{
             RoomCatalogueWriter.initializeEmptyCatalogue(context);
