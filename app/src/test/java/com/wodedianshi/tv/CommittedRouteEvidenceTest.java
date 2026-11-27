@@ -113,4 +113,19 @@ public class CommittedRouteEvidenceTest {
         scores.put(key,0);
         assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
     }
+    @Test public void crossDirectoryExactDedupRetainsMetadataAndFirstOccurrence() {
+        String url="https://example.invalid/live";
+        SourceUpdateWorker.Entry first=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry duplicate=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry otherScope=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"global","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry otherStation=new SourceUpdateWorker.Entry("CCTV-2",url,"央视",false,"china","cctv2","CCTV-2");
+        SourceUpdateWorker.Entry otherAddress=new SourceUpdateWorker.Entry("CCTV-1",url+"?token=b","央视",false,"china","cctv1","CCTV-1");
+        java.util.List<SourceUpdateWorker.Entry> raw=java.util.Arrays.asList(first,otherScope,duplicate,otherStation,otherAddress);
+        java.util.List<SourceUpdateWorker.Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(raw,SourceUpdateWorker.Entry::exactRecordFields);
+        assertEquals(java.util.Arrays.asList(first,otherScope,otherStation,otherAddress),distinct);
+        assertEquals(5,raw.size());
+        assertEquals(2,DiscoveryBatchPolicy.scannedForBatch("same","same",2,distinct.size()));
+        assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new","old",2,distinct.size()));
+    }
+
 }
