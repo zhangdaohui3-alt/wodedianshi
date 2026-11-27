@@ -29,6 +29,10 @@ public final class SourceDiscoveryIdentityPolicy {
   public static String identity(String name,String group,String url,String tvgId,String tvgName){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
     String v=broadcaster.isEmpty()?canonicalName(name):broadcaster;
+    // These keys have absolute precedence: avoid local-city scans and URI
+    // parsing for every repeated national or satellite backup.
+    String known=ChannelIdentityPolicy.broadcasterIdentity(v);
+    if(!known.isEmpty())return known;
     String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
     String fallback=base;
     try{
