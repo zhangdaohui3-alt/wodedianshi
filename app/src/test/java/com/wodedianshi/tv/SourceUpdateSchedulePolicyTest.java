@@ -372,6 +372,29 @@ public class SourceUpdateSchedulePolicyTest {
             assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(event,at,at,at));
     }
 
+    @Test public void cooledCandidatesCanBeReplacedWithoutIncreasingProbeBudget(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        java.util.HashMap<String,String> current=new java.util.HashMap<>();
+        for(int i=0;i<100;i++){
+            pending.add("k"+i);current.put("k"+i,"https://example.invalid/"+i);
+        }
+        java.util.List<String> ordered=SourceUpdateSchedulePolicy.provisionalRecheckOrder(
+                pending,current,key->false,SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
+        assertEquals(100,ordered.size());
+        int checked=0,skipped=0;
+        String last="";
+        for(String url:ordered){
+            if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+            if(skipped<20){skipped++;continue;}
+            checked++;last=url;
+        }
+        assertEquals(48,checked);
+        assertEquals("https://example.invalid/67",last);
+        assertEquals(100,pending.size());
+        assertTrue(SourceUpdateSchedulePolicy.provisionalRecheckOrder(
+                pending,current,key->false,0).isEmpty());
+    }
+
     @Test public void freshStableDeferralDoesNotConsumeProbeSlotsOrDeletePendingKeys(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         java.util.HashMap<String,String> current=new java.util.HashMap<>();
