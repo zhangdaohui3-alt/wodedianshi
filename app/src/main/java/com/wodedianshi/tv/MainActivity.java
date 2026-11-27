@@ -1513,8 +1513,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     liveNextPageButton.setNextFocusLeftId(livePageStatus.getId());
     channelPane.addView(initialDiscoveryProgressPanel,new LinearLayout.LayoutParams(-1,dp(38)));
     channelPane.addView(livePaging,new LinearLayout.LayoutParams(-1,dp(36)));
-    livePreviousPageButton.setOnClickListener(v->{if(livePageIndex>0){livePageIndex--;preserveRequestedLivePageOnce=true;refreshPage();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
-    liveNextPageButton.setOnClickListener(v->{int total=getCurrentLiveMatchCount();if(LivePagePolicy.canAdvance(livePageIndex,total,LIVE_PAGE_SIZE)){livePageIndex++;preserveRequestedLivePageOnce=true;refreshPage();channelScroll.post(()->channelScroll.scrollTo(0,0));}});
+    livePreviousPageButton.setOnClickListener(v->requestLivePage(livePageIndex-1,v));
+    liveNextPageButton.setOnClickListener(v->requestLivePage(livePageIndex+1,v));
 
     list=new LinearLayout(this);list.setOrientation(1);channelScroll=new ScrollView(this){
       @Override public boolean dispatchTouchEvent(MotionEvent event){
@@ -4825,8 +4825,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     java.util.concurrent.Future<?> previousFilter=pendingCatalogueFilter;
     if(previousFilter!=null)previousFilter.cancel(true);
     purgeCancelledTasks(catalogueFilterWorker);
-    if(livePreviousPageButton!=null)livePreviousPageButton.setEnabled(false);
-    if(liveNextPageButton!=null)liveNextPageButton.setEnabled(false);
+    // Keep paging controls focusable while the filter runs. Their click
+    // handler rejects concurrent requests instead of disabling focused Views.
     final String query=RemoteChannelOrderPolicy.normalizeQuery(search.getText().toString());
     final String categorySnapshot=activeCategory==null?"全部":activeCategory;
     final boolean favoriteOnly=favoriteMode;
@@ -4850,7 +4850,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
     final int previousFocusedIndex;
     final String previousFocusedKey;
-    View currentFocus=rootLayout==null?null:rootLayout.findFocus();
+    View focusRoot=fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()
+        ?fullscreenMenuPopup.getContentView():rootLayout;
+    View currentFocus=pageOnly||focusRoot==null?null:focusRoot.findFocus();
     previousFocusedIndex=currentFocus!=null&&currentFocus.getTag() instanceof Integer?(Integer)currentFocus.getTag():-1;
     Object focusedKeyTag=currentFocus==null?null:currentFocus.getTag(R.id.tag_channel_key);
     previousFocusedKey=focusedKeyTag instanceof String?(String)focusedKeyTag:null;
@@ -5011,10 +5013,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         runOnUiThread(()->{
           if(generation!=catalogueFilterGeneration||isFinishing()||isDestroyed())return;
           directoryFilterInFlightKey=null;
-          // Keep the previously rendered catalogue usable when a new background
-          // filter fails. refresh() disables paging while work is pending; without
-          // restoring the buttons here, one transient exception strands the user
-          // on the old page with no way to navigate it.
+          // Reconcile paging boundaries after a failed background filter.
+          // The busy click guard is released with the in-flight key above.
           updateLivePaging(lastFilteredMatchCount);
           // Do not replay old remote keys after a failed filter on the next
           // unrelated user action. A fresh press can start a fresh filter.
@@ -5146,6 +5146,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(target!=null)target.requestFocus();
     });
   }
+  private void requestLivePage(int target,View control){
+    if(!LivePagePolicy.canRequestPage(target,livePageIndex,getCurrentLiveMatchCount(),
+        LIVE_PAGE_SIZE,directoryFilterInFlightKey!=null))return;
+    if(control!=null)control.requestFocus();
+    livePageIndex=target;
+    preserveRequestedLivePageOnce=true;
+    refreshPage();
+  }
+
   private void showLivePagePicker(){
     if(!startupDataReady||!activityStarted||isFinishing()||isDestroyed())return;
     RemoteChannelOrder order=currentRemoteChannelOrder();
@@ -5165,11 +5174,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(latest==null||directoryFilterInFlightKey!=null||!renderedKey.equals(latest.key)){
         toast("频道目录已更新，请重新选择页码");return;
       }
-      if(!LivePagePolicy.canSelectPage(which,getCurrentLiveMatchCount(),LIVE_PAGE_SIZE))return;
-      if(which==livePageIndex)return;
-      livePageIndex=which;
-      preserveRequestedLivePageOnce=true;
-      refreshPage();
+      requestLivePage(which,livePageStatus);
     });
   }
   private int getCurrentLiveMatchCount(){
@@ -5184,12 +5189,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       livePageStatus.setText((livePageIndex+1)+"/"+pages+" 页 ▾");
       livePageStatus.setContentDescription("第 "+(livePageIndex+1)+" 页，共 "+pages+" 页，点击选择页码");
     }
+    // At an actual page boundary, move focus locally BEFORE disabling the
+    // focused direction button, rather than letting Android jump to a category.
+    boolean previousAvailable=livePageIndex>0,nextAvailable=livePageIndex+1<pages;
+    if(livePageStatus!=null&&((!previousAvailable&&livePreviousPageButton!=null&&livePreviousPageButton.hasFocus())
+        ||(!nextAvailable&&liveNextPageButton!=null&&liveNextPageButton.hasFocus())))
+      livePageStatus.requestFocus();
     if(livePreviousPageButton!=null){
-      boolean enabled=livePageIndex>0;livePreviousPageButton.setEnabled(enabled);
+      boolean enabled=previousAvailable;livePreviousPageButton.setEnabled(enabled);
       livePreviousPageButton.setAlpha(enabled?1f:0.42f);
     }
     if(liveNextPageButton!=null){
-      boolean enabled=livePageIndex+1<pages;liveNextPageButton.setEnabled(enabled);
+      boolean enabled=nextAvailable;liveNextPageButton.setEnabled(enabled);
       liveNextPageButton.setAlpha(enabled?1f:0.42f);
     }
   }
