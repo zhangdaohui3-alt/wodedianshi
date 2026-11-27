@@ -4,6 +4,28 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MediaPayloadValidatorTest {
+    @Test public void inPlacePrefixNeverReadsUnusedCapacity(){
+        byte[] ts=new byte[8192];
+        ts[187]=0x47;ts[190]=0x10;ts[375]=0x47;ts[378]=0x10;
+        byte[] fragment={0,0,0,16,'m','o','o','f',0,0,0,0,0,0,0,0,
+                0,0,16,0,'m','d','a','t',1};
+        byte[] random=new byte[8192];new java.util.Random(71L).nextBytes(random);
+        for(byte[] sample:new byte[][]{ts,java.util.Arrays.copyOf(fragment,8192),random}){
+            for(int length=0;length<=sample.length;length++){
+                assertEquals("length="+length,
+                    MediaPayloadValidator.hasConfirmedHlsPrefix(java.util.Arrays.copyOf(sample,length)),
+                    MediaPayloadValidator.hasConfirmedHlsPrefix(sample,length));
+            }
+        }
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(ts,562));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(ts,563));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(fragment,24));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(fragment,25));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(ts,-1));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(ts,8193));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(null,0));
+    }
+
     @Test public void earlyTsEvidenceMatchesFullSampleAndRequiresTwoCompletePackets(){
         byte[] full=new byte[8192];
         int offset=187;
