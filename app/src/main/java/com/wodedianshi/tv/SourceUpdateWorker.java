@@ -3156,7 +3156,10 @@ public class SourceUpdateWorker extends Worker {
       }
       if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
           ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
-      if(initial&&wave.size()>2&&idleWavePressureGeneration<0L){
+      // Manual refresh and first build share the same high-concurrency
+      // input-pressure gate. A user request to refresh is not permission
+      // to compete with later remote-control or touch interaction.
+      if(wave.size()>2&&idleWavePressureGeneration<0L){
         idleWavePressureGeneration=pressureAtAdmission;
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       }
