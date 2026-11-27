@@ -372,4 +372,41 @@ public class HlsWorkerProbeIntegrationTest {
                     +bytes("not media").length+2L*transportSample().length,result.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void directNullOnlyStreamDoesNotPassAfterFullFallback()throws Exception{
+        byte[] body=new byte[188*30];
+        for(int at=0;at<body.length;at+=188){
+            body[at]=0x47;body[at+1]=0x1f;body[at+2]=(byte)0xff;body[at+3]=0x10;
+        }
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    String start=reader.readLine();
+                    assertNotNull(start);
+                    assertTrue(start,start.startsWith("GET /null.ts "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n"
+                            +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                    out.write(body);out.flush();
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/null.ts",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertFalse(result.valid);
+            assertFalse(result.provisional);
+            assertFalse(result.socketTimedOut);
+            assertEquals(1L,result.sampleRequests);
+            assertEquals((long)body.length,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
 }
