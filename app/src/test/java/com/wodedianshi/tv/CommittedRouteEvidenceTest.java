@@ -30,4 +30,24 @@ public class CommittedRouteEvidenceTest {
         row.put("sources",new JSONArray());
         assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,same,"CCTV-1"));
     }
+
+    @Test public void retainedRouteReuseRequiresCurrentPositiveNonProvisionalScore() throws Exception {
+        String url="https://example.invalid/live";
+        String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
+        JSONObject scores=new JSONObject();
+        java.util.Set<String> provisional=new java.util.HashSet<>();
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(legacy,200);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(key,200);
+        assertTrue(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.add(key);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.clear();provisional.add(legacy);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.clear();scores.put(key,-500);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(key,0);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+    }
 }
