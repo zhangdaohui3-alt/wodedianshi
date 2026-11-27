@@ -2252,7 +2252,8 @@ public class SourceUpdateWorker extends Worker {
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+slice.checked
         +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+slice.originDeferred
         +" stable_deferred="+stableDeferred[0]
-        +" reused_full="+slice.reused+" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
+        +" reused_full="+slice.reused+" extended="+slice.extended
+        +" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
         +" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
@@ -2261,11 +2262,12 @@ public class SourceUpdateWorker extends Worker {
   static final class QualityRecheckSlice {
     final Map<String,ProbeResult> completed;
     final int checked,originDeferred,reused;
+    final boolean extended;
     final long sampleRequests,sampleBytes;
     QualityRecheckSlice(Map<String,ProbeResult> completed,int checked,int originDeferred,
-        int reused,long sampleRequests,long sampleBytes){
+        int reused,long sampleRequests,long sampleBytes,boolean extended){
       this.completed=completed;this.checked=checked;this.originDeferred=originDeferred;
-      this.reused=reused;this.sampleRequests=sampleRequests;this.sampleBytes=sampleBytes;
+      this.reused=reused;this.sampleRequests=sampleRequests;this.sampleBytes=sampleBytes;this.extended=extended;
     }
   }
   static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
@@ -2274,18 +2276,25 @@ public class SourceUpdateWorker extends Worker {
     // Scope positive full evidence to this single idle slice. Exact URL
     // keys still own their queue membership and durable quality records.
     HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
-    int checked=0,conclusive=0,originDeferred=0,reused=0;
+    int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
+    int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
+    boolean extended=false;
+    long startedAt=android.os.SystemClock.elapsedRealtime();
     long sampleRequests=0L,sampleBytes=0L;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
     // this slice: a temporary outage must not blacklist a saved source.
     InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
     for(String url:selected){
       SourceProbeTimePolicy.checkPublicationPaused(paused);
-      // Retain the existing bound on both network attempts and durable
-      // quality updates. Cache reuse never consumes a network attempt.
-      if(conclusive>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
       long now=android.os.SystemClock.elapsedRealtime();
       if(now>=stageDeadline)break;
+      // The default quota remains unchanged for slow, inconclusive or
+      // cache-heavy batches. Only measured healthy fresh probes can extend.
+      if(!extended&&checked>=limit&&SourceUpdateSchedulePolicy.permitsFastRecheckExtension(
+          checked,positive,now-startedAt,sampleRequests,sampleBytes)){
+        extended=true;limit=SourceUpdateSchedulePolicy.PROVISIONAL_FAST_LIMIT;
+      }
+      if(conclusive>=limit)break;
       String endpoint=SourceSelectionPolicy.endpointKey(url);
       ProbeResult previous=successfulEndpoints.get(endpoint);
       if(previous!=null){
@@ -2293,7 +2302,8 @@ public class SourceUpdateWorker extends Worker {
         pending.remove(StableKey.url(url));conclusive++;reused++;
         continue;
       }
-      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+      if(checked>=limit)break;
+      if(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))break;
       long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
       if(deadline==0L)break;
       String origin=InitialOriginCooldownPolicy.origin(url);
@@ -2316,13 +2326,14 @@ public class SourceUpdateWorker extends Worker {
         continue;
       }
       if(SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
-          measured.paced,measured.provisional,finishedAt,deadline))
-        successfulEndpoints.put(endpoint,measured);
+          measured.paced,measured.provisional,finishedAt,deadline)){
+        successfulEndpoints.put(endpoint,measured);positive++;
+      }
       completed.put(url,measured);
       pending.remove(key);conclusive++;
     }
     SourceProbeTimePolicy.checkPublicationPaused(paused);
-    return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes);
+    return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes,extended);
   }
   private Result abortManualStructuralConflict(String manualId){
     com.wodedianshi.tv.db.AppStateEditor status=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
