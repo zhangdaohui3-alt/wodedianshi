@@ -105,20 +105,15 @@ public final class ManualProbeQualityStore {
         for(int i=0;i<list.size();i+=256){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             List<String> page=list.subList(i,Math.min(i+256,list.size()));
-            Set<String> missing=inherit?new LinkedHashSet<>(page):null;
-            for(ManualProbeQualityEntity row:dao.load(owner,page)){
+            // Both IN lists together use at most 512 key parameters; stay
+            // below Android 9 SQLite's 999-variable bound. One statement
+            // observes a consistent view of private and published evidence.
+            List<ManualProbeQualityEntity> rows=inherit
+                ?dao.loadInherited(owner,PUBLISHED_OWNER,page):dao.load(owner,page);
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            for(ManualProbeQualityEntity row:rows){
                 if(row.score!=null)scores.put(row.sourceKey,row.score);
                 if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
-                // Row existence, not non-null fields, determines inheritance:
-                // an explicit private tombstone must never resurrect old scores.
-                if(missing!=null)missing.remove(row.sourceKey);
-            }
-            if(missing!=null&&!missing.isEmpty()){
-                SourceProbeTimePolicy.checkPublicationPaused(paused);
-                for(ManualProbeQualityEntity row:dao.load(PUBLISHED_OWNER,new ArrayList<>(missing))){
-                    if(row.score!=null)scores.put(row.sourceKey,row.score);
-                    if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
-                }
             }
             loaded.addAll(page);
         }
