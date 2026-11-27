@@ -130,8 +130,13 @@ public final class SourceUpdateSchedulePolicy {
 
     /** Only the existing idle eligibility worker may run this extra small
      * quality-only batch. Ordinary full maintenance takes precedence. */
+    // Daily WorkManager dispatch is inexact and the recorded timestamp is
+    // the previous completion, not dispatch. A small eligibility tolerance
+    // avoids skipping an entire daily opportunity for a slightly early run.
+    // This does not schedule any new wakeup or alter the per-pass quota.
+    static final long PROVISIONAL_RECHECK_MIN_INTERVAL_MS=23L*60L*60L*1000L;
     static boolean provisionalRecheckDue(boolean pending,long last,long now){
-        return pending&&now>0L&&(last<=0L||now<last||now-last>=24L*60L*60L*1000L);
+        return pending&&now>0L&&(last<=0L||now<last||now-last>=PROVISIONAL_RECHECK_MIN_INTERVAL_MS);
     }
 
 
