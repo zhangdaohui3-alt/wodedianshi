@@ -109,13 +109,12 @@ public final class DiscoveryBatchPolicy {
         return checked<limit||(initial&&!viewing&&!requiresNetwork);
     }
 
-    /** Only an idle initial slice may consume its bounded deterministic
-     * tail after the network deadline. No new request, cache lookup or
-     * unresolved duplicate qualifies. Existing admitted results keep
-     * their previous deadline behavior in every mode. */
-    static boolean canConsumeAfterProbeDeadline(boolean initial,boolean viewing,
+    /** Idle private builds may consume their bounded deterministic tail
+     * after the network deadline. No new request, cache lookup or unresolved
+     * duplicate qualifies. Ordinary maintenance and viewing retain their cap. */
+    static boolean canConsumeAfterProbeDeadline(boolean privateBuild,boolean viewing,
             boolean admitted,boolean knownWithoutNetwork){
-        return admitted||(initial&&!viewing&&knownWithoutNetwork);
+        return admitted||(privateBuild&&!viewing&&knownWithoutNetwork);
     }
 
     /** Includes the current request, whose counter was incremented before
