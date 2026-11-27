@@ -93,6 +93,33 @@ public class SingleChannelCandidateSearchTest {
         }
     }
 
+    @Test public void cachedCursorTracksPhysicalOrderEvenWhenBodyIsUnchanged()throws Exception{
+        java.io.File file=java.io.File.createTempFile("single-channel-order",".m3u");
+        try{
+            String body="#EXTM3U\n"+entry("CCTV-1","https://one.example/1")
+                +entry("CCTV-1","https://one.example/2")
+                +entry("CCTV-2","https://two.example/1");
+            try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){
+                output.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            String raw=SingleChannelCandidateSearch.scanVersion("body-v1",file);
+            PlaylistFeedIndex.readPage(file,0,1,ignored->{});
+            assertEquals(raw,SingleChannelCandidateSearch.scanVersion("body-v1",file));
+            PlaylistFeedIndex.readInitialPage(file,0,1,ignored->{},()->false);
+            String coverage=SingleChannelCandidateSearch.scanVersion("body-v1",file);
+            assertNotEquals(raw,coverage);
+            assertEquals(0,SingleChannelCandidateSearch.resumeOffset(raw,coverage,2));
+            assertEquals(2,SingleChannelCandidateSearch.resumeOffset(coverage,coverage,2));
+            assertTrue(new java.io.File(file.getAbsolutePath()+".index-offsets").delete());
+            assertEquals(raw,SingleChannelCandidateSearch.scanVersion("body-v1",file));
+            assertEquals(0,SingleChannelCandidateSearch.resumeOffset(coverage,raw,2));
+        }finally{
+            new java.io.File(file.getAbsolutePath()+".index-data").delete();
+            new java.io.File(file.getAbsolutePath()+".index-offsets").delete();
+            file.delete();
+        }
+    }
+
     @Test public void rowBudgetAndCancellationAreIndependent()throws Exception{
         String body=entry("CCTV-3","https://wrong.example/live")
             +entry("CCTV-2","https://right.example/live");
