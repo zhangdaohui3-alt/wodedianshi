@@ -700,19 +700,42 @@ public final class PlaylistFeedCache {
             int preference=Boolean.compare(preferred.contains(left.getName()),preferred.contains(right.getName()));
             return preference!=0?preference:Long.compare(lastAccess(left),lastAccess(right));
         });
-        for (File file : files) {
-            if (total <= budget) break;
-            if (file.equals(keep)) continue;
-            long size = cacheEntrySize(file);
-            if (!file.delete()) continue;
-            deleteSidecar(file, ".index-data");
-            deleteSidecar(file, ".index-offsets");
-            deleteSidecar(file, ".index-data.tmp");
-            deleteSidecar(file, ".index-offsets.tmp");
-            deleteSidecar(file, ".properties");
-            deleteSidecar(file, ".properties.tmp");
-            total = Math.max(0L, total - size);
+        // Dispose of nonessential entries first. Under harder pressure,
+        // an unfinished downloaded body is more expensive to replace than
+        // its deterministic local index. Protect the active entry throughout.
+        for(File file:files){
+            if(total<=budget)break;
+            if(file.equals(keep)||preferred.contains(file.getName()))continue;
+            total=Math.max(0L,total-evictCacheEntry(file));
         }
+        for(File file:files){
+            if(total<=budget)break;
+            if(file.equals(keep)||!preferred.contains(file.getName()))continue;
+            long before=cacheEntrySize(file);
+            deleteSidecar(file,".index-data");
+            deleteSidecar(file,".index-offsets");
+            deleteSidecar(file,".index-data.tmp");
+            deleteSidecar(file,".index-offsets.tmp");
+            total=Math.max(0L,total-Math.max(0L,before-cacheEntrySize(file)));
+        }
+        for(File file:files){
+            if(total<=budget)break;
+            if(file.equals(keep)||!preferred.contains(file.getName()))continue;
+            total=Math.max(0L,total-evictCacheEntry(file));
+        }
+    }
+
+    private static long evictCacheEntry(File file){
+        long before=cacheEntrySize(file);
+        if(!file.delete())return 0L;
+        deleteSidecar(file,".index-data");
+        deleteSidecar(file,".index-offsets");
+        deleteSidecar(file,".index-data.tmp");
+        deleteSidecar(file,".index-offsets.tmp");
+        deleteSidecar(file,".properties");
+        deleteSidecar(file,".properties.tmp");
+        // Failed sidecar deletion does not release its occupied bytes.
+        return Math.max(0L,before-cacheEntrySize(file));
     }
 
     private static long cacheEntrySize(File playlist) {
