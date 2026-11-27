@@ -617,4 +617,12 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(0,SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,retained,true));
         assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),48));
     }
+
+    @Test public void qualityMirrorOnlyMaintainedForLegacyPublishedReaders(){
+        org.junit.Assert.assertTrue(SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(false,false));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(false,true));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(true,false));
+        org.junit.Assert.assertFalse(SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(true,true));
+    }
+
 }
