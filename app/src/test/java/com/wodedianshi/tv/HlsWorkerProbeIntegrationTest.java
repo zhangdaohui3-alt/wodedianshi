@@ -458,6 +458,24 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void publicationPruneYieldsInsideBackupScanWithoutChangingPending()throws Exception{
+        String primary="https://example.invalid/primary", backup="https://example.invalid/backup";
+        String removed="https://example.invalid/removed";
+        org.json.JSONArray rows=new org.json.JSONArray().put(new org.json.JSONObject()
+                .put("url",primary).put("sources",new org.json.JSONArray().put(backup).put(primary)));
+        List<String> original=Arrays.asList(StableKey.url(removed),StableKey.url(backup),StableKey.url(primary));
+        LinkedHashSet<String> pending=new LinkedHashSet<>(original);
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        try{
+            SourceUpdateWorker.prunePendingForCompletePublication(pending,rows,()->checks.incrementAndGet()==3);
+            fail("Expected pause before second backup position");
+        }catch(SourceProbeTimePolicy.PublicationPausedException expected){
+            assertEquals(original,new ArrayList<>(pending));
+        }
+        assertEquals(1,SourceUpdateWorker.prunePendingForCompletePublication(pending,rows,()->false));
+        assertEquals(original.subList(1,3),new ArrayList<>(pending));
+    }
+
     @Test public void exhaustedNetworkBudgetWithNoVersionedEvidenceStopsAtFirstMiss(){
         String first="http://127.0.0.1:1/no-evidence.ts";
         String second=first+"?another=1";
