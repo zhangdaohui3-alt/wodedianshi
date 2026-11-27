@@ -61,4 +61,42 @@ public class InitialOriginCooldownPolicyTest {
         p.observe("origin","new",31001,false,true);
         assertFalse(p.cooling("origin",31001));
     }
+
+    @Test public void repeatedPressureUsesBoundedBackoffWithoutExtendingInFlightEpisode(){
+        InitialOriginCooldownPolicy p=new InitialOriginCooldownPolicy();
+        String a="origin";
+        p.observePressure(a,1000);
+        p.observePressure(a,2000);
+        assertFalse(p.cooling(a,31000));
+        p.observePressure(a,31000);
+        assertTrue(p.cooling(a,90999));
+        assertFalse(p.cooling(a,91000));
+        p.observePressure(a,91000);
+        assertTrue(p.cooling(a,210999));
+        assertFalse(p.cooling(a,211000));
+        p.observePressure(a,211000);
+        assertTrue(p.cooling(a,330999));
+        assertFalse(p.cooling(a,331000));
+        p.observe(a,"recovered",331001,false,true);
+        p.observePressure(a,331002);
+        assertFalse(p.cooling(a,361002));
+    }
+
+    @Test public void repeatedDistinctFailuresEscalateOnlyAfterNewThreshold(){
+        InitialOriginCooldownPolicy p=new InitialOriginCooldownPolicy();
+        String a="origin";
+        p.observe(a,"one",1000,true,false);
+        p.observe(a,"two",2000,true,false);
+        p.observe(a,"three",3000,true,false);
+        assertFalse(p.cooling(a,33000));
+        p.observe(a,"four",33000,true,false);
+        p.observe(a,"five",33001,true,false);
+        assertFalse(p.cooling(a,33001));
+        p.observe(a,"six",33002,true,false);
+        assertTrue(p.cooling(a,93001));
+        assertFalse(p.cooling(a,93002));
+        // A long quiet interval discards recovery history.
+        p.observePressure(a,213002);
+        assertFalse(p.cooling(a,243002));
+    }
 }
