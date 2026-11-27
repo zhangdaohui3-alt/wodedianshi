@@ -179,4 +179,22 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,attempted,visited,prepared,failed,3,4,false,false,false));
         assertArrayEquals(new boolean[6],done);
     }
+
+    @Test public void cachePressureDrainsEligibleIndexedDirectoriesBeforeNewAcquisition(){
+        boolean[] done=new boolean[6],attempted=new boolean[6],visited=new boolean[6],failed=new boolean[6];
+        boolean[] prepared={false,true,true,true,false,false};
+        boolean[] available={false,true,false,true,false,false};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,false,false,false,available));
+        attempted[1]=true;
+        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,false,false,false,available));
+        attempted[3]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,false,false,false,available));
+        attempted[1]=false;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,true,false,false,available));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,false,true,false,available));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(0,done,attempted,visited,prepared,failed,3,4,false,false,false,null));
+        assertArrayEquals(new boolean[6],done);
+        assertFalse(PlaylistFeedCache.initialCacheNeedsDrain(160L*1024*1024-1));
+        assertTrue(PlaylistFeedCache.initialCacheNeedsDrain(160L*1024*1024));
+    }
 }
