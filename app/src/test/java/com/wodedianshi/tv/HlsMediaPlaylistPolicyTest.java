@@ -257,4 +257,25 @@ public class HlsMediaPlaylistPolicyTest {
         assertTrue(HlsMediaPlaylistPolicy.parse(playlist,
                 "https://cdn.example/live/index.m3u8").unsupportedEncryption);
     }
+
+    @Test public void longPlaylistSkipsUnusedResourceResolutionButChecksLateMapAndKey()throws Exception{
+        StringBuilder playlist=new StringBuilder("#EXTM3U\n#EXT-X-MAP:URI=\"init-a.mp4\"\n");
+        for(int i=0;i<4000;i++)playlist.append("#EXTINF:6,\nseg").append(i).append(".m4s\n");
+        // Beyond the retained prefix, an unused malformed resource cannot
+        // prevent validation of the earlier selected media.
+        playlist.append("#EXTINF:6,\nhttp://[invalid\n");
+        String base="https://cdn.example/live/index.m3u8";
+        HlsMediaPlaylistPolicy.Resources first=HlsMediaPlaylistPolicy.parse(playlist.toString(),base);
+        assertEquals(4,first.mediaUrls.size());
+        assertEquals(java.util.Arrays.asList(0L,1L,2L,3L),first.mediaSequenceNumbers);
+        assertFalse(first.unsupportedEncryption);
+        assertFalse(first.unsupportedInitializationMap);
+        playlist.append("#EXT-X-MAP:URI=\"init-b.mp4\"\n")
+                .append("#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://license\"\n");
+        HlsMediaPlaylistPolicy.Resources late=HlsMediaPlaylistPolicy.parse(playlist.toString(),base);
+        assertEquals(first.mediaUrls,late.mediaUrls);
+        assertEquals(first.mediaSequenceNumbers,late.mediaSequenceNumbers);
+        assertTrue(late.unsupportedEncryption);
+        assertTrue(late.unsupportedInitializationMap);
+    }
 }
