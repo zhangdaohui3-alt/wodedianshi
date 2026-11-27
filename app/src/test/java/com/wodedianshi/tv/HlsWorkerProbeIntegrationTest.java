@@ -847,6 +847,38 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void failedBoundedRenditionsRemainUnconfirmedWhenMoreExist()throws Exception{
+        assertFailedRenditionCap(9,true);
+    }
+
+    @Test public void fullyTestedFailedRenditionsRemainDefinitive()throws Exception{
+        assertFailedRenditionCap(8,false);
+    }
+
+    private void assertFailedRenditionCap(int distinct,boolean unconfirmed)throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                StringBuilder master=new StringBuilder("#EXTM3U\n");
+                for(int i=0;i<distinct;i++)master.append("#EXT-X-STREAM-INF:BANDWIDTH=")
+                        .append((distinct-i)*100000).append("\n/v").append(i).append(".m3u8\n");
+                replyRecheck(server,"/master.m3u8",200,bytes(master.toString()));
+                for(int i=0;i<8;i++)replyRecheck(server,"/v"+i+".m3u8",200,bytes("not a playlist"));
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertFalse(result.valid);
+            assertEquals(unconfirmed,result.inconclusive());
+            assertEquals(unconfirmed,result.unsupportedPreflight);
+            assertEquals(9L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void largerConfirmedManifestUsesSameRequestAndValidatesBothSegments()throws Exception{
         assertLargeManifestUsesSameResponse("/large.m3u8","bytes=0-131072");
     }
