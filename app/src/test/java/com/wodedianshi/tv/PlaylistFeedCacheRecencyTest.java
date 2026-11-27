@@ -11,6 +11,30 @@ import static org.junit.Assert.*;
 public class PlaylistFeedCacheRecencyTest {
     @Rule public TemporaryFolder folder=new TemporaryFolder();
 
+    @Test public void recoveryUsesExactDigestAndOriginalInitialAgeWithoutValidators() throws Exception {
+        File body=folder.newFile("recovered.m3u");
+        byte[] bytes="#EXTM3U\n#EXTINF:-1,Test\nhttps://example.org/live\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try(FileOutputStream output=new FileOutputStream(body)){output.write(bytes);}
+        assertTrue(body.setLastModified(123456000L));
+        byte[] digest=java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder hex=new StringBuilder();
+        for(byte value:digest)hex.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        String version=body.getName()+":"+hex;
+        Properties initial=PlaylistFeedCache.recoveredBodyMetadata(body,()->false,true);
+        assertEquals("123456000",initial.getProperty("cachedAt"));
+        assertNull(initial.getProperty("etag"));
+        assertNull(initial.getProperty("lastModified"));
+        assertTrue(PlaylistFeedCache.matchesRecoveredAcquisition(body,initial,version));
+        assertFalse(PlaylistFeedCache.matchesRecoveredAcquisition(body,initial,version+"changed"));
+        assertNull(PlaylistFeedCache.recoveredBodyMetadata(body,()->false,false).getProperty("cachedAt"));
+        try(FileOutputStream output=new FileOutputStream(body,true)){output.write(1);}
+        assertFalse(PlaylistFeedCache.matchesRecoveredAcquisition(body,initial,version));
+        try{
+            PlaylistFeedCache.recoveredBodyMetadata(body,()->true,true);
+            fail("Expected cancellation");
+        }catch(SourceProbeTimePolicy.PausedException expected){}
+    }
+
     @Test public void indexedReadRefreshesMetadataOnlyWithoutChangingBodyVersion() throws Exception {
         File body=folder.newFile("directory.m3u");
         try(FileOutputStream output=new FileOutputStream(body)){
