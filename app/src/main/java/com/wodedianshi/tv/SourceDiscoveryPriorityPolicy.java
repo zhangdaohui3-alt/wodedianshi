@@ -113,6 +113,14 @@ public final class SourceDiscoveryPriorityPolicy {
             boolean[] visited,boolean[] prepared,boolean[] failed,int mainlandEnd,
             int regionEnd,boolean preferCore,boolean viewing,boolean acquisitionYield,
             boolean[] availableUnderPressure) {
+        return nextInitialFeedWithCache(start,completed,attempted,visited,prepared,failed,
+                mainlandEnd,regionEnd,preferCore,viewing,acquisitionYield,availableUnderPressure,null);
+    }
+
+    static int nextInitialFeedWithCache(int start,boolean[] completed,boolean[] attempted,
+            boolean[] visited,boolean[] prepared,boolean[] failed,int mainlandEnd,
+            int regionEnd,boolean preferCore,boolean viewing,boolean acquisitionYield,
+            boolean[] availableUnderPressure,boolean[] orderedReady) {
         if(!preferCore&&!viewing&&availableUnderPressure!=null&&completed!=null
                 &&attempted!=null&&completed.length==attempted.length
                 &&availableUnderPressure.length==completed.length){
@@ -133,13 +141,28 @@ public final class SourceDiscoveryPriorityPolicy {
                         firstTurn[i]|=visited[i]||failed[i];
                     }
                     int first=nextFeed(start,eligibleStage,firstTurn,mainlandEnd,regionEnd,false);
-                    if(first>=0)return first;
+                    if(first>=0){
+                        int ready=readyInSameStage(start,eligibleStage,firstTurn,orderedReady,mainlandEnd,regionEnd);
+                        return ready>=0?ready:first;
+                    }
                 }
-                return drain;
+                boolean[] eligibleStage=completed.clone();
+                for(int i=0;i<completed.length;i++)eligibleStage[i]|=drainOnly[i];
+                int ready=readyInSameStage(start,eligibleStage,drainOnly,orderedReady,mainlandEnd,regionEnd);
+                return ready>=0?ready:drain;
             }
         }
         return nextInitialFeed(start,completed,attempted,visited,prepared,failed,
                 mainlandEnd,regionEnd,preferCore,viewing,acquisitionYield);
+    }
+
+    // Readiness breaks ties only within the current regional/inspection tier.
+    private static int readyInSameStage(int start,boolean[] stage,boolean[] attempted,
+            boolean[] ready,int mainlandEnd,int regionEnd){
+        if(ready==null||ready.length!=stage.length)return -1;
+        boolean[] mask=attempted.clone();
+        for(int i=0;i<mask.length;i++)mask[i]|=!ready[i];
+        return nextFeed(start,stage,mask,mainlandEnd,regionEnd,false);
     }
 
     /** Select from the highest-priority eligible stage. A temporarily deferred
