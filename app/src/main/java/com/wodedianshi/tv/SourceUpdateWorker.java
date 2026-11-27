@@ -557,6 +557,7 @@ public class SourceUpdateWorker extends Worker {
               .putInt("source_initial_progress_feed_entries",0)
               .putString("source_initial_progress_phase","正在准备首次完整抓源")
               .putInt("source_initial_next_feed_index",0)
+              .remove(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY)
               .putString("source_full_rebuild_feed_fingerprint",configuredFeedFingerprint)
               .putBoolean("source_full_rebuild_active",true);
           com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
@@ -734,6 +735,7 @@ public class SourceUpdateWorker extends Worker {
       boolean[] visitedForCoverage=new boolean[feeds.length];
       boolean[] preparedForCoverage=new boolean[feeds.length];
       boolean[] failedForCoverage=new boolean[feeds.length];
+      boolean acquisitionYield=false;
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,slowPlayback,preferCoreCoverage);
@@ -743,6 +745,7 @@ public class SourceUpdateWorker extends Worker {
         System.arraycopy(admission.visited,0,visitedForCoverage,0,feeds.length);
         System.arraycopy(admission.prepared,0,preparedForCoverage,0,feeds.length);
         System.arraycopy(admission.failed,0,failedForCoverage,0,feeds.length);
+        acquisitionYield=admission.acquisitionYield;
         final long[] recheckRemaining=admission.remaining;
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
@@ -750,7 +753,7 @@ public class SourceUpdateWorker extends Worker {
             &&SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,inspectedFeeds,
                 attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback)<0){
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
           enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(inspectedFeeds,
@@ -770,7 +773,7 @@ public class SourceUpdateWorker extends Worker {
             ?SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback)
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Prefer mainland, then HK/Macau/Taiwan, then international feeds.
@@ -839,6 +842,7 @@ public class SourceUpdateWorker extends Worker {
                   .putInt("source_initial_next_feed_index",
                       preferCoreCoverage?SourceDiscoveryPriorityPolicy.nextAfterFirstWatchTurn(feedIndex,feeds.length)
                           :InitialFeedRotationPolicy.nextAfterPartialAcquisition(feedIndex,feeds.length,false))
+                  .putBoolean(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY,true)
                   .putString("source_initial_progress_phase","空闲时已保存目录分段，轮换其他目录")
                   .apply();
               return continueAfterAcquisition();
@@ -852,7 +856,7 @@ public class SourceUpdateWorker extends Worker {
             int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeed(feedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback);
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false);
             if(nextPreparation!=feedIndex||!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
@@ -873,6 +877,7 @@ public class SourceUpdateWorker extends Worker {
                 new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
                     .putInt("source_initial_next_feed_index",
                         InitialFeedRotationPolicy.nextAfterPartialAcquisition(feedIndex,feeds.length,true))
+                    .putBoolean(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY,true)
                     .putString("source_initial_progress_phase","已保存大型目录分段，稳定播放时继续下载")
                     .apply();
                 return continueAfterAcquisition();
@@ -1763,7 +1768,8 @@ public class SourceUpdateWorker extends Worker {
         update.putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(provisionalKeys).toString());
       }
       if(initialDiscoveryChain){
-        update.putInt("source_initial_next_feed_index",initialNextFeedIndex);
+        update.putInt("source_initial_next_feed_index",initialNextFeedIndex)
+            .remove(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY);
       }
       // Advance a feed only after every candidate in the current multi-feed batch
       // has had its probe turn. This prevents losing the tail when the probe deadline
@@ -2076,6 +2082,7 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_initial_feed_batch_fingerprint")
             .remove("source_initial_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
+              .remove(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY)
             .putInt("source_initial_progress_percent",0)
               .putInt("source_initial_progress_basis_points",0)
             .putInt("source_initial_progress_done_feeds",0)
@@ -2195,7 +2202,7 @@ public class SourceUpdateWorker extends Worker {
           int next=SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,
               admission.completed,admission.deferred,admission.visited,admission.prepared,admission.failed,
               SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false);
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false,admission.acquisitionYield);
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
@@ -3117,6 +3124,7 @@ public class SourceUpdateWorker extends Worker {
     new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(index),version)
         .putInt("source_initial_next_feed_index",index)
+        .remove(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY)
         .putString("source_initial_progress_phase","目录已准备，下一批继续线路初筛")
         .apply();
   }
@@ -3984,6 +3992,7 @@ public class SourceUpdateWorker extends Worker {
   private static final class InitialFeedAdmission {
     final boolean[] completed,deferred,visited,failed,prepared;
     final long[] remaining;
+    boolean acquisitionYield;
     InitialFeedAdmission(int count){
       completed=new boolean[count];deferred=new boolean[count];
       visited=new boolean[count];failed=new boolean[count];prepared=new boolean[count];remaining=new long[count];
@@ -3993,7 +4002,8 @@ public class SourceUpdateWorker extends Worker {
    * decision. Masks are scheduling hints only; they never mark a feed done. */
   private InitialFeedAdmission readInitialFeedAdmission(int count,boolean viewing,boolean preferCore){
     InitialFeedAdmission admission=new InitialFeedAdmission(count);
-    ArrayList<String> keys=new ArrayList<>(count*(preferCore?7:5));
+    ArrayList<String> keys=new ArrayList<>(1+count*(preferCore?7:5));
+    keys.add(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY);
     for(int i=0;i<count;i++){
       keys.add(initialFeedDoneKey(i));
       keys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
@@ -4006,6 +4016,7 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     Map<String,String> state=readRoomValues(keys);
+    admission.acquisitionYield=Boolean.parseBoolean(state.get(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY));
     long wall=System.currentTimeMillis(),elapsed=android.os.SystemClock.elapsedRealtime();
     for(int i=0;i<count;i++){
       admission.completed[i]=Boolean.parseBoolean(state.get(initialFeedDoneKey(i)));
