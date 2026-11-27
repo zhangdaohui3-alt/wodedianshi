@@ -273,6 +273,41 @@ public class PlaylistFeedIndexTest {
         assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
     }
 
+    @Test public void completedRangeCheckpointOutranksNewerPartialAndInvalidFiles() throws Exception {
+        File dir=java.nio.file.Files.createTempDirectory("mytv-range-priority").toFile();
+        try{
+            File[] parts={new File(dir,"complete.range-part"),new File(dir,"partial.range-part"),
+                new File(dir,"invalid.range-part")};
+            for(int i=0;i<parts.length;i++){
+                try(FileOutputStream out=new FileOutputStream(parts[i])){out.write(new byte[4]);}
+                parts[i].setLastModified(1000L+i*1000L);
+                String prefix=parts[i].getName().replace(".range-part","");
+                java.util.Properties state=new java.util.Properties();
+                state.setProperty("length","4");
+                state.setProperty("total",i==0?"4":"8");
+                state.setProperty("etag",i==2?"weak":"\"version\"");
+                state.setProperty("location","test-location");
+                try(FileOutputStream out=new FileOutputStream(new File(dir,prefix+".range-state"))){
+                    state.store(out,null);
+                }
+            }
+            assertEquals(2,PlaylistFeedCache.rangeRetentionPriority(parts[0]));
+            assertEquals(1,PlaylistFeedCache.rangeRetentionPriority(parts[1]));
+            assertEquals(0,PlaylistFeedCache.rangeRetentionPriority(parts[2]));
+            PlaylistFeedCache.trimOtherRangeParts(dir,new File(dir,"current.range-part"),8L);
+            org.junit.Assert.assertTrue(parts[0].exists());
+            org.junit.Assert.assertTrue(parts[1].exists());
+            org.junit.Assert.assertFalse(parts[2].exists());
+            PlaylistFeedCache.trimOtherRangeParts(dir,new File(dir,"current.range-part"),4L);
+            org.junit.Assert.assertTrue(parts[0].exists());
+            org.junit.Assert.assertFalse(parts[1].exists());
+        }finally{
+            File[] files=dir.listFiles();
+            if(files!=null)for(File file:files)file.delete();
+            dir.delete();
+        }
+    }
+
     @Test public void smallRangeCheckpointsSurviveRotationWithinSameByteBudget() throws Exception {
         File dir=java.nio.file.Files.createTempDirectory("mytv-range-budget").toFile();
         try{
