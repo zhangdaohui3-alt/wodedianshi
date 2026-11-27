@@ -2292,9 +2292,9 @@ public class SourceUpdateWorker extends Worker {
       if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
           com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
       else update.putString("source_probe_scores_v1",scores.toString());
+      update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
+          java.util.UUID.randomUUID().toString());
     }
-    if(!completed.isEmpty())update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
-        java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
   }
   /** Owner-local network phase; publication remains in the existing caller. */
@@ -2408,16 +2408,15 @@ public class SourceUpdateWorker extends Worker {
       // Retain only a finished full positive observation, not the queue,
       // score transaction, or failed/cancelled work. Never refresh its age
       // on a cache hit. An intervening version change makes it ineligible.
-      if(retryKey!=null&&finishedAt<stageDeadline
-          &&SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
-              measured.paced,measured.provisional,finishedAt,deadline))
+      boolean inconclusive=measured.inconclusive();
+      boolean fullPositive=SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,inconclusive,
+          measured.paced,measured.provisional,finishedAt,deadline);
+      if(retryKey!=null&&finishedAt<stageDeadline&&fullPositive)
         rememberInitialProbe(retryKey,measured,finishedAt);
       SourceProbeTimePolicy.checkPublicationPaused(paused);
       String key=StableKey.url(url);
       sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
       measured.publishOriginHealth(recheckOrigins,origin,endpoint,finishedAt);
-      boolean fullPositive=SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
-          measured.paced,measured.provisional,finishedAt,deadline);
       // A previous fast batch is not permission to keep spending resources
       // after transport pressure or a newly slow response. Use the existing
       // idle read timeout as a conservative elapsed-cost threshold.
@@ -2425,8 +2424,7 @@ public class SourceUpdateWorker extends Worker {
           ||measured.transientNetworkFailure||finishedAt>=deadline
           ||finishedAt-now>=SourceProbeTimePolicy.sampleReadTimeoutCap(false);
       lastProbeHealthy=fullPositive&&!pressure;
-      if(measured.inconclusive()
-          ||finishedAt>=deadline){
+      if(inconclusive||finishedAt>=deadline){
         unresolvedEndpoints.add(endpoint);
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         if(extended&&pressure)break;
