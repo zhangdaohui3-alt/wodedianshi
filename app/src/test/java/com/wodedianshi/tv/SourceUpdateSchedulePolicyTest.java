@@ -386,4 +386,39 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(48,fast);assertEquals(6,slow);
         assertEquals(101,pending.size());
     }
+
+    @Test public void freshCacheDoesNotScanAllEntriesForEachOfTwentyThousandInsertions(){
+        java.util.LinkedHashMap<Integer,Long> cache=new java.util.LinkedHashMap<>(16,0.75f,true);
+        java.util.concurrent.atomic.AtomicInteger scans=new java.util.concurrent.atomic.AtomicInteger();
+        long earliest=Long.MAX_VALUE;
+        for(int i=0;i<20000;i++){
+            long expires=300000L+i;
+            cache.put(i,expires);earliest=Math.min(earliest,expires);
+            earliest=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(
+                cache,1024,earliest,i,v->{scans.incrementAndGet();return v;});
+        }
+        assertEquals(0,scans.get());
+        assertEquals(1024,cache.size());
+        assertEquals(Integer.valueOf(18976),cache.keySet().iterator().next());
+        assertTrue(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,0L,300000L));
+        assertFalse(SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,0L,300001L));
+    }
+
+    @Test public void expirySweepProtectsFreshLruBeforeEvicting(){
+        java.util.LinkedHashMap<String,Long> cache=new java.util.LinkedHashMap<>(8,0.75f,true);
+        cache.put("fresh-oldest",300000L);
+        cache.put("expired",15000L);
+        cache.put("fresh-newest",310000L);
+        long hint=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,2,15000L,15001L,v->v);
+        assertEquals(java.util.Arrays.asList("fresh-oldest","fresh-newest"),new java.util.ArrayList<>(cache.keySet()));
+        assertEquals(300000L,hint);
+        cache.put("new",320000L);
+        hint=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,2,hint,15002L,v->v);
+        assertEquals(java.util.Arrays.asList("fresh-newest","new"),new java.util.ArrayList<>(cache.keySet()));
+        assertEquals(300000L,hint); // conservative lower bound after eviction
+        cache.put("next",330000L);
+        hint=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,2,hint,310001L,v->v);
+        assertEquals(java.util.Arrays.asList("new","next"),new java.util.ArrayList<>(cache.keySet()));
+        assertEquals(320000L,hint);
+    }
 }
