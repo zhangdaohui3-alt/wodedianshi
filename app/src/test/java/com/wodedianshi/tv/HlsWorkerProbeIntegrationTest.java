@@ -440,7 +440,17 @@ public class HlsWorkerProbeIntegrationTest {
                     order,pending,SystemClock.elapsedRealtime()+90000L,()->false,1234567L);
             assertEquals(0,retry.checked);assertEquals(1,retry.reused);
             assertEquals(0L,retry.sampleRequests);assertTrue(pending.isEmpty());
-            pending.add(key);
+            // Too little time to admit a fresh network request, but enough
+            // to consume a later same-version positive retry observation.
+            String unmeasured=url+"?fresh=1";
+            String missingKey=StableKey.url(unmeasured);
+            pending.add(missingKey);pending.add(key);
+            SourceUpdateWorker.QualityRecheckSlice tail=SourceUpdateWorker.probeQualityRecheckSlice(
+                    Arrays.asList(unmeasured,url),pending,SystemClock.elapsedRealtime()+5000L,()->false,1234567L);
+            assertEquals(0,tail.checked);assertEquals(1,tail.reused);
+            assertEquals(1,tail.conclusive);assertEquals(0L,tail.sampleRequests);
+            assertEquals(Collections.singleton(missingKey),pending);
+            pending.clear();pending.add(key);
             SourceUpdateWorker.QualityRecheckSlice changed=SourceUpdateWorker.probeQualityRecheckSlice(
                     order,pending,SystemClock.elapsedRealtime()+90000L,()->false,1234568L);
             assertEquals(1,changed.checked);assertEquals(0,changed.reused);
