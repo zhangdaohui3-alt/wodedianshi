@@ -22,11 +22,8 @@ final class LivePictureGate {
         earliestRenderAt=assignedAt;
     }
 
-    boolean reveal(Object eventOwner,String eventMediaId) {
-        return revealRendered(eventOwner,eventMediaId,Long.MAX_VALUE);
-    }
-
-    boolean revealRendered(Object eventOwner,String eventMediaId,long renderedAt) {
+    /** Untimed Vout uses zero; it cannot satisfy a positive Media3 time floor. */
+    boolean reveal(Object eventOwner,String eventMediaId,long renderedAt) {
         if(owner==null||owner!=eventOwner||mediaId==null||mediaId.isEmpty()
                 ||!mediaId.equals(eventMediaId)||renderedAt<earliestRenderAt)return false;
         cover(); // A duplicate event must not reopen an invalidated handoff.
