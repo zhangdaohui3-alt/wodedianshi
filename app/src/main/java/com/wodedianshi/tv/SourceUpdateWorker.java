@@ -2359,7 +2359,14 @@ public class SourceUpdateWorker extends Worker {
         flushQualityCheckpoint(completed,checkpoint,paused);
         continue;
       }
-      if(checked>=limit)break;
+      if(checked>=limit){
+        // No further network admissions. An unmeasured row need not hide
+        // a later alias of a full positive result already in this slice.
+        // The bounded candidate list, stage deadline and conclusive cap
+        // still apply; skipped rows retain their original queue positions.
+        if(successfulEndpoints.isEmpty())break;
+        continue;
+      }
       if(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))break;
       long deadline=SourceUpdateSchedulePolicy.qualityRecheckDeadline(stageDeadline,now,tailUsed,
           lastProbeHealthy,checked,positive,sampleRequests,sampleBytes);
