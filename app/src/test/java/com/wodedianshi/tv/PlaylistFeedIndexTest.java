@@ -464,6 +464,30 @@ public class PlaylistFeedIndexTest {
             PlaylistFeedCache.initialPressureDrainCandidates(new File[]{body},new String[]{version}));
     }
 
+    @Test public void pressureInventoryReportsReadinessOnlyForExactOrderedBody() throws Exception {
+        File body=playlist("#EXTM3U\n#EXTINF:-1,Test\nhttps://example.invalid/live\n");
+        java.util.Properties metadata=PlaylistFeedCache.recoveredBodyMetadata(body,()->false,true);
+        String version=body.getName()+":"+metadata.getProperty("bodySha256");
+        String different=body.getName()+":"+new String(new char[64]).replace('\0','a');
+        File sidecar=new File(body.getPath()+".properties");
+        try(FileOutputStream out=new FileOutputStream(sidecar)){metadata.store(out,"");}
+        boolean[] ready={true,true,true};
+        File[] bodies={body,body,null};
+        String[] versions={version,different,version};
+        PlaylistFeedIndex.readPage(body,0,1,row->{});
+        org.junit.Assert.assertArrayEquals(new boolean[]{true,false,false},
+            PlaylistFeedCache.initialPressureDrainCandidates(bodies,versions,ready));
+        org.junit.Assert.assertArrayEquals(new boolean[3],ready);
+        PlaylistFeedIndex.readInitialPage(body,0,1,row->{},()->false);
+        org.junit.Assert.assertArrayEquals(new boolean[]{true,false,false},
+            PlaylistFeedCache.initialPressureDrainCandidates(bodies,versions,ready));
+        org.junit.Assert.assertArrayEquals(new boolean[]{true,false,false},ready);
+        org.junit.Assert.assertTrue(sidecar.delete());
+        org.junit.Assert.assertArrayEquals(new boolean[]{true,true,false},
+            PlaylistFeedCache.initialPressureDrainCandidates(bodies,versions,ready));
+        org.junit.Assert.assertArrayEquals(new boolean[3],ready);
+    }
+
     @Test public void acquiredBodyCanRestoreMissingIndexWithoutRemoteDownload() throws Exception {
         File dir=java.nio.file.Files.createTempDirectory("mytv-index-repair").toFile();
         try{
