@@ -2327,7 +2327,7 @@ public class SourceUpdateWorker extends Worker {
     HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
     int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
     int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
-    boolean extended=false,lastProbeHealthy=false;
+    boolean extended=false,lastProbeHealthy=false,tailUsed=false;
     long startedAt=android.os.SystemClock.elapsedRealtime();
     long sampleRequests=0L,sampleBytes=0L;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
@@ -2361,13 +2361,15 @@ public class SourceUpdateWorker extends Worker {
       }
       if(checked>=limit)break;
       if(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))break;
-      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
+      long deadline=SourceUpdateSchedulePolicy.qualityRecheckDeadline(stageDeadline,now,tailUsed,
+          lastProbeHealthy,checked,positive,sampleRequests,sampleBytes);
       if(deadline==0L)break;
       String origin=InitialOriginCooldownPolicy.origin(url);
       if(recheckOrigins.cooling(origin,now)){
         // Not attempted: retain the original queue position and quality.
         originDeferred++;continue;
       }
+      if(deadline-now<SourceProbeTimePolicy.INITIAL_ADDRESS_BUDGET_MS)tailUsed=true;
       checked++;
       ProbeResult measured=probe(url,deadline,false,paused,false);
       long finishedAt=android.os.SystemClock.elapsedRealtime();
