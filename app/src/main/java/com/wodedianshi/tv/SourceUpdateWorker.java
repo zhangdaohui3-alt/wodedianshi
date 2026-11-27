@@ -2217,7 +2217,7 @@ public class SourceUpdateWorker extends Worker {
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested);
+    QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested,catalogueVersion);
     Map<String,ProbeResult> completed=slice.completed;
     int conclusive=completed.size();
     // Only completed measurements need quality rows. Skipped, timed-out and
@@ -2272,6 +2272,13 @@ public class SourceUpdateWorker extends Worker {
   }
   static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
       long stageDeadline,java.util.function.BooleanSupplier paused){
+    return probeQualityRecheckSlice(selected,pending,stageDeadline,paused,null);
+  }
+  // Non-null version is supplied only by the exclusive source-work owner
+  // (or a sequential host test). Namespace within the existing bounded cache;
+  // initial/manual observations must not authorize a full quality recheck.
+  static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
+      long stageDeadline,java.util.function.BooleanSupplier paused,Long catalogueVersion){
     LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
     // Scope positive full evidence to this single idle slice. Exact URL
     // keys still own their queue membership and durable quality records.
@@ -2297,6 +2304,13 @@ public class SourceUpdateWorker extends Worker {
       if(conclusive>=limit)break;
       String endpoint=SourceSelectionPolicy.endpointKey(url);
       ProbeResult previous=successfulEndpoints.get(endpoint);
+      String retryKey=catalogueVersion==null?null:"quality-recheck\n"+catalogueVersion+"\n"+endpoint;
+      if(previous==null&&retryKey!=null){
+        RecentProbe cached=INITIAL_PROBES.get(retryKey);
+        if(cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,cached.at,now)
+            &&cached.result.valid&&!cached.result.inconclusive()&&!cached.result.paced&&!cached.result.provisional)
+          previous=cached.result;
+      }
       if(previous!=null){
         completed.put(url,previous);
         pending.remove(StableKey.url(url));conclusive++;reused++;
@@ -2313,8 +2327,15 @@ public class SourceUpdateWorker extends Worker {
       }
       checked++;
       ProbeResult measured=probe(url,deadline,false,paused,false);
-      SourceProbeTimePolicy.checkPublicationPaused(paused);
       long finishedAt=android.os.SystemClock.elapsedRealtime();
+      // Retain only a finished full positive observation, not the queue,
+      // score transaction, or failed/cancelled work. Never refresh its age
+      // on a cache hit. An intervening version change makes it ineligible.
+      if(retryKey!=null&&finishedAt<stageDeadline
+          &&SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
+              measured.paced,measured.provisional,finishedAt,deadline))
+        rememberInitialProbe(retryKey,measured,finishedAt);
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
       String key=StableKey.url(url);
       sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
       if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
