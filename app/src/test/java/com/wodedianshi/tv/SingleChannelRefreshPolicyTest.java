@@ -92,6 +92,23 @@ public class SingleChannelRefreshPolicyTest {
                 "file:///bad","https:///bad","https://d.example/live","https://e.example/live"),4));
         assertEquals(Arrays.asList("https://a.example/live","https://b.example/live"),old);
     }
+    @Test public void refreshUsesSameStrictUrlValidationAndDeduplicationAsAppend(){
+        java.util.List<String> existing=java.util.Arrays.asList("https://example.invalid/old");
+        java.util.List<String> candidates=java.util.Arrays.asList(null,"ftp://example.invalid/file",
+            "https:///no-host","https://bad host/live","https://example.invalid/old",
+            "https://example.invalid/new","https://example.invalid/new","http://example.invalid/second");
+        assertFalse(SingleChannelRefreshPolicy.validCandidateUrl(null));
+        assertFalse(SingleChannelRefreshPolicy.validCandidateUrl("https:///no-host"));
+        assertFalse(SingleChannelRefreshPolicy.validCandidateUrl("https://bad host/live"));
+        assertTrue(SingleChannelRefreshPolicy.validCandidateUrl("https://example.invalid/new"));
+        java.util.List<String> expected=new java.util.ArrayList<>(existing);
+        expected.addAll(SingleChannelRefreshPolicy.appendCandidates(existing,candidates,3));
+        assertEquals(java.util.Arrays.asList("https://example.invalid/old","https://example.invalid/new",
+            "http://example.invalid/second"),expected);
+        assertEquals(expected,SingleChannelRefreshPolicy.planRefresh(existing,candidates,3,
+            existing.get(0),existing.get(0),existing.get(0),java.util.Collections.emptySet(),null));
+    }
+
     @Test public void fullOrEmptyRefreshDoesNotRemoveAnyExistingRoute(){
         assertTrue(SingleChannelRefreshPolicy.appendCandidates(
             Arrays.asList("https://a.example/live","https://b.example/live"),
