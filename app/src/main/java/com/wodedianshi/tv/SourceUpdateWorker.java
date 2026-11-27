@@ -3628,11 +3628,20 @@ public class SourceUpdateWorker extends Worker {
       return result;
     }catch(java.net.SocketTimeoutException timeout){result.socketTimedOut=true;return result;}
     catch(java.io.IOException unavailable){
-      result.transientNetworkFailure=unavailable instanceof TransientProbeHttpException
+      result.transientNetworkFailure|=unavailable instanceof TransientProbeHttpException
           ||SourceProbeTimePolicy.transientProbeNetworkException(unavailable);
       return result;
     }
     catch(Exception e){return result;}
+    finally{
+      // A pause can arrive inside a blocked HTTP operation, including one
+      // that throws before the next ordinary cancellation check. Treat all
+      // exit paths consistently; never publish an expired or cancelled result.
+      if(probeSampleInterrupted(deadline,pauseRequested,result)){
+        result.valid=false;
+        result.provisional=false;
+      }
+    }
   }
   // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
   // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
