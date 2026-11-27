@@ -127,6 +127,42 @@ public class SourceRankingRetentionPolicyTest {
         assertEquals(5016,newCalls.get());
     }
 
+    @Test public void commonRankingSortsOnceAndPreservesTwentyThousandRoutePositions(){
+        java.util.concurrent.atomic.AtomicInteger baselineCalls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger optimizedCalls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.Comparator<String> base=(a,b)->{baselineCalls.incrementAndGet();return 0;};
+        java.util.Comparator<String> fast=(a,b)->{optimizedCalls.incrementAndGet();return 0;};
+        for(int i=0;i<5000;i++){
+            String a="https://example.invalid/a/"+i,b="https://example.invalid/b/"+i;
+            String c="https://example.invalid/c/"+i,d="https://example.invalid/d/"+i;
+            java.util.ArrayList<String> input=new java.util.ArrayList<>(Arrays.asList(a,b,c,d));
+            java.util.ArrayList<String> expected=new java.util.ArrayList<>(input);
+            expected.sort(base);
+            expected=new java.util.ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(expected,c,d,8));
+            expected.sort(base);
+            assertEquals(expected,SourceRankingRetentionPolicy.rankRequiredAndBest(input,c,d,8,fast));
+        }
+        assertEquals(30000,baselineCalls.get());
+        assertEquals(15000,optimizedCalls.get());
+    }
+
+    @Test public void singleSortMatchesLegacyAcrossTiesAndFallbackCases(){
+        java.util.Random random=new java.util.Random(467);
+        for(int i=0;i<1000;i++){
+            java.util.ArrayList<String> input=new java.util.ArrayList<>();
+            for(int n=0;n<i%12;n++)input.add("https://example.invalid/"+n);
+            java.util.Collections.shuffle(input,random);
+            String primary=i%5==0?"https://example.invalid/missing":"https://example.invalid/1";
+            String active=i%7==0?"":"https://example.invalid/2";
+            java.util.Comparator<String> cmp=(a,b)->Integer.compare(b.hashCode()%3,a.hashCode()%3);
+            java.util.ArrayList<String> expected=new java.util.ArrayList<>(input);
+            expected.sort(cmp);
+            expected=new java.util.ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(expected,primary,active,8));
+            expected.sort(cmp);
+            assertEquals(expected,SourceRankingRetentionPolicy.rankRequiredAndBest(input,primary,active,8,cmp));
+        }
+    }
+
     @Test public void boundedRankingEvictsOldEvidenceAndRetainsComparatorOrder(){
         java.util.Map<String,Integer> calls=new java.util.HashMap<>();
         java.util.Comparator<String> cmp=SourceRankingRetentionPolicy.boundedBestFirst(url->{
