@@ -218,11 +218,9 @@ public final class ManualProbeQualityStore {
 
     private static void publishPreviewPage(AppDatabase db,Set<String> keys,BooleanSupplier paused){
         SourceProbeTimePolicy.checkPublicationPaused(paused);
-        List<ManualProbeQualityEntity> rows=db.manualProbeQualityDao().load(INITIAL_OWNER,new ArrayList<>(keys));
-        List<ManualProbeQualityEntity> copy=new ArrayList<>(rows.size());
-        for(ManualProbeQualityEntity row:rows)
-            copy.add(new ManualProbeQualityEntity(PUBLISHED_OWNER,row.sourceKey,row.score,row.failureStreak));
-        if(!copy.isEmpty())db.manualProbeQualityDao().put(copy);
+        // Copy only exact preview keys; missing private rows leave inherited
+        // published evidence untouched. Nullable private rows still replace.
+        db.manualProbeQualityDao().copyKeys(INITIAL_OWNER,PUBLISHED_OWNER,new ArrayList<>(keys));
     }
 
     /** Merge all remaining private evidence at final publication.
