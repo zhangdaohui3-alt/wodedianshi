@@ -147,6 +147,22 @@ public final class HlsMediaPlaylistPolicy {
                 aesIv,hasFirstSequence?firstSequence:mediaSequence,unsupportedEncryption,skippedMediaRange,media,sequences);
     }
 
+    /** Only a recognizable open live media window qualifies; an empty
+     * closed VOD or an invalid master still follows the ordinary rejection. */
+    static boolean isEmptyLiveWindow(String playlist){
+        if(playlist==null)return false;
+        boolean target=false;
+        for(String raw:playlist.replace("\r","").split("\n")){
+            String line=raw.trim();
+            if(line.equals("#EXT-X-ENDLIST")||line.startsWith("#EXT-X-STREAM-INF:"))return false;
+            if(line.startsWith("#EXT-X-TARGETDURATION:")){
+                try{target=Long.parseLong(line.substring("#EXT-X-TARGETDURATION:".length()).trim())>0;}
+                catch(NumberFormatException malformed){return false;}
+            }
+        }
+        return target;
+    }
+
     private static String attribute(Pattern pattern,String attributes) {
         Matcher m=pattern.matcher(attributes); return m.find()?m.group(1):null;
     }
