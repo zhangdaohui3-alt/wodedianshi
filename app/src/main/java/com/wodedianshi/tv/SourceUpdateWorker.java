@@ -1407,6 +1407,7 @@ public class SourceUpdateWorker extends Worker {
       // cursor could skip most saved URLs forever as the window changed between runs.
       final long probeStartedAt=android.os.SystemClock.elapsedRealtime();
       long probeDeadline=probeStartedAt+PROBE_STAGE_DEADLINE_MS;
+      final boolean idlePrivateBuild=IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback);
       final boolean boundedAddressBudget=SourceProbeTimePolicy.usesBoundedAddressBudget(
           initialDiscoveryChain,manualRefresh,slowPlayback);
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
@@ -1512,7 +1513,7 @@ public class SourceUpdateWorker extends Worker {
             reusedPreflights++;
           }else{
             checked++;
-            if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
+            if(idlePrivateBuild
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,healthEndpoints,addressDeadline,probeDeadline,initialDiscoveryChain,
                     DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),
@@ -1522,7 +1523,7 @@ public class SourceUpdateWorker extends Worker {
               TimedProbe outcome;
               try{outcome=idleWave.take(endpoint,probeDeadline);}
               catch(java.util.concurrent.TimeoutException timeout){
-                if(!initialDiscoveryChain||slowPlayback)throw timeout;
+                if(!idlePrivateBuild)throw timeout;
                 // The current position has no consumed result. Preserve the
                 // previously processed contiguous prefix, not this position.
                 if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
@@ -1537,7 +1538,7 @@ public class SourceUpdateWorker extends Worker {
             }else{
               // A rejected wave may have spent the remaining address budget
               // preparing candidates. Keep this exact position for the next slice.
-              if(initialDiscoveryChain&&!slowPlayback
+              if(idlePrivateBuild
                   &&android.os.SystemClock.elapsedRealtime()>=addressDeadline){
                 checked--;
                 if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
@@ -1762,7 +1763,7 @@ public class SourceUpdateWorker extends Worker {
       // A missing result at the stage deadline leaves that slice for retry.
       try{idleWave.finishBeforeCommit();}
       catch(java.util.concurrent.TimeoutException timeout){
-        if(!initialDiscoveryChain||slowPlayback)throw timeout;
+        if(!idlePrivateBuild)throw timeout;
         idleWaveTimedOut=true;
         idleWave.close();
         if(!awaitRetiringProbePool())throw timeout;
@@ -2297,7 +2298,7 @@ public class SourceUpdateWorker extends Worker {
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
             +" reused="+reusedPreflights+" retained_duplicate="+retainedDuplicates+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(stagedSizeAfterProbe))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed||initialIndexed?indexedPositions.size():-1)
-            +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
+            +" parallel_launched="+idleWave.launched+" wave_timeout="+idleWaveTimedOut+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
             +" inconclusive_endpoints="+inconclusiveAttempts.size()+" viewing_deferred="+viewingDeferred);
       }
