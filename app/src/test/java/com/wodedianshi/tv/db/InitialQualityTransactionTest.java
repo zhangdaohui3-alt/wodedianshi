@@ -432,15 +432,47 @@ public class InitialQualityTransactionTest {
             db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,rows,()->false));
             visible.add(inheritedUrl);
             db.runInTransaction(()->ManualProbeQualityStore.publishInitialPreviewInTransaction(db,visible,()->false));
-            assertEquals(301,db.manualProbeQualityDao().page(published,"",400).size());
+            assertEquals(300,db.manualProbeQualityDao().page(published,"",400).size());
             assertEquals(Integer.valueOf(1299),db.manualProbeQualityDao().find(published,com.wodedianshi.tv.StableKey.url(visible.get(299))).score);
             assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,inherited).score);
             assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(published,inherited).failureStreak);
-            assertNull(db.manualProbeQualityDao().find(published,cleared).score);
-            assertNull(db.manualProbeQualityDao().find(published,cleared).failureStreak);
+            assertNull(db.manualProbeQualityDao().find(published,cleared));
+            assertNotNull(db.manualProbeQualityDao().find(initial,cleared));
             assertNull(db.manualProbeQualityDao().find(published,hidden));
             assertEquals(Integer.valueOf(1800),db.manualProbeQualityDao().find(initial,hidden).score);
             assertTrue(ManualProbeQualityStore.hasInitial(db));
+        }finally{db.close();}
+    }
+
+    @Test public void publishedQualityWritesDeleteClearedRowsWithoutTouchingPrivateEvidence(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialPreviewInTransaction(db,Collections.emptyList(),()->false));
+            db.manualProbeQualityDao().put(java.util.Arrays.asList(
+                new ManualProbeQualityEntity(published,"clear",900,1),
+                new ManualProbeQualityEntity(published,"keep",700,2),
+                new ManualProbeQualityEntity(initial,"clear",null,null)));
+            java.util.List<ManualProbeQualityEntity> changes=java.util.Arrays.asList(
+                new ManualProbeQualityEntity(published,"clear",null,null),
+                new ManualProbeQualityEntity(published,"new-empty",null,null),
+                new ManualProbeQualityEntity(published,"streak",null,2));
+            try{
+                db.runInTransaction(()->{
+                    ManualProbeQualityStore.writePublishedInTransaction(db,changes,()->false);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,"clear").score);
+            db.runInTransaction(()->ManualProbeQualityStore.writePublishedInTransaction(db,changes,()->false));
+            assertNull(db.manualProbeQualityDao().find(published,"clear"));
+            assertNull(db.manualProbeQualityDao().find(published,"new-empty"));
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(published,"streak").failureStreak);
+            assertEquals(Integer.valueOf(700),db.manualProbeQualityDao().find(published,"keep").score);
+            assertNotNull(db.manualProbeQualityDao().find(initial,"clear"));
         }finally{db.close();}
     }
 
