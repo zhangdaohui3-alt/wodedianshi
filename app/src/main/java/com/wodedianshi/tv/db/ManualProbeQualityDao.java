@@ -14,6 +14,12 @@ public interface ManualProbeQualityDao {
     ManualProbeQualityEntity find(String owner,String key);
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
     List<ManualProbeQualityEntity> page(String owner,String after,int limit);
+    @Query("SELECT sourceKey FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
+    List<String> pageKeys(String owner,String after,int limit);
+    @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak) "
+        + "SELECT :target,sourceKey,score,failureStreak FROM manual_probe_quality "
+        + "WHERE owner=:source AND sourceKey>:after AND sourceKey<=:through")
+    void copyRange(String source,String target,String after,String through);
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     void put(List<ManualProbeQualityEntity> rows);
     @Query("DELETE FROM manual_probe_quality WHERE owner=:owner")
