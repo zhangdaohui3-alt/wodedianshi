@@ -361,6 +361,34 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L));
     }
 
+    @Test public void onlyRecentExplicitStableOutputDefersExtraQualityProbe(){
+        long at=100000L,grace=SourceUpdateSchedulePolicy.STABLE_RECHECK_GRACE_MS;
+        assertTrue(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck("stable",at,at,at+grace-1));
+        assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck("stable",at,at,at+grace));
+        assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck("stable",at,at,at-1));
+        assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck("stable",0L,0L,at));
+        assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck("stable",at,at+1,at+2));
+        for(String event:java.util.Arrays.asList("","ready","firstFrame","attempt","failure","buffer","audioCodecError"))
+            assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(event,at,at,at));
+    }
+
+    @Test public void freshStableDeferralDoesNotConsumeProbeSlotsOrDeletePendingKeys(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        java.util.HashMap<String,String> current=new java.util.HashMap<>();
+        for(int i=0;i<100;i++){
+            pending.add("k"+i);current.put("k"+i,"https://example.invalid/"+i);
+        }
+        java.util.List<String> original=new java.util.ArrayList<>(pending);
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(
+                pending,current,key->Integer.parseInt(key.substring(1))<50);
+        assertEquals(48,selected.size());
+        assertEquals("https://example.invalid/50",selected.get(0));
+        assertEquals("https://example.invalid/97",selected.get(47));
+        assertEquals(original,new java.util.ArrayList<>(pending));
+        assertEquals("https://example.invalid/0",
+                SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current).get(0));
+    }
+
     @Test public void qualityRecheckSpreadsOriginsWithoutLosingOldestOrReorderingStoredQueue(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         java.util.HashMap<String,String> current=new java.util.HashMap<>();
