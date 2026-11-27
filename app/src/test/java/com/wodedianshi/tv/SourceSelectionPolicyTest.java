@@ -86,6 +86,18 @@ public class SourceSelectionPolicyTest {
                 0, Collections.emptySet(), Collections.emptySet()));
     }
 
+    @Test public void workerCandidateReusesEndpointWithoutRewritingRequestUrl() {
+        String raw="https://EXAMPLE.invalid:443/Live?token=AbC";
+        SourceUpdateWorker.Entry entry=new SourceUpdateWorker.Entry("test",raw,"央视");
+        String endpoint=entry.endpoint();
+        assertEquals("https://example.invalid/Live?token=AbC",endpoint);
+        assertSame(endpoint,entry.endpoint());
+        assertEquals(raw,entry.url);
+        SourceUpdateWorker.Entry distinct=new SourceUpdateWorker.Entry("test",
+                "https://example.invalid/Live?token=abc","央视");
+        assertNotEquals(endpoint,distinct.endpoint());
+    }
+
     @Test public void canonicalEndpointKeyMatchesSchemeHostAndDefaultPortAliases() {
         assertEquals(SourceSelectionPolicy.endpointKey("HTTP://Example.COM:80/live.m3u8"),
                 SourceSelectionPolicy.endpointKey("http://example.com/live.m3u8"));
