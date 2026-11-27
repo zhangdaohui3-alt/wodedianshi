@@ -409,4 +409,43 @@ public class HlsWorkerProbeIntegrationTest {
             assertEquals((long)body.length,result.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void cappedManifestIsInconclusiveWithoutDependentMediaRequests()throws Exception{
+        byte[] body=new byte[32769];
+        Arrays.fill(body,(byte)' ');
+        byte[] prefix=bytes(media("high"));
+        System.arraycopy(prefix,0,body,0,prefix.length);
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    String start=reader.readLine();
+                    assertNotNull(start);
+                    assertTrue(start,start.startsWith("GET /capped.m3u8 "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\n"
+                            +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                    out.write(body);out.flush();
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/capped.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertFalse(result.valid);
+            assertTrue(result.incompleteManifest);
+            assertTrue(result.inconclusive());
+            assertFalse(result.socketTimedOut);
+            assertFalse(result.transientNetworkFailure);
+            assertEquals(1L,result.sampleRequests);
+            assertEquals(32769L,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
 }
