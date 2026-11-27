@@ -2503,15 +2503,8 @@ public class SourceUpdateWorker extends Worker {
         String stablePrimaryUrl=channel.optString("url","");
         // Preserve both the stable channel identity and the user's last selected
         // source even when the ranked list is trimmed to the eight-source cap.
-        ordered.sort(bestFirst);
-        // Required-first retention can change tie order even within the cap;
-        // keep the existing stable re-sort semantics when needed.
-        List<String> retained=SourceRankingRetentionPolicy.retainRequiredAndBest(
-            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL);
-        if(!ordered.equals(retained)){
-          ordered=new ArrayList<>(retained);
-          ordered.sort(bestFirst);
-        }
+        ordered=SourceRankingRetentionPolicy.rankRequiredAndBest(
+            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL,bestFirst);
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
         if(ranked.length()>0){
