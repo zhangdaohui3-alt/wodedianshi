@@ -16,7 +16,8 @@ final class IdleProbeWavePolicy {
         return !viewing&&(initial||manual);
     }
     static boolean canStart(boolean initial,long now,long addressDeadline,long batchDeadline) {
-        if(initial)return SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,addressDeadline);
+        if(initial)return now>=0L&&now<addressDeadline
+                &&SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,addressDeadline);
         // Manual idle probes also receive a bounded address budget; retain
         // the existing 17-second admission margin for a drained wave.
         return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
