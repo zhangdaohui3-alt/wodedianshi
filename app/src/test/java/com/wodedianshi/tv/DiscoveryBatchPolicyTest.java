@@ -403,4 +403,18 @@ public class DiscoveryBatchPolicyTest {
         assertEquals(2,consumed);
     }
 
+    @Test public void idleManualDeadlineCanAdvanceCommittedDuplicatesWithoutSkippingFreshWork(){
+        boolean initial=false,manual=true,viewing=false;
+        int consumed=0;
+        // Already committed records, then an unresolved fresh candidate,
+        // then another duplicate which must remain behind that cursor.
+        for(boolean known:new boolean[]{true,true,false,true}){
+            if(!DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(initial||manual,viewing,false,known))break;
+            consumed++;
+        }
+        assertEquals(2,consumed);
+        assertFalse(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(false,false,false,true));
+        assertFalse(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(true,true,false,true));
+    }
+
 }
