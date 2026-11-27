@@ -9,6 +9,19 @@ public class ChannelIdentityPolicyTest {
         assertEquals("湖南卫视|satellite", ChannelIdentityPolicy.identity("湖南卫视", "HunanTV", "fallback"));
     }
 
+    @Test public void discoveryBroadcasterKeysIgnoreLowerPriorityIdentityEvidence() {
+        assertEquals("CCTV-1|cctv", SourceDiscoveryIdentityPolicy.identity(
+                "CCTV-1", "地方", "not a valid URI", "provider.local", ""));
+        assertEquals("湖南卫视|satellite", SourceDiscoveryIdentityPolicy.identity(
+                "湖南卫视", "地方", "https://other.example/live", "provider.local", ""));
+        assertEquals("local:广东|深圳|深圳都市频道", SourceDiscoveryIdentityPolicy.identity(
+                "深圳都市频道", "地方", "https://a.example/live", "provider.local", ""));
+        assertEquals("tvgid:provider.unique", SourceDiscoveryIdentityPolicy.identity(
+                "测试频道", "地方", "https://a.example/live", "provider.unique", ""));
+        assertEquals("测试频道|地方|host:a.example", SourceDiscoveryIdentityPolicy.identity(
+                "测试频道", "地方", "https://a.example/live", "", ""));
+    }
+
     @Test public void stableTvgIdGroupsSameLocalChannelAcrossDifferentHosts() {
         String first = ChannelIdentityPolicy.identity("", "FJTV.FUZHOU", "福建综合|地方|host:a.example");
         String second = ChannelIdentityPolicy.identity("", " fjtv.fuzhou ", "福建综合|地方|host:b.example");
