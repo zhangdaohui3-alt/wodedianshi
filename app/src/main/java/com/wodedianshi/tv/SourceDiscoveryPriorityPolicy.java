@@ -81,8 +81,8 @@ public final class SourceDiscoveryPriorityPolicy {
         int size=completed.length;
         int china=bound(mainlandEnd,size),regions=Math.max(china,bound(regionEnd,size));
         // Acquisition is global, but in the same China/HMT/other order.
-        // Once no fresh directory remains, the ordinary probe rotation takes
-        // over unchanged, including retry of failed and evicted directories.
+        // Once no fresh directory remains, grant prepared directories an
+        // initial inspection turn before resuming ordinary probe rotation.
         int[] boundaries={0,china,regions,size};
         for(int stage=0;stage<3;stage++){
             int from=boundaries[stage],to=boundaries[stage+1];
@@ -92,6 +92,16 @@ public final class SourceDiscoveryPriorityPolicy {
                 int i=from+(first-from+d)%(to-from);
                 if(!completed[i]&&!attempted[i]&&!prepared[i]&&!failed[i])return i;
             }
+        }
+        // Give each prepared, not-yet-inspected directory one media turn
+        // before deep scanning, still in mainland/HMT/international order.
+        // The temporary mask must never be persisted as feed completion.
+        if(visited!=null&&visited.length==size){
+            boolean[] firstTurnsDone=completed.clone();
+            for(int i=0;i<size;i++)
+                firstTurnsDone[i]|=visited[i]||failed[i]||!prepared[i];
+            int first=nextEligibleFeed(start,firstTurnsDone,attempted,mainlandEnd,regionEnd,false);
+            if(first>=0)return first;
         }
         return ordinary;
     }
