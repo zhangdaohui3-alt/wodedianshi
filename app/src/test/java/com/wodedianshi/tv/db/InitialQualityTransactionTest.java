@@ -227,4 +227,40 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+
+    @Test public void previewSqlCopyDoesNotReplaceMissingPrivateKeysOrUnpublishedRoutes(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            java.util.List<String> visible=new java.util.ArrayList<>();
+            java.util.List<ManualProbeQualityEntity> rows=new java.util.ArrayList<>();
+            for(int n=0;n<300;n++){
+                String url="https://example.invalid/visible/"+n;
+                visible.add(url);
+                String key=com.wodedianshi.tv.StableKey.url(url);
+                rows.add(new ManualProbeQualityEntity(initial,key,n==150?null:Integer.valueOf(1000+n),null));
+            }
+            String hidden=com.wodedianshi.tv.StableKey.url("https://example.invalid/hidden");
+            String inheritedUrl="https://example.invalid/inherited",inherited=com.wodedianshi.tv.StableKey.url(inheritedUrl);
+            String cleared=com.wodedianshi.tv.StableKey.url(visible.get(150));
+            rows.add(new ManualProbeQualityEntity(initial,hidden,1800,null));
+            db.manualProbeQualityDao().put(java.util.Arrays.asList(
+                new ManualProbeQualityEntity(published,inherited,900,2),
+                new ManualProbeQualityEntity(published,cleared,700,1)));
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,rows,()->false));
+            visible.add(inheritedUrl);
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialPreviewInTransaction(db,visible,()->false));
+            assertEquals(301,db.manualProbeQualityDao().page(published,"",400).size());
+            assertEquals(Integer.valueOf(1299),db.manualProbeQualityDao().find(published,com.wodedianshi.tv.StableKey.url(visible.get(299))).score);
+            assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,inherited).score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(published,inherited).failureStreak);
+            assertNull(db.manualProbeQualityDao().find(published,cleared).score);
+            assertNull(db.manualProbeQualityDao().find(published,cleared).failureStreak);
+            assertNull(db.manualProbeQualityDao().find(published,hidden));
+            assertEquals(Integer.valueOf(1800),db.manualProbeQualityDao().find(initial,hidden).score);
+            assertTrue(ManualProbeQualityStore.hasInitial(db));
+        }finally{db.close();}
+    }
+
 }
