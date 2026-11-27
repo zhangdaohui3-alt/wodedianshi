@@ -398,6 +398,19 @@ public class PlaylistFeedIndexTest {
         }
     }
 
+    @Test public void evictedBodiesLoseOnlyTemporaryPreparationHints() throws Exception {
+        File surviving=playlist("#EXTM3U\n#EXTINF:-1,Test\nhttps://example.invalid/test\n");
+        File[] bodies={null,surviving,null,surviving};
+        boolean[] completed={false,false,true,false};
+        boolean[] prepared={true,true,true,false};
+        PlaylistFeedCache.reconcilePreparedBodies(bodies,completed,prepared);
+        org.junit.Assert.assertArrayEquals(new boolean[]{false,true,true,false},prepared);
+        org.junit.Assert.assertArrayEquals(new boolean[]{false,false,true,false},completed);
+        // No acquisition metadata or index is needed to retain a recoverable
+        // body hint, and mere presence never upgrades an unprepared feed.
+        org.junit.Assert.assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(surviving));
+    }
+
     @Test public void acquiredBodyCanRestoreMissingIndexWithoutRemoteDownload() throws Exception {
         File dir=java.nio.file.Files.createTempDirectory("mytv-index-repair").toFile();
         try{
