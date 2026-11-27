@@ -181,6 +181,10 @@ public final class PlaylistFeedCache {
                 }
                 expected=range[0];total=range[1];
             }else if(status==200){
+                // Reject a contradictory partial header before discarding
+                // any durable prefix; use the ordinary full-response rule.
+                if(!SourceProbeTimePolicy.fullDirectoryResponse(status,connection.getHeaderField("Content-Range")))
+                    throw new IOException("Invalid full directory response");
                 // Range ignored or representation changed. Never append a 200.
                 clearRangeCheckpoint(checkpoint,partial);offset=0L;
                 expected=connection.getContentLength();total=expected;
@@ -202,8 +206,10 @@ public final class PlaylistFeedCache {
                 while(true){
                     checkDownloadBudget(paused,deadline);
                     int n=input.read(buffer);
-                    checkDownloadBudget(paused,deadline);
+                    // EOF is not new network work. A fully received validated
+                    // range may now finish its durable checkpoint on pause.
                     if(n<0)break;
+                    checkDownloadBudget(paused,deadline);
                     copied+=n;
                     if(copied>transferLimit||(expected>=0L&&copied>expected))
                         throw new IOException("Directory response exceeded range budget");
@@ -217,13 +223,14 @@ public final class PlaylistFeedCache {
                 if(copied<=0L||(expected>=0L&&copied!=expected))throw new IOException("Incomplete directory range");
                 out.getFD().sync();
             }
-            checkDownloadBudget(paused,deadline);
             long length=offset+copied;
             if(status==206){
-                Properties next=new Properties();
-                next.setProperty("etag",tag);next.setProperty("location",location);
-                next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
+                // The full expected range has been received, checked and
+                // fsynced. Commit its small checkpoint before checking pause
+                // again, so the next slice never discards this valid prefix.
+                Properties next=completedRangeState(length,total,partial.length(),tag,location);
                 writePropertiesAtomically(checkpoint,checkpointTemp,next);
+                checkDownloadBudget(paused,deadline);
                 if(length<total)return null;
                 // Preserve the final bytes before any digest/index work.
                 // Give a large completed range its own fresh validation slice.
@@ -236,6 +243,15 @@ public final class PlaylistFeedCache {
             // Uncommitted tail is truncated on next attempt, never trusted.
             if(!checkpoint.isFile())partial.delete();
         }
+    }
+
+    static Properties completedRangeState(long length,long total,long fileLength,String tag,String location)throws IOException {
+        if(fileLength!=length||!SourceProbeTimePolicy.validDirectoryCheckpoint(length,total,fileLength,tag,location))
+            throw new IOException("Invalid completed directory range");
+        Properties next=new Properties();
+        next.setProperty("etag",tag);next.setProperty("location",location);
+        next.setProperty("length",Long.toString(length));next.setProperty("total",Long.toString(total));
+        return next;
     }
 
     private static File publishRangeBody(Context context,File directory,File cached,File partial,File checkpoint,
