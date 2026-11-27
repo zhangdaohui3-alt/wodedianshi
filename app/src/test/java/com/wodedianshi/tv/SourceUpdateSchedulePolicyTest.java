@@ -435,4 +435,20 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,true,2000L,3000L,4000L));
         assertTrue(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,2000L,3000L,4000L));
     }
+
+    @Test public void provisionalAdmissionReservesEveryPositionWithoutDroppingExistingPending(){
+        assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2000,48));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2001,48));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2048,1));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(0,0));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(-1,48));
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        for(int i=0;i<2000;i++)SourceUpdateSchedulePolicy.rememberProvisional(pending,"old"+i);
+        for(int i=0;i<48;i++)SourceUpdateSchedulePolicy.rememberProvisional(pending,"new"+i);
+        assertEquals(2048,pending.size());
+        assertTrue(pending.contains("old0"));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),1));
+        pending.remove("old0");
+        assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),1));
+    }
 }
