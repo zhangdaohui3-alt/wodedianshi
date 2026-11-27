@@ -114,21 +114,6 @@ public final class ManualProbeQualityStore {
         });
     }
 
-    // Read compatibility state only after the transaction determines it is
-    // authoritative. A stale or malformed mirror cannot block indexed seeding.
-    private static List<ManualProbeQualityEntity> legacyRows(AppDatabase db,String owner,
-            String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
-        SourceProbeTimePolicy.checkPublicationPaused(paused);
-        String a=db.appStateDao().getValue(scoresKey),b=db.appStateDao().getValue(streaksKey);
-        JSONObject scores=new JSONObject(a==null?"{}":a),streaks=new JSONObject(b==null?"{}":b);
-        Set<String> keys=new HashSet<>();
-        Iterator<String> it=scores.keys();
-        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
-        it=streaks.keys();
-        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
-        return changes(owner,keys,scores,streaks);
-    }
-
     public static void loadUrls(Context context,String owner,Collection<String> urls,Set<String> loaded,
             JSONObject scores,JSONObject streaks,BooleanSupplier paused)throws JSONException{
         loadUrls(RoomDatabaseProvider.get(context),owner,urls,loaded,scores,streaks,paused);
@@ -192,22 +177,14 @@ public final class ManualProbeQualityStore {
         return "true".equals(db.appStateDao().getValue(INITIAL_READY_KEY));
     }
 
-    /** Never read a legacy mirror if indexed published quality is authoritative. */
-    public static void ensureInitial(Context context,String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
-        ensureInitial(RoomDatabaseProvider.get(context),scoresKey,streaksKey,paused);
+    /** Start with empty private observations; inherit published Room evidence on demand. */
+    public static void ensureInitial(Context context,BooleanSupplier paused){
+        ensureInitial(RoomDatabaseProvider.get(context),paused);
     }
 
-    static void ensureInitial(AppDatabase db,String scoresKey,String streaksKey,BooleanSupplier paused)throws JSONException{
+    static void ensureInitial(AppDatabase db,BooleanSupplier paused){
         if(hasInitial(db))return;
-        db.runInTransaction((java.util.concurrent.Callable<Void>)()->{
-            requireInitialTransaction(db);
-            SourceProbeTimePolicy.checkPublicationPaused(paused);
-            if(hasInitial(db))return null;
-            List<ManualProbeQualityEntity> rows="true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY))
-                ?Collections.emptyList():legacyRows(db,INITIAL_OWNER,scoresKey,streaksKey,paused);
-            seedInitialInTransaction(db,rows,paused);
-            return null;
-        });
+        db.runInTransaction(()->seedInitialInTransaction(db,Collections.emptyList(),paused));
     }
 
     static void seedInitialInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,BooleanSupplier paused){
@@ -216,9 +193,7 @@ public final class ManualProbeQualityStore {
         if("true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))return;
         db.manualProbeQualityDao().clearOwner(INITIAL_OWNER);
         db.appStateDao().put(new AppStateEntity(INITIAL_READY_KEY,"true",System.currentTimeMillis()));
-        // An indexed published catalogue is authoritative. Do not seed it
-        // from the bounded compatibility JSON, which may be stale. Missing
-        // private keys inherit published values lazily during targeted reads.
+        // Missing private keys inherit published Room values lazily.
         if(!"true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY)))
             writeInitialInTransaction(db,rows,paused);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
