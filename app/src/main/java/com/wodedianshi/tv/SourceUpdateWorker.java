@@ -872,7 +872,7 @@ public class SourceUpdateWorker extends Worker {
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
             acquiredVersions[feedIndex]=PlaylistFeedCache.contentVersion(cachedFeed);
-            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions);
+            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions,preparedForCoverage);
             // Yield to another fresh eligible directory before deep scans; retain
             // immediate first-watch and the ordinary probe budget when none remains.
             int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(feedIndex,
@@ -4178,7 +4178,7 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     if(!viewing){
-      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed,admission.acquiredVersions);}
+      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed,admission.acquiredVersions,admission.prepared);}
       catch(IOException unavailable){android.util.Log.w("MyTVSourceDiscovery","initial_cache_inventory_unavailable");}
     }
     return admission;
