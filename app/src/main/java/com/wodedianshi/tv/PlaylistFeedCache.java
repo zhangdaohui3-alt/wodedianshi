@@ -273,7 +273,7 @@ public final class PlaylistFeedCache {
         if(tag!=null)fresh.setProperty("etag",tag);
         writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
         checkpoint.delete();
-        pruneOldEntries(directory,cached);
+        pruneOldEntries(directory,cached,true);
         return cached;
     }
 
@@ -326,7 +326,7 @@ public final class PlaylistFeedCache {
                 || (System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
             metadata.setLastModified(System.currentTimeMillis());
-            pruneOldEntries(directory, cached);
+            pruneOldEntries(directory, cached,initialDiscovery);
             return cached;
         }
 
@@ -361,7 +361,7 @@ public final class PlaylistFeedCache {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
                 metadata.setLastModified(System.currentTimeMillis());
-                pruneOldEntries(directory, cached);
+                pruneOldEntries(directory, cached,initialDiscovery);
                 return cached;
             }
             if (!SourceProbeTimePolicy.fullDirectoryResponse(status,connection.getHeaderField("Content-Range"))) {
@@ -433,7 +433,7 @@ public final class PlaylistFeedCache {
             if (responseEtag != null) fresh.setProperty("etag", responseEtag);
             if (responseModified != null) fresh.setProperty("lastModified", responseModified);
             writePropertiesAtomically(metadata, metadataTemporary, fresh);
-            pruneOldEntries(directory, cached);
+            pruneOldEntries(directory, cached,initialDiscovery);
             return cached;
         } finally {
             if (connection != null) connection.disconnect();
@@ -497,17 +497,34 @@ public final class PlaylistFeedCache {
         }
     }
 
-    /** Keep the app's private cache bounded even when many feeds are configured. */
-    private static void pruneOldEntries(File directory, File keep) {
+    /** Index construction adds bytes after download pruning. Recheck the same
+     * bounded cache after a successful initial index, keeping its current body. */
+    static void trimPreparedInitial(File playlist) throws IOException {
+        if(playlist!=null)pruneOldEntries(playlist.getParentFile(),playlist,true);
+    }
+
+    private static void pruneOldEntries(File directory,File keep,boolean initial) throws IOException {
+        java.util.Set<String> preferred=new java.util.HashSet<>();
+        if(initial)for(String feed:SourceDiscoveryFeedCatalog.feeds())
+            preferred.add(sha256("initial|"+feed)+".m3u");
+        pruneOldEntries(directory,keep,preferred,MAX_CACHE_BYTES);
+    }
+
+    /** Prefer retaining initial-build files only while acquiring initial
+     * directories. A hard capacity target still allows older initial files
+     * to be evicted when necessary; the current body is never removed. */
+    static void pruneOldEntries(File directory,File keep,java.util.Set<String> preferred,long budget) {
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
         if (files == null || files.length == 0) return;
         long total = 0L;
         for (File file : files) total += cacheEntrySize(file);
-        if (total <= MAX_CACHE_BYTES) return;
-        java.util.Arrays.sort(files, (left, right) ->
-                Long.compare(lastAccess(left), lastAccess(right)));
+        if (total <= budget) return;
+        java.util.Arrays.sort(files, (left, right) -> {
+            int preference=Boolean.compare(preferred.contains(left.getName()),preferred.contains(right.getName()));
+            return preference!=0?preference:Long.compare(lastAccess(left),lastAccess(right));
+        });
         for (File file : files) {
-            if (total <= MAX_CACHE_BYTES) break;
+            if (total <= budget) break;
             if (file.equals(keep)) continue;
             long size = cacheEntrySize(file);
             if (!file.delete()) continue;
