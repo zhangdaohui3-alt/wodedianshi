@@ -3294,6 +3294,16 @@ public class SourceUpdateWorker extends Worker {
         &&!socketTimedOut&&!transientNetworkFailure&&!incompleteSample;}
     boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
+    // Local to one probe, allocated only after an explicit pressure response.
+    private HashSet<String> pressureOrigins;
+    boolean originDeferred(String origin){
+      return pressureOrigins!=null&&pressureOrigins.contains(origin);
+    }
+    void noteOriginPressure(String origin){
+      if(origin==null||origin.isEmpty())return;
+      if(pressureOrigins==null)pressureOrigins=new HashSet<>();
+      pressureOrigins.add(origin);
+    }
     int score;
     int width,height;
     long latencyMs;
@@ -3678,6 +3688,12 @@ public class SourceUpdateWorker extends Worker {
     HttpURLConnection c=null;
     try{
       if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
+      // Avoid another request to an origin that explicitly asked this
+      // probe to back off. Independent origins remain eligible.
+      if(result.pressureOrigins!=null
+          &&result.originDeferred(InitialOriginCooldownPolicy.origin(address))){
+        result.transientNetworkFailure=true;return null;
+      }
       c=(HttpURLConnection)new URL(address).openConnection();
       // URLConnection options must be configured before the first operation that connects it.
       // Reserve half the remaining budget for connection setup and the rest for response reads.
@@ -3698,7 +3714,11 @@ public class SourceUpdateWorker extends Worker {
       result.sampleRequests++;
       int code=c.getResponseCode();
       if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
-      if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
+      if(SourceProbeTimePolicy.transientProbeHttpStatus(code)){
+        TransientProbeHttpException pressure=new TransientProbeHttpException(code,c.getURL().toString());
+        if(code==429||code==503)result.noteOriginPressure(pressure.origin);
+        throw pressure;
+      }
       // A rejected byte range proves this sampling method failed, not
       // that the original stream is unplayable. Do not retry without Range
       // in this bounded probe.
