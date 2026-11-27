@@ -511,6 +511,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
+                 .remove(DiscoveryBatchPolicy.initialReplayMaskKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(feed))
                 .remove(initialFeedUnavailableKey(feed))
                 .remove(initialFeedFailureCountKey(feed))
@@ -1166,6 +1167,9 @@ public class SourceUpdateWorker extends Worker {
               roomInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK),
               initialDiscoveryScanned)
           :DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
+      long replayMask=initialDiscoveryChain&&pageFeed>=0
+          ?DiscoveryBatchPolicy.resumeReplayMask(roomString(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),""),
+              transientRecheck,candidates.size()):0L;
       // Resume by exact position inside an unchanged batch. URL-based cursors are
       // unsafe because distinct channel identities can share one endpoint; choosing
       // the last duplicate URL can skip entries that were not yet scanned.
@@ -1193,7 +1197,9 @@ public class SourceUpdateWorker extends Worker {
       int savedIndex=0,discoveryIndex=0;
       while(savedIndex<savedWindow||discoveryIndex<discoveryWindow){
         if(discoveryIndex<discoveryWindow){
-          Entry e=candidates.get((discoveryScanStart+discoveryIndex)%candidates.size());
+          int position=(discoveryScanStart+discoveryIndex)%candidates.size();
+          Entry e=candidates.get(position);
+          e.skipReplay=DiscoveryBatchPolicy.skipReplayPosition(transientRecheck,replayMask,position);
           probeCandidates.add(e);discoveryIndex++;
         }
         if(savedIndex<savedWindow){
@@ -1299,6 +1305,7 @@ public class SourceUpdateWorker extends Worker {
             &&!idleWave.has(e.endpoint())))break;
         boolean priorityRecheck=priorityRechecks.contains(e);
         if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
+        if(e.skipReplay)continue;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=e.endpoint();
         String exactScoreKey=null,oldScoreKey=null;
@@ -1320,8 +1327,8 @@ public class SourceUpdateWorker extends Worker {
           if(allowOriginDeferral&&!reuse&&!idleWave.has(endpoint)
               &&INITIAL_ORIGINS.cooling(origin,clock)){
             if(pageFeed<0)throw new IllegalStateException("Missing origin recheck page");
-            transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
-                initialDiscoveryScanned+discoveryScanned-1);
+            replayMask=DiscoveryBatchPolicy.noteReplayPosition(replayMask,initialDiscoveryScanned+discoveryScanned-1,candidates.size());
+            transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,initialDiscoveryScanned+discoveryScanned-1);
             originDeferred++;
             continue;
           }
@@ -1431,22 +1438,23 @@ public class SourceUpdateWorker extends Worker {
               // Save the earliest unresolved position with the same immutable
               // page fingerprint, but let other positions have their paced turn.
               // At page end rewind once for idle replay before advancing raw cursor.
-              transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
-                  initialDiscoveryScanned+discoveryScanned-1);
+              replayMask=DiscoveryBatchPolicy.noteReplayPosition(replayMask,initialDiscoveryScanned+discoveryScanned-1,candidates.size());
+              transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,initialDiscoveryScanned+discoveryScanned-1);
             }
             // Preserve the existing transient failure replay. Also allow a timed-out
             // clearly mainland candidate to recover a missing early core category.
             // Do not expand ordinary timeout retries across the full catalogue.
             if(initialDiscoveryChain&&pageFeed>=0&&!slowPlayback&&!e.savedSource
-                &&transientRecheck==DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK){
+                &&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
               boolean coreTimeout=measured.recoverableCoreWindow()&&preferCoreCoverage
                   &&ChinaDiscoveryCandidatePolicy.isClearlyMainland(e.scope,e.name,e.group,e.tvgName,e.tvgId)
                   &&DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,saved.length(),
                       (long)initialCheckedAtStart+checked,observedCoreMask,
                       FullDiscoveryProgressPolicy.coreCategoryMask(e.name,e.group,e.tvgName,e.tvgId,"china".equals(e.scope)));
-              if(measured.transientNetworkFailure||coreTimeout)
-                transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,
-                    initialDiscoveryScanned+discoveryScanned-1);
+              if(measured.transientNetworkFailure||coreTimeout){
+                replayMask=DiscoveryBatchPolicy.noteReplayPosition(replayMask,initialDiscoveryScanned+discoveryScanned-1,candidates.size());
+                transientRecheck=DiscoveryBatchPolicy.noteTransientRecheck(transientRecheck,initialDiscoveryScanned+discoveryScanned-1);
+              }
             }
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
@@ -1618,6 +1626,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&pageFeed>=0&&DiscoveryBatchPolicy.shouldReplayTransientSuffix(
           transientRecheck,nextBatchScanned,candidates.size())){
         nextBatchScanned=transientRecheck;
+        replayMask=DiscoveryBatchPolicy.includeReplayAliases(replayMask,candidates,Entry::endpoint);
         transientRecheck=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED;
         // Recheck only in idle; never loop on an unavailable server during playback.
         update.putBoolean(DiscoveryBatchPolicy.initialIdleRecheckKey(pageFeed),true)
@@ -1727,6 +1736,7 @@ public class SourceUpdateWorker extends Worker {
           if(!batch.success)continue;
           if(initialDiscoveryChain)update.remove(DiscoveryBatchPolicy.initialIdleRecheckKey(batch.index))
               .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(batch.index))
+              .remove(DiscoveryBatchPolicy.initialReplayMaskKey(batch.index))
               .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(batch.index));
           if(!initialDiscoveryChain && recoveredDirectoryScanned(batch)
               && Boolean.parseBoolean(recoveryState.get(initialFeedUnavailableKey(batch.index)))){
@@ -1770,7 +1780,8 @@ public class SourceUpdateWorker extends Worker {
         update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
             .putInt(batchPrefix+"scanned",nextBatchScanned);
         if(initialDiscoveryChain&&pageFeed>=0)
-          update.putInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),transientRecheck);
+          update.putInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),transientRecheck)
+              .putString(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),Long.toString(replayMask));
       }
       if(!initialDiscoveryChain&&feedBatchComplete){
         int stillUnavailable=0;
@@ -2000,6 +2011,7 @@ public class SourceUpdateWorker extends Worker {
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
+                 .remove(DiscoveryBatchPolicy.initialReplayMaskKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckAtKey(feed));
         }
         failedBuildReset.remove(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY)
@@ -2895,7 +2907,7 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isActivityActive();
   }
   static final class Entry{
-    String name,group,scope,tvgId,tvgName;boolean savedSource;
+    String name,group,scope,tvgId,tvgName;boolean savedSource,skipReplay;
     final String url;
     private String canonicalEndpoint;
     // Candidate identities belong to the serial source-work owner. The HTTP
@@ -3185,6 +3197,7 @@ public class SourceUpdateWorker extends Worker {
       for(;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
         if(initial&&entry.savedSource)break;
+        if(entry.skipReplay)continue;
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
         String endpoint=entry.endpoint();
         // An already measured or unsupported row cannot issue another network
@@ -3265,6 +3278,7 @@ public class SourceUpdateWorker extends Worker {
       while(slots>0&&rollingNext<rollingEntries.size()){
         Entry entry=rollingEntries.get(rollingNext);
         if(entry.savedSource)return;
+        if(entry.skipReplay){rollingNext++;continue;}
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
         String endpoint=entry.endpoint();
         if(IdleProbeWavePolicy.canBridgeKnownRow(http,rollingMeasured.containsKey(endpoint))){
