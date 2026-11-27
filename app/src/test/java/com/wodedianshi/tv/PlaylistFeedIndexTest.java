@@ -387,11 +387,44 @@ public class PlaylistFeedIndexTest {
             org.junit.Assert.assertTrue(first.exists());
             org.junit.Assert.assertTrue(index.exists());
             org.junit.Assert.assertTrue(current.exists());
+            PlaylistFeedCache.pruneOldEntries(dir,current,preferred,20L);
+            org.junit.Assert.assertTrue(first.exists());
+            org.junit.Assert.assertFalse(index.exists());
+            org.junit.Assert.assertTrue(current.exists());
             PlaylistFeedCache.pruneOldEntries(dir,current,preferred,10L);
             org.junit.Assert.assertFalse(first.exists());
             org.junit.Assert.assertFalse(index.exists());
             org.junit.Assert.assertTrue(current.exists());
         } finally {
+            File[] children=dir.listFiles();
+            if(children!=null)for(File child:children)child.delete();
+            dir.delete();
+        }
+    }
+
+    @Test public void pressureEvictsDerivedIndexButPreservesExactAcquiredBody() throws Exception {
+        File dir=java.nio.file.Files.createTempDirectory("mytv-index-pressure").toFile();
+        try{
+            File body=new File(dir,"initial-old.m3u"),current=new File(dir,"initial-current.m3u");
+            byte[] bytes="#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/live\n".getBytes(StandardCharsets.UTF_8);
+            try(FileOutputStream out=new FileOutputStream(body)){out.write(bytes);}
+            try(FileOutputStream out=new FileOutputStream(current)){out.write(bytes);}
+            java.util.Properties metadata=PlaylistFeedCache.recoveredBodyMetadata(body,()->false,true);
+            File sidecar=new File(body.getPath()+".properties");
+            try(FileOutputStream out=new FileOutputStream(sidecar)){metadata.store(out,"");}
+            String version=PlaylistFeedCache.contentVersion(body);
+            PlaylistFeedIndex.readInitialPage(body,0,1,row->{},()->false);
+            org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(body));
+            long budget=body.length()+current.length()+sidecar.length();
+            PlaylistFeedCache.pruneOldEntries(dir,current,
+                new java.util.HashSet<>(java.util.Arrays.asList(body.getName(),current.getName())),budget);
+            assertEquals(body,PlaylistFeedCache.matchingAcquiredBody(body,version));
+            assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(body));
+            org.junit.Assert.assertTrue(current.exists());
+            assertEquals(1,PlaylistFeedIndex.readInitialPage(body,0,1,row->{},()->false));
+            assertEquals(version,PlaylistFeedCache.contentVersion(body));
+            org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(body));
+        }finally{
             File[] children=dir.listFiles();
             if(children!=null)for(File child:children)child.delete();
             dir.delete();
