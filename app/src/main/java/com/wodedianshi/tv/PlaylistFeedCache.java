@@ -273,7 +273,7 @@ public final class PlaylistFeedCache {
         if(tag!=null)fresh.setProperty("etag",tag);
         writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
         checkpoint.delete();
-        pruneOldEntries(directory,cached,true);
+        pruneOldEntries(context,directory,cached,true);
         return cached;
     }
 
@@ -326,7 +326,7 @@ public final class PlaylistFeedCache {
                 || (System.currentTimeMillis() - cachedAt >= 0L
                 && System.currentTimeMillis() - cachedAt < MAX_AGE_MS))) {
             metadata.setLastModified(System.currentTimeMillis());
-            pruneOldEntries(directory, cached,initialDiscovery);
+            pruneOldEntries(context,directory,cached,initialDiscovery);
             return cached;
         }
 
@@ -361,7 +361,7 @@ public final class PlaylistFeedCache {
                 old.setProperty("cachedAt", Long.toString(System.currentTimeMillis()));
                 writePropertiesAtomically(metadata, metadataTemporary, old);
                 metadata.setLastModified(System.currentTimeMillis());
-                pruneOldEntries(directory, cached,initialDiscovery);
+                pruneOldEntries(context,directory,cached,initialDiscovery);
                 return cached;
             }
             if (!SourceProbeTimePolicy.fullDirectoryResponse(status,connection.getHeaderField("Content-Range"))) {
@@ -433,7 +433,7 @@ public final class PlaylistFeedCache {
             if (responseEtag != null) fresh.setProperty("etag", responseEtag);
             if (responseModified != null) fresh.setProperty("lastModified", responseModified);
             writePropertiesAtomically(metadata, metadataTemporary, fresh);
-            pruneOldEntries(directory, cached,initialDiscovery);
+            pruneOldEntries(context,directory,cached,initialDiscovery);
             return cached;
         } finally {
             if (connection != null) connection.disconnect();
@@ -553,26 +553,51 @@ public final class PlaylistFeedCache {
 
     /** Index construction adds bytes after download pruning. Recheck the same
      * bounded cache after a successful initial index, keeping its current body. */
-    static void trimPreparedInitial(File playlist) throws IOException {
-        if(playlist!=null)pruneOldEntries(playlist.getParentFile(),playlist,true);
+    static void trimPreparedInitial(Context context,File playlist) throws IOException {
+        if(playlist!=null)pruneOldEntries(context,playlist.getParentFile(),playlist,true);
     }
 
-    private static void pruneOldEntries(File directory,File keep,boolean initial) throws IOException {
+    private static void pruneOldEntries(Context context,File directory,File keep,boolean initial) {
+        pruneWithPreference(directory,keep,MAX_CACHE_BYTES,()->{
+            if(!initial)return java.util.Collections.emptySet();
+            String[] feeds=SourceDiscoveryFeedCatalog.feeds();
+            java.util.ArrayList<String> keys=new java.util.ArrayList<>(feeds.length);
+            for(int i=0;i<feeds.length;i++)keys.add(SourceUpdateWorker.initialFeedDoneKey(i));
+            java.util.Set<String> completed=new java.util.HashSet<>();
+            try {
+                for(com.wodedianshi.tv.db.AppStateEntity state:
+                    com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).appStateDao().getValues(keys))
+                    if(Boolean.parseBoolean(state.stateValue))completed.add(state.key);
+            } catch(RuntimeException unavailable) {
+                // Missing completion evidence must not weaken candidate retention.
+                completed.clear();
+            }
+            return unfinishedInitialCacheNames(feeds,completed);
+        });
+    }
+
+    static java.util.Set<String> unfinishedInitialCacheNames(String[] feeds,java.util.Set<String> completed){
         java.util.Set<String> preferred=new java.util.HashSet<>();
-        if(initial)for(String feed:SourceDiscoveryFeedCatalog.feeds())
-            preferred.add(sha256("initial|"+feed)+".m3u");
-        pruneOldEntries(directory,keep,preferred,MAX_CACHE_BYTES);
+        for(int i=0;i<feeds.length;i++)
+            if(!completed.contains(SourceUpdateWorker.initialFeedDoneKey(i)))
+                preferred.add(sha256("initial|"+feeds[i])+".m3u");
+        return preferred;
     }
 
-    /** Prefer retaining initial-build files only while acquiring initial
-     * directories. A hard capacity target still allows older initial files
-     * to be evicted when necessary; the current body is never removed. */
+    /** Keep unfinished initial directories ahead of disposable cache entries.
+     * Read completion state only if eviction is actually necessary. */
     static void pruneOldEntries(File directory,File keep,java.util.Set<String> preferred,long budget) {
+        pruneWithPreference(directory,keep,budget,()->preferred);
+    }
+
+    private static void pruneWithPreference(File directory,File keep,long budget,
+            java.util.function.Supplier<java.util.Set<String>> preference) {
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
         if (files == null || files.length == 0) return;
         long total = 0L;
         for (File file : files) total += cacheEntrySize(file);
         if (total <= budget) return;
+        java.util.Set<String> preferred=preference.get();
         java.util.Arrays.sort(files, (left, right) -> {
             int preference=Boolean.compare(preferred.contains(left.getName()),preferred.contains(right.getName()));
             return preference!=0?preference:Long.compare(lastAccess(left),lastAccess(right));
