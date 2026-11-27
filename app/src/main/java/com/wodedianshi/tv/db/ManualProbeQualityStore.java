@@ -29,6 +29,33 @@ public final class ManualProbeQualityStore {
         AppDatabase db=RoomDatabaseProvider.get(context);
         if(!hasPublished(context))return null;
         requireCatalogueVersion(db,expectedVersion);
+        JSONObject scores=readScoresForUrls(db,PUBLISHED_OWNER,urls,paused);
+        requireCatalogueVersion(db,expectedVersion);
+        return scores;
+    }
+
+    public static JSONObject readManualRankingScores(Context context,String owner,Collection<String> urls,
+            BooleanSupplier paused)throws JSONException{
+        return readManualRankingScores(RoomDatabaseProvider.get(context),owner,urls,paused);
+    }
+
+    static JSONObject readManualRankingScores(AppDatabase db,String owner,Collection<String> urls,
+            BooleanSupplier paused)throws JSONException{
+        requireManualReadyOwner(db,owner);
+        JSONObject scores=readScoresForUrls(db,owner,urls,paused);
+        requireManualReadyOwner(db,owner);
+        return scores;
+    }
+
+    private static void requireManualReadyOwner(AppDatabase db,String owner){
+        RoomCatalogueBuildStore.requireMatchingOwner(owner,db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY));
+        RoomCatalogueBuildStore.requireMatchingOwner(owner,db.appStateDao().getValue(READY_KEY));
+        if(!"true".equals(db.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_READY_KEY)))
+            throw new IllegalStateException("Manual quality not ready for final ranking");
+    }
+
+    private static JSONObject readScoresForUrls(AppDatabase db,String owner,Collection<String> urls,
+            BooleanSupplier paused)throws JSONException{
         JSONObject scores=new JSONObject();
         LinkedHashSet<String> keys=new LinkedHashSet<>();
         for(String url:urls){
@@ -36,18 +63,18 @@ public final class ManualProbeQualityStore {
             if(url==null||url.isEmpty())continue;
             keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
             if(keys.size()>=256){
-                readScorePage(db,keys,scores,paused);
+                readScorePage(db,owner,keys,scores,paused);
                 keys.clear();
             }
         }
-        if(!keys.isEmpty())readScorePage(db,keys,scores,paused);
-        requireCatalogueVersion(db,expectedVersion);
+        if(!keys.isEmpty())readScorePage(db,owner,keys,scores,paused);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
         return scores;
     }
-    private static void readScorePage(AppDatabase db,Set<String> keys,JSONObject scores,
+    private static void readScorePage(AppDatabase db,String owner,Set<String> keys,JSONObject scores,
             BooleanSupplier paused)throws JSONException{
         SourceProbeTimePolicy.checkPublicationPaused(paused);
-        for(ManualProbeQualityEntity row:db.manualProbeQualityDao().load(PUBLISHED_OWNER,new ArrayList<>(keys)))
+        for(ManualProbeQualityEntity row:db.manualProbeQualityDao().load(owner,new ArrayList<>(keys)))
             if(row.score!=null)scores.put(row.sourceKey,row.score);
     }
     private static void requireCatalogueVersion(AppDatabase db,long expected){
