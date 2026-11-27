@@ -561,4 +561,102 @@ public class HlsWorkerProbeIntegrationTest {
             assertFalse(result.deterministicEvidenceLimit());
         }finally{serverThread.shutdownNow();}
     }
+
+    /** Compare the actual HTTP path over identical mixed fixtures. No wall-clock
+     * assertions: network timing in CI is not a device or Internet benchmark. */
+    @Test public void mixedBatchFullVersusScreeningPreservesEvidenceAndReducesBodyReads()throws Exception{
+        String[] roots={"/direct.ts","/null.ts","/healthy.m3u8","/master.m3u8",
+                "/bad.m3u8","/busy.ts","/range.m3u8"};
+        String[] fullRequests={"/direct.ts","/null.ts","/healthy.m3u8","/healthy1.ts","/healthy2.ts",
+                "/master.m3u8","/high.m3u8","/shared.ts","/high2.ts","/low.m3u8","/shared.ts","/low2.ts",
+                "/bad.m3u8","/bad1.ts","/bad2.ts","/busy.ts","/range.m3u8"};
+        String[] fastRequests={"/direct.ts","/null.ts","/healthy.m3u8","/healthy1.ts","/healthy2.ts",
+                "/master.m3u8","/high.m3u8","/shared.ts","/high2.ts","/low.m3u8","/low2.ts",
+                "/bad.m3u8","/bad1.ts","/bad2.ts","/busy.ts","/range.m3u8"};
+        byte[] largeTs=new byte[32768],nullTs=new byte[188*30];
+        for(int at=0;at+188<=largeTs.length;at+=188){
+            largeTs[at]=0x47;largeTs[at+2]=0x20;largeTs[at+3]=0x10;
+        }
+        for(int at=0;at<nullTs.length;at+=188){
+            nullTs[at]=0x47;nullTs[at+1]=0x1f;nullTs[at+2]=(byte)0xff;nullTs[at+3]=0x10;
+        }
+        Map<String,byte[]> bodies=new HashMap<>();
+        bodies.put("/direct.ts",largeTs);bodies.put("/null.ts",nullTs);
+        bodies.put("/healthy.m3u8",bytes(media("healthy")));
+        bodies.put("/healthy1.ts",largeTs);bodies.put("/healthy2.ts",Arrays.copyOf(largeTs,8192));
+        bodies.put("/master.m3u8",bytes(MASTER));
+        bodies.put("/high.m3u8",bytes(media("high").replace("/high1.ts","/shared.ts")));
+        bodies.put("/low.m3u8",bytes(media("low").replace("/low1.ts","/shared.ts")));
+        bodies.put("/shared.ts",largeTs);bodies.put("/high2.ts",bytes("not media"));
+        bodies.put("/low2.ts",Arrays.copyOf(largeTs,8192));
+        bodies.put("/bad.m3u8",bytes(media("bad")));bodies.put("/bad1.ts",transportSample());
+        bodies.put("/bad2.ts",bytes("not media"));
+        bodies.put("/busy.ts",new byte[0]);
+        bodies.put("/range.m3u8",bytes("#EXTM3U\n#EXTINF:6,\n#EXT-X-BYTERANGE:376@0\nshared.ts\n"));
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(int mode=0;mode<2;mode++){
+                    for(String path:mode==0?fullRequests:fastRequests){
+                        try(Socket socket=server.accept()){
+                            socket.setSoTimeout(5000);
+                            BufferedReader reader=new BufferedReader(new InputStreamReader(
+                                    socket.getInputStream(),StandardCharsets.US_ASCII));
+                            String start=reader.readLine();
+                            assertNotNull(start);assertTrue(start,start.startsWith("GET "+path+" "));
+                            for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                            byte[] body=bodies.get(path);
+                            assertNotNull(body);
+                            OutputStream out=socket.getOutputStream();
+                            String status="/busy.ts".equals(path)?"429 Too Many Requests":"200 OK";
+                            out.write(bytes("HTTP/1.1 "+status+"\r\nContent-Type: application/octet-stream\r\n"
+                                    +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                            try{out.write(body);out.flush();}
+                            catch(SocketException closed){
+                                if(mode==0||!Arrays.asList("/direct.ts","/healthy2.ts","/low2.ts").contains(path))throw closed;
+                            }
+                        }
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult[][] observed=new SourceUpdateWorker.ProbeResult[2][roots.length];
+            long[] requests=new long[2],bodyBytes=new long[2];
+            for(int mode=0;mode<2;mode++){
+                for(int i=0;i<roots.length;i++){
+                    SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                            "http://127.0.0.1:"+server.getLocalPort()+roots[i],
+                            SystemClock.elapsedRealtime()+15000L,false,()->false,mode==1);
+                    observed[mode][i]=result;
+                    requests[mode]+=result.sampleRequests;bodyBytes[mode]+=result.sampleBytes;
+                }
+            }
+            served.get(15,TimeUnit.SECONDS);
+            boolean[] valid={true,false,true,true,false,false,false};
+            boolean[] uncertain={false,false,false,false,false,true,true};
+            for(int mode=0;mode<2;mode++){
+                for(int i=0;i<roots.length;i++){
+                    assertEquals(roots[i],valid[i],observed[mode][i].valid);
+                    assertEquals(roots[i],uncertain[i],observed[mode][i].inconclusive());
+                }
+                assertEquals(640,observed[mode][3].width);
+                assertTrue(observed[mode][5].firstOriginPressure);
+                assertTrue(observed[mode][6].unsupportedPreflight);
+            }
+            assertFalse(observed[0][0].provisional);assertTrue(observed[1][0].provisional);
+            assertEquals(17L,requests[0]);assertEquals(16L,requests[1]);
+            long expectedFullBytes=0;
+            for(String path:fullRequests)expectedFullBytes+=bodies.get(path).length;
+            assertEquals(expectedFullBytes,bodyBytes[0]);
+            // A fragmented confirmation read can consume up to 375+1024
+            // bytes before finding two complete packets. Use that safe bound.
+            assertTrue("full="+bodyBytes[0]+" fast="+bodyBytes[1],
+                    bodyBytes[0]-bodyBytes[1]>=28672L+32768L+2L*(8192L-1399L));
+            System.out.println("mixed_probe_comparison full_requests="+requests[0]
+                    +" fast_requests="+requests[1]+" full_body_bytes="+bodyBytes[0]
+                    +" fast_body_bytes="+bodyBytes[1]);
+        }finally{serverThread.shutdownNow();}
+    }
 }
