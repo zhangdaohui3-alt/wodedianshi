@@ -1775,6 +1775,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           keys.add("source_initial_index_bypassed");
           keys.add("source_initial_index_ready");
           keys.add("source_initial_index_entries");
+          final int configuredFeeds=SourceDiscoveryFeedCatalog.feeds().length;
+          for(int i=0;i<configuredFeeds;i++)keys.add(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
           for(String suffix:new String[]{"done_feeds","total_feeds","china_done_feeds",
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
@@ -1793,6 +1795,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           final boolean indexBypassed="true".equals(snapshot.get("source_initial_index_bypassed"));
           final int indexReady=(int)readStateLong(snapshot,"source_initial_index_ready",0L);
           final long indexEntries=readStateLong(snapshot,"source_initial_index_entries",0L);
+          final int preparedFeeds=FullDiscoveryProgressPolicy.recordedAcquisitions(snapshot,0,configuredFeeds);
+          final int preparedMainland=FullDiscoveryProgressPolicy.recordedAcquisitions(snapshot,0,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
           final int done=(int)readStateLong(snapshot,prefix+"done_feeds",0L);
           final int total=(int)readStateLong(snapshot,prefix+"total_feeds",0L);
           final int chinaDone=(int)readStateLong(snapshot,prefix+"china_done_feeds",0L);
@@ -1877,7 +1881,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               return;
             }
             String recoverySignature=done+":"+checked+":"+validated+":"+staged+":"+basisPoints
-                +":"+feedIndex+":"+cursor+":"+indexAttempted+":"+indexReady+":"+indexEntries;
+                +":"+feedIndex+":"+cursor+":"+indexAttempted+":"+indexReady+":"+indexEntries+":"+preparedFeeds;
             long recoveryNow=android.os.SystemClock.elapsedRealtime();
             if(!recoverySignature.equals(initialRecoveryProgressSignature)
                 ||recoveryNow<initialRecoveryUnchangedSince){
@@ -1944,10 +1948,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
                 (total>0?"已处理目录 "+Math.max(0,done)+"/"+total
                     +" · 中国大陆 "+Math.max(0,chinaDone)+"/"+Math.max(0,chinaTotal)
                     :"正在准备来源列表"))
+                +"\n目录准备记录 "+preparedFeeds+"/"+configuredFeeds+" · 中国大陆 "+preparedMainland+"/"+SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT+"（非线路验证）"
                 +"\n已整理频道 "+Math.max(0,staged)+(previewLevel>0?" · 阶段目录已发布":"")+" · 中国初筛通过 "
                     +Math.max(0,chinaValidated)+" 次"
                 +"\n初筛地址 "+Math.max(0,checked)+" · 失败目录 "
-                    +Math.max(0,unavailable)+" 个 · 超时 "+Math.max(0,timeouts)+" 次"
+                    +Math.max(0,unavailable)+" 个 · 检测不确定 "+Math.max(0,timeouts)+" 次"
                 +(total>0?"\n当前目录 "+(Math.max(0,feedIndex)+1)+fraction:"")
                 +(initialDiscoverySchedulerDetail.isEmpty()?"":"\n"+initialDiscoverySchedulerDetail);
             refreshInitialDiscoveryDetailsDialog();
