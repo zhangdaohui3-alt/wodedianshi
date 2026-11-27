@@ -401,6 +401,57 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void emptyLiveWindowIsUnconfirmedButClosedEmptyPlaylistIsNot()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            String live="#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:42\n";
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/live-empty.m3u8",200,bytes(live));
+                replyRecheck(server,"/ended-empty.m3u8",200,bytes(live+"#EXT-X-ENDLIST\n"));
+                return null;
+            });
+            String base="http://127.0.0.1:"+server.getLocalPort();
+            SourceUpdateWorker.ProbeResult empty=SourceUpdateWorker.probe(base+"/live-empty.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false);
+            SourceUpdateWorker.ProbeResult ended=SourceUpdateWorker.probe(base+"/ended-empty.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(empty.valid);assertTrue(empty.inconclusive());
+            assertFalse(ended.valid);assertFalse(ended.inconclusive());
+            assertEquals(1L,empty.sampleRequests);assertEquals(1L,ended.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
+    @Test public void shortIdentityHttpBodyCannotEstablishCompleteMediaEvidence()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    assertTrue(reader.readLine().startsWith("GET /short.ts "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                            +"Content-Length: 4096\r\nConnection: close\r\n\r\n"));
+                    out.write(transportSample());out.flush();
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/short.ts",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(result.valid);assertTrue(result.inconclusive());
+            assertEquals(1L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
