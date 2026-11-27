@@ -12,6 +12,39 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=28,manifest=Config.NONE)
 public class InitialQualityTransactionTest {
+    @Test public void manualSeedCapturesLegacyOnlyWhenUnindexedAndRollsBack()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String owner="manual-capture";
+            String scores=RoomCatalogueBuildStore.MANUAL_SCORES_KEY,streaks=RoomCatalogueBuildStore.MANUAL_STREAKS_KEY;
+            db.appStateDao().put(new AppStateEntity("source_probe_scores_v1","{\"a\":900}",1L));
+            db.appStateDao().put(new AppStateEntity("source_probe_failure_streaks_v1","{\"b\":2}",1L));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            db.runInTransaction(()->ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,2L,()->false));
+            assertEquals("{\"a\":900}",db.appStateDao().getValue(scores));
+            assertEquals("{\"b\":2}",db.appStateDao().getValue(streaks));
+            db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_OWNER_KEY);
+            db.runInTransaction(()->{
+                ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false);
+                ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
+            });
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            try{
+                db.runInTransaction(()->{
+                    ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,3L,()->false);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertEquals("{\"a\":900}",db.appStateDao().getValue(scores));
+            db.runInTransaction(()->ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,owner,4L,()->false));
+            assertNull(db.appStateDao().getValue(scores));
+            assertNull(db.appStateDao().getValue(streaks));
+            assertEquals("{\"a\":900}",db.appStateDao().getValue("source_probe_scores_v1"));
+        }finally{db.close();}
+    }
+
     @Test public void indexedSeedIgnoresObsoleteMalformedMirrors()throws Exception{
         android.content.Context context=RuntimeEnvironment.getApplication();
         AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
