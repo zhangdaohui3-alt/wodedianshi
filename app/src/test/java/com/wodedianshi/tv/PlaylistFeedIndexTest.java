@@ -273,6 +273,33 @@ public class PlaylistFeedIndexTest {
         assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
     }
 
+    @Test public void smallRangeCheckpointsSurviveRotationWithinSameByteBudget() throws Exception {
+        File dir=java.nio.file.Files.createTempDirectory("mytv-range-budget").toFile();
+        try{
+            File current=new File(dir,"current.range-part");
+            File[] parts=new File[5];
+            for(int i=0;i<parts.length;i++){
+                parts[i]=new File(dir,"feed"+i+".range-part");
+                try(FileOutputStream out=new FileOutputStream(parts[i])){out.write(new byte[4]);}
+                parts[i].setLastModified(1000L+i*1000L);
+                org.junit.Assert.assertTrue(new File(dir,"feed"+i+".range-state").createNewFile());
+            }
+            try(FileOutputStream out=new FileOutputStream(current)){out.write(new byte[20]);}
+            PlaylistFeedCache.trimOtherRangeParts(dir,current,20L);
+            for(File part:parts)org.junit.Assert.assertTrue(part.exists());
+            PlaylistFeedCache.trimOtherRangeParts(dir,current,8L);
+            for(int i=0;i<parts.length;i++){
+                assertEquals(i>=3,parts[i].exists());
+                assertEquals(i>=3,new File(dir,"feed"+i+".range-state").exists());
+            }
+            org.junit.Assert.assertTrue(current.exists());
+        }finally{
+            File[] files=dir.listFiles();
+            if(files!=null)for(File file:files)file.delete();
+            dir.delete();
+        }
+    }
+
     @Test public void completedInitialDirectoryYieldsCacheToUnfinishedDirectory() throws Exception {
         String[] feeds={"https://example.invalid/one","https://example.invalid/two"};
         java.util.Set<String> all=PlaylistFeedCache.unfinishedInitialCacheNames(
