@@ -60,6 +60,14 @@ public final class SourceUpdateSchedulePolicy {
     }
 
 
+    /** Reserve room for every candidate position, including endpoint aliases.
+     * Admission is fixed for the slice so speculative parallel work cannot
+     * overflow the durable provisional queue. */
+    static boolean permitsProvisionalScreen(int pending,int positions){
+        return pending>=0&&positions>0&&pending<=PROVISIONAL_RECHECK_CAP
+                &&positions<=PROVISIONAL_RECHECK_CAP-pending;
+    }
+
     /** Bounded insertion-order evidence list; retry attempts can move a key to
      * the tail without extending the normal saved-source rotation. */
     static void rememberProvisional(java.util.LinkedHashSet<String> keys,String key){
