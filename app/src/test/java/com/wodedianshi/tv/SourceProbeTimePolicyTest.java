@@ -314,4 +314,19 @@ public class SourceProbeTimePolicyTest {
         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(5_000L, 1_000L, 0));
         assertEquals(0, SourceProbeTimePolicy.boundedTimeoutMillis(5_000L, 1_000L, -10));
     }
+
+    @Test public void manualIdleSharesInitialAddressBudgetWithoutChangingRoutineOrViewing(){
+        assertTrue(SourceProbeTimePolicy.usesBoundedAddressBudget(true,false,false));
+        assertTrue(SourceProbeTimePolicy.usesBoundedAddressBudget(true,false,true));
+        assertTrue(SourceProbeTimePolicy.usesBoundedAddressBudget(false,true,false));
+        assertFalse(SourceProbeTimePolicy.usesBoundedAddressBudget(false,true,true));
+        assertFalse(SourceProbeTimePolicy.usesBoundedAddressBudget(false,false,false));
+        long deadline=90000L;
+        assertEquals(15000L,SourceProbeTimePolicy.initialAddressDeadline(deadline,0L));
+        assertEquals(30000L,SourceProbeTimePolicy.initialAddressDeadline(deadline,15000L));
+        assertEquals(90000L,SourceProbeTimePolicy.initialAddressDeadline(deadline,75000L));
+        assertEquals(0L,SourceProbeTimePolicy.initialAddressDeadline(deadline,75001L));
+        assertTrue(SourceProbeTimePolicy.initialProbeInconclusive(false,15000L,15000L));
+        assertFalse(SourceProbeTimePolicy.initialProbeInconclusive(false,14999L,15000L));
+    }
 }
