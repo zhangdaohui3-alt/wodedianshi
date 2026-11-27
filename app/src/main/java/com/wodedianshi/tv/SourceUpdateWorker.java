@@ -3555,7 +3555,7 @@ public class SourceUpdateWorker extends Worker {
                     :HlsAes128Preflight.ivForMediaSequence(resources.mediaSequenceNumbers.get(0));
                 if(!HlsAes128Preflight.validatesMediaSegment(
                     candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
-              }else if(!looksLikeHlsSegment(candidateSample))continue;
+              }else if(!MediaPayloadValidator.looksLikeHlsSegment(candidateSample))continue;
               if(probeSampleInterrupted(renditionDeadline,pauseRequested,result))continue;
               evidence=new ClearSegmentEvidence(candidateSample.length,
                   Math.max(1L,android.os.SystemClock.elapsedRealtime()-candidateSegmentStart),candidateSampleResponse.earlyDirectTs);
@@ -3578,7 +3578,7 @@ public class SourceUpdateWorker extends Worker {
                       :HlsAes128Preflight.ivForMediaSequence(resources.mediaSequenceNumbers.get(1));
                   secondSegmentOk=HlsAes128Preflight.validatesMediaSegment(
                       second,aesKey,secondIv,HlsProbeValidationPolicy.isCompleteSample(secondResponse.truncated));
-                }else secondSegmentOk=second!=null&&looksLikeHlsSegment(second);
+                }else secondSegmentOk=MediaPayloadValidator.looksLikeHlsSegment(second);
               }
               if(!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))continue;
             }
@@ -3620,9 +3620,8 @@ public class SourceUpdateWorker extends Worker {
         return result;
       }
       result.latencyMs=Math.max(1L,android.os.SystemClock.elapsedRealtime()-started);
-      URL url=new URL(address);
-      String ext=url.getPath().toLowerCase(Locale.ROOT);
-      if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes,ext))return result;
+      // Direct media validity depends on sampled content, not the URL suffix.
+      if(!MediaPayloadValidator.looksLikeMediaPayload(initialBytes))return result;
       result.valid=true;
       result.score=350+SourceQualityScorer.preflightSpeedBonus(result.paced,initialBytes.length,result.latencyMs);
       return result;
@@ -3642,17 +3641,6 @@ public class SourceUpdateWorker extends Worker {
         result.provisional=false;
       }
     }
-  }
-  // HLS media may be MPEG-TS or fragmented MP4 (CMAF/fMP4).
-  // Do not reject valid fMP4 segments merely because they are shorter than 188 bytes.
-  private static boolean looksLikeHlsSegment(byte[] b){
-    return MediaPayloadValidator.looksLikeHlsSegment(b);
-  }
-  private boolean hasIsoBmffBox(byte[] b){
-    return MediaPayloadValidator.hasIsoBmffBox(b);
-  }
-  private boolean looksLikeMediaPayload(byte[] b){
-    return MediaPayloadValidator.looksLikeMediaPayload(b);
   }
   private static final class ClearSegmentEvidence {
     final int bytes;
