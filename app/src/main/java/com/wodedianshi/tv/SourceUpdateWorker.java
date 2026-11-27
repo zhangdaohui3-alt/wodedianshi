@@ -509,6 +509,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedProgressKey(feed))
                 .remove(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feed))
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
+                .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"coverage_order")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
                  .remove(DiscoveryBatchPolicy.initialReplayMaskKey(feed))
@@ -1130,6 +1131,21 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery",
           "merge_preparation_ms="+(android.os.SystemClock.elapsedRealtime()-mergePreparationStartedAt)
               +" staged_rows="+saved.length()+" indexed_identities="+byIdentity.size());
+      if(initialIndexed){
+        LinkedHashSet<String> identities=new LinkedHashSet<>();
+        for(Entry entry:candidates)if(!entry.savedSource)
+          identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
+        for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
+            com.wodedianshi.tv.db.RoomCatalogueBuildStore.readInitialByIdentity(getApplicationContext(),previousStagedSize,initialRevision,identities,pauseRequested)){
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          JSONObject row=new JSONObject(entity.recordJson);
+          String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
+          if(!entity.mergeIdentity.equals(key)||!identities.contains(key))
+            throw new IllegalStateException("Stale staging identity index");
+          stagedPositions.put(row,saved.length());indexedPositions.add(entity.sortOrder);
+          saved.put(row);byIdentity.put(key,row);
+        }
+      }
       int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedPool.size(),position->{
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         return savedPool.get(position).url;
@@ -1171,6 +1187,27 @@ public class SourceUpdateWorker extends Worker {
         previousDiscoveryFingerprint=discoveryFingerprint;
         previousScanned=roomInt("source_initial_feed_batch_scanned",0);
         update.remove("source_initial_feed_batch_fingerprint").remove("source_initial_feed_batch_scanned");
+      }
+      // Coverage ordering uses only the committed staging at the start of a
+      // new page. Store the mask beside the existing fingerprint/cursor so
+      // playback, restart and exact replay cannot change positional identity.
+      String coverageOrder="";
+      if(initialDiscoveryChain&&pageFeed>=0&&!candidates.isEmpty()){
+        String rawFingerprint=discoveryFingerprint;
+        long covered=DiscoveryBatchPolicy.readCoverageMask(
+            roomString(batchPrefix+"coverage_order",""),rawFingerprint,candidates.size());
+        if(covered<0L&&!rawFingerprint.equals(previousDiscoveryFingerprint)){
+          covered=DiscoveryBatchPolicy.coveredPositions(candidates,
+              entry->byIdentity.containsKey(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName)));
+        }
+        if(covered>=0L){
+          coverageOrder=rawFingerprint+":"+covered;
+          final int coverageFeed=pageFeed;
+          DiscoveryBatchPolicy.prioritizeUncovered(candidates,covered,
+              entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(coverageFeed,
+                  entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
+          discoveryFingerprint=CatalogueFingerprint.sha256(coverageOrder);
+        }
       }
       int initialDiscoveryScanned=DiscoveryBatchPolicy.scannedForBatch(
           discoveryFingerprint,previousDiscoveryFingerprint,previousScanned,candidates.size());
@@ -1227,16 +1264,13 @@ public class SourceUpdateWorker extends Worker {
       // separate persistent quality keys. Full detection still runs when full.
       allowProvisionalScreen=initialDiscoveryChain&&!slowPlayback
           &&SourceUpdateSchedulePolicy.permitsProvisionalScreen(provisionalKeys.size(),probeCandidates.size());
-      if(manualIndexed||initialIndexed){
+      if(manualIndexed){
         if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
         for(Entry entry:probeCandidates)if(!entry.savedSource)
           identities.add(identity(entry.name,entry.group,entry.url,entry.tvgId,entry.tvgName));
         for(com.wodedianshi.tv.db.CatalogueBuildRowEntity entity:
-            (initialIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.readInitialByIdentity(
-                getApplicationContext(),previousStagedSize,initialRevision,identities,pauseRequested):
-                com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(
-                    getApplicationContext(),manualId,identities,pauseRequested))){
+            com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(getApplicationContext(),manualId,identities,pauseRequested)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=new JSONObject(entity.recordJson);
           String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
@@ -1764,7 +1798,7 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain&&batch.unavailable){
             String failedPrefix=DiscoveryBatchPolicy.initialBatchPrefix(batch.index);
             update.putBoolean(initialFeedUnavailableKey(batch.index),true)
-                .remove(failedPrefix+"fingerprint").remove(failedPrefix+"scanned");
+                .remove(failedPrefix+"fingerprint").remove(failedPrefix+"scanned").remove(failedPrefix+"coverage_order");
           }else if(initialDiscoveryChain){
             update.remove(initialFeedUnavailableKey(batch.index))
                 .remove(initialFeedFailureCountKey(batch.index))
@@ -1789,10 +1823,11 @@ public class SourceUpdateWorker extends Worker {
             update.remove(cursorKey).remove(cursorKey+"_version");
           }
         }
-        update.remove(batchPrefix+"fingerprint").remove(batchPrefix+"scanned");
+        update.remove(batchPrefix+"fingerprint").remove(batchPrefix+"scanned").remove(batchPrefix+"coverage_order");
       }else if(candidates.size()>0){
         update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
             .putInt(batchPrefix+"scanned",nextBatchScanned);
+        if(!coverageOrder.isEmpty())update.putString(batchPrefix+"coverage_order",coverageOrder);
         if(initialDiscoveryChain&&pageFeed>=0)
           update.putInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),transientRecheck)
               .putString(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),Long.toString(replayMask));
@@ -2023,6 +2058,7 @@ public class SourceUpdateWorker extends Worker {
               .remove(initialFeedProgressKey(feed))
               .remove(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feed))
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
+                .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"coverage_order")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
                  .remove(DiscoveryBatchPolicy.initialReplayMaskKey(feed))
