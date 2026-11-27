@@ -507,6 +507,55 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void hlsPressureSkipsSameOriginButAllowsIndependentRendition()throws Exception{
+        ExecutorService serverThread=Executors.newFixedThreadPool(2);
+        try(ServerSocket limited=new ServerSocket();ServerSocket healthy=new ServerSocket()){
+            limited.bind(new InetSocketAddress("127.0.0.1",0));
+            healthy.bind(new InetSocketAddress("127.0.0.1",0));
+            limited.setSoTimeout(10000);healthy.setSoTimeout(10000);
+            String master="#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n/high.m3u8\n"
+                    +"#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n/mid.m3u8\n"
+                    +"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\nhttp://127.0.0.1:"
+                    +healthy.getLocalPort()+"/low.m3u8\n";
+            Future<?> first=serverThread.submit(()->{
+                replyRecheck(limited,"/master.m3u8",200,bytes(master));
+                replyRecheck(limited,"/high.m3u8",429,new byte[0]);
+                return null;
+            });
+            Future<?> other=serverThread.submit(()->{
+                replyRecheck(healthy,"/low.m3u8",200,bytes(media("low")));
+                replyRecheck(healthy,"/low1.ts",200,transportSample());
+                replyRecheck(healthy,"/low2.ts",200,transportSample());
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+limited.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            first.get(12,TimeUnit.SECONDS);other.get(12,TimeUnit.SECONDS);
+            assertTrue(result.valid);assertFalse(result.inconclusive());
+            assertEquals(640,result.width);assertEquals(5L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
+    @Test public void sameOrigin503DoesNotCauseRepeatedRenditionRequests()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/master.m3u8",200,bytes(MASTER));
+                replyRecheck(server,"/high.m3u8",503,new byte[0]);
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(result.valid);assertTrue(result.inconclusive());
+            assertEquals(2L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
