@@ -1168,11 +1168,9 @@ public class SourceUpdateWorker extends Worker {
       final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
       final boolean publishedQualityAvailable=!manualRefresh&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
       final boolean indexedPublished=!initialDiscoveryChain&&publishedQualityAvailable;
-      // Activate for initial builds without an existing authoritative published
-      // index. Existing indexed-catalogue rebuilds keep the legacy path until
-      // their private seed can reconcile current published and legacy evidence.
-      final boolean indexedInitial=initialDiscoveryChain&&
-          (com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext())||!publishedQualityAvailable);
+      // All initial rebuilds use private indexed quality. Missing private
+      // keys inherit authoritative published evidence on demand, not a copy.
+      final boolean indexedInitial=initialDiscoveryChain;
       if(indexedInitial&&!com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext()))
         com.wodedianshi.tv.db.ManualProbeQualityStore.ensureInitial(getApplicationContext(),
             new JSONObject(roomString(scoresKey,"{}")),new JSONObject(roomString(streaksKey,"{}")),pauseRequested);
