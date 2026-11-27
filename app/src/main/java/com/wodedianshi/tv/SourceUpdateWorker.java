@@ -739,9 +739,10 @@ public class SourceUpdateWorker extends Worker {
       boolean[] preparedForCoverage=new boolean[feeds.length];
       boolean[] failedForCoverage=new boolean[feeds.length];
       boolean acquisitionYield=false;
+      boolean[] availableUnderPressure=null;
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,slowPlayback);
+        InitialFeedAdmission admission=readInitialFeedAdmission(feeds,slowPlayback);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         System.arraycopy(admission.completed,0,inspectedFeeds,0,feeds.length);
         System.arraycopy(admission.deferred,0,attemptedFeedsThisRun,0,feeds.length);
@@ -749,14 +750,15 @@ public class SourceUpdateWorker extends Worker {
         System.arraycopy(admission.prepared,0,preparedForCoverage,0,feeds.length);
         System.arraycopy(admission.failed,0,failedForCoverage,0,feeds.length);
         acquisitionYield=admission.acquisitionYield;
+        availableUnderPressure=admission.availableUnderPressure;
         final long[] recheckRemaining=admission.remaining;
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
-            &&SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,inspectedFeeds,
+            &&SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,inspectedFeeds,
                 attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield)<0){
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
           enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(inspectedFeeds,
@@ -773,10 +775,10 @@ public class SourceUpdateWorker extends Worker {
       int feedLimit=initialDiscoveryChain?feeds.length:routineEnd-routineStart;
       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
-            ?SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,
+            ?SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield)
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Prefer mainland, then HK/Macau/Taiwan, then international feeds.
@@ -861,12 +863,13 @@ public class SourceUpdateWorker extends Worker {
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
+            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds);
             // Yield to another fresh eligible directory before deep scans; retain
             // immediate first-watch and the ordinary probe budget when none remains.
-            int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeed(feedIndex,
+            int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(feedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false);
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,availableUnderPressure);
             if(nextPreparation!=feedIndex||!DiscoveryBatchPolicy.canProbeAfterQuickAcquisition(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
@@ -2214,11 +2217,11 @@ public class SourceUpdateWorker extends Worker {
               roomInt("source_initial_progress_staged_channels",0),
               roomInt("source_initial_progress_checked_urls",0),
               roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
-          InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,false);
-          int next=SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,
+          InitialFeedAdmission admission=readInitialFeedAdmission(feeds,false);
+          int next=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
               admission.completed,admission.deferred,admission.visited,admission.prepared,admission.failed,
               SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false,admission.acquisitionYield);
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false,admission.acquisitionYield,admission.availableUnderPressure);
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
@@ -4048,6 +4051,7 @@ public class SourceUpdateWorker extends Worker {
     final boolean[] completed,deferred,visited,failed,prepared;
     final long[] remaining;
     boolean acquisitionYield;
+    boolean[] availableUnderPressure;
     InitialFeedAdmission(int count){
       completed=new boolean[count];deferred=new boolean[count];
       visited=new boolean[count];failed=new boolean[count];prepared=new boolean[count];remaining=new long[count];
@@ -4055,7 +4059,8 @@ public class SourceUpdateWorker extends Worker {
   }
   /** One consistent Room read for both admission and the post-commit delay
    * decision. Masks are scheduling hints only; they never mark a feed done. */
-  private InitialFeedAdmission readInitialFeedAdmission(int count,boolean viewing){
+  private InitialFeedAdmission readInitialFeedAdmission(String[] feeds,boolean viewing){
+    int count=feeds.length;
     InitialFeedAdmission admission=new InitialFeedAdmission(count);
     ArrayList<String> keys=new ArrayList<>(1+count*7);
     keys.add(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY);
@@ -4092,6 +4097,10 @@ public class SourceUpdateWorker extends Worker {
         admission.remaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,wall);
         admission.deferred[i]=admission.remaining[i]>0L;
       }
+    }
+    if(!viewing){
+      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed);}
+      catch(IOException unavailable){android.util.Log.w("MyTVSourceDiscovery","initial_cache_inventory_unavailable");}
     }
     return admission;
   }
