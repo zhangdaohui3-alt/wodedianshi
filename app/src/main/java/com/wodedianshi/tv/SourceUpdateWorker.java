@@ -1406,11 +1406,11 @@ public class SourceUpdateWorker extends Worker {
             // Mutually exclusive primary reasons for consumed inconclusive results.
             // Cancellation and deferral are not media failures or socket timeouts.
             switch(measured.uncertainReason(boundedAddressBudget&&measuredAt>=addressDeadline)){
-              case 1: uncertainSocket++;break;
-              case 2: uncertainTransport++;break;
-              case 3: uncertainBudget++;break;
-              case 4: uncertainMedia++;break;
-              default: uncertainPaced++;break;
+              case SOCKET: uncertainSocket++;break;
+              case TRANSPORT: uncertainTransport++;break;
+              case BUDGET: uncertainBudget++;break;
+              case MEDIA: uncertainMedia++;break;
+              case PACED: uncertainPaced++;break;
             }
             if(DiscoveryBatchPolicy.holdInconclusiveCandidate(initialDiscoveryChain,slowPlayback,e.savedSource)){
               if(pageFeed<0)throw new IllegalStateException("Missing initial recheck page");
@@ -3350,11 +3350,12 @@ public class SourceUpdateWorker extends Worker {
     boolean transientNetworkFailure,incompleteManifest,incompleteSample,unsupportedPreflight,emptyLiveWindow;
     boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample||unsupportedPreflight||emptyLiveWindow;}
     // Diagnostics only: one primary reason per already-inconclusive result.
-    int uncertainReason(boolean budgetExpired){
-      if(socketTimedOut)return 1;
-      if(transientNetworkFailure)return 2;
-      if(budgetExpired)return 3;
-      return inconclusive()?4:5;
+    enum UncertainReason { SOCKET, TRANSPORT, BUDGET, MEDIA, PACED }
+    UncertainReason uncertainReason(boolean budgetExpired){
+      if(socketTimedOut)return UncertainReason.SOCKET;
+      if(transientNetworkFailure)return UncertainReason.TRANSPORT;
+      if(budgetExpired)return UncertainReason.BUDGET;
+      return inconclusive()?UncertainReason.MEDIA:UncertainReason.PACED;
     }
     // Reuse the existing bounded domestic-core suffix replay for a genuinely
     // temporary empty live window, but not for a deterministic parser limit.
