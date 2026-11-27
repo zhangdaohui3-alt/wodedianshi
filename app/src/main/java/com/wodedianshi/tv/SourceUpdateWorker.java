@@ -2208,20 +2208,15 @@ public class SourceUpdateWorker extends Worker {
     final JSONObject observedPlayback=playbackHistory;
     final long evidenceNow=System.currentTimeMillis();
     final int[] stableDeferred={0};
-    ArrayList<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current,key->{
+    ArrayList<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->{
       JSONObject metric=observedPlayback.optJSONObject(key);
       boolean defer=metric!=null&&SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(
           metric.optString("lastEvent",""),metric.optLong("lastStable",0L),
           metric.optLong("updated",0L),evidenceNow);
       if(defer)stableDeferred[0]++;
       return defer;
-    });
-    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
-    JSONObject scores=new JSONObject(indexed?"{}":roomString("source_probe_scores_v1","{}"));
-    JSONObject streaks=new JSONObject(indexed?"{}":roomString("source_probe_failure_streaks_v1","{}"));
-    HashSet<String> dirty=new HashSet<>();
-    if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
-        com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,selected,new HashSet<>(),scores,streaks,pauseRequested);
+    },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
+    LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
     int checked=0,conclusive=0,originDeferred=0;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
@@ -2229,6 +2224,7 @@ public class SourceUpdateWorker extends Worker {
     InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
     for(String url:selected){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
       long now=android.os.SystemClock.elapsedRealtime();
       long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
       if(deadline==0L)break;
@@ -2250,18 +2246,35 @@ public class SourceUpdateWorker extends Worker {
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         continue;
       }
-      storePreflightScore(scores,url,measured);
-      // Do not retire or change channel membership in a quality-only pass.
-      // Preserve existing failure-streak records for the ordinary health rotation.
-      dirty.add(key);dirty.add(legacyScoreKey(url));
+      completed.put(url,measured);
       pending.remove(key);conclusive++;
+    }
+    // Only completed measurements need quality rows. Skipped, timed-out and
+    // never-admitted candidates must not incur score hydration or writes.
+    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
+    JSONObject scores=new JSONObject(),streaks=new JSONObject();
+    HashSet<String> dirty=new HashSet<>();
+    if(!completed.isEmpty()){
+      if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
+          com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,completed.keySet(),
+          new HashSet<>(),scores,streaks,pauseRequested);
+      else scores=new JSONObject(roomString("source_probe_scores_v1","{}"));
+      for(Map.Entry<String,ProbeResult> entry:completed.entrySet()){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        String url=entry.getKey();
+        storePreflightScore(scores,url,entry.getValue());
+        // Keep the existing failure streak for ordinary health rotation.
+        dirty.add(scoreKey(url));dirty.add(legacyScoreKey(url));
+      }
     }
     com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(context)
         .putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(pending).toString())
         .putLong(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,System.currentTimeMillis());
-    if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
-        com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
-    else update.putString("source_probe_scores_v1",scores.toString());
+    if(conclusive>0){
+      if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
+          com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
+      else update.putString("source_probe_scores_v1",scores.toString());
+    }
     if(conclusive>0)update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
         java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
