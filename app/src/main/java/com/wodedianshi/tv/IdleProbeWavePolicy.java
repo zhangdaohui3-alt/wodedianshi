@@ -17,8 +17,8 @@ final class IdleProbeWavePolicy {
     }
     static boolean canStart(boolean initial,long now,long addressDeadline,long batchDeadline) {
         if(initial)return SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,addressDeadline);
-        // Manual probes retain their original full remaining stage budget (not
-        // the first-build 15s address cap). Avoid speculative waves near its end.
+        // Manual idle probes also receive a bounded address budget; retain
+        // the existing 17-second admission margin for a drained wave.
         return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
     }
     /** Only rows that provably cannot start a fresh probe may be bridged. */
