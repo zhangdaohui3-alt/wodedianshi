@@ -297,7 +297,7 @@ public class HlsWorkerProbeIntegrationTest {
             server.bind(new InetSocketAddress("127.0.0.1",0));
             server.setSoTimeout(10000);
             Future<?> served=serverThread.submit(()->{
-                for(int attempt=0;attempt<2;attempt++){
+                for(int attempt=0;attempt<3;attempt++){
                     try(Socket socket=server.accept()){
                         socket.setSoTimeout(5000);
                         BufferedReader reader=new BufferedReader(new InputStreamReader(
@@ -310,7 +310,7 @@ public class HlsWorkerProbeIntegrationTest {
                         out.write(body,0,1379);out.flush();
                         // The fast reader can close after its bounded prefix.
                         try{out.write(body,1379,body.length-1379);out.flush();}
-                        catch(SocketException closed){if(attempt==0)throw closed;}
+                        catch(SocketException closed){if(attempt!=1)throw closed;}
                     }
                 }
                 return null;
@@ -320,12 +320,17 @@ public class HlsWorkerProbeIntegrationTest {
                     SystemClock.elapsedRealtime()+15000L,false,()->false,false);
             SourceUpdateWorker.ProbeResult screen=SourceUpdateWorker.probe(url,
                     SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            SourceUpdateWorker.ProbeResult saturated=SourceUpdateWorker.probe(url,
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true,false);
             served.get(15,TimeUnit.SECONDS);
             assertTrue(full.valid);assertTrue(screen.valid);
             assertFalse(full.provisional);assertTrue(screen.provisional);
             assertEquals(1L,full.sampleRequests);assertEquals(1L,screen.sampleRequests);
             assertEquals(32768L,full.sampleBytes);assertEquals(4096L,screen.sampleBytes);
             assertEquals(full.sampleBytes,8L*screen.sampleBytes);
+            assertTrue(saturated.valid);assertFalse(saturated.provisional);
+            assertEquals(1L,saturated.sampleRequests);
+            assertEquals(full.sampleBytes,saturated.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
 
