@@ -99,11 +99,13 @@ public final class RoomCatalogueReader {
     private RoomCatalogueReader() {}
 
     private static String legacyRoute(ChannelEntity channel) {
-        String name=channel.name==null?"":channel.name;
-        String key=channel.legacyKey==null?"":channel.legacyKey;
-        String prefix=name+"|";
-        return key.startsWith(prefix)?key.substring(prefix.length()):
-                (channel.primaryUrl==null?"":channel.primaryUrl);
+        return legacyRoute(channel.name,channel.legacyKey,channel.primaryUrl);
+    }
+
+    private static String legacyRoute(String name,String key,String primary){
+        String prefix=(name==null?"":name)+"|";
+        return key!=null&&key.startsWith(prefix)?key.substring(prefix.length()):
+                (primary==null?"":primary);
     }
 
     /** Route membership only: no scope parsing, source sorting or favorites.
@@ -120,11 +122,11 @@ public final class RoomCatalogueReader {
         boolean matched=false;
         for(int offset=0;offset<total&&!matched;offset+=PAGE_SIZE){
             com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
-            List<ChannelWithSources> page=dao.getAllChannelsPage(PAGE_SIZE,offset);
+            List<ChannelDao.RouteMembership> page=dao.getRouteMembershipPage(PAGE_SIZE,offset);
             if(page==null||page.isEmpty())break;
-            for(ChannelWithSources row:page){
+            for(ChannelDao.RouteMembership row:page){
                 com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
-                if(row==null||row.channel==null)continue;
+                if(row==null)continue;
                 loaded++;
                 if(visitRowRoutes(row,visitor)){matched=true;break;}
             }
@@ -137,16 +139,16 @@ public final class RoomCatalogueReader {
         return version;
     }
 
-    static boolean visitRowRoutes(ChannelWithSources row,java.util.function.Predicate<String> visitor){
-        String legacy=legacyRoute(row.channel);
+    static boolean visitRowRoutes(ChannelDao.RouteMembership row,java.util.function.Predicate<String> visitor){
+        String legacy=legacyRoute(row.name,row.legacyKey,row.primaryUrl);
         if(visitor.test(legacy))return true;
         boolean hasSources=false;
-        if(row.sources!=null)for(BackupSourceEntity source:row.sources){
-            if(source==null||source.url==null||source.url.isEmpty())continue;
+        if(row.urls!=null)for(String source:row.urls){
+            if(source==null||source.isEmpty())continue;
             hasSources=true;
-            if(!source.url.equals(legacy)&&visitor.test(source.url))return true;
+            if(!source.equals(legacy)&&visitor.test(source))return true;
         }
-        String primary=row.channel.primaryUrl;
+        String primary=row.primaryUrl;
         return !hasSources&&primary!=null&&!primary.isEmpty()&&!primary.equals(legacy)&&visitor.test(primary);
     }
 
