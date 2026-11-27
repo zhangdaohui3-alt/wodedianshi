@@ -14,6 +14,7 @@ public final class ManualProbeQualityStore {
     static final String READY_KEY="source_manual_quality_owner_v1";
     public static final String PUBLISHED_OWNER="@published";
     public static final String INITIAL_OWNER="@initial";
+    static final String INITIAL_READY_KEY="source_initial_indexed_quality_ready_v1";
     private static final String PUBLISHED_READY_KEY="source_indexed_quality_published_v1";
 
     public static boolean hasPublished(Context context){
@@ -148,11 +149,64 @@ public final class ManualProbeQualityStore {
         db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
     }
 
+    public static boolean hasInitial(Context context){
+        return "true".equals(RoomDatabaseProvider.get(context).appStateDao().getValue(INITIAL_READY_KEY));
+    }
+
+    /** The caller supplies the current build's legacy compatibility state.
+     * Never overwrite an already initialized build on restart. */
+    public static void ensureInitial(Context context,JSONObject scores,JSONObject streaks,BooleanSupplier paused){
+        AppDatabase db=RoomDatabaseProvider.get(context);
+        if(hasInitial(context))return;
+        Set<String> keys=new HashSet<>();
+        Iterator<String> it=scores.keys();
+        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
+        it=streaks.keys();
+        while(it.hasNext()){SourceProbeTimePolicy.checkPublicationPaused(paused);keys.add(it.next());}
+        List<ManualProbeQualityEntity> rows=changes(INITIAL_OWNER,keys,scores,streaks);
+        db.runInTransaction(()->seedInitialInTransaction(db,rows,paused));
+    }
+
+    static void seedInitialInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,BooleanSupplier paused){
+        requireInitialTransaction(db);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        if("true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))return;
+        db.manualProbeQualityDao().clearOwner(INITIAL_OWNER);
+        db.appStateDao().put(new AppStateEntity(INITIAL_READY_KEY,"true",System.currentTimeMillis()));
+        writeInitialInTransaction(db,rows,paused);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+    }
+
+    /** Merge private evidence at final publication, not at interim previews.
+     * Unobserved published keys survive, and explicit nulls remain tombstones.
+     * Caller must own the checked full catalogue transaction. */
+    static void publishInitialInTransaction(AppDatabase db,BooleanSupplier paused){
+        requireInitialTransaction(db);
+        if(!"true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))
+            throw new IllegalStateException("Initial quality not initialized");
+        String after="";
+        for(;;){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<ManualProbeQualityEntity> page=db.manualProbeQualityDao().page(INITIAL_OWNER,after,256);
+            if(page.isEmpty())break;
+            List<ManualProbeQualityEntity> copy=new ArrayList<>(page.size());
+            for(ManualProbeQualityEntity row:page)
+                copy.add(new ManualProbeQualityEntity(PUBLISHED_OWNER,row.sourceKey,row.score,row.failureStreak));
+            db.manualProbeQualityDao().put(copy);
+            after=page.get(page.size()-1).sourceKey;
+        }
+        db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
+        clearInitialInTransaction(db);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+    }
+
     /** Private first-build scores share the existing table. They become
      * visible to published readers only with the final catalogue transaction. */
     static void writeInitialInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,
             BooleanSupplier paused){
         requireInitialTransaction(db);
+        if(!"true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))
+            throw new IllegalStateException("Initial quality not initialized");
         for(ManualProbeQualityEntity row:rows)
             if(!INITIAL_OWNER.equals(row.owner))throw new IllegalArgumentException("Wrong initial quality owner");
         for(int i=0;i<rows.size();i+=256){
@@ -169,6 +223,7 @@ public final class ManualProbeQualityStore {
     static void clearInitialInTransaction(AppDatabase db){
         requireInitialTransaction(db);
         db.manualProbeQualityDao().clearOwner(INITIAL_OWNER);
+        db.appStateDao().remove(INITIAL_READY_KEY);
     }
 
     static void writePublishedInTransaction(AppDatabase db,List<ManualProbeQualityEntity> rows,
