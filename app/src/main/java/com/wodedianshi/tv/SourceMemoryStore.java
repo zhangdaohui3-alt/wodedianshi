@@ -123,11 +123,7 @@ public final class SourceMemoryStore {
                     String key = it.next();
                     if (cooldowns.optLong(key, 0L) <= now) it.remove();
                 }
-                String canonicalKey = StableKey.url(SourceSelectionPolicy.endpointKey(url));
-                String originalKey = StableKey.url(url);
-                cooldowns.put(canonicalKey, now + durationMs);
-                if (!canonicalKey.equals(originalKey)) cooldowns.remove(originalKey);
-                cooldowns.remove(StableKey.legacyUrl(url));
+                cooldowns.put(StableKey.url(SourceSelectionPolicy.endpointKey(url)), now + durationMs);
                 trimOldest(cooldowns);
                 scheduleMemoryFlush(context, COOLDOWNS);
             } catch (Exception ignored) { return; }
@@ -139,8 +135,6 @@ public final class SourceMemoryStore {
         synchronized (LOCK) {
             if (!initialized) return false;
             long until = cooldowns.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
-            if (until <= 0L) until = cooldowns.optLong(StableKey.url(url), 0L);
-            if (until <= 0L) until = cooldowns.optLong(StableKey.legacyUrl(url), 0L);
             return until > System.currentTimeMillis();
         }
     }
@@ -177,9 +171,8 @@ public final class SourceMemoryStore {
         try {
             WRITER.execute(() -> {
                 try {
-                    String key = StableKey.url(url), legacy = StableKey.legacyUrl(url);
+                    String key = StableKey.url(url);
                     JSONObject old = qoe.get(key);
-                    if (old == null) old = qoe.get(legacy);
                     // Only copy one endpoint, never the entire history on a tune.
                     JSONObject m = old == null ? new JSONObject() : new JSONObject(old.toString());
                     if ("attempt".equals(event)) m.put("attempts", m.optInt("attempts",0)+1);
@@ -204,7 +197,6 @@ public final class SourceMemoryStore {
                     // cannot order two callbacks in the same millisecond.
                     m.put("lastEvent",event);
                     qoe.put(key,m);
-                    if (!key.equals(legacy)) qoe.remove(legacy);
                     // A flush queued behind existing metric tasks combines a burst.
                     if (!qoeFlushQueued) {
                         qoeFlushQueued=true;
