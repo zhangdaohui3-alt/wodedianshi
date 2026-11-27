@@ -476,6 +476,37 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void expiredOrCancelledProbeIsInconclusiveWithoutNetwork(){
+        long now=SystemClock.elapsedRealtime();
+        SourceUpdateWorker.ProbeResult expired=SourceUpdateWorker.probe(
+                "http://127.0.0.1:1/live.ts",now,false,()->false);
+        assertFalse(expired.valid);assertTrue(expired.socketTimedOut);
+        assertTrue(expired.inconclusive());assertEquals(0L,expired.sampleRequests);
+        SourceUpdateWorker.ProbeResult cancelled=SourceUpdateWorker.probe(
+                "http://127.0.0.1:1/live.ts",now+15000L,false,()->true);
+        assertFalse(cancelled.valid);assertTrue(cancelled.inconclusive());
+        assertEquals(0L,cancelled.sampleRequests);
+    }
+
+    @Test public void rejectedRangeIsUnconfirmedWithoutUnboundedFallback()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                replyRecheck(server,"/range.ts",416,bytes("range rejected"));
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/range.ts",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false);
+            served.get(12,TimeUnit.SECONDS);
+            assertFalse(result.valid);assertTrue(result.unsupportedPreflight);
+            assertTrue(result.inconclusive());assertTrue(result.deterministicEvidenceLimit());
+            assertEquals(1L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void firstRequest429IsOriginPressureNotInvalidMedia()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
