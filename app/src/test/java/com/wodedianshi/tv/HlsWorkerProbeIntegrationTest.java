@@ -458,6 +458,24 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void exhaustedNetworkBudgetWithNoVersionedEvidenceStopsAtFirstMiss(){
+        String first="http://127.0.0.1:1/no-evidence.ts";
+        String second=first+"?another=1";
+        List<String> routes=Arrays.asList(first,second);
+        java.util.concurrent.atomic.AtomicInteger visited=new java.util.concurrent.atomic.AtomicInteger();
+        List<String> selected=new AbstractList<String>(){
+            @Override public String get(int index){visited.incrementAndGet();return routes.get(index);}
+            @Override public int size(){return routes.size();}
+        };
+        LinkedHashSet<String> pending=new LinkedHashSet<>(Arrays.asList(StableKey.url(first),StableKey.url(second)));
+        LinkedHashSet<String> original=new LinkedHashSet<>(pending);
+        SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                selected,pending,SystemClock.elapsedRealtime()+5000L,()->false,Long.MIN_VALUE);
+        assertEquals(1,visited.get());assertEquals(0,result.checked);
+        assertEquals(0,result.conclusive);assertEquals(0L,result.sampleRequests);
+        assertEquals(new ArrayList<>(original),new ArrayList<>(pending));
+    }
+
     @Test public void checkpointKeepsCompletedBatchWhenPlaybackInterruptsNextBatch()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         AtomicBoolean paused=new AtomicBoolean();
