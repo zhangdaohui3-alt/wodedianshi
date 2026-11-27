@@ -11,6 +11,21 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest=Config.NONE,sdk=28)
 public class CommittedRouteEvidenceTest {
+    @Test public void candidateReusesUnchangedMergeIdentityAcrossOwnerStages(){
+        SourceUpdateWorker.Entry candidate=new SourceUpdateWorker.Entry(
+            "深圳都市频道","https://example.invalid/live","地方",false,"china","provider.id","");
+        String expected=SourceDiscoveryIdentityPolicy.identity(
+            candidate.name,candidate.group,candidate.url,candidate.tvgId,candidate.tvgName);
+        String first=candidate.mergeIdentity();
+        assertEquals(expected,first);
+        candidate.skipReplay=true;
+        candidate.alreadyStaged=true;
+        assertSame(first,candidate.mergeIdentity());
+        SourceUpdateWorker.Entry other=new SourceUpdateWorker.Entry(
+            "广州都市频道",candidate.url,"地方",false,"china","provider.other","");
+        assertNotEquals(first,other.mergeIdentity());
+    }
+
     @Test public void onlyExactRetainedAssociationMayReuseCommittedEvidence() throws Exception {
         String url="https://example.invalid/live?token=A";
         JSONObject row=new JSONObject().put("name","CCTV-1").put("group","央视")
