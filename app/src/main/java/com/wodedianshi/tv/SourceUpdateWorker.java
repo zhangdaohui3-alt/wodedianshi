@@ -507,7 +507,7 @@ public class SourceUpdateWorker extends Worker {
             resetBuildState.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
                 .remove(feedCursorKey(feed)+"_version")
                 .remove(initialFeedProgressKey(feed))
-                .remove(initialAcquiredVersionKey(feed))
+                .remove(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feed))
                 .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
@@ -614,7 +614,7 @@ public class SourceUpdateWorker extends Worker {
           // Start with the nonempty indexed feed, rather than immediately
           // retrying an earlier failed download. Other feeds remain unfinished.
           if(count>0)acquisition.putInt("source_initial_next_feed_index",bootstrapFeed);
-          if(!preparedVersion.isEmpty())acquisition.putString(initialAcquiredVersionKey(bootstrapFeed),preparedVersion);
+          if(!preparedVersion.isEmpty())acquisition.putString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(bootstrapFeed),preparedVersion);
           acquisition.apply();
           // Persist acquisition before any media probes. A quickly prepared
           // nonempty first directory may immediately enter the ordinary bounded
@@ -827,7 +827,7 @@ public class SourceUpdateWorker extends Worker {
             cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
           }
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
-              roomString(initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
+              roomString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feedIndex),""),PlaylistFeedCache.contentVersion(cachedFeed)))){
             // The acquisition-only slice is independent of the probe cursor.
             // Never reuse a marker if eviction or a changed body invalidated it.
             noteInitialStage("独立准备目录 "+(feedIndex+1)+"/"+feeds.length);
@@ -2021,7 +2021,7 @@ public class SourceUpdateWorker extends Worker {
           failedBuildReset.remove(initialFeedDoneKey(feed)).remove(feedCursorKey(feed))
               .remove(feedCursorKey(feed)+"_version")
               .remove(initialFeedProgressKey(feed))
-              .remove(initialAcquiredVersionKey(feed))
+              .remove(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(feed))
               .remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"fingerprint").remove(DiscoveryBatchPolicy.initialBatchPrefix(feed)+"scanned")
                 .remove(DiscoveryBatchPolicy.initialIdleRecheckKey(feed))
                 .remove(DiscoveryBatchPolicy.initialTransientRecheckKey(feed))
@@ -3074,13 +3074,12 @@ public class SourceUpdateWorker extends Worker {
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
-  private String initialAcquiredVersionKey(int index){return "source_initial_acquired_version_"+index;}
   private void commitInitialAcquisition(int index,File cached) throws IOException {
     String version=PlaylistFeedCache.contentVersion(cached);
     if(PlaylistFeedIndex.indexedEntryCount(cached)<0)throw new IOException("Prepared directory index unavailable");
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-        .putString(initialAcquiredVersionKey(index),version)
+        .putString(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(index),version)
         .putInt("source_initial_next_feed_index",index)
         .putString("source_initial_progress_phase","目录已准备，下一批继续线路初筛")
         .apply();
@@ -3966,7 +3965,7 @@ public class SourceUpdateWorker extends Worker {
       keys.add(DiscoveryBatchPolicy.initialTransientRecheckKey(i));
       keys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
       keys.add(initialFeedFailureCountKey(i));
-      keys.add(initialAcquiredVersionKey(i));
+      keys.add(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
       if(preferCore){
         keys.add(feedCursorKey(i));
         keys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
@@ -3977,7 +3976,7 @@ public class SourceUpdateWorker extends Worker {
     for(int i=0;i<count;i++){
       admission.completed[i]=Boolean.parseBoolean(state.get(initialFeedDoneKey(i)));
       admission.failed[i]=positiveFeedState(state,initialFeedFailureCountKey(i));
-      String acquired=state.get(initialAcquiredVersionKey(i));
+      String acquired=state.get(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
       admission.prepared[i]=acquired!=null&&!acquired.isEmpty();
       admission.visited[i]=preferCore&&(admission.failed[i]
           ||positiveFeedState(state,feedCursorKey(i))
