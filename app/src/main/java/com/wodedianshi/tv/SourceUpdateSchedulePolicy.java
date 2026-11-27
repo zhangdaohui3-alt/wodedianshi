@@ -44,11 +44,21 @@ public final class SourceUpdateSchedulePolicy {
     static java.util.ArrayList<String> selectProvisionalRechecks(
             java.util.Set<String> pending,java.util.Map<String,String> current) {
         java.util.ArrayList<String> selected=new java.util.ArrayList<>();
+        // Oldest route gets the first opportunity; thereafter take one route
+        // per origin per round, preserving FIFO within each origin. A cluster
+        // of slow siblings cannot occupy every early slot of the idle budget.
+        java.util.LinkedHashMap<String,java.util.ArrayDeque<String>> byOrigin=new java.util.LinkedHashMap<>();
         for(String key:pending){
             String url=current.get(key);
             if(url==null||url.isEmpty())continue;
-            selected.add(url);
-            if(selected.size()>=PROVISIONAL_DAILY_LIMIT)break;
+            String origin=InitialOriginCooldownPolicy.origin(url);
+            byOrigin.computeIfAbsent(origin,ignored->new java.util.ArrayDeque<>()).addLast(url);
+        }
+        java.util.ArrayDeque<java.util.ArrayDeque<String>> rounds=new java.util.ArrayDeque<>(byOrigin.values());
+        while(!rounds.isEmpty()&&selected.size()<PROVISIONAL_DAILY_LIMIT){
+            java.util.ArrayDeque<String> routes=rounds.removeFirst();
+            selected.add(routes.removeFirst());
+            if(!routes.isEmpty())rounds.addLast(routes);
         }
         return selected;
     }
