@@ -2296,7 +2296,7 @@ public class SourceUpdateWorker extends Worker {
             +" finalize_ms="+(commitStartedAt-probesFinishedAt)
             +" commit_ms="+(commitFinishedAt-commitStartedAt)
             +" elapsed_ms="+(commitFinishedAt-sliceStartedAt)+" checked="+checked
-            +" reused="+reusedPreflights+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(stagedSizeAfterProbe))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed||initialIndexed?indexedPositions.size():-1)
+            +" reused="+reusedPreflights+" retained_duplicate="+retainedDuplicates+" staged="+(manualQueueOnly?"not_read":manualIndexed?Integer.toString(indexedBaseCount+saved.length()-indexedPositions.size()):Integer.toString(stagedSizeAfterProbe))+" viewing="+slowPlayback+" manual="+manualRefresh+" queue_only="+manualQueueOnly+" indexed_rows="+(manualIndexed||initialIndexed?indexedPositions.size():-1)
             +" parallel_launched="+idleWave.launched+" inconclusive="+initialTimeouts
             +" saved_scanned="+savedScanned+" discovery_scanned="+discoveryScanned
             +" inconclusive_endpoints="+inconclusiveAttempts.size()+" viewing_deferred="+viewingDeferred);
