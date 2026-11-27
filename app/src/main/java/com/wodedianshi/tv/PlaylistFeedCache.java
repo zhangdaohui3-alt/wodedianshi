@@ -134,19 +134,9 @@ public final class PlaylistFeedCache {
         File partial=new File(directory,key+".range-part");
         File checkpoint=new File(directory,key+".range-state");
         File checkpointTemp=new File(directory,key+".range-state.tmp");
-        // Bound partial-file storage globally. Eviction never advances a feed cursor.
-        File[] parts=directory.listFiles((dir,name)->name.endsWith(".range-part"));
-        if(parts!=null){
-            java.util.Arrays.sort(parts,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
-            int retained=0;
-            for(File other:parts){
-                if(other.equals(partial))continue;
-                if(retained++>=2){
-                    String prefix=other.getName().substring(0,other.getName().length()-".range-part".length());
-                    if(other.delete())new File(directory,prefix+".range-state").delete();
-                }
-            }
-        }
+        // Reserve one maximum-sized current range plus two maximum-sized
+        // other ranges, but retain more small prefixes within that same budget.
+        trimOtherRangeParts(directory,partial,2L*SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES);
         Properties previous=readProperties(checkpoint);
         String oldTag=previous.getProperty("etag","");
         String oldLocation=previous.getProperty("location","");
@@ -275,6 +265,27 @@ public final class PlaylistFeedCache {
         checkpoint.delete();
         pruneOldEntries(context,directory,cached,true);
         return cached;
+    }
+
+    /** Byte-bounded retention avoids repeatedly evicting small checkpoints
+     * solely because several directory families are being rotated. The
+     * current part is protected; eviction never advances a probe cursor. */
+    static void trimOtherRangeParts(File directory,File current,long budget){
+        File[] parts=directory.listFiles((dir,name)->name.endsWith(".range-part"));
+        if(parts==null)return;
+        java.util.Arrays.sort(parts,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+        long retained=0L;
+        for(File other:parts){
+            if(other.equals(current))continue;
+            long bytes=other.length();
+            if(bytes<=Math.max(0L,budget-retained)){
+                retained+=bytes;
+                continue;
+            }
+            String prefix=other.getName().substring(0,other.getName().length()-".range-part".length());
+            if(other.delete())new File(directory,prefix+".range-state").delete();
+            else retained+=bytes; // Failed deletion still occupies disk.
+        }
     }
 
     private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
