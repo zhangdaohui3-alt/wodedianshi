@@ -149,6 +149,35 @@ public class RoomPublicationIntegrationTest {
             System.out.println("room_route_scale channels=2500 routes=20000 full_read_ms="
                     +fullNanos/1000000L+" route_scan_ms="+routeNanos/1000000L
                     +" early_exit_ms="+earlyNanos/1000000L+" cancelled_after="+visited.get());
+            // Both paths have now been warmed. Alternate order and compare
+            // equivalent exact membership work on each pass; do not assert
+            // wall-clock speed on shared CI hardware.
+            long[] fullWarm=new long[6],routeWarm=new long[6];
+            for(int pass=0;pass<6;pass++){
+                for(int order=0;order<2;order++){
+                    boolean hydrate=(pass+order)%2==0;
+                    java.util.Set<String> keys=new java.util.HashSet<>();
+                    long start=System.nanoTime();
+                    if(hydrate){
+                        RoomCatalogueReader.Snapshot snapshot=RoomCatalogueReader.read(context);
+                        assertEquals(version,Long.valueOf(snapshot.catalogueVersion));
+                        for(RoomCatalogueReader.ChannelRecord row:snapshot.channels){
+                            keys.add(row.url);keys.addAll(row.sources);
+                        }
+                        fullWarm[pass]=System.nanoTime()-start;
+                    }else{
+                        assertEquals(version,RoomCatalogueReader.visitRouteUrls(context,url->{
+                            keys.add(url);return false;
+                        },()->false));
+                        routeWarm[pass]=System.nanoTime()-start;
+                    }
+                    assertEquals(expected,keys);
+                }
+            }
+            java.util.Arrays.sort(fullWarm);java.util.Arrays.sort(routeWarm);
+            System.out.println("room_route_balanced rounds=6 full_median_us="
+                    +(fullWarm[2]+fullWarm[3])/2000L+" route_median_us="
+                    +(routeWarm[2]+routeWarm[3])/2000L);
             // Match the actual quality-recheck membership workload: exact
             // persistent URL digests, not just raw URL equality in a set.
             java.util.Set<String> pending=new java.util.HashSet<>();
