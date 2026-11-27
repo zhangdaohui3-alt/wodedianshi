@@ -1594,7 +1594,7 @@ public class SourceUpdateWorker extends Worker {
           measuredByEndpoint.put(endpoint,measured);
           // A previously good source that now fails its probe must lose its old high score.
           // Keep the URL as a fallback, but rank it below sources that still pass validation.
-          if(!indexedQuality){
+          if(!indexedQuality&&!initialDiscoveryChain){
             exactScoreKey=scoreKey(e.url);oldScoreKey=legacyScoreKey(e.url);
             storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
           }
@@ -1605,12 +1605,16 @@ public class SourceUpdateWorker extends Worker {
             SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,exactScoreKey);
           else provisionalKeys.remove(exactScoreKey);
         }
-        if(indexedQuality){
-          // Shared endpoint observations can be consumed by more than one exact URL.
+        if(indexedQuality||initialDiscoveryChain){
+          // One conclusive endpoint observation can be consumed by distinct
+          // exact URLs. Persist each association's own score in both initial
+          // staging and indexed quality, without issuing another probe.
           if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
           if(oldScoreKey==null)oldScoreKey=legacyScoreKey(e.url);
           storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
-          manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
+          if(indexedQuality){
+            manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
+          }
         }
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
           String streakKey=exactScoreKey==null?scoreKey(e.url):exactScoreKey;
