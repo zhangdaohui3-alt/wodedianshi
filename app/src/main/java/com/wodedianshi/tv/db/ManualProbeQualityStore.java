@@ -164,6 +164,9 @@ public final class ManualProbeQualityStore {
         if(PUBLISHED_OWNER.equals(owner))throw new IllegalArgumentException("Reserved quality owner");
         db.manualProbeQualityDao().clearOwner(PUBLISHED_OWNER);
         db.manualProbeQualityDao().publish(owner,PUBLISHED_OWNER);
+        // A published row with neither value has no fallback to suppress.
+        // Do not copy these empty records into every later manual round.
+        db.manualProbeQualityDao().removeEmptyRows(PUBLISHED_OWNER);
         db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
     }
 
@@ -252,6 +255,8 @@ public final class ManualProbeQualityStore {
         }
         db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
         clearInitialInTransaction(db);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        db.manualProbeQualityDao().removeEmptyRows(PUBLISHED_OWNER);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
