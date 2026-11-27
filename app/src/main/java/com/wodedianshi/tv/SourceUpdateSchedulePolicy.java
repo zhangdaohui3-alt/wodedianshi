@@ -153,14 +153,31 @@ public final class SourceUpdateSchedulePolicy {
      * upgrades outside its ordinary contiguous prefix. Never skip normal rows. */
     static java.util.ArrayList<Integer> provisionalRecheckPositions(
             java.util.List<String> savedKeys,int start,int window,java.util.Set<String> pending){
+        return provisionalRecheckPositions(savedKeys.size(),savedKeys::get,start,window,pending);
+    }
+
+    /** Generate exact keys only when visited; stop once the oldest reserved
+     * candidates are all located. Missing keys still require a full scan. */
+    static java.util.ArrayList<Integer> provisionalRecheckPositions(
+            int size,java.util.function.IntFunction<String> keyAt,int start,int window,
+            java.util.Set<String> pending){
         java.util.ArrayList<Integer> result=new java.util.ArrayList<>();
-        int size=savedKeys.size(),limit=Math.min(3,window/4);
+        int limit=Math.min(3,window/4);
         if(size<=window||window<=0||limit<=0||pending.isEmpty())return result;
+        java.util.HashSet<String> oldest=new java.util.HashSet<>();
+        for(String key:pending){
+            oldest.add(key);
+            if(oldest.size()>=limit)break;
+        }
         java.util.HashMap<String,Integer> outside=new java.util.HashMap<>();
         for(int i=window;i<size;i++){
             int position=(start+i)%size;
-            String key=savedKeys.get(position);
-            if(pending.contains(key))outside.putIfAbsent(key,position);
+            String key=keyAt.apply(position);
+            if(pending.contains(key)){
+                outside.putIfAbsent(key,position);
+                oldest.remove(key);
+                if(oldest.isEmpty())break;
+            }
         }
         for(String key:pending){
             Integer position=outside.get(key);
