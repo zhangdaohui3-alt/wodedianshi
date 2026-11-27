@@ -32,6 +32,11 @@ public interface ManualProbeQualityDao {
         + "SELECT :target,sourceKey,score,failureStreak FROM manual_probe_quality "
         + "WHERE owner=:source AND sourceKey IN (:keys)")
     void copyKeys(String source,String target,List<String> keys);
+    @Query("DELETE FROM manual_probe_quality WHERE owner=:owner AND sourceKey IN (:keys)")
+    void removeKeys(String owner,List<String> keys);
+    @Query("DELETE FROM manual_probe_quality WHERE owner=:owner AND sourceKey IN (:keys) "
+        + "AND score IS NULL AND failureStreak IS NULL")
+    void removeEmptyKeys(String owner,List<String> keys);
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     void put(List<ManualProbeQualityEntity> rows);
     @Query("DELETE FROM manual_probe_quality WHERE owner=:owner")
