@@ -32,4 +32,17 @@ public class HlsProbeValidationPolicyTest {
         assertTrue(HlsProbeValidationPolicy.isIncompleteContentRange("invalid",32768));
         assertTrue(HlsProbeValidationPolicy.isIncompleteContentRange(null,32768));
     }
+
+    @Test public void prefixRangeRejectsWrongOffsetAndInconsistentBody(){
+        assertNull(HlsProbeValidationPolicy.parsePrefixRange("bytes 16-31/100"));
+        assertNull(HlsProbeValidationPolicy.parsePrefixRange("bytes 0-100/100"));
+        assertNull(HlsProbeValidationPolicy.parsePrefixRange("bytes 0-9223372036854775807/*"));
+        long[] range=HlsProbeValidationPolicy.parsePrefixRange("bytes 0-99/100");
+        assertArrayEquals(new long[]{100L,100L},range);
+        assertTrue(HlsProbeValidationPolicy.prefixBodyMatches(range,100,32768));
+        assertFalse(HlsProbeValidationPolicy.prefixBodyMatches(range,99,32768));
+        assertFalse(HlsProbeValidationPolicy.prefixBodyMatches(range,101,32768));
+        assertTrue(HlsProbeValidationPolicy.prefixBodyMatches(range,33,32));
+        assertTrue(HlsProbeValidationPolicy.isIncompleteContentRange("bytes 0-31/*",32));
+    }
 }
