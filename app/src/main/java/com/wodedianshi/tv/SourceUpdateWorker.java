@@ -979,7 +979,7 @@ public class SourceUpdateWorker extends Worker {
             // and parsedCount remain untouched; a changed candidate fingerprint
             // restarts that partial page rather than skipping its suffix.
             ArrayList<Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(feedCandidates,
-                entry->Arrays.asList(entry.name,entry.url,entry.group,entry.tvgId,entry.tvgName,entry.scope));
+                Entry::exactRecordFields);
             feedCandidates.clear();feedCandidates.addAll(distinct);
           }
           if(manualRefresh&&!initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
@@ -1115,6 +1115,16 @@ public class SourceUpdateWorker extends Worker {
           // One failed directory per idle slice, then commit its actual outcome.
           break;
         }
+      }
+      // Manual and routine acquisition can contain repeated exact records,
+      // including records from separate directory pages in the same batch.
+      // Dedupe before fingerprinting, Room lookups and probe admission.
+      // FeedBatch.parsed still owns raw cursor advancement on completion.
+      if(!initialDiscoveryChain&&candidates.size()>1){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        ArrayList<Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(candidates,Entry::exactRecordFields);
+        candidates.clear();candidates.addAll(distinct);
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       }
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
       ArrayList<String> manualSavedKeys=new ArrayList<>();
@@ -3056,6 +3066,7 @@ public class SourceUpdateWorker extends Worker {
     private String canonicalMergeIdentity;
     private String canonicalHost;
     private String canonicalOrigin;
+    List<String> exactRecordFields(){return Arrays.asList(name,url,group,tvgId,tvgName,scope);}
     // Immutable original URL, owner-confined lazy identities. Preserve the
     // existing independent host and scheme/port semantics.
     String host(){
