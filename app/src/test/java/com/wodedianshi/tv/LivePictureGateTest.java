@@ -25,6 +25,17 @@ public class LivePictureGateTest {
         assertTrue(gate.reveal(vlc,"same"));
     }
 
+    @Test public void currentOutputMayReopenAfterLossButOldEngineCannot(){
+        LivePictureGate gate=new LivePictureGate();
+        Object current=new Object(),old=new Object();
+        gate.arm(current,"source");
+        assertTrue(gate.reveal(current,"source"));
+        gate.cover();
+        gate.arm(current,"source");
+        assertFalse(gate.reveal(old,"source"));
+        assertTrue(gate.reveal(current,"source"));
+    }
+
     @Test public void releaseInvalidatesQueuedCallbacks(){
         LivePictureGate gate=new LivePictureGate();
         Object engine=new Object();
