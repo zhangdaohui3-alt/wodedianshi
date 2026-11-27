@@ -76,4 +76,22 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+
+    @Test public void initialIndexedScoresRetainMoreThanLegacyCompatibilityCapacity(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            java.util.List<ManualProbeQualityEntity> rows=new java.util.ArrayList<>();
+            for(int i=0;i<8001;i++)rows.add(new ManualProbeQualityEntity(initial,String.format(java.util.Locale.ROOT,"k%05d",i),1000+i,null));
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,rows,()->false));
+            assertEquals(Integer.valueOf(9000),db.manualProbeQualityDao().find(initial,"k08000").score);
+            assertEquals(Integer.valueOf(1000),db.manualProbeQualityDao().find(initial,"k00000").score);
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            assertEquals(Integer.valueOf(9000),db.manualProbeQualityDao().find(published,"k08000").score);
+            assertEquals(Integer.valueOf(1000),db.manualProbeQualityDao().find(published,"k00000").score);
+            assertNull(db.manualProbeQualityDao().find(initial,"k08000"));
+        }finally{db.close();}
+    }
+
 }
