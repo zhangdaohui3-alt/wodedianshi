@@ -711,8 +711,13 @@ public class SourceUpdateWorker extends Worker {
             if(savedPool.size()>=20000)break;
             // A shared URL only needs one network probe, even if several channel
             // entries reference it. Keep the first channel identity for diagnostics.
-            if(savedPoolUrls.add(SourceSelectionPolicy.endpointKey(u)))savedPool.add(new Entry(
-                channelName,u,channelGroup,true,"",channel.optString("tvgId",""),channel.optString("tvgName","")));
+            String endpoint=SourceSelectionPolicy.endpointKey(u);
+            if(savedPoolUrls.add(endpoint)){
+              Entry entry=new Entry(channelName,u,channelGroup,true,"",
+                  channel.optString("tvgId",""),channel.optString("tvgName",""));
+              entry.canonicalEndpoint=endpoint;
+              savedPool.add(entry);
+            }
           }
         }
       }
@@ -1282,11 +1287,11 @@ public class SourceUpdateWorker extends Worker {
         // deadline, but no fresh request may begin after it.
         if(!DiscoveryBatchPolicy.canConsumeProbePosition(initialDiscoveryChain,slowPlayback,
             checked,runProbeLimit,false)||isStopped()||(android.os.SystemClock.elapsedRealtime()>=probeDeadline
-            &&!idleWave.has(SourceSelectionPolicy.endpointKey(e.url))))break;
+            &&!idleWave.has(e.endpoint())))break;
         boolean priorityRecheck=priorityRechecks.contains(e);
         if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
-        String endpoint=SourceSelectionPolicy.endpointKey(e.url);
+        String endpoint=e.endpoint();
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
@@ -2727,7 +2732,7 @@ public class SourceUpdateWorker extends Worker {
   private String discoveryFingerprint(List<Entry> entries){
     StringBuilder value=new StringBuilder(entries.size()*96);
     for(Entry entry:entries){
-      appendFingerprintPart(value,SourceSelectionPolicy.endpointKey(entry.url));
+      appendFingerprintPart(value,entry.endpoint());
       appendFingerprintPart(value,entry.name);
       appendFingerprintPart(value,entry.group);
       appendFingerprintPart(value,entry.tvgId);
@@ -2830,8 +2835,16 @@ public class SourceUpdateWorker extends Worker {
   private boolean isActivityActive(SharedPreferences prefs){
     return SourceUpdateActivityPolicy.isActivityActive();
   }
-  private static class Entry{
-    String name,url,group,scope,tvgId,tvgName;boolean savedSource;
+  static final class Entry{
+    String name,group,scope,tvgId,tvgName;boolean savedSource;
+    final String url;
+    private String canonicalEndpoint;
+    // Candidate identities belong to the serial source-work owner. The HTTP
+    // task receives the original immutable URL, never this normalized key.
+    String endpoint(){
+      if(canonicalEndpoint==null)canonicalEndpoint=SourceSelectionPolicy.endpointKey(url);
+      return canonicalEndpoint;
+    }
     // Unscoped saved URLs have unknown provenance; only discovered feeds carry an explicit scope.
     Entry(String n,String u,String g){this(n,u,g,false,"","","");}
     Entry(String n,String u,String g,boolean saved){this(n,u,g,saved,"","","");}
@@ -3114,7 +3127,7 @@ public class SourceUpdateWorker extends Worker {
         Entry entry=entries.get(i);
         if(initial&&entry.savedSource)break;
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
-        String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
+        String endpoint=entry.endpoint();
         // An already measured or unsupported row cannot issue another network
         // request in the owner loop. Bridge only these deterministic gaps, and
         // keep the original row order/cursor. Never bridge cooling, expiring
@@ -3157,7 +3170,7 @@ public class SourceUpdateWorker extends Worker {
     private void submit(Entry entry,long deadline){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       final String url=entry.url;
-      final String endpoint=SourceSelectionPolicy.endpointKey(url);
+      final String endpoint=entry.endpoint();
       pending.put(endpoint,executor.submit(()->{
         int active=activeProbes.incrementAndGet();
         peakProbes.accumulateAndGet(active,Math::max);
@@ -3191,7 +3204,7 @@ public class SourceUpdateWorker extends Worker {
         Entry entry=rollingEntries.get(rollingNext);
         if(entry.savedSource)return;
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
-        String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
+        String endpoint=entry.endpoint();
         if(IdleProbeWavePolicy.canBridgeKnownRow(http,rollingMeasured.containsKey(endpoint))){
           rollingNext++;continue;
         }
