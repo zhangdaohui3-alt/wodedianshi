@@ -2,6 +2,13 @@ package com.wodedianshi.tv;
 
 /** Controls the one-time independent full-catalogue rebuild lifecycle. */
 public final class SourceUpdateSchedulePolicy {
+    /** Indexed published quality replaces the per-slice compatibility mirror.
+     * Manual staging never uses that mirror; legacy readers retain it until
+     * the first indexed preview or final publication succeeds. */
+    static boolean maintainLegacyQualityMirror(boolean manual,boolean indexedPublished){
+        return !manual&&!indexedPublished;
+    }
+
     private SourceUpdateSchedulePolicy() {}
 
     /**
