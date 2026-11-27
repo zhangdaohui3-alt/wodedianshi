@@ -489,4 +489,39 @@ public class HlsWorkerProbeIntegrationTest {
             assertEquals(40000L+2L*transportSample().length,result.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void nonzeroHttpRangeIsUnconfirmedBeforeAnyMediaRead()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    String start=reader.readLine();
+                    assertNotNull(start);
+                    assertTrue(start,start.startsWith("GET /wrong.ts "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    byte[] body=transportSample();
+                    OutputStream out=socket.getOutputStream();
+                    out.write(bytes("HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp2t\r\n"
+                            +"Content-Range: bytes 188-563/1000\r\nContent-Length: "+body.length
+                            +"\r\nConnection: close\r\n\r\n"));
+                    out.write(body);out.flush();
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/wrong.ts",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertFalse(result.valid);
+            assertTrue(result.incompleteSample);
+            assertTrue(result.inconclusive());
+            assertEquals(1L,result.sampleRequests);
+            assertEquals(0L,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
 }
