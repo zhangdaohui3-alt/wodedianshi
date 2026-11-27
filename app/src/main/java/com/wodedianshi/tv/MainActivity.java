@@ -8147,20 +8147,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void applyLastKnownGoodSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
-    // Try each persisted generation independently. A stale new-format URL must
-    // not mask an older remembered URL that is still present in this playlist.
-    String[] keys={
-      SourceMemoryStore.channelIdentityKey(identity(c)),
-      SourceMemoryStore.channelKey(c.name,c.group,c.url),
-      SourceMemoryStore.legacyChannelKey(c.name,c.group,c.url)
-    };
-    for(String key:keys){
-      if(key==null||key.isEmpty())continue;
-      String remembered=SourceMemoryStore.getLastGood(this,key);
-      int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
-      if(index>=0&&!isSourceBlocked(c,c.backups.get(index))
-          &&!SourceMemoryStore.isCoolingDown(this,c.backups.get(index))){c.activeSource=index;return;}
-    }
+    String remembered=SourceMemoryStore.getLastGood(this,SourceMemoryStore.channelIdentityKey(identity(c)));
+    int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
+    if(index>=0&&!isSourceBlocked(c,c.backups.get(index))
+        &&!SourceMemoryStore.isCoolingDown(this,c.backups.get(index)))c.activeSource=index;
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     SourceMemoryStore.recordMetric(getApplicationContext(),url,event,readyMs);
