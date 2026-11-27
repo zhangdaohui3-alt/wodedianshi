@@ -36,7 +36,22 @@ public final class SourceUpdateSchedulePolicy {
         return cachedCatalogue!=currentCatalogue
                 ||!java.util.Objects.equals(cachedQualityRevision,currentQualityRevision);
     }
-    static final int PROVISIONAL_DAILY_LIMIT=6;
+    // The existing 90-second stage and 15-second address admission remain
+    // authoritative. Fast confirmations may use more of the same idle window;
+    // a slow origin cannot force a new request into the final partial budget.
+    static final int PROVISIONAL_DAILY_LIMIT=DiscoveryBatchPolicy.INITIAL_PAGE_SIZE;
+
+    static java.util.ArrayList<String> selectProvisionalRechecks(
+            java.util.Set<String> pending,java.util.Map<String,String> current) {
+        java.util.ArrayList<String> selected=new java.util.ArrayList<>();
+        for(String key:pending){
+            String url=current.get(key);
+            if(url==null||url.isEmpty())continue;
+            selected.add(url);
+            if(selected.size()>=PROVISIONAL_DAILY_LIMIT)break;
+        }
+        return selected;
+    }
 
     /** Only the existing idle eligibility worker may run this extra small
      * quality-only batch. Ordinary full maintenance takes precedence. */
