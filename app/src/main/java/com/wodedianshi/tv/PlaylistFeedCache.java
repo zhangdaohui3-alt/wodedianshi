@@ -562,7 +562,7 @@ public final class PlaylistFeedCache {
         if(playlist!=null)pruneOldEntries(context,playlist.getParentFile(),playlist,true);
     }
 
-    private static void pruneOldEntries(Context context,File directory,File keep,boolean initial) {
+    private static void pruneOldEntries(Context context,File directory,File keep,boolean initial) throws IOException {
         pruneWithPreference(directory,keep,MAX_CACHE_BYTES,()->{
             if(!initial)return java.util.Collections.emptySet();
             String[] feeds=SourceDiscoveryFeedCatalog.feeds();
@@ -581,7 +581,7 @@ public final class PlaylistFeedCache {
         });
     }
 
-    static java.util.Set<String> unfinishedInitialCacheNames(String[] feeds,java.util.Set<String> completed){
+    static java.util.Set<String> unfinishedInitialCacheNames(String[] feeds,java.util.Set<String> completed) throws IOException {
         java.util.Set<String> preferred=new java.util.HashSet<>();
         for(int i=0;i<feeds.length;i++)
             if(!completed.contains(SourceUpdateWorker.initialFeedDoneKey(i)))
@@ -591,12 +591,17 @@ public final class PlaylistFeedCache {
 
     /** Keep unfinished initial directories ahead of disposable cache entries.
      * Read completion state only if eviction is actually necessary. */
-    static void pruneOldEntries(File directory,File keep,java.util.Set<String> preferred,long budget) {
+    static void pruneOldEntries(File directory,File keep,java.util.Set<String> preferred,long budget) throws IOException {
         pruneWithPreference(directory,keep,budget,()->preferred);
     }
 
+    @FunctionalInterface
+    private interface CachePreference {
+        java.util.Set<String> get() throws IOException;
+    }
+
     private static void pruneWithPreference(File directory,File keep,long budget,
-            java.util.function.Supplier<java.util.Set<String>> preferenceSupplier) {
+            CachePreference preferenceSupplier) throws IOException {
         File[] files = directory.listFiles((dir, name) -> name.endsWith(".m3u"));
         if (files == null || files.length == 0) return;
         long total = 0L;
