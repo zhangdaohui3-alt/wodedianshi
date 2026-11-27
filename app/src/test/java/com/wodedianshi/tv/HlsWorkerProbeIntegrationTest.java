@@ -252,6 +252,38 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{servers.shutdownNow();}
     }
 
+    @Test public void dependentMediaPressureDefersNextSavedRouteOnSameOrigin()throws Exception{
+        ExecutorService servers=Executors.newFixedThreadPool(2);
+        try(ServerSocket limited=new ServerSocket();ServerSocket healthy=new ServerSocket()){
+            limited.bind(new InetSocketAddress("127.0.0.1",0));
+            healthy.bind(new InetSocketAddress("127.0.0.1",0));
+            limited.setSoTimeout(10000);healthy.setSoTimeout(10000);
+            Future<?> first=servers.submit(()->{
+                replyRecheck(limited,"/master.m3u8",200,bytes(MASTER));
+                replyRecheck(limited,"/high.m3u8",503,new byte[0]);
+                return null;
+            });
+            Future<?> second=servers.submit(()->{
+                replyRecheck(healthy,"/good.ts",200,transportSample());
+                return null;
+            });
+            String base="http://127.0.0.1:"+limited.getLocalPort();
+            String blocked=base+"/master.m3u8",sibling=base+"/sibling.ts";
+            String good="http://127.0.0.1:"+healthy.getLocalPort()+"/good.ts";
+            List<String> order=Arrays.asList(blocked,sibling,good);
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(String url:order)pending.add(StableKey.url(url));
+            SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
+                    order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
+            first.get(12,TimeUnit.SECONDS);second.get(12,TimeUnit.SECONDS);
+            assertEquals(2,result.checked);
+            assertEquals(1,result.originDeferred);
+            assertEquals(3L,result.sampleRequests);
+            assertEquals(Collections.singleton(good),result.completed.keySet());
+            assertEquals(Arrays.asList(StableKey.url(sibling),StableKey.url(blocked)),new ArrayList<>(pending));
+        }finally{servers.shutdownNow();}
+    }
+
     private static void replyRecheck(ServerSocket server,String path,int status,byte[] body)throws Exception{
         try(Socket socket=server.accept()){
             socket.setSoTimeout(5000);
