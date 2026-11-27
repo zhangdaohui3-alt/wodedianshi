@@ -476,4 +476,35 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+    @Test public void manualHydrationSeparatesCommittedRoundPositiveFromInheritedAndFailedScores()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String owner="manual-current",published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            String a="https://example.invalid/a",b="https://example.invalid/b",c="https://example.invalid/c",d="https://example.invalid/d";
+            String ak=com.wodedianshi.tv.StableKey.url(a),bk=com.wodedianshi.tv.StableKey.url(b),
+                ck=com.wodedianshi.tv.StableKey.url(c),dk=com.wodedianshi.tv.StableKey.url(d);
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            db.appStateDao().put(new AppStateEntity(ManualProbeQualityStore.READY_KEY,owner,1L));
+            db.manualProbeQualityDao().put(java.util.Arrays.asList(
+                new ManualProbeQualityEntity(owner,ak,900,null),
+                new ManualProbeQualityEntity(published,bk,800,null),
+                new ManualProbeQualityEntity(owner,ck,-500,2),
+                new ManualProbeQualityEntity(owner,dk,null,null),
+                new ManualProbeQualityEntity(published,dk,700,1)));
+            org.json.JSONObject scores=new org.json.JSONObject(),streaks=new org.json.JSONObject();
+            java.util.Set<String> ownPositive=new java.util.HashSet<>();
+            ManualProbeQualityStore.loadUrls(db,owner,java.util.Arrays.asList(a,b,c,d),
+                new java.util.HashSet<>(),scores,streaks,ownPositive,()->false);
+            assertEquals(Collections.singleton(ak),ownPositive);
+            assertEquals(900,scores.getInt(ak));
+            assertEquals(800,scores.getInt(bk));
+            assertEquals(-500,scores.getInt(ck));
+            assertEquals(2,streaks.getInt(ck));
+            assertFalse(scores.has(dk));
+        }finally{db.close();}
+    }
+
 }
