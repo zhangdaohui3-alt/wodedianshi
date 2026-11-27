@@ -397,7 +397,7 @@ public class SourceUpdateWorker extends Worker {
         String owner=roomString(manualOwnerKey,"");
         boolean resume=manualId.equals(owner)&&manualId.equals(roomString("source_manual_active_id",""))
             &&config.equals(roomString("source_manual_feed_config",""));
-        if(!resume||!manualId.equals(manualProbeCacheOwner)){
+        if(!SourceUpdateSchedulePolicy.manualProbeCacheMatches(resume,manualId,manualProbeCacheOwner)){
           clearRecentProbeCache();manualProbeCacheOwner=manualId;
         }
         if(!resume){
