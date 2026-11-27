@@ -347,13 +347,23 @@ public class RoomPublicationIntegrationTest {
             RoomCatalogueWriter.writeSnapshotWithProgress(context,oldRows,empty,true,
                     ()->false,new AppStateEditor(context).putInt(PERCENT,100));
             long base=RoomCatalogueReader.read(context).catalogueVersion;
+            // Seed the public compatibility state, exactly as the production
+            // legacy-to-indexed path does. The checked staging transaction
+            // captures it, rather than accepting a caller-supplied private mirror.
+            AppStateStore.put(context,"source_probe_scores_v1",new JSONObject().put(oldKey,600).toString());
+            AppStateStore.put(context,"source_probe_failure_streaks_v1",new JSONObject().put(oldKey,2).toString());
             RoomCatalogueBuildStore.seedManual(context,oldRows,base,owner,()->false,
-                    new AppStateEditor(context).putInt("source_manual_next_feed",0)
-                            .putString(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,
-                                    new JSONObject().put(oldKey,600).toString()));
+                    new AppStateEditor(context).putInt("source_manual_next_feed",0));
+            assertEquals(600,new JSONObject(AppStateStore.get(context,
+                    RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}")).getInt(oldKey));
+            assertEquals(2,new JSONObject(AppStateStore.get(context,
+                    RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{}")).getInt(oldKey));
+            // A later compatibility write cannot alter the already captured seed.
+            AppStateStore.put(context,"source_probe_scores_v1",new JSONObject().put(oldKey,999).toString());
             ManualProbeQualityStore.ensure(context,owner,()->false);
             AppDatabase db=RoomDatabaseProvider.get(context);
             assertEquals(Integer.valueOf(600),db.manualProbeQualityDao().find(owner,oldKey).score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(owner,oldKey).failureStreak);
             assertFalse(ManualProbeQualityStore.hasPublished(context));
             JSONArray newRows=new JSONArray().put(channel("CCTV-2",newUrl));
             assertFalse(RoomCatalogueBuildStore.commitManualIndexed(context,owner,1,
