@@ -2393,7 +2393,7 @@ public class SourceUpdateWorker extends Worker {
     if(pending.isEmpty()){
       // The version-consistent scan proved that no queued route survives.
       // Persist the empty queue, but do not hydrate QoE or quality state.
-      publishQualityRecheckCheckpoint(context,pending,Collections.emptyMap(),catalogueVersion,false,true);
+      publishQualityRecheckCheckpoint(context,pending,Collections.emptyMap(),catalogueVersion,true);
       android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked=0 selected=0 conclusive=0"
           +" pending=0 membership_ms="+membershipMs+" sample_requests=0 sample_bytes=0");
       return Result.success();
