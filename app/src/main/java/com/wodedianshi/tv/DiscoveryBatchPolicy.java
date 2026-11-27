@@ -109,6 +109,15 @@ public final class DiscoveryBatchPolicy {
         return checked<limit||(initial&&!viewing&&!requiresNetwork);
     }
 
+    /** Only an idle initial slice may consume its bounded deterministic
+     * tail after the network deadline. No new request, cache lookup or
+     * unresolved duplicate qualifies. Existing admitted results keep
+     * their previous deadline behavior in every mode. */
+    static boolean canConsumeAfterProbeDeadline(boolean initial,boolean viewing,
+            boolean admitted,boolean knownWithoutNetwork){
+        return admitted||(initial&&!viewing&&knownWithoutNetwork);
+    }
+
     /** Includes the current request, whose counter was incremented before
      * asking to admit a wave. Never launch speculative requests over budget. */
     static int waveRequestAllowance(int limit,int checkedIncludingCurrent) {
