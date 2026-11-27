@@ -183,12 +183,19 @@ public final class SourceProbeTimePolicy {
                 && batchDeadline-addressDeadline>=2000L;
     }
 
+    /** Full-quality bounded idle probes need a sibling opportunity too.
+     * Keep this decision independent of provisional/short-sample permission. */
+    static boolean reserveRenditionBudget(boolean initialIdle,boolean viewing,long started,long deadline){
+        return !viewing&&deadline>started
+                &&(initialIdle||deadline-started<=INITIAL_ADDRESS_BUDGET_MS);
+    }
+
     /** Give the best rendition a substantial window, but reserve five seconds
-     * for a distinct sibling when the remaining first-build idle budget allows.
-     * Never shorten the only/last rendition or the ordinary/viewing probe. */
-    static long initialRenditionDeadline(boolean initialIdle,boolean hasSibling,
+     * for a distinct sibling when the bounded idle budget allows.
+     * Never shorten the only/last rendition or an ineligible probe. */
+    static long initialRenditionDeadline(boolean reserveSibling,boolean hasSibling,
             long now,long addressDeadline) {
-        if(!initialIdle||!hasSibling||now<0L||addressDeadline<now
+        if(!reserveSibling||!hasSibling||now<0L||addressDeadline<now
                 ||addressDeadline-now<11000L)return addressDeadline;
         return addressDeadline-5000L;
     }
