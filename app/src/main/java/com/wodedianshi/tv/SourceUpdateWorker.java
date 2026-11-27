@@ -741,7 +741,7 @@ public class SourceUpdateWorker extends Worker {
       boolean acquisitionYield=false;
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,slowPlayback,preferCoreCoverage);
+        InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,slowPlayback);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         System.arraycopy(admission.completed,0,inspectedFeeds,0,feeds.length);
         System.arraycopy(admission.deferred,0,attemptedFeedsThisRun,0,feeds.length);
@@ -2206,7 +2206,7 @@ public class SourceUpdateWorker extends Worker {
               roomInt("source_initial_progress_staged_channels",0),
               roomInt("source_initial_progress_checked_urls",0),
               roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
-          InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,false,preferCoreNow);
+          InitialFeedAdmission admission=readInitialFeedAdmission(feeds.length,false);
           int next=SourceDiscoveryPriorityPolicy.nextInitialFeed(initialNextFeedIndex,
               admission.completed,admission.deferred,admission.visited,admission.prepared,admission.failed,
               SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
@@ -4038,9 +4038,9 @@ public class SourceUpdateWorker extends Worker {
   }
   /** One consistent Room read for both admission and the post-commit delay
    * decision. Masks are scheduling hints only; they never mark a feed done. */
-  private InitialFeedAdmission readInitialFeedAdmission(int count,boolean viewing,boolean preferCore){
+  private InitialFeedAdmission readInitialFeedAdmission(int count,boolean viewing){
     InitialFeedAdmission admission=new InitialFeedAdmission(count);
-    ArrayList<String> keys=new ArrayList<>(1+count*(preferCore?7:5));
+    ArrayList<String> keys=new ArrayList<>(1+count*7);
     keys.add(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY);
     for(int i=0;i<count;i++){
       keys.add(initialFeedDoneKey(i));
@@ -4048,10 +4048,8 @@ public class SourceUpdateWorker extends Worker {
       keys.add(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i));
       keys.add(initialFeedFailureCountKey(i));
       keys.add(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
-      if(preferCore){
-        keys.add(feedCursorKey(i));
-        keys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
-      }
+      keys.add(feedCursorKey(i));
+      keys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
     }
     Map<String,String> state=readRoomValues(keys);
     admission.acquisitionYield=Boolean.parseBoolean(state.get(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY));
@@ -4061,9 +4059,9 @@ public class SourceUpdateWorker extends Worker {
       admission.failed[i]=positiveFeedState(state,initialFeedFailureCountKey(i));
       String acquired=state.get(FullDiscoveryProgressPolicy.initialAcquiredVersionKey(i));
       admission.prepared[i]=acquired!=null&&!acquired.isEmpty();
-      admission.visited[i]=preferCore&&(admission.failed[i]
+      admission.visited[i]=admission.failed[i]
           ||positiveFeedState(state,feedCursorKey(i))
-          ||positiveFeedState(state,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned"));
+          ||positiveFeedState(state,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
       int marker=DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
       try{marker=Integer.parseInt(state.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
       catch(NumberFormatException ignored){}
