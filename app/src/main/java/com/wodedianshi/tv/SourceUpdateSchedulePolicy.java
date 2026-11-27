@@ -131,6 +131,11 @@ public final class SourceUpdateSchedulePolicy {
         return measuredAt>Long.MAX_VALUE-ttl?Long.MAX_VALUE:measuredAt+ttl;
     }
 
+    /** Reuse only fresh evidence of the same durable manual refresh session. */
+    static boolean manualProbeCacheMatches(boolean resume,String manualId,String cachedOwner){
+        return resume&&manualId!=null&&!manualId.isEmpty()&&manualId.equals(cachedOwner);
+    }
+
     /** Single rule for the owner, initial wave admission and rolling refill.
      * Paced observations cannot stand in for an unpaced quality measurement. */
     static boolean reusableInitialObservation(boolean valid,boolean provisional,boolean paced,
