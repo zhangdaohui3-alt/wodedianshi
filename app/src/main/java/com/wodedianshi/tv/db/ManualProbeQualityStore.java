@@ -57,48 +57,40 @@ public final class ManualProbeQualityStore {
     private static JSONObject readScoresForUrls(AppDatabase db,String owner,Collection<String> urls,
             BooleanSupplier paused)throws JSONException{
         JSONObject scores=new JSONObject();
+        boolean inherit=inheritsPublished(db,owner);
         LinkedHashSet<String> keys=new LinkedHashSet<>();
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             if(url==null||url.isEmpty())continue;
             keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
             if(keys.size()>=256){
-                readScorePage(db,owner,keys,scores,paused);
+                readScorePage(db,owner,keys,scores,inherit,paused);
                 keys.clear();
             }
         }
-        if(!keys.isEmpty())readScorePage(db,owner,keys,scores,paused);
+        if(!keys.isEmpty())readScorePage(db,owner,keys,scores,inherit,paused);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         return scores;
     }
+    private static boolean inheritsPublished(AppDatabase db,String owner){
+        if(PUBLISHED_OWNER.equals(owner))return false;
+        AppStateDao state=db.appStateDao();
+        return "true".equals(state.getValue(PUBLISHED_READY_KEY))
+            &&(INITIAL_OWNER.equals(owner)||owner.equals(state.getValue(READY_KEY))
+                &&owner.equals(state.getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)));
+    }
     private static void readScorePage(AppDatabase db,String owner,Set<String> keys,JSONObject scores,
-            BooleanSupplier paused)throws JSONException{
+            boolean inherit,BooleanSupplier paused)throws JSONException{
         SourceProbeTimePolicy.checkPublicationPaused(paused);
-        for(ManualProbeQualityEntity row:db.manualProbeQualityDao().load(owner,new ArrayList<>(keys)))
+        List<String> page=new ArrayList<>(keys);
+        ManualProbeQualityDao dao=db.manualProbeQualityDao();
+        for(ManualProbeQualityEntity row:inherit?dao.loadInherited(owner,PUBLISHED_OWNER,page):dao.load(owner,page))
             if(row.score!=null)scores.put(row.sourceKey,row.score);
     }
     private static void requireCatalogueVersion(AppDatabase db,long expected){
         CatalogueMigrationEntity checkpoint=db.channelDao().getMigration(MasterCatalogueRepository.MIGRATION_KEY);
         if(checkpoint==null||checkpoint.completedAt!=expected)
             throw new RoomCatalogueReader.StaleSnapshotException();
-    }
-
-    /** Capture compatibility evidence only for an unindexed manual base.
-     * Use the same checked snapshot transaction, not a separate pre-read. */
-    static void captureLegacyManualSeedInTransaction(AppDatabase db,String owner,long now,BooleanSupplier paused){
-        RoomCatalogueBuildStore.requireManualOwner(db,owner);
-        SourceProbeTimePolicy.checkPublicationPaused(paused);
-        AppStateDao state=db.appStateDao();
-        if("true".equals(state.getValue(PUBLISHED_READY_KEY))){
-            state.remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
-            state.remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
-        }else{
-            String scores=state.getValue("source_probe_scores_v1");
-            String streaks=state.getValue("source_probe_failure_streaks_v1");
-            state.put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_SCORES_KEY,scores==null?"{}":scores,now));
-            state.put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,streaks==null?"{}":streaks,now));
-        }
-        SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
     public static void ensure(Context context,String owner,BooleanSupplier paused)throws JSONException{
@@ -112,10 +104,8 @@ public final class ManualProbeQualityStore {
             RoomCatalogueBuildStore.requireManualOwner(db,owner);
             if(owner.equals(db.appStateDao().getValue(READY_KEY)))return null;
             db.manualProbeQualityDao().clearOwner(owner);
-            if("true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY))){
-                copyQualityInTransaction(db,PUBLISHED_OWNER,owner,paused);
-            }else writeInTransaction(db,owner,legacyRows(db,owner,
-                RoomCatalogueBuildStore.MANUAL_SCORES_KEY,RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,paused),paused);
+            // A new round stores only its observations. The published base
+            // remains authoritative for keys without a private row.
             db.appStateDao().put(new AppStateEntity(READY_KEY,owner,System.currentTimeMillis()));
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_SCORES_KEY);
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_STREAKS_KEY);
@@ -155,8 +145,7 @@ public final class ManualProbeQualityStore {
         }
         List<String> list=new ArrayList<>(keys);
         ManualProbeQualityDao dao=db.manualProbeQualityDao();
-        boolean inherit=INITIAL_OWNER.equals(owner)
-            &&"true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY));
+        boolean inherit=inheritsPublished(db,owner);
         for(int i=0;i<list.size();i+=256){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             List<String> page=list.subList(i,Math.min(i+256,list.size()));
@@ -198,12 +187,12 @@ public final class ManualProbeQualityStore {
             after=page.get(page.size()-1).sourceKey;
         }
     }
-    static void publishInTransaction(AppDatabase db,String owner){
+    static void publishInTransaction(AppDatabase db,String owner,BooleanSupplier paused){
         RoomCatalogueBuildStore.requireManualOwner(db,owner);
         RoomCatalogueBuildStore.requireMatchingOwner(owner,db.appStateDao().getValue(READY_KEY));
         if(PUBLISHED_OWNER.equals(owner))throw new IllegalArgumentException("Reserved quality owner");
-        db.manualProbeQualityDao().clearOwner(PUBLISHED_OWNER);
-        db.manualProbeQualityDao().publish(owner,PUBLISHED_OWNER);
+        // Merge only observed keys. Inherited evidence remains in place.
+        copyQualityInTransaction(db,owner,PUBLISHED_OWNER,paused);
         // A published row with neither value has no fallback to suppress.
         // Do not copy these empty records into every later manual round.
         db.manualProbeQualityDao().removeEmptyRows(PUBLISHED_OWNER);
