@@ -1257,6 +1257,10 @@ public class SourceUpdateWorker extends Worker {
           int position=(discoveryScanStart+discoveryIndex)%candidates.size();
           Entry e=candidates.get(position);
           e.skipReplay=DiscoveryBatchPolicy.skipReplayPosition(transientRecheck,replayMask,position);
+          if(initialDiscoveryChain&&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED&&!e.skipReplay){
+            JSONObject staged=byIdentity.get(identity(e.name,e.group,e.url,e.tvgId,e.tvgName));
+            e.alreadyStaged=hasCommittedRouteEvidence(staged,e,canonicalDisplayName(e));
+          }
           probeCandidates.add(e);discoveryIndex++;
         }
         if(savedIndex<savedWindow){
@@ -1321,7 +1325,7 @@ public class SourceUpdateWorker extends Worker {
       final boolean boundedAddressBudget=SourceProbeTimePolicy.usesBoundedAddressBudget(
           initialDiscoveryChain,manualRefresh,slowPlayback);
       int savedScanned=0,discoveryScanned=0,reusedPreflights=0,initialTimeouts=0;
-      int originDeferred=0,provisionalAccepted=0;
+      int originDeferred=0,provisionalAccepted=0,retainedDuplicates=0;
       int uncertainSocket=0,uncertainTransport=0,uncertainBudget=0,uncertainMedia=0;
       int uncertainPaced=0;
       long consumedSampleRequests=0L,consumedSampleBytes=0L;
@@ -1360,6 +1364,7 @@ public class SourceUpdateWorker extends Worker {
         boolean priorityRecheck=priorityRechecks.contains(e);
         if(e.savedSource){if(!priorityRecheck)savedScanned++;}else discoveryScanned++;
         if(e.skipReplay)continue;
+        if(e.alreadyStaged){retainedDuplicates++;continue;}
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=e.endpoint();
         String exactScoreKey=null,oldScoreKey=null;
@@ -1670,7 +1675,7 @@ public class SourceUpdateWorker extends Worker {
       }
       idleWave.close();
       final long probesFinishedAt=android.os.SystemClock.elapsedRealtime();
-      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" inconclusive_total="+initialTimeouts+" socket_timeout="+uncertainSocket+" transport="+uncertainTransport+" address_budget="+uncertainBudget+" media_uncertain="+uncertainMedia+" paced_uncertain="+uncertainPaced+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" consumed_sample_requests="+consumedSampleRequests+" consumed_sample_bytes="+consumedSampleBytes+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
+      if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery","network_probes="+checked+" reused_recent="+reusedPreflights+" retained_duplicate="+retainedDuplicates+" inconclusive_total="+initialTimeouts+" socket_timeout="+uncertainSocket+" transport="+uncertainTransport+" address_budget="+uncertainBudget+" media_uncertain="+uncertainMedia+" paced_uncertain="+uncertainPaced+" origin_deferred="+originDeferred+" provisional_accepted="+provisionalAccepted+" consumed_sample_requests="+consumedSampleRequests+" consumed_sample_bytes="+consumedSampleBytes+" wave_timeout="+idleWaveTimedOut+" network_ceiling="+INITIAL_NETWORK.limit(IdleProbeWavePolicy.MAX_CONCURRENT,probesFinishedAt)+" preparation_ms="+(probeStartedAt-sliceStartedAt)+" probe_and_merge_ms="+(probesFinishedAt-probeStartedAt)+" viewing="+slowPlayback+" scanned_candidates="+discoveryScanned+" parallel_launched="+idleWave.launched);
       // Keep each channel's best distinct sources together, ranked by measured
       // reachability/speed/resolution. Generic names remain host-separated; recognized
       // CCTV and satellite channels merge across source hosts.
@@ -2967,7 +2972,7 @@ public class SourceUpdateWorker extends Worker {
     return SourceUpdateActivityPolicy.isActivityActive();
   }
   static final class Entry{
-    String name,group,scope,tvgId,tvgName;boolean savedSource,skipReplay;
+    String name,group,scope,tvgId,tvgName;boolean savedSource,skipReplay,alreadyStaged;
     final String url;
     private String canonicalEndpoint;
     // Candidate identities belong to the serial source-work owner. The HTTP
@@ -3156,6 +3161,32 @@ public class SourceUpdateWorker extends Worker {
     String canonical=canonicalName(entry.name);
     return canonical.startsWith("CCTV-")||canonical.endsWith("卫视")?canonical:entry.name;
   }
+  /** Only reuse an already accepted route association from THIS build's
+   * committed staging. New provenance, metadata enrichment, URL aliases,
+   * routine refresh and designated rechecks still follow normal probes. */
+  static boolean hasCommittedRouteEvidence(JSONObject staged,Entry entry,String displayName){
+    if(staged==null||entry==null||entry.savedSource
+        ||!ChannelCatalogueScopePolicy.isRetainableScope(entry.scope)
+        ||!staged.optString("name","").equals(displayName)
+        ||!staged.optString("group","").equals(entry.group)
+        ||(!entry.tvgId.isEmpty()&&!entry.tvgId.equals(staged.optString("tvgId","")))
+        ||(!entry.tvgName.isEmpty()&&!entry.tvgName.equals(staged.optString("tvgName",""))))return false;
+    JSONArray routes=staged.optJSONArray("sources");
+    if(routes==null)return false;
+    boolean retained=false;
+    for(int i=0;i<routes.length();i++)if(entry.url.equals(routes.optString(i,""))){retained=true;break;}
+    if(!retained)return false;
+    JSONArray ownership=staged.optJSONArray("backupSourceScopes");
+    if(ownership==null)return false;
+    for(int i=0;i<ownership.length();i++){
+      JSONObject item=ownership.optJSONObject(i);
+      if(item==null||!entry.url.equals(item.optString("url","")))continue;
+      JSONArray scopes=item.optJSONArray("scopes");
+      if(scopes!=null)for(int j=0;j<scopes.length();j++)
+        if(entry.scope.equals(scopes.optString(j,"")))return true;
+    }
+    return false;
+  }
   private static boolean hasChinaScope(JSONObject channel){
     JSONArray scopes=channel.optJSONArray("sourceScopes");
     if(scopes!=null)for(int i=0;i<scopes.length();i++)
@@ -3260,7 +3291,7 @@ public class SourceUpdateWorker extends Worker {
       for(;i<entries.size()&&wave.size()<limit;i++){
         Entry entry=entries.get(i);
         if(initial&&entry.savedSource)break;
-        if(entry.skipReplay)continue;
+        if(entry.skipReplay||entry.alreadyStaged)continue;
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
         String endpoint=entry.endpoint();
         // An already measured or unsupported row cannot issue another network
@@ -3340,7 +3371,7 @@ public class SourceUpdateWorker extends Worker {
       while(slots>0&&rollingNext<rollingEntries.size()){
         Entry entry=rollingEntries.get(rollingNext);
         if(entry.savedSource)return;
-        if(entry.skipReplay){rollingNext++;continue;}
+        if(entry.skipReplay||entry.alreadyStaged){rollingNext++;continue;}
         boolean http=entry.url.startsWith("http://")||entry.url.startsWith("https://");
         String endpoint=entry.endpoint();
         if(IdleProbeWavePolicy.canBridgeKnownRow(http,rollingMeasured.containsKey(endpoint))){
