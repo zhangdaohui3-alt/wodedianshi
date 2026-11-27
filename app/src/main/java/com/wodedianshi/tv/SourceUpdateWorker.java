@@ -2861,6 +2861,14 @@ public class SourceUpdateWorker extends Worker {
         .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,level)
         .putInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,milestone)
         .putInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,coreMask);
+    if(com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext())){
+      LinkedHashSet<String> previewUrls=new LinkedHashSet<>();
+      for(int i=0;i<preview.length();i++){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        collectQualityUrls(previewUrls,preview.optJSONObject(i));
+      }
+      state.putInitialPreviewQuality(previewUrls,pauseRequested);
+    }
     int count=com.wodedianshi.tv.db.RoomCatalogueWriter.writeSnapshotWithProgress(
         getApplicationContext(),preview,base.catalogueVersion,false,pauseRequested,state);
     if(count!=preview.length())throw new IllegalStateException("Preview directory count mismatch");
