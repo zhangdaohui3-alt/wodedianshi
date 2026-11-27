@@ -2691,7 +2691,7 @@ public class SourceUpdateWorker extends Worker {
       // bounded cache and one recency clock across all rows, not across merges.
       final long rankingTime=System.currentTimeMillis();
       java.util.Comparator<String> bestFirst=SourceRankingRetentionPolicy.boundedBestFirst(
-          url->combinedScore(url,measuredScores,observedQoe,rankingTime),1024);
+          url->SourceQualityScorer.rankScore(url,measuredScores,observedQoe::optJSONObject,rankingTime),1024);
       for(int i:rankingRows){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -3359,9 +3359,6 @@ public class SourceUpdateWorker extends Worker {
     for(String scope:sortedScopes)channelScopes.put(scope);
     channel.put("sourceScopes",channelScopes);
   }
-  private int sourceQualityScore(String address){
-    return SourceQualityScorer.labelScore(address);
-  }
   // Only the source owner reads/writes this map and all persisted/cache state.
   // Network tasks return a result, never merge a channel or advance a cursor.
   private static final class TimedProbe {
@@ -3637,32 +3634,7 @@ public class SourceUpdateWorker extends Worker {
     // Scores can change between probe merges, so never share this cache across
     // operations. Freeze recency time within a comparison to keep it consistent.
     final long now=System.currentTimeMillis();
-    return SourceRankingRetentionPolicy.memoizedBestFirst(url->combinedScore(url,probes,qoe,now));
-  }
-  private double combinedScore(String url,JSONObject probes,JSONObject qoe,long now){
-    String key=scoreKey(url),legacyKey=legacyScoreKey(url);
-    double probeScore=probes.has(key)?probes.optDouble(key,0.0):probes.optDouble(legacyKey,0.0);
-    // URL resolution labels contribute at most 12 points; media preflight and
-    // observed playback QoE remain dominant, so a fake "1080p" label cannot
-    // outrank a materially healthier stream by itself.
-    double score=probeScore+sourceQualityScore(url)*0.01;
-    // Keep a currently failed preflight below unprobed/valid sources even if its old QoE was excellent.
-    if(SourceQualityScorer.isFailedProbeScore(probeScore))return score;
-    JSONObject m=qoe.optJSONObject(key);
-    if(m==null)m=qoe.optJSONObject(legacyKey);
-    if(m!=null&&m.optInt("attempts",0)>=2){
-      int attempts=Math.max(1,m.optInt("attempts",0)),ready=m.optInt("ready",0),fail=m.optInt("failures",0),buffers=m.optInt("buffers",0);
-      int codecWarnings=m.optInt("audioCodecErrors",0)+m.optInt("audioSinkErrors",0)+m.optInt("videoCodecErrors",0);
-      // Use exactly the same attempt-normalized QoE policy as live playback ranking.
-      double qoeAdjustment=SourceQoeScoringPolicy.adjustment(
-          attempts,ready,m.optInt("firstFrames",0),m.optInt("stablePlays",0),
-          fail,buffers,m.optLong("avgReadyMs",0L),m.optLong("avgFirstFrameMs",0L),
-          codecWarnings);
-      score+=qoeAdjustment*SourceQoeScoringPolicy.historyWeight(m.optLong("updated",0L),now);
-      score+=SourceQoeScoringPolicy.recentSuccessBonus(
-          m.optLong("lastFirstFrame",0L),m.optLong("lastStable",0L),now);
-    }
-    return score;
+    return SourceRankingRetentionPolicy.memoizedBestFirst(url->SourceQualityScorer.rankScore(url,probes,qoe::optJSONObject,now));
   }
   // Sniff the response body as well as the URL: some IPTV gateways expose
   // HLS manifests through extensionless or tokenized endpoint URLs.
