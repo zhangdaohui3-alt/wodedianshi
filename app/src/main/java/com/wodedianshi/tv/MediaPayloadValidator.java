@@ -16,7 +16,13 @@ public final class MediaPayloadValidator {
      * with a complete moof and an mdat header plus at least one payload byte.
      * Header-only fMP4 is not sufficient to shorten the HTTP sample. */
     static boolean hasConfirmedHlsPrefix(byte[] data) {
-        return hasTransportStreamPackets(data) || hasIsoBmffMediaFragment(data,true);
+        return data!=null&&hasConfirmedHlsPrefix(data,data.length);
+    }
+
+    /** The unused capacity of a streaming buffer is not received evidence. */
+    static boolean hasConfirmedHlsPrefix(byte[] data,int length){
+        return data!=null&&length>=0&&length<=data.length
+                &&(hasTransportStreamPackets(data,length)||hasIsoBmffMediaFragment(data,length,true));
     }
 
     // Initial direct TS screening requires substantially more evidence than
@@ -44,12 +50,16 @@ public final class MediaPayloadValidator {
      * to establish evidence when a sample starts with null or damaged packets.
      * A PAT/control-table payload remains structural evidence, not decoded AV. */
     static boolean hasTransportStreamPackets(byte[] data) {
-        if (data == null || data.length < 376) return false;
-        for (int offset=0;offset<188&&offset+376<=data.length;offset++) {
+        return data!=null&&hasTransportStreamPackets(data,data.length);
+    }
+
+    private static boolean hasTransportStreamPackets(byte[] data,int length) {
+        if (length < 376) return false;
+        for (int offset=0;offset<188&&offset+376<=length;offset++) {
             if(!isValidTransportStreamPacket(data,offset)
                     ||!isValidTransportStreamPacket(data,offset+188))continue;
             boolean previousClean=false,previousPayload=false;
-            for(int at=offset;at+188<=data.length;at+=188){
+            for(int at=offset;at+188<=length;at+=188){
                 boolean clean=isCleanTransportStreamPacket(data,at);
                 boolean payload=clean&&hasNonNullPayload(data,at,false);
                 if(previousClean&&clean&&(previousPayload||payload))return true;
@@ -117,34 +127,34 @@ public final class MediaPayloadValidator {
      * but its complete box header must be present and structurally valid.
      */
     public static boolean hasIsoBmffMediaFragment(byte[] data) {
-        return hasIsoBmffMediaFragment(data,false);
+        return data!=null&&hasIsoBmffMediaFragment(data,data.length,false);
     }
 
-    private static boolean hasIsoBmffMediaFragment(byte[] data,boolean requirePayloadByte) {
-        if (data == null || data.length < 16) return false;
+    private static boolean hasIsoBmffMediaFragment(byte[] data,int length,boolean requirePayloadByte) {
+        if (length < 16) return false;
         int offset = 0;
         boolean hasMovieFragment = false;
         int examined = 0;
-        while (offset >= 0 && offset + 8 <= data.length && examined++ < 16) {
+        while (offset >= 0 && offset + 8 <= length && examined++ < 16) {
             long size = uint32(data, offset);
             String type = fourCc(data, offset + 4);
             int headerSize = 8;
             if (size == 1L) {
-                if (offset + 16 > data.length) return false;
+                if (offset + 16 > length) return false;
                 size = uint64(data, offset + 8);
                 headerSize = 16;
             } else if (size == 0L) {
-                size = data.length - offset;
+                size = length - offset;
             }
             if (size < headerSize) return false;
             if ("moof".equals(type)) {
-                if (size > data.length - offset) return false;
+                if (size > length - offset) return false;
                 hasMovieFragment = true;
             } else if ("mdat".equals(type)) {
                 return hasMovieFragment && (!requirePayloadByte
-                        || (size > headerSize && data.length - offset > headerSize));
+                        || (size > headerSize && length - offset > headerSize));
             }
-            if (size > Integer.MAX_VALUE || size > data.length - offset) return false;
+            if (size > Integer.MAX_VALUE || size > length - offset) return false;
             offset += (int) size;
         }
         return false;
