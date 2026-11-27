@@ -2199,7 +2199,23 @@ public class SourceUpdateWorker extends Worker {
     if(catalogueVersion==null)return Result.retry();
     // Only discard missing keys after a complete, version-consistent read.
     SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,current.keySet(),true);
-    ArrayList<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
+    // Use only exact-key persisted playback evidence. Legacy entries without
+    // an explicit last event, malformed history and future timestamps fail open
+    // to the ordinary probe. Never remove a pending key or alter its score here.
+    JSONObject playbackHistory;
+    try{playbackHistory=new JSONObject(roomString("source_qoe_v1","{}"));}
+    catch(JSONException malformed){playbackHistory=new JSONObject();}
+    final JSONObject observedPlayback=playbackHistory;
+    final long evidenceNow=System.currentTimeMillis();
+    final int[] stableDeferred={0};
+    ArrayList<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current,key->{
+      JSONObject metric=observedPlayback.optJSONObject(key);
+      boolean defer=metric!=null&&SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(
+          metric.optString("lastEvent",""),metric.optLong("lastStable",0L),
+          metric.optLong("updated",0L),evidenceNow);
+      if(defer)stableDeferred[0]++;
+      return defer;
+    });
     final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
     JSONObject scores=new JSONObject(indexed?"{}":roomString("source_probe_scores_v1","{}"));
     JSONObject streaks=new JSONObject(indexed?"{}":roomString("source_probe_failure_streaks_v1","{}"));
@@ -2251,6 +2267,7 @@ public class SourceUpdateWorker extends Worker {
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
         +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+originDeferred
+        +" stable_deferred="+stableDeferred[0]
         +" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
