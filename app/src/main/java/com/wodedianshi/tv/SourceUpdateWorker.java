@@ -2198,6 +2198,7 @@ public class SourceUpdateWorker extends Worker {
       SourceUpdateSchedulePolicy.rememberProvisional(pending,stored.optString(i,""));
     if(pending.isEmpty())return Result.success();
     HashMap<String,String> current=new HashMap<>();
+    long membershipStart=android.os.SystemClock.elapsedRealtime();
     Long catalogueVersion=com.wodedianshi.tv.db.RoomCatalogueReader.visitRouteUrls(context,url->{
       collectPendingRoute(pending,current,url);
       return current.size()==pending.size();
@@ -2205,6 +2206,15 @@ public class SourceUpdateWorker extends Worker {
     if(catalogueVersion==null)return Result.retry();
     // Only discard missing keys after a complete, version-consistent read.
     SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,current.keySet(),true);
+    long membershipMs=android.os.SystemClock.elapsedRealtime()-membershipStart;
+    if(pending.isEmpty()){
+      // The version-consistent scan proved that no queued route survives.
+      // Persist the empty queue, but do not hydrate QoE or quality state.
+      publishQualityRecheckCheckpoint(context,pending,Collections.emptyMap(),catalogueVersion,false,true);
+      android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked=0 selected=0 conclusive=0"
+          +" pending=0 membership_ms="+membershipMs+" sample_requests=0 sample_bytes=0");
+      return Result.success();
+    }
     // Use only exact-key persisted playback evidence. Legacy entries without
     // an explicit last event, malformed history and future timestamps fail open
     // to the ordinary probe. Never remove a pending key or alter its score here.
@@ -2215,6 +2225,7 @@ public class SourceUpdateWorker extends Worker {
     final long evidenceNow=System.currentTimeMillis();
     final int[] stableDeferred={0};
     ArrayList<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->{
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject metric=observedPlayback.optJSONObject(key);
       boolean defer=metric!=null&&SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(
           metric.optString("lastEvent",""),metric.optLong("lastStable",0L),
@@ -2223,7 +2234,7 @@ public class SourceUpdateWorker extends Worker {
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
+    final boolean indexed=!selected.isEmpty()&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
     // Indexed quality supports bounded atomic checkpoints. Compatibility JSON
     // keeps the old single write to avoid repeated whole-score serialization.
     java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=indexed?batch->{
@@ -2238,7 +2249,7 @@ public class SourceUpdateWorker extends Worker {
         +" stable_deferred="+stableDeferred[0]
         +" reused_full="+slice.reused+" extended="+slice.extended
         +" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
-        +" pending="+pending.size()
+        +" pending="+pending.size()+" membership_ms="+membershipMs
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
   }
