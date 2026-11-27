@@ -594,7 +594,7 @@ public class SourceUpdateWorker extends Worker {
             }
             // readPage builds the complete random-access index if necessary.
             // Decode one record to check the sidecar without allocating all entries.
-            PlaylistFeedIndex.readPage(cached,0,1,source->{},pauseRequested);
+            PlaylistFeedIndex.readInitialPage(cached,0,1,source->{},pauseRequested);
             count=PlaylistFeedIndex.indexedEntryCount(cached);
             if(count>=0){
               PlaylistFeedCache.trimPreparedInitial(cached);
@@ -861,7 +861,7 @@ public class SourceUpdateWorker extends Worker {
                   .apply();
               return continueAfterAcquisition();
             }
-            PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
+            PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
@@ -921,7 +921,16 @@ public class SourceUpdateWorker extends Worker {
               return Result.success();
             }
           }
+          if(initialDiscoveryChain&&!slowPlayback&&!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)){
+            noteInitialStage("空闲时整理频道首源顺序 "+(feedIndex+1)+"/"+feeds.length);
+            PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
+            PlaylistFeedCache.trimPreparedInitial(cachedFeed);
+            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+            return continueAfterAcquisition();
+          }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
+          if(initialDiscoveryChain)feedVersion=PlaylistFeedIndex.initialProbeVersion(
+              feedVersion,PlaylistFeedIndex.hasCoverageOrder(cachedFeed));
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
               roomString(cursorKey+"_version",""),feedVersion);
           int feedPageSize=initialDiscoveryChain
@@ -940,6 +949,7 @@ public class SourceUpdateWorker extends Worker {
                 source.tvgId,source.tvgName));
           };
           parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
+              initialDiscoveryChain?PlaylistFeedIndex.readInitialPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
           if(initialDiscoveryChain){
             // Dedupe exact records only within the fixed raw page. Raw index
