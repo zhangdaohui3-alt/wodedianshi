@@ -99,4 +99,36 @@ public class InitialSharedProbeScoreAndroidTest {
         }catch(UnsupportedOperationException expected){}
     }
 
+    @Test public void incrementalPlaybackCheckpointPreservesUntouchedRowsAndRemovesEvictions() throws Exception {
+        android.content.Context context=org.robolectric.RuntimeEnvironment.getApplication();
+        com.wodedianshi.tv.db.AppDatabase db=androidx.room.Room.inMemoryDatabaseBuilder(
+            context,com.wodedianshi.tv.db.AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String a=StableKey.url("https://example.invalid/a");
+            String b=StableKey.url("https://example.invalid/b");
+            String c=StableKey.url("https://example.invalid/c");
+            java.util.Map<String,org.json.JSONObject> history=new java.util.HashMap<>();
+            history.put(a,new org.json.JSONObject().put("updated",1L).put("stablePlays",1));
+            history.put(b,new org.json.JSONObject().put("updated",2L).put("stablePlays",2));
+            SourceMemoryStore.persistPlaybackChanges(db,history,new java.util.HashSet<>(history.keySet()));
+            db.appStateDao().put(new com.wodedianshi.tv.db.AppStateEntity("unrelated","keep",1L));
+            db.appStateDao().put(new com.wodedianshi.tv.db.AppStateEntity("source_qoe_v1","{}",1L));
+            history.put(c,new org.json.JSONObject().put("updated",3L).put("stablePlays",3));
+            java.util.Set<String> changed=new java.util.HashSet<>(SourceMemoryStore.trimPlaybackHistory(history,2));
+            changed.add(c);
+            SourceMemoryStore.persistPlaybackChanges(db,history,changed);
+            java.util.Map<String,org.json.JSONObject> restored=SourceMemoryStore.readPlaybackHistory(db);
+            assertEquals(2,restored.size());
+            assertFalse(restored.containsKey(a));
+            assertEquals(2,restored.get(b).getInt("stablePlays"));
+            assertEquals(3,restored.get(c).getInt("stablePlays"));
+            assertEquals("keep",db.appStateDao().getValue("unrelated"));
+            history.put(b,new org.json.JSONObject().put("updated",4L).put("stablePlays",4));
+            SourceMemoryStore.persistPlaybackChanges(db,history,java.util.Collections.singleton(b));
+            restored=SourceMemoryStore.readPlaybackHistory(db);
+            assertEquals(4,restored.get(b).getInt("stablePlays"));
+            assertEquals(3,restored.get(c).getInt("stablePlays"));
+        }finally{db.close();}
+    }
+
 }
