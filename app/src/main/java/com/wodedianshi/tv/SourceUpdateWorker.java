@@ -49,9 +49,10 @@ public class SourceUpdateWorker extends Worker {
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
   // All three owner-confined admission paths use exactly the same cache rule.
-  private static RecentProbe reusableInitialProbe(String endpoint,boolean viewing,long now){
+  private RecentProbe reusableInitialProbe(String endpoint,boolean viewing,long now){
     RecentProbe cached=INITIAL_PROBES.get(endpoint);
-    return cached!=null&&SourceUpdateSchedulePolicy.reusableInitialObservation(
+    return cached!=null&&(!cached.result.provisional||allowProvisionalScreen)
+        &&SourceUpdateSchedulePolicy.reusableInitialObservation(
         cached.result.valid,cached.result.provisional,cached.result.paced,viewing,cached.at,now)
         ?cached:null;
   }
@@ -77,6 +78,7 @@ public class SourceUpdateWorker extends Worker {
   private static String committedStagingRevision="";
   private static long committedStagingAt;
   private boolean slowPlayback;
+  private boolean allowProvisionalScreen;
   private boolean inlineInitialRequested;
   private final java.util.concurrent.atomic.AtomicBoolean initialSliceExpired=new java.util.concurrent.atomic.AtomicBoolean();
   private int ownedSlices;
@@ -1193,6 +1195,11 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
+      // Fix admission for the entire slice before any executor submission.
+      // Reserve raw positions, not distinct endpoints, because aliases have
+      // separate persistent quality keys. Full detection still runs when full.
+      allowProvisionalScreen=initialDiscoveryChain&&!slowPlayback
+          &&SourceUpdateSchedulePolicy.permitsProvisionalScreen(provisionalKeys.size(),probeCandidates.size());
       if(manualIndexed||initialIndexed){
         if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
@@ -3190,7 +3197,7 @@ public class SourceUpdateWorker extends Worker {
   // HLS manifests through extensionless or tokenized endpoint URLs.
   private ProbeResult probe(String address,long deadline){
     return probe(address,deadline,slowPlayback,pauseRequested,
-        getInputData().getBoolean("initial_discovery_chain",false)&&!slowPlayback);
+        getInputData().getBoolean("initial_discovery_chain",false)&&!slowPlayback,allowProvisionalScreen);
   }
   // Same production HTTP path, callable by host loopback regression tests.
   static ProbeResult probe(String address,long deadline,boolean slowPlayback,
@@ -3199,6 +3206,10 @@ public class SourceUpdateWorker extends Worker {
   }
   static ProbeResult probe(String address,long deadline,boolean slowPlayback,
       java.util.function.BooleanSupplier pauseRequested,boolean initialIdle){
+    return probe(address,deadline,slowPlayback,pauseRequested,initialIdle,initialIdle);
+  }
+  static ProbeResult probe(String address,long deadline,boolean slowPlayback,
+      java.util.function.BooleanSupplier pauseRequested,boolean initialIdle,boolean allowProvisional){
     ProbeResult result=new ProbeResult();
     result.paced=slowPlayback;
     long started=android.os.SystemClock.elapsedRealtime();
@@ -3209,7 +3220,7 @@ public class SourceUpdateWorker extends Worker {
       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       try{
         initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested,
-            false,initialIdle&&!slowPlayback&&!playlistUrl,result,playlistUrl);
+            false,allowProvisional&&initialIdle&&!slowPlayback&&!playlistUrl,result,playlistUrl);
         result.firstRequestReached=initialResponse!=null;
       }catch(TransientProbeHttpException failure){
         // A redirect may have reached a different origin. Do not penalize the
@@ -3304,7 +3315,7 @@ public class SourceUpdateWorker extends Worker {
             boolean reusableClear=initialIdle&&!slowPlayback&&!resources.aes128Encrypted;
             // Require a distinct second media resource before shortening the
             // first TS sample. A single-segment playlist retains full preflight.
-            boolean screenFirst=reusableClear&&candidateSegments.size()>1;
+            boolean screenFirst=allowProvisional&&reusableClear&&candidateSegments.size()>1;
             ClearSegmentEvidence evidence=reusableClear?confirmedClearFirstSegments.get(candidateSegmentUrl):null;
             if(evidence!=null&&evidence.provisional&&!screenFirst)evidence=null;
             if(evidence==null){
