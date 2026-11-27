@@ -33,6 +33,30 @@ public class RoomCatalogueRouteScanTest {
         assertEquals(expected,new HashSet<>(actual));
         assertEquals(expected.size(),actual.size());
     }
+    @Test public void viewingPauseStopsInsideChannelBeforeVisitingBackupRoutes(){
+        ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/first",
+                new BackupSourceEntity("id","https://example.invalid/first",0,"[]"),
+                new BackupSourceEntity("id","https://example.invalid/second",1,"[]"));
+        List<String> actual=new ArrayList<>();
+        try{
+            RoomCatalogueReader.visitRowRoutes(projection(row),url->{actual.add(url);return false;},
+                    ()->actual.size()==2);
+            fail("Expected playback pause before the second backup");
+        }catch(com.wodedianshi.tv.SourceProbeTimePolicy.PublicationPausedException expected){
+            assertEquals(Arrays.asList("https://example.invalid/original","https://example.invalid/first"),actual);
+        }
+    }
+    @Test public void viewingPauseStopsBeforeFallbackPrimary(){
+        ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/first");
+        List<String> actual=new ArrayList<>();
+        try{
+            RoomCatalogueReader.visitRowRoutes(projection(row),url->{actual.add(url);return false;},
+                    ()->!actual.isEmpty());
+            fail("Expected playback pause before the fallback primary");
+        }catch(com.wodedianshi.tv.SourceProbeTimePolicy.PublicationPausedException expected){
+            assertEquals(Collections.singletonList("https://example.invalid/original"),actual);
+        }
+    }
     @Test public void matchStopsBeforeOtherRoutesAndFallbackMatchesOriginalSemantics(){
         ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/partition");
         List<String> actual=new ArrayList<>();
