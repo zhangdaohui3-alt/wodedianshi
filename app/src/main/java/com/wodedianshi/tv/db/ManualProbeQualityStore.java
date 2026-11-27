@@ -96,6 +96,11 @@ public final class ManualProbeQualityStore {
 
     public static void loadUrls(Context context,String owner,Collection<String> urls,Set<String> loaded,
             JSONObject scores,JSONObject streaks,BooleanSupplier paused)throws JSONException{
+        loadUrls(RoomDatabaseProvider.get(context),owner,urls,loaded,scores,streaks,paused);
+    }
+
+    static void loadUrls(AppDatabase db,String owner,Collection<String> urls,Set<String> loaded,
+            JSONObject scores,JSONObject streaks,BooleanSupplier paused)throws JSONException{
         LinkedHashSet<String> keys=new LinkedHashSet<>();
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
@@ -104,13 +109,26 @@ public final class ManualProbeQualityStore {
                 if(!loaded.contains(key))keys.add(key);
         }
         List<String> list=new ArrayList<>(keys);
-        ManualProbeQualityDao dao=RoomDatabaseProvider.get(context).manualProbeQualityDao();
+        ManualProbeQualityDao dao=db.manualProbeQualityDao();
+        boolean inherit=INITIAL_OWNER.equals(owner)
+            &&"true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY));
         for(int i=0;i<list.size();i+=256){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
             List<String> page=list.subList(i,Math.min(i+256,list.size()));
+            Set<String> missing=inherit?new LinkedHashSet<>(page):null;
             for(ManualProbeQualityEntity row:dao.load(owner,page)){
                 if(row.score!=null)scores.put(row.sourceKey,row.score);
                 if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
+                // Row existence, not non-null fields, determines inheritance:
+                // an explicit private tombstone must never resurrect old scores.
+                if(missing!=null)missing.remove(row.sourceKey);
+            }
+            if(missing!=null&&!missing.isEmpty()){
+                SourceProbeTimePolicy.checkPublicationPaused(paused);
+                for(ManualProbeQualityEntity row:dao.load(PUBLISHED_OWNER,new ArrayList<>(missing))){
+                    if(row.score!=null)scores.put(row.sourceKey,row.score);
+                    if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
+                }
             }
             loaded.addAll(page);
         }
@@ -177,7 +195,11 @@ public final class ManualProbeQualityStore {
         if("true".equals(db.appStateDao().getValue(INITIAL_READY_KEY)))return;
         db.manualProbeQualityDao().clearOwner(INITIAL_OWNER);
         db.appStateDao().put(new AppStateEntity(INITIAL_READY_KEY,"true",System.currentTimeMillis()));
-        writeInitialInTransaction(db,rows,paused);
+        // An indexed published catalogue is authoritative. Do not seed it
+        // from the bounded compatibility JSON, which may be stale. Missing
+        // private keys inherit published values lazily during targeted reads.
+        if(!"true".equals(db.appStateDao().getValue(PUBLISHED_READY_KEY)))
+            writeInitialInTransaction(db,rows,paused);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
