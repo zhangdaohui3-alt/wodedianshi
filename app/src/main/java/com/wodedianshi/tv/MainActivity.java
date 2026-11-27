@@ -1608,7 +1608,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     FrameLayout.LayoutParams actionsParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.LEFT);
     actionsParams.leftMargin=dp(8);actionsParams.bottomMargin=dp(8);
     liveStage.addView(fullscreenActionsButton,actionsParams);fullscreenActionsButton.setVisibility(View.GONE);
-    networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
+    networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setElevation(dp(2));networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
     refresh();
@@ -7732,6 +7732,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             }
           }else if(libVlcVideoOutputReady){
             libVlcVideoOutputReady=false;
+            // A lost output may leave its last native frame on the surface.
+            // Reuse the same cover until this exact engine reports output again.
+            coverLivePicture();
+            livePictureGate.arm(engine,expectedMediaId);
             resetLibVlcHealthEvidence();
             pauseStableDiscovery();
             saveLiveDiagnostic("ENGINE_VOUT_LOST","LibVLC video output count returned to zero");
