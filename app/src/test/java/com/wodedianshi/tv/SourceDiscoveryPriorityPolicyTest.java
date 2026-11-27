@@ -130,12 +130,23 @@ public class SourceDiscoveryPriorityPolicyTest {
         boolean[] done={false,false,false,false,false};
         boolean[] tried=new boolean[5],visited=new boolean[5],failed=new boolean[5];
         boolean[] prepared={true,false,false,false,false};
-        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
-        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,true,false));
-        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,true));
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,true,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,true,false));
         failed[1]=true;tried[2]=true;
-        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false,false));
         tried[0]=true;tried[1]=true;
-        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
+        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false,false));
+    }
+
+    @Test public void partialAcquisitionGivesOrdinaryRotationTurnWithoutChangingCompletion(){
+        boolean[] done={false,false,false,false,false};
+        boolean[] tried=new boolean[5],visited=new boolean[5],failed=new boolean[5];
+        boolean[] prepared={true,false,true,false,false};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeed(2,done,tried,visited,prepared,failed,3,4,false,false,false));
+        assertEquals(2,SourceDiscoveryPriorityPolicy.nextInitialFeed(2,done,tried,visited,prepared,failed,3,4,false,false,true));
+        tried[2]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(2,done,tried,visited,prepared,failed,3,4,false,false,true));
+        assertFalse(done[1]);
     }
 }
