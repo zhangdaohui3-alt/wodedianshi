@@ -6315,17 +6315,24 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     hideChannelZapOverlay=()->{if(channelZapOverlay!=null)channelZapOverlay.setVisibility(View.GONE);hideChannelZapOverlay=null;};
     uiHandler.postDelayed(hideChannelZapOverlay,1800L);
   }
-  private boolean isSourceBlocked(String url){
-    if(url==null||url.isEmpty())return false;
-    return getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",new HashSet<>()).contains(url);
+  // User preference only: do not alter network QoE or delete catalogue rows.
+  private Set<String> sourceBlockRecords(){
+    return getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet());
   }
-  private boolean blockSource(String url){
-    if(url==null||url.isEmpty())return false;
+  private boolean isSourceBlocked(Channel channel,String url){
+    return SourceSelectionPolicy.isUserBlocked(sourceBlockRecords(),identity(channel),url);
+  }
+  private Set<String> blockedSourceUrls(Channel channel){
+    return SourceSelectionPolicy.blockedUrls(sourceBlockRecords(),identity(channel),channel.backups);
+  }
+  private void setSourceBlocked(Channel channel,String url,boolean blocked){
+    String key=SourceSelectionPolicy.channelBlockKey(identity(channel),url);
+    if(key.isEmpty())return;
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-    HashSet<String> blocked=new HashSet<>(p.getStringSet("blocked_ad_sources",new HashSet<>()));
-    boolean added=blocked.add(url);
-    p.edit().putStringSet("blocked_ad_sources",blocked).apply();
-    return added;
+    HashSet<String> records=new HashSet<>(sourceBlockRecords());
+    if(blocked)records.add(key);
+    else{records.remove(key);records.remove(url);}
+    p.edit().putStringSet("blocked_ad_sources",records).apply();
   }
   private static final class PendingSingleChannelRefresh {
     final Channel channel;
@@ -6476,15 +6483,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // The sorter preserves the currently playing URL; ordering stays in memory.
     sortSourcesByObservedQuality(c);
     final String displayedActiveUrl=currentSourceUrl();
+    final long displayedTuneSerial=liveTuneRequestSerial;
     ArrayList<String> labels=new ArrayList<>();
     ArrayList<String> displayedUrls=new ArrayList<>();
     for(int i=0;i<c.backups.size();i++){
       String url=c.backups.get(i);
-      boolean blocked=isSourceBlocked(url);
+      boolean blocked=isSourceBlocked(c,url);
       labels.add("播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源")+(blocked?" · 已屏蔽（点此恢复）":""));
       displayedUrls.add(url);
     }
-    labels.add("屏蔽当前播放源（广告、错台或异常内容）");
+    labels.add("屏蔽本频道当前源（广告、错台或异常内容）");
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源")
       .setItems(labels.toArray(new String[0]),(d,which)->{
         if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
@@ -6492,8 +6500,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(current!=c){toast("频道已变化，请重新打开换源菜单");return;}
         if(which==displayedUrls.size()){
           String bad=currentSourceUrl();
-          if(bad.isEmpty()||!bad.equals(displayedActiveUrl)){toast("当前播放源已变化，请重新打开换源菜单");return;}
-          blockSource(bad);
+          if(bad.isEmpty()||!bad.equals(displayedActiveUrl)||displayedTuneSerial!=liveTuneRequestSerial){toast("当前播放源已变化，请重新打开换源菜单");return;}
+          setSourceBlocked(c,bad,true);
+          saveLiveDiagnostic("SOURCE_USER_BLOCK","channel="+c.name+" route="+StableKey.url(SourceSelectionPolicy.endpointKey(bad)).substring(0,19));
           int next=findNextUnblockedSource(c,c.activeSource,1);
           if(next>=0){c.activeSource=next;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");}
@@ -6503,10 +6512,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         String url=displayedUrls.get(which);
         int index=SourceSelectionPolicy.resolveManualSelection(c,current,c.backups,url);
         if(index<0){toast("播放源已变化，请重新打开换源菜单");return;}
-        if(isSourceBlocked(url)){
-          android.content.SharedPreferences p=getSharedPreferences("mytv",0);
-          HashSet<String> blocked=new HashSet<>(p.getStringSet("blocked_ad_sources",new HashSet<>()));
-          blocked.remove(url);p.edit().putStringSet("blocked_ad_sources",blocked).apply();
+        if(isSourceBlocked(c,url)){
+          setSourceBlocked(c,url,false);
           toast("已恢复该播放源");
         }
         c.activeSource=index;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
@@ -6521,7 +6528,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int findNextUnblockedSource(Channel c,int from,int direction){
     if(c==null||c.backups==null||c.backups.size()<2)return -1;
     // Manual selection remains unrestricted except for sources explicitly blocked by the user.
-    Set<String> blocked=getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet());
+    Set<String> blocked=blockedSourceUrls(c);
     for(int step=1;step<c.backups.size();step++){
       int ix=(from+direction*step)%c.backups.size();
       if(ix<0)ix+=c.backups.size();
@@ -6533,7 +6540,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(c==null||c.backups==null)return -1;
     HashSet<String> blocked=new HashSet<>();
     HashSet<String> coolingDown=new HashSet<>();
-    Set<String> userBlocked=getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet());
+    Set<String> userBlocked=blockedSourceUrls(c);
     for(String url:c.backups){
       if(userBlocked.contains(url)||failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
       else if(SourceMemoryStore.isCoolingDown(this,url))coolingDown.add(url);
@@ -6563,7 +6570,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!canApplyRemoteZap()||selected<0||selected>=channels.size())return;
       int resolved=SourceSelectionPolicy.resolveQueuedManualSelection(c,channels.get(selected),
           expectedSerial,liveTuneRequestSerial,c.backups,expectedActive,currentSourceUrl(),target,
-          getSharedPreferences("mytv",0).getStringSet("blocked_ad_sources",Collections.emptySet()));
+          blockedSourceUrls(c));
       if(resolved>=0)applyRemoteSource(c,resolved);
     };
     uiHandler.postDelayed(pendingRemoteSourceDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
@@ -7374,6 +7381,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
+    if(isSourceBlocked(c,c.backups.get(c.activeSource))){
+      int next=findNextUnblockedSource(c,c.activeSource,1);
+      if(next<0){stopFailedLiveSession("本频道线路已屏蔽，请在换源菜单中恢复");return;}
+      c.activeSource=next;
+    }
     cancelBufferingFallback();
     cancelPlaybackWatchdog();
     cancelAudioTrackCheck();
@@ -7401,7 +7413,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     currentMediaId=generation+":"+selected+":"+c.activeSource;
     info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
     updateLiveChannelSelection(selected);
-    saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size());
+    saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size()+" route="+StableKey.url(SourceSelectionPolicy.endpointKey(c.backups.get(c.activeSource))).substring(0,19));
     try{
     if(player==null){
       recordDecoderInventoryOnce();
@@ -8140,7 +8152,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(key==null||key.isEmpty())continue;
       String remembered=SourceMemoryStore.getLastGood(this,key);
       int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
-      if(index>=0&&!isSourceBlocked(c.backups.get(index))
+      if(index>=0&&!isSourceBlocked(c,c.backups.get(index))
           &&!SourceMemoryStore.isCoolingDown(this,c.backups.get(index))){c.activeSource=index;return;}
     }
   }
