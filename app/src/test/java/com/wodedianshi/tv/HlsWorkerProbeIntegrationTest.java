@@ -329,6 +329,41 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void checkpointKeepsCompletedBatchWhenPlaybackInterruptsNextBatch()throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        AtomicBoolean paused=new AtomicBoolean();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            int batch=SourceUpdateWorker.QUALITY_CHECKPOINT_SIZE;
+            Future<?> served=serverThread.submit(()->{
+                for(int i=0;i<batch;i++)replyRecheck(server,"/checkpoint"+i+".ts",200,transportSample());
+                return null;
+            });
+            List<String> order=new ArrayList<>();
+            LinkedHashSet<String> pending=new LinkedHashSet<>();
+            for(int i=0;i<batch+4;i++){
+                String url="http://127.0.0.1:"+server.getLocalPort()+"/checkpoint"+i+".ts";
+                order.add(url);pending.add(StableKey.url(url));
+            }
+            List<String> saved=new ArrayList<>();
+            LinkedHashSet<String> savedPending=new LinkedHashSet<>();
+            try{
+                SourceUpdateWorker.probeQualityRecheckSlice(order,pending,
+                        SystemClock.elapsedRealtime()+90000L,paused::get,null,completed->{
+                    assertEquals(batch,completed.size());
+                    saved.addAll(completed.keySet());savedPending.addAll(pending);
+                    paused.set(true);
+                });
+                fail("expected playback cancellation");
+            }catch(SourceProbeTimePolicy.PublicationPausedException expected){}
+            served.get(12,TimeUnit.SECONDS);
+            assertEquals(order.subList(0,batch),saved);
+            assertEquals(4,savedPending.size());
+            for(int i=batch;i<order.size();i++)assertTrue(savedPending.contains(StableKey.url(order.get(i))));
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void productionRecheckStopsBeforeAnyNetworkWhenPlaybackResumes(){
         String url="http://127.0.0.1:1/never.ts";
         LinkedHashSet<String> pending=new LinkedHashSet<>(Collections.singleton(StableKey.url(url)));
