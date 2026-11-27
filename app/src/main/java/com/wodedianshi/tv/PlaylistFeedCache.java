@@ -445,11 +445,29 @@ public final class PlaylistFeedCache {
     /** Stable viewing may read an already indexed, matching snapshot only.
      * No network, pruning, hash rebuild or index construction on this path. */
     public static File findIndexedInitial(Context context,String feedUrl) throws IOException {
-        File directory=new File(context.getFilesDir(),"playlist-feed-cache");
-        File cached=new File(directory,sha256("initial|"+feedUrl)+".m3u");
+        File cached=initialBody(context,feedUrl);
+        return matchesBody(readProperties(new File(cached.getPath()+".properties")),cached)
+                &&PlaylistFeedIndex.indexedEntryCount(cached)>=0?cached:null;
+    }
+
+    private static File initialBody(Context context,String feedUrl)throws IOException {
+        return new File(new File(context.getFilesDir(),"playlist-feed-cache"),
+                sha256("initial|"+feedUrl)+".m3u");
+    }
+
+    /** A committed acquisition identifies the full body independently of its
+     * derived index. Repair a missing index from that exact body at idle speed;
+     * do not revalidate a previously acquired, still matching body over HTTP. */
+    static File findAcquiredInitialBody(Context context,String feedUrl,String acquiredVersion)throws IOException {
+        return matchingAcquiredBody(initialBody(context,feedUrl),acquiredVersion);
+    }
+
+    static File matchingAcquiredBody(File cached,String acquiredVersion)throws IOException {
+        if(cached==null||acquiredVersion==null||acquiredVersion.isEmpty())return null;
         Properties metadata=readProperties(new File(cached.getPath()+".properties"));
-        return matchesBody(metadata,cached)&&PlaylistFeedIndex.indexedEntryCount(cached)>=0
-                ?cached:null;
+        if(!matchesBody(metadata,cached))return null;
+        String version=cached.getName()+":"+metadata.getProperty("bodySha256");
+        return DiscoveryBatchPolicy.isPreparedInitialFeed(acquiredVersion,version)?cached:null;
     }
 
     /** Idle initial discovery has consumed a validated indexed page. Refresh only
