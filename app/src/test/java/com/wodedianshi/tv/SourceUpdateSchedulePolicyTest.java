@@ -372,6 +372,15 @@ public class SourceUpdateSchedulePolicyTest {
             assertFalse(SourceUpdateSchedulePolicy.deferRecentlyStableRecheck(event,at,at,at));
     }
 
+    @Test public void interruptedQualityPassHasOnlyOneShortRetry(){
+        assertTrue(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(true,0,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(true,1,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(true,10,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(false,0,false,false));
+        assertFalse(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(true,0,true,false));
+        assertFalse(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(true,0,false,true));
+    }
+
     @Test public void onlyHealthyCheapIdleBatchesExtendTheRecheckQuota(){
         assertEquals(96,SourceUpdateSchedulePolicy.PROVISIONAL_FAST_LIMIT);
         assertTrue(SourceUpdateSchedulePolicy.permitsFastRecheckExtension(48,36,30000L,192L,2097152L));
