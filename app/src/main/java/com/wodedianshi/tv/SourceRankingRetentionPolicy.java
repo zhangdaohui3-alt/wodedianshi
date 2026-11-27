@@ -51,6 +51,31 @@ public final class SourceRankingRetentionPolicy {
         return new ArrayList<>(retained);
     }
 
+    /** Common already-deduplicated rows fit the cap with both required URLs
+     * present. Put required ties first, then sort once instead of sorting
+     * before retention and again afterwards. Unusual inputs keep the old path. */
+    static ArrayList<String> rankRequiredAndBest(ArrayList<String> urls,String primary,
+            String active,int limit,java.util.Comparator<String> bestFirst){
+        boolean fits=urls.size()<=limit&&urls.contains(primary)&&urls.contains(active);
+        if(fits)for(String url:urls){
+            if(url==null||!url.equals(url.trim())
+                    ||!(url.startsWith("http://")||url.startsWith("https://"))){
+                fits=false;break;
+            }
+        }
+        if(fits){
+            ArrayList<String> retained=new ArrayList<>(retainRequiredAndBest(urls,primary,active,limit));
+            retained.sort(bestFirst);
+            return retained;
+        }
+        urls.sort(bestFirst);
+        List<String> retained=retainRequiredAndBest(urls,primary,active,limit);
+        if(urls.equals(retained))return urls;
+        ArrayList<String> result=new ArrayList<>(retained);
+        result.sort(bestFirst);
+        return result;
+    }
+
     /** Select only surplus keys after the caller chooses its protected/recent
      * and fallback set. Do not copy or rewrite values which will be retained. */
     static List<String> surplusScoreKeys(java.util.Iterator<String> keys,
