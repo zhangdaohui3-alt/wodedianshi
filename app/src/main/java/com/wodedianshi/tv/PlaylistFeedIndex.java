@@ -69,6 +69,13 @@ public final class PlaylistFeedIndex {
                 &&(cursor>0||partialScanned>0));
     }
 
+    /** A missing derived index must not downgrade an already started
+     * station-first checkpoint to raw order during stable viewing. */
+    static boolean needsCoverageRecovery(String bodyVersion,String savedVersion,int cursor,int partialScanned){
+        return bodyVersion!=null&&!bodyVersion.isEmpty()&&(cursor>0||partialScanned>0)
+                &&initialProbeVersion(bodyVersion,true).equals(savedVersion);
+    }
+
     static boolean hasCoverageOrder(File playlist){
         if(playlist==null)return false;
         File records=new File(playlist.getAbsolutePath()+".index-data");
