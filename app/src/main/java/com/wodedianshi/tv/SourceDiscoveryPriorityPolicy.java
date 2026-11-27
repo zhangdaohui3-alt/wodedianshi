@@ -119,7 +119,24 @@ public final class SourceDiscoveryPriorityPolicy {
             boolean[] drainOnly=attempted.clone();
             for(int i=0;i<drainOnly.length;i++)drainOnly[i]|=!availableUnderPressure[i];
             int drain=nextEligibleFeed(start,completed,drainOnly,mainlandEnd,regionEnd,false);
-            if(drain>=0)return drain;
+            if(drain>=0){
+                // Stay in the highest eligible cached region. Within it, give
+                // uninspected healthy directories a first turn before another
+                // deep scan of a directory already visited. Neither mask is
+                // durable completion, and normal rotation resumes afterwards.
+                if(visited!=null&&failed!=null&&visited.length==completed.length
+                        &&failed.length==completed.length){
+                    boolean[] eligibleStage=completed.clone();
+                    boolean[] firstTurn=drainOnly.clone();
+                    for(int i=0;i<completed.length;i++){
+                        eligibleStage[i]|=drainOnly[i];
+                        firstTurn[i]|=visited[i]||failed[i];
+                    }
+                    int first=nextFeed(start,eligibleStage,firstTurn,mainlandEnd,regionEnd,false);
+                    if(first>=0)return first;
+                }
+                return drain;
+            }
         }
         return nextInitialFeed(start,completed,attempted,visited,prepared,failed,
                 mainlandEnd,regionEnd,preferCore,viewing,acquisitionYield);
