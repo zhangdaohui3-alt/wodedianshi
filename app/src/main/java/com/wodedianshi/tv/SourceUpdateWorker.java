@@ -885,12 +885,15 @@ public class SourceUpdateWorker extends Worker {
               return continueAfterAcquisition();
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           }
-          if(cachedFeed==null&&slowPlayback){
+          boolean viewingNeedsOrderedRecovery=initialDiscoveryChain&&slowPlayback&&cachedFeed!=null
+              &&PlaylistFeedIndex.requiresIdleCoverageRepair(cachedFeed,
+                  PlaylistFeedCache.contentVersion(cachedFeed),savedProbeVersion,feedCursor,savedPartialScanned);
+          if(slowPlayback&&(cachedFeed==null||viewingNeedsOrderedRecovery)){
             // Acquisition is its own bounded slice: no stream probe in the same
             // worker. Never advance the verified cursor after a download alone.
             noteInitialStage("稳定直播低速下载目录 "+(feedIndex+1)+"/"+feeds.length);
             try{
-              cachedFeed=PlaylistFeedCache.obtainInitialViewingChunk(
+              if(cachedFeed==null)cachedFeed=PlaylistFeedCache.obtainInitialViewingChunk(
                   getApplicationContext(),feed,feedCursor>0,pauseRequested);
               if(cachedFeed==null){
                 // An exact validated byte range was committed; neither the
@@ -906,9 +909,8 @@ public class SourceUpdateWorker extends Worker {
               }
               if(!SourceProbeTimePolicy.fitsLiveFullDirectory(cachedFeed.length()))
                 throw new IOException("Directory exceeds stable-viewing index limit");
-              if(!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)
-                  &&PlaylistFeedIndex.needsCoverageRecovery(PlaylistFeedCache.contentVersion(cachedFeed),
-                      savedProbeVersion,feedCursor,savedPartialScanned)){
+              if(viewingNeedsOrderedRecovery||PlaylistFeedIndex.requiresIdleCoverageRepair(cachedFeed,
+                  PlaylistFeedCache.contentVersion(cachedFeed),savedProbeVersion,feedCursor,savedPartialScanned)){
                 // The viewing retry branch rotates to another directory
                 // without touching the committed cursor or page fingerprint.
                 throw new IOException("Station-first index recovery deferred until idle");
