@@ -121,7 +121,14 @@ public final class SourceUpdateSchedulePolicy {
      * but never inherit the longer lifetime of a full preflight. */
     static boolean canReuseInitialProbe(boolean valid,boolean provisional,long measuredAt,long now) {
         return measuredAt >= 0L && now >= measuredAt
-                && now - measuredAt <= (valid ? (provisional ? 60_000L : 300_000L) : 15_000L);
+                && now <= initialProbeExpiry(valid,provisional,measuredAt);
+    }
+
+    /** Inclusive last eligible instant, using the same lifetime as lookup. */
+    static long initialProbeExpiry(boolean valid,boolean provisional,long measuredAt){
+        if(measuredAt<0L)return -1L;
+        long ttl=valid?(provisional?60_000L:300_000L):15_000L;
+        return measuredAt>Long.MAX_VALUE-ttl?Long.MAX_VALUE:measuredAt+ttl;
     }
 
     /** Single rule for the owner, initial wave admission and rolling refill.
@@ -143,6 +150,28 @@ public final class SourceUpdateSchedulePolicy {
             if(!reusable.test(values.next()))values.remove();
         }
         while(cache.size()>limit)cache.remove(cache.keySet().iterator().next());
+    }
+
+    /** The owner supplies a conservative earliest-expiry hint. Before that
+     * instant, eviction requires no linear expiry scan. When it elapses,
+     * sweep once and recompute the hint from the remaining entries.
+     * The monotonic elapsed-realtime clock and process-local ownership make
+     * the lower bound safe even when a prior earliest entry was overwritten. */
+    static <K,V> long trimInitialProbeCacheByExpiry(java.util.LinkedHashMap<K,V> cache,int capacity,
+            long earliestExpiry,long now,java.util.function.ToLongFunction<V> expiry){
+        int limit=Math.max(0,capacity);
+        if(cache.size()<=limit)return earliestExpiry;
+        if(now>earliestExpiry){
+            earliestExpiry=Long.MAX_VALUE;
+            java.util.Iterator<V> values=cache.values().iterator();
+            while(values.hasNext()){
+                long end=expiry.applyAsLong(values.next());
+                if(now>end)values.remove();
+                else earliestExpiry=Math.min(earliestExpiry,end);
+            }
+        }
+        while(cache.size()>limit)cache.remove(cache.keySet().iterator().next());
+        return earliestExpiry;
     }
 
     /** A positive completed media preflight can survive owner cancellation,
