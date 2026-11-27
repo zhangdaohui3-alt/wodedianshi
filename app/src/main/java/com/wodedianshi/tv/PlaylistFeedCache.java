@@ -273,7 +273,16 @@ public final class PlaylistFeedCache {
     static void trimOtherRangeParts(File directory,File current,long budget){
         File[] parts=directory.listFiles((dir,name)->name.endsWith(".range-part"));
         if(parts==null)return;
-        java.util.Arrays.sort(parts,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+        long otherBytes=0L;
+        for(File other:parts)if(!other.equals(current))otherBytes+=other.length();
+        if(otherBytes<=budget)return;
+        // Read each checkpoint once, only when eviction is necessary.
+        java.util.Map<File,Integer> priority=new java.util.HashMap<>();
+        for(File other:parts)if(!other.equals(current))priority.put(other,rangeRetentionPriority(other));
+        java.util.Arrays.sort(parts,(a,b)->{
+            int rank=Integer.compare(priority.getOrDefault(b,0),priority.getOrDefault(a,0));
+            return rank!=0?rank:Long.compare(b.lastModified(),a.lastModified());
+        });
         long retained=0L;
         for(File other:parts){
             if(other.equals(current))continue;
@@ -286,6 +295,18 @@ public final class PlaylistFeedCache {
             if(other.delete())new File(directory,prefix+".range-state").delete();
             else retained+=bytes; // Failed deletion still occupies disk.
         }
+    }
+
+    /** Completed validated bytes need only local publication. A valid
+     * partial prefix is also more valuable than an uncommitted file. */
+    static int rangeRetentionPriority(File part){
+        String prefix=part.getName().substring(0,part.getName().length()-".range-part".length());
+        Properties state=readProperties(new File(part.getParentFile(),prefix+".range-state"));
+        long offset=parseLong(state.getProperty("length"),0L);
+        long total=parseLong(state.getProperty("total"),-1L);
+        if(!SourceProbeTimePolicy.validDirectoryCheckpoint(offset,total,part.length(),
+                state.getProperty("etag",""),state.getProperty("location","")))return 0;
+        return offset==total?2:1;
     }
 
     private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
