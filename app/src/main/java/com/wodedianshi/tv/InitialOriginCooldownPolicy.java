@@ -47,6 +47,15 @@ final class InitialOriginCooldownPolicy {
         Health h=current(origin,now);
         return h!=null&&h.until>now;
     }
+    /** Recently throttled or repeatedly failing origins must recover through
+     * the serial owner, not speculative waves. A reached request clears the
+     * recovery history unless explicit active pressure still protects it.
+     * This does not prevent an exempt core/replay candidate from being tried. */
+    boolean requiresSerialProbe(String origin,long now){
+        if(origin==null||origin.isEmpty()||now<0L)return false;
+        Health h=current(origin,now);
+        return h!=null&&h.level>0;
+    }
     private Health episode(String origin,long now){
         Health h=current(origin,now);
         if(h==null){
