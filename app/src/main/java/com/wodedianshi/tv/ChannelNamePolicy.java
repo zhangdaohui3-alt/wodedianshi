@@ -433,8 +433,15 @@ final class ChannelNamePolicy {
         return pattern.matcher(uppercaseMetadata).find();
     }
 
-    /** Resolve broadcaster identity from all M3U metadata, not just the display label. */
+    /** Explicit station metadata outranks directory grouping. A category may
+     * help legacy labels only when no station identifier can be resolved. */
     static String canonicalBroadcasterName(String name, String tvgName, String tvgId, String group) {
+        String explicit=resolveBroadcasterMetadata(name,tvgName,tvgId,"");
+        if(!explicit.isEmpty()||group==null||group.trim().isEmpty())return explicit;
+        return resolveBroadcasterMetadata(name,tvgName,tvgId,group);
+    }
+
+    private static String resolveBroadcasterMetadata(String name,String tvgName,String tvgId,String group) {
         String metadata = ((name == null ? "" : name) + " "
                 + (tvgName == null ? "" : tvgName) + " "
                 + (tvgId == null ? "" : tvgId) + " "
