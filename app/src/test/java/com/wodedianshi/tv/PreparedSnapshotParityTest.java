@@ -96,14 +96,14 @@ public class PreparedSnapshotParityTest {
             for(int i=0;i<rows.size();i++)if((Boolean)province.invoke(activity,rows.get(i),label))expected.add(i);
             assertEquals(label,expected,index.candidates(label));
         }
-        @SuppressWarnings("unchecked")
-        List<Object> catalogue=(List<Object>)field(MainActivity.class,"channels").get(activity);
-        catalogue.addAll(rows);
-        Method geo=method("savedGeoChannelKeys",String.class,String.class);
+        // No prepared cache is installed: exercise the production uncached
+        // snapshot membership path directly instead of the retired wrapper.
+        assertNull(field(MainActivity.class,"preparedLocalSnapshot").get(activity));
+        Method geo=method("geoKeysForSnapshot",List.class,long.class,String.class,String.class);
         for(String[] scope:new String[][]{
             {"geo:countries:us","us"},{"geo:countries:cn","cn"},{"geo:countries:gb","gb"},
             {"geo:cities:us-phoenix",""},{"geo:subdivisions:us-az",""},{"geo:subdivisions:us-ca",""}}){
-            assertEquals(scope[0],geo.invoke(activity,scope[0],scope[1]),index.geoKeys(scope[0]));
+            assertEquals(scope[0],geo.invoke(activity,rows,7L,scope[0],scope[1]),index.geoKeys(scope[0]));
         }
         // Same-sized replacement must not make the prepared positional data eligible.
         SnapshotCategoryIndex.PreparedLocal prepared=new SnapshotCategoryIndex.PreparedLocal(7,index);
