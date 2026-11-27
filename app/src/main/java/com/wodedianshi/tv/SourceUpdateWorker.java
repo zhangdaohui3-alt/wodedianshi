@@ -2216,58 +2216,10 @@ public class SourceUpdateWorker extends Worker {
       if(defer)stableDeferred[0]++;
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
-    LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
-    // Scope positive full evidence to this single idle slice. Exact URL
-    // keys still own their queue membership and durable quality records.
-    HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    int checked=0,conclusive=0,originDeferred=0,reused=0;
-    long sampleRequests=0L,sampleBytes=0L;
-    // Reuse the bounded cooldown policy, but keep routine evidence local to
-    // this slice: a temporary outage must not blacklist a saved source.
-    InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
-    for(String url:selected){
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      // Retain the existing bound on both network attempts and durable
-      // quality updates. Cache reuse never consumes a network attempt.
-      if(conclusive>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
-      long now=android.os.SystemClock.elapsedRealtime();
-      if(now>=stageDeadline)break;
-      String endpoint=SourceSelectionPolicy.endpointKey(url);
-      ProbeResult previous=successfulEndpoints.get(endpoint);
-      if(previous!=null){
-        completed.put(url,previous);
-        pending.remove(scoreKey(url));conclusive++;reused++;
-        continue;
-      }
-      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
-      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
-      if(deadline==0L)break;
-      String origin=InitialOriginCooldownPolicy.origin(url);
-      if(recheckOrigins.cooling(origin,now)){
-        // Not attempted: retain the original queue position and quality.
-        originDeferred++;continue;
-      }
-      checked++;
-      ProbeResult measured=probe(url,deadline,false,pauseRequested,false);
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      long finishedAt=android.os.SystemClock.elapsedRealtime();
-      String key=scoreKey(url);
-      sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
-      if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
-      else recheckOrigins.observe(origin,endpoint,finishedAt,
-          measured.firstRequestFailed,measured.firstRequestReached);
-      if(measured.inconclusive()
-          ||finishedAt>=deadline){
-        SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
-        continue;
-      }
-      if(SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
-          measured.paced,measured.provisional,finishedAt,deadline))
-        successfulEndpoints.put(endpoint,measured);
-      completed.put(url,measured);
-      pending.remove(key);conclusive++;
-    }
+    QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested);
+    Map<String,ProbeResult> completed=slice.completed;
+    int conclusive=completed.size();
     // Only completed measurements need quality rows. Skipped, timed-out and
     // never-admitted candidates must not incur score hydration or writes.
     final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
@@ -2297,13 +2249,80 @@ public class SourceUpdateWorker extends Worker {
     if(conclusive>0)update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
         java.util.UUID.randomUUID().toString());
     update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
-    android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
-        +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+originDeferred
+    android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+slice.checked
+        +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+slice.originDeferred
         +" stable_deferred="+stableDeferred[0]
-        +" reused_full="+reused+" sample_requests="+sampleRequests+" sample_bytes="+sampleBytes
+        +" reused_full="+slice.reused+" sample_requests="+slice.sampleRequests+" sample_bytes="+slice.sampleBytes
         +" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
     return Result.success();
+  }
+  /** Owner-local network phase; publication remains in the existing caller. */
+  static final class QualityRecheckSlice {
+    final Map<String,ProbeResult> completed;
+    final int checked,originDeferred,reused;
+    final long sampleRequests,sampleBytes;
+    QualityRecheckSlice(Map<String,ProbeResult> completed,int checked,int originDeferred,
+        int reused,long sampleRequests,long sampleBytes){
+      this.completed=completed;this.checked=checked;this.originDeferred=originDeferred;
+      this.reused=reused;this.sampleRequests=sampleRequests;this.sampleBytes=sampleBytes;
+    }
+  }
+  static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
+      long stageDeadline,java.util.function.BooleanSupplier paused){
+    LinkedHashMap<String,ProbeResult> completed=new LinkedHashMap<>();
+    // Scope positive full evidence to this single idle slice. Exact URL
+    // keys still own their queue membership and durable quality records.
+    HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
+    int checked=0,conclusive=0,originDeferred=0,reused=0;
+    long sampleRequests=0L,sampleBytes=0L;
+    // Reuse the bounded cooldown policy, but keep routine evidence local to
+    // this slice: a temporary outage must not blacklist a saved source.
+    InitialOriginCooldownPolicy recheckOrigins=new InitialOriginCooldownPolicy();
+    for(String url:selected){
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
+      // Retain the existing bound on both network attempts and durable
+      // quality updates. Cache reuse never consumes a network attempt.
+      if(conclusive>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+      long now=android.os.SystemClock.elapsedRealtime();
+      if(now>=stageDeadline)break;
+      String endpoint=SourceSelectionPolicy.endpointKey(url);
+      ProbeResult previous=successfulEndpoints.get(endpoint);
+      if(previous!=null){
+        completed.put(url,previous);
+        pending.remove(StableKey.url(url));conclusive++;reused++;
+        continue;
+      }
+      if(checked>=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT)break;
+      long deadline=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
+      if(deadline==0L)break;
+      String origin=InitialOriginCooldownPolicy.origin(url);
+      if(recheckOrigins.cooling(origin,now)){
+        // Not attempted: retain the original queue position and quality.
+        originDeferred++;continue;
+      }
+      checked++;
+      ProbeResult measured=probe(url,deadline,false,paused,false);
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
+      long finishedAt=android.os.SystemClock.elapsedRealtime();
+      String key=StableKey.url(url);
+      sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
+      if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
+      else recheckOrigins.observe(origin,endpoint,finishedAt,
+          measured.firstRequestFailed,measured.firstRequestReached);
+      if(measured.inconclusive()
+          ||finishedAt>=deadline){
+        SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
+        continue;
+      }
+      if(SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
+          measured.paced,measured.provisional,finishedAt,deadline))
+        successfulEndpoints.put(endpoint,measured);
+      completed.put(url,measured);
+      pending.remove(key);conclusive++;
+    }
+    SourceProbeTimePolicy.checkPublicationPaused(paused);
+    return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes);
   }
   private Result abortManualStructuralConflict(String manualId){
     com.wodedianshi.tv.db.AppStateEditor status=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
