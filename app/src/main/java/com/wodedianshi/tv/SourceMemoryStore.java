@@ -2,6 +2,9 @@ package com.wodedianshi.tv;
 
 import android.content.Context;
 import com.wodedianshi.tv.db.AppStateStore;
+import com.wodedianshi.tv.db.AppDatabase;
+import com.wodedianshi.tv.db.AppStateEntity;
+import com.wodedianshi.tv.db.RoomDatabaseProvider;
 import org.json.JSONObject;
 import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
@@ -11,7 +14,8 @@ import java.util.concurrent.Executors;
 public final class SourceMemoryStore {
     private static final String LAST_GOOD = "source_last_good_v1";
     private static final String COOLDOWNS = "source_cooldowns_v1";
-    private static final String QOE = "source_qoe_v1";
+    private static final String QOE_PREFIX = "source_qoe_v3:";
+    private static final String QOE_END = "source_qoe_v3;";
     private static final long LAST_GOOD_MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L;
     private static final int MAX_ENTRIES = 500;
     private static final int MAX_QOE_ENTRIES = 4096;
@@ -24,6 +28,7 @@ public final class SourceMemoryStore {
     private static final java.util.concurrent.ConcurrentHashMap<String, JSONObject> qoe =
             new java.util.concurrent.ConcurrentHashMap<>();
     private static boolean qoeFlushQueued;
+    private static final java.util.Set<String> dirtyQoe = new java.util.HashSet<>();
     private static final java.util.HashSet<String> memoryFlushQueued = new java.util.HashSet<>();
 
     private SourceMemoryStore() {}
@@ -33,24 +38,14 @@ public final class SourceMemoryStore {
         if (context == null) throw new IllegalArgumentException("context is null");
         if (initialized) return;
         Context application = context.getApplicationContext();
-        String savedQoe = AppStateStore.get(application, QOE, "{}");
+        java.util.Map<String,JSONObject> savedQoe = readPlaybackHistory(RoomDatabaseProvider.get(application));
         String savedGood = AppStateStore.get(application, LAST_GOOD, "{}");
         String savedCooldowns = AppStateStore.get(application, COOLDOWNS, "{}");
         synchronized (LOCK) {
             // Activity recreation must not overwrite unflushed process-owned memory.
             if (initialized) return;
-            try {
-                JSONObject persisted = new JSONObject(savedQoe);
-                Iterator<String> keys = persisted.keys();
-                while (keys.hasNext()) {
-                    String key = keys.next();
-                    JSONObject entry = persisted.optJSONObject(key);
-                    if (entry != null && key.startsWith("v2:")) qoe.put(key, entry);
-                }
-            } catch (Exception malformed) {
-                android.util.Log.w("MyTVSourceMemory", "Invalid stored QoE history", malformed);
-            }
-            trimPlaybackHistory(qoe, MAX_QOE_ENTRIES);
+            qoe.putAll(savedQoe);
+            dirtyQoe.addAll(trimPlaybackHistory(qoe, MAX_QOE_ENTRIES));
             try { lastGood = new JSONObject(savedGood); }
             catch (Exception malformed) { lastGood = new JSONObject(); }
             try { cooldowns = new JSONObject(savedCooldowns); }
@@ -199,13 +194,21 @@ public final class SourceMemoryStore {
                     // cannot order two callbacks in the same millisecond.
                     m.put("lastEvent",event);
                     qoe.put(key,m);
+                    dirtyQoe.add(key);
                     // A flush queued behind existing metric tasks combines a burst.
                     if (!qoeFlushQueued) {
                         qoeFlushQueued=true;
                         WRITER.execute(() -> {
                             qoeFlushQueued=false;
-                            trimPlaybackHistory(qoe, MAX_QOE_ENTRIES);
-                            write(application,QOE,new JSONObject(qoe).toString());
+                            dirtyQoe.addAll(trimPlaybackHistory(qoe, MAX_QOE_ENTRIES));
+                            try {
+                                persistPlaybackChanges(RoomDatabaseProvider.get(application),qoe,dirtyQoe);
+                                dirtyQoe.clear();
+                            } catch (RuntimeException failed) {
+                                // Retry the same keys on the next event; never
+                                // acknowledge a failed transaction as durable.
+                                android.util.Log.e("MyTVSourceMemory","QoE checkpoint failed",failed);
+                            }
                         });
                     }
                 } catch (Exception failure) {
@@ -237,13 +240,48 @@ public final class SourceMemoryStore {
     /** Writer-owned map; foreground readers only access immutable entries.
      * Bound optional playback evidence, not the channel or probe catalogue.
      * Sort only on overflow and remove the oldest observations in one pass. */
-    static void trimPlaybackHistory(java.util.Map<String,JSONObject> history,int capacity) {
+    static java.util.List<String> trimPlaybackHistory(java.util.Map<String,JSONObject> history,int capacity) {
         int excess=history.size()-Math.max(0,capacity);
-        if(excess<=0)return;
+        if(excess<=0)return java.util.Collections.emptyList();
         java.util.ArrayList<String> oldest=new java.util.ArrayList<>(history.keySet());
         oldest.sort(java.util.Comparator.<String>comparingLong(
             key->history.get(key).optLong("updated",0L)).thenComparing(key->key));
-        for(int i=0;i<excess;i++)history.remove(oldest.get(i));
+        java.util.List<String> removed=new java.util.ArrayList<>(oldest.subList(0,excess));
+        for(String key:removed)history.remove(key);
+        return removed;
+    }
+
+    /** One authoritative row per exact source, in the existing Room state table. */
+    static java.util.Map<String,JSONObject> readPlaybackHistory(AppDatabase db){
+        java.util.Map<String,JSONObject> history=new java.util.HashMap<>();
+        for(AppStateEntity row:db.appStateDao().getKeyRange(QOE_PREFIX,QOE_END)){
+            String key=row.key.substring(QOE_PREFIX.length());
+            if(!key.startsWith("v2:"))continue;
+            try{history.put(key,new JSONObject(row.stateValue));}
+            catch(org.json.JSONException malformed){
+                android.util.Log.w("MyTVSourceMemory","Invalid playback observation",malformed);
+            }
+        }
+        return history;
+    }
+
+    /** Commit changed observations and evictions together; no full-history encoding. */
+    static void persistPlaybackChanges(AppDatabase db,java.util.Map<String,JSONObject> history,
+            java.util.Set<String> changed){
+        if(changed.isEmpty())return;
+        java.util.List<AppStateEntity> rows=new java.util.ArrayList<>();
+        java.util.List<String> removals=new java.util.ArrayList<>();
+        for(String key:changed){
+            JSONObject value=history.get(key);
+            if(value==null)removals.add(QOE_PREFIX+key);
+            else rows.add(new AppStateEntity(QOE_PREFIX+key,value.toString(),value.optLong("updated",0L)));
+        }
+        db.runInTransaction(()->{
+            for(int i=0;i<rows.size();i+=256)
+                db.appStateDao().putAll(rows.subList(i,Math.min(i+256,rows.size())));
+            for(int i=0;i<removals.size();i+=256)
+                db.appStateDao().removeAll(removals.subList(i,Math.min(i+256,removals.size())));
+        });
     }
 
     private static void write(Context context, String key, String value) {
