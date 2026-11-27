@@ -3467,7 +3467,9 @@ public class SourceUpdateWorker extends Worker {
         SampleResponse manifestResponse=initialResponse;
         String manifest=HlsVariantPolicy.decodePlaylist(initialBytes);
         String manifestUrl=manifestResponse.finalUrl;
-        ArrayList<HlsVariantPolicy.Variant> variants=HlsVariantPolicy.parseWithOverflow(manifest,manifestUrl);
+        ArrayList<HlsVariantPolicy.Variant> variants=initialIdle||slowPlayback
+            ?HlsVariantPolicy.parseWithOverflow(manifest,manifestUrl)
+            :HlsVariantPolicy.parseWithRotatingFallback(manifest,manifestUrl,System.currentTimeMillis()/86400000L);
         boolean untestedRenditions=variants.size()>HlsVariantPolicy.MAX_VARIANTS;
         if(untestedRenditions)variants.remove(variants.size()-1);
         if(variants.isEmpty())variants.add(new HlsVariantPolicy.Variant(manifestUrl,0L,0,0));
