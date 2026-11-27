@@ -3523,7 +3523,8 @@ public class SourceUpdateWorker extends Worker {
             }
             // fMP4/CMAF playlists require the EXT-X-MAP initialization resource.
             // AES-128 maps require their explicit IV and must validate after decryption.
-            if(resources.initializationUrl!=null&&!(initialIdle&&!slowPlayback&&!resources.aes128Encrypted
+            boolean reusableClear=!slowPlayback&&!resources.aes128Encrypted;
+            if(resources.initializationUrl!=null&&!(reusableClear
                 &&confirmedClearMaps.contains(resources.initializationUrl))){
               SampleResponse initializationResponse=fetchSampleResponse(resources.initializationUrl,32768,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
               byte[] initialization=initializationResponse==null?null:initializationResponse.bytes;
@@ -3534,15 +3535,14 @@ public class SourceUpdateWorker extends Worker {
                     initialization,aesKey,mapIv,HlsProbeValidationPolicy.isCompleteSample(initializationResponse.truncated)))continue;
               }else{
                 if(!MediaPayloadValidator.hasIsoBmffInitializationSegment(initialization))continue;
-                if(initialIdle&&!slowPlayback)confirmedClearMaps.add(resources.initializationUrl);
+                if(reusableClear)confirmedClearMaps.add(resources.initializationUrl);
               }
             }
             String candidateSegmentUrl=candidateSegments.get(0);
             long candidateSegmentStart=android.os.SystemClock.elapsedRealtime();
-            boolean reusableClear=initialIdle&&!slowPlayback&&!resources.aes128Encrypted;
-            // Require a distinct second media resource before shortening the
-            // first TS sample. A single-segment playlist retains full preflight.
-            boolean screenFirst=allowProvisional&&reusableClear&&candidateSegments.size()>1;
+            // Sharing confirmed clear evidence is independent of shortening
+            // the sample. Only initial screening can use a provisional prefix.
+            boolean screenFirst=initialIdle&&allowProvisional&&reusableClear&&candidateSegments.size()>1;
             ClearSegmentEvidence evidence=reusableClear?confirmedClearFirstSegments.get(candidateSegmentUrl):null;
             if(evidence!=null&&evidence.provisional&&!screenFirst)evidence=null;
             if(evidence==null){
@@ -3570,7 +3570,7 @@ public class SourceUpdateWorker extends Worker {
                   &&confirmedClearFirstSegments.containsKey(secondUrl);
               if(!secondSegmentOk){
                 SampleResponse secondResponse=fetchSampleResponse(secondUrl,8192,renditionDeadline,slowPlayback,pauseRequested,
-                    reusableClear,false,result);
+                    initialIdle&&reusableClear,false,result);
                 byte[] second=secondResponse==null?null:secondResponse.bytes;
                 if(resources.aes128Encrypted&&second!=null){
                   byte[] secondIv=resources.encryptionIv!=null
