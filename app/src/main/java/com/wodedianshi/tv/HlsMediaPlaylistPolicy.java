@@ -47,6 +47,7 @@ public final class HlsMediaPlaylistPolicy {
         if (playlist == null || finalPlaylistUrl == null)
             return new Resources(null,false,false,false,null,null,0L,false,media,sequences);
         String[] lines = playlist.replace("\\r", "").split("\\n");
+        URL base=new URL(finalPlaylistUrl);
         // Continue scanning the bounded playlist after the media URL cap is reached: key
         // rotation or METHOD=NONE may appear later and must not be missed.
         for (int i=0;i<lines.length;i++) {
@@ -69,7 +70,7 @@ public final class HlsMediaPlaylistPolicy {
                 } else if("AES-128".equals(method) && (format==null || "identity".equals(format))) {
                     if(clearMediaSeen)unsupportedEncryption=true;
                     String uri=uriAttribute(attrs);
-                    String resolved=resolve(uri,finalPlaylistUrl);
+                    String resolved=resolve(uri,base);
                     if(resolved==null) unsupportedEncryption=true;
                     else {
                         String iv=attribute(IV_ATTRIBUTE,attrs);
@@ -89,7 +90,7 @@ public final class HlsMediaPlaylistPolicy {
                 }
             } else if(line.startsWith("#EXT-X-MAP:")) {
                 String attrs=line.substring("#EXT-X-MAP:".length());
-                String mapUrl=resolve(uriAttribute(attrs),finalPlaylistUrl);
+                String mapUrl=resolve(uriAttribute(attrs),base);
                 if(mapUrl==null) {
                     unsupportedMap=true; initialization=null;
                     if(attrs.matches(".*(?:^|,)\\s*BYTERANGE\\s*=.*"))unsupportedMapRange=true;
@@ -110,7 +111,7 @@ public final class HlsMediaPlaylistPolicy {
                     String uri=uriAttribute(attrs);
                     if(uri!=null){
                         clearMediaSeen=true;
-                        if(addUnique(media,resolve(uri,finalPlaylistUrl)))sequences.add(-1L);
+                        if(media.size()<MAX_MEDIA_SEGMENTS&&addUnique(media,resolve(uri,base)))sequences.add(-1L);
                     }
                 }
             } else if(line.startsWith("#EXTINF:")) {
@@ -122,7 +123,8 @@ public final class HlsMediaPlaylistPolicy {
             } else if(awaitingSegment&&!line.isEmpty()&&!line.startsWith("#")) {
                 // Skipped resources still consume a sequence; comments do not.
                 if(activeKeyUrl==null)clearMediaSeen=true;
-                if(!segmentGap&&!segmentRange&&addUnique(media,resolve(line,finalPlaylistUrl))){
+                if(!segmentGap&&!segmentRange&&media.size()<MAX_MEDIA_SEGMENTS
+                        &&addUnique(media,resolve(line,base))){
                     sequences.add(nextSequence);
                     if(!hasFirstSequence){firstSequence=nextSequence;hasFirstSequence=true;}
                 }
@@ -145,8 +147,8 @@ public final class HlsMediaPlaylistPolicy {
     private static String uriAttribute(String attributes) {
         return attribute(URI_ATTRIBUTE,attributes);
     }
-    private static String resolve(String uri,String base)throws Exception {
-        return uri==null||uri.isEmpty()?null:new URL(new URL(base),uri).toString();
+    private static String resolve(String uri,URL base)throws Exception {
+        return uri==null||uri.isEmpty()?null:new URL(base,uri).toString();
     }
     private static boolean addUnique(ArrayList<String> values,String value) {
         if(value==null||values.contains(value)||values.size()>=MAX_MEDIA_SEGMENTS)return false;
