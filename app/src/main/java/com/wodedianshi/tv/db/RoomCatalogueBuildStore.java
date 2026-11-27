@@ -656,6 +656,7 @@ public final class RoomCatalogueBuildStore {
             if(db.appStateDao().getValue(MANUAL_OWNER_KEY)!=null)
                 throw new IllegalStateException("Manual staging must not be cleared by initial discovery");
             db.channelDao().clearCatalogueBuildRows();
+            ManualProbeQualityStore.clearInitialInTransaction(db);
             if(progress!=null)progress.applyInTransaction(db);
             db.appStateDao().remove(STAGING_REVISION_KEY);
             checkPause(paused);
