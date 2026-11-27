@@ -18,6 +18,8 @@ public interface ManualProbeQualityDao {
     void put(List<ManualProbeQualityEntity> rows);
     @Query("DELETE FROM manual_probe_quality WHERE owner=:owner")
     void clearOwner(String owner);
+    @Query("DELETE FROM manual_probe_quality WHERE owner=:owner AND score IS NULL AND failureStreak IS NULL")
+    int removeEmptyRows(String owner);
     @Query("UPDATE manual_probe_quality SET owner=:published WHERE owner=:owner")
     void publish(String owner,String published);
 }
