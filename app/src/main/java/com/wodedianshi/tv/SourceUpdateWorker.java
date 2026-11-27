@@ -1518,6 +1518,14 @@ public class SourceUpdateWorker extends Worker {
               measured=outcome.result;addressDeadline=outcome.deadline;measuredAt=outcome.finishedAt;
               parallelOutcome=true;
             }else{
+              // A rejected wave may have spent the remaining address budget
+              // preparing candidates. Keep this exact position for the next slice.
+              if(initialDiscoveryChain&&!slowPlayback
+                  &&android.os.SystemClock.elapsedRealtime()>=addressDeadline){
+                checked--;
+                if(e.savedSource){if(!priorityRecheck)savedScanned--;}else discoveryScanned--;
+                break;
+              }
               idleWave.serialProbes++;
               noteInitialStage((slowPlayback?"稳定直播低速串行":"空闲串行检测")+" · 本批第 "+checked+" 条（尚未提交）");
               measured=probe(e.url,addressDeadline);
@@ -3485,6 +3493,8 @@ public class SourceUpdateWorker extends Worker {
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
       }
+      // Candidate preparation may consume the remaining time budget.
+      now=android.os.SystemClock.elapsedRealtime();
       if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
           ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
       // Manual refresh and first build share the same high-concurrency
