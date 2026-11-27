@@ -125,4 +125,17 @@ public class SourceDiscoveryPriorityPolicyTest {
         assertEquals("优先抓取中国大陆：央视、卫视、各省地方台",
             SourceDiscoveryPriorityPolicy.stageLabel(0));
     }
+
+    @Test public void preparedDirectoryYieldsToFreshEligiblePeerOnlyAfterCoreCoverage(){
+        boolean[] done={false,false,false,false,false};
+        boolean[] tried=new boolean[5],visited=new boolean[5],failed=new boolean[5];
+        boolean[] prepared={true,false,false,false,false};
+        assertEquals(1,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,true,false));
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,true));
+        failed[1]=true;tried[2]=true;
+        assertEquals(0,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
+        tried[0]=true;tried[1]=true;
+        assertEquals(3,SourceDiscoveryPriorityPolicy.nextInitialFeed(0,done,tried,visited,prepared,failed,3,4,false,false));
+    }
 }
