@@ -1438,7 +1438,7 @@ public class SourceUpdateWorker extends Worker {
         if(e.alreadyStaged){retainedDuplicates++;continue;}
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=e.endpoint();
-        String exactScoreKey=null,oldScoreKey=null;
+        String exactScoreKey=null;
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
@@ -1625,9 +1625,8 @@ public class SourceUpdateWorker extends Worker {
         }
         // Persist each exact URL associated with a conclusive observation.
         if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
-        if(oldScoreKey==null)oldScoreKey=legacyScoreKey(e.url);
-        storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
-        manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
+        storePreflightScore(measuredScores,exactScoreKey,measured);
+        manualQualityDirty.add(exactScoreKey);
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
           String streakKey=exactScoreKey==null?scoreKey(e.url):exactScoreKey;
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
@@ -2453,10 +2452,10 @@ public class SourceUpdateWorker extends Worker {
       for(Map.Entry<String,ProbeResult> entry:completed.entrySet()){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         String url=entry.getKey();
-        String key=scoreKey(url),legacy=legacyScoreKey(url);
-        storePreflightScore(scores,key,legacy,entry.getValue());
+        String key=scoreKey(url);
+        storePreflightScore(scores,key,entry.getValue());
         // Keep the existing failure streak for ordinary health rotation.
-        dirty.add(key);dirty.add(legacy);
+        dirty.add(key);
       }
     }
     com.wodedianshi.tv.db.AppStateEditor update=new com.wodedianshi.tv.db.AppStateEditor(context)
@@ -3268,10 +3267,9 @@ public class SourceUpdateWorker extends Worker {
    * routine refresh and designated rechecks still follow normal probes. */
   static boolean mayReuseRetainedPreflight(JSONObject scores,Set<String> provisional,String url){
     if(scores==null||provisional==null||url==null||url.isEmpty())return false;
-    String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
-    if(provisional.contains(key)||provisional.contains(legacy))return false;
-    // Require the exact current score rather than falling back to old hashed
-    // keys; an evicted score or a later negative observation is not proof.
+    String key=StableKey.url(url);
+    if(provisional.contains(key))return false;
+    // A missing score or a later negative observation is not proof.
     double score=scores.optDouble(key,Double.NaN);
     return Double.isFinite(score)&&score>0.0;
   }
@@ -3630,13 +3628,11 @@ public class SourceUpdateWorker extends Worker {
     long bitrate;
     long sampleRequests,sampleBytes;
   }
-  static void storePreflightScore(JSONObject scores,String key,String legacyKey,ProbeResult result)throws JSONException{
-    double prior=scores.has(key)?scores.optDouble(key,0.0):scores.optDouble(legacyKey,0.0);
+  static void storePreflightScore(JSONObject scores,String key,ProbeResult result)throws JSONException{
+    double prior=scores.optDouble(key,0.0);
     scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,result.provisional,prior,result.score):-500.0);
-    scores.remove(legacyKey);
   }
   private String scoreKey(String url){return StableKey.url(url);}
-  private String legacyScoreKey(String url){return StableKey.legacyUrl(url);}
   private java.util.Comparator<String> rankingComparator(JSONObject probes,JSONObject qoe){
     // Scores can change between probe merges, so never share this cache across
     // operations. Freeze recency time within a comparison to keep it consistent.
