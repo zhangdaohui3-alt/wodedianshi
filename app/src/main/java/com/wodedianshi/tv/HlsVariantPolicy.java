@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 
 /** Bounded, deterministic ordering of playable HLS media renditions. */
 public final class HlsVariantPolicy {
-    private static final int MAX_VARIANTS = 8;
+    static final int MAX_VARIANTS = 8;
     private static final Pattern BANDWIDTH = Pattern.compile("(?:^|[, :])BANDWIDTH=(\\d+)");
     private static final Pattern RESOLUTION = Pattern.compile("(?:^|[, :])RESOLUTION=(\\d+)x(\\d+)");
 
@@ -61,6 +61,16 @@ public final class HlsVariantPolicy {
     }
 
     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
+        return parseBounded(manifest,finalManifestUrl,MAX_VARIANTS);
+    }
+
+    // One extra distinct entry is an overflow witness, not permission to
+    // issue another request. Preserve the public eight-rendition contract.
+    static ArrayList<Variant> parseWithOverflow(String manifest,String finalManifestUrl)throws Exception {
+        return parseBounded(manifest,finalManifestUrl,MAX_VARIANTS+1);
+    }
+
+    private static ArrayList<Variant> parseBounded(String manifest,String finalManifestUrl,int limit)throws Exception {
         ArrayList<Variant> variants = new ArrayList<>();
         if (manifest == null || finalManifestUrl == null) return variants;
         // Most live media playlists have no master renditions. Avoid splitting
@@ -122,7 +132,7 @@ public final class HlsVariantPolicy {
             // case-insensitive host and equivalent default ports. Preserve
             // the original selected URL and every distinct path/query.
             if (seen.add(SourceSelectionPolicy.endpointKey(variant.url))) distinct.add(variant);
-            if (distinct.size() >= MAX_VARIANTS) break;
+            if (distinct.size() >= limit) break;
         }
         return distinct;
     }
