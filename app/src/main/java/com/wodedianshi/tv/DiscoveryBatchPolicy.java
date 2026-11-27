@@ -117,6 +117,40 @@ public final class DiscoveryBatchPolicy {
         return result;
     }
 
+    /** Freeze the prior-page coverage preference, not live staging state,
+     * throughout every continuation of the same immutable page. */
+    static <T> long coveredPositions(java.util.List<T> rows,
+            java.util.function.Predicate<T> covered) {
+        if(rows.size()>INITIAL_PAGE_SIZE)return 0L;
+        long mask=0L;
+        for(int i=0;i<rows.size();i++)if(covered.test(rows.get(i)))mask|=1L<<i;
+        return mask;
+    }
+
+    static long readCoverageMask(String record,String rawFingerprint,int count) {
+        if(record==null||count<0||count>INITIAL_PAGE_SIZE
+                ||!record.startsWith(rawFingerprint+":"))return -1L;
+        try{
+            long mask=Long.parseLong(record.substring(rawFingerprint.length()+1));
+            return mask>=0L&&(mask>>>count)==0L?mask:-1L;
+        }catch(NumberFormatException invalid){return -1L;}
+    }
+
+    /** Existing geographic/category priority is stronger than coverage.
+     * Keep the original page's host/station interleave within each partition. */
+    static <T> void prioritizeUncovered(java.util.List<T> rows,long covered,
+            java.util.function.ToIntFunction<T> priority) {
+        if(covered<=0L||rows.size()>INITIAL_PAGE_SIZE)return;
+        java.util.TreeMap<Integer,java.util.ArrayList<T>> groups=new java.util.TreeMap<>();
+        for(int i=0;i<rows.size();i++){
+            T row=rows.get(i);
+            int rank=2*priority.applyAsInt(row)+((covered&(1L<<i))!=0L?1:0);
+            groups.computeIfAbsent(rank,k->new java.util.ArrayList<>()).add(row);
+        }
+        rows.clear();
+        for(java.util.ArrayList<T> group:groups.values())rows.addAll(group);
+    }
+
     /** Independent partial page checkpoints enable fair rotation. */
     public static String initialBatchPrefix(int feedIndex) {
         return "source_initial_page_"+feedIndex+"_";
