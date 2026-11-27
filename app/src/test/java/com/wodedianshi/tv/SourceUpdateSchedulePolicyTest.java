@@ -361,6 +361,31 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L));
     }
 
+    @Test public void qualityRecheckSpreadsOriginsWithoutLosingOldestOrReorderingStoredQueue(){
+        java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
+        java.util.HashMap<String,String> current=new java.util.HashMap<>();
+        for(int i=0;i<60;i++){
+            pending.add("slow"+i);current.put("slow"+i,"https://slow.invalid/"+i);
+        }
+        pending.add("missing");
+        pending.add("fast0");current.put("fast0","https://fast.invalid/0");
+        pending.add("fast1");current.put("fast1","https://fast.invalid/1");
+        pending.add("other");current.put("other","https://other.invalid/0");
+        java.util.List<String> original=new java.util.ArrayList<>(pending);
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
+        assertEquals(48,selected.size());
+        assertEquals(java.util.Arrays.asList("https://slow.invalid/0","https://fast.invalid/0",
+                "https://other.invalid/0","https://slow.invalid/1","https://fast.invalid/1"),
+                selected.subList(0,5));
+        assertEquals(48,new java.util.HashSet<>(selected).size());
+        assertEquals(original,new java.util.ArrayList<>(pending));
+        // An attempted inconclusive oldest key rotates normally; an unattempted
+        // cooled sibling remains eligible for the next bounded slice.
+        SourceUpdateSchedulePolicy.rememberProvisional(pending,"slow0");
+        assertEquals("https://slow.invalid/1",
+                SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current).get(0));
+    }
+
     @Test public void qualityRecheckUsesRemainingIdleBudgetWithoutExceedingPageLimit(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         java.util.HashMap<String,String> current=new java.util.HashMap<>();
