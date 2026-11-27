@@ -502,6 +502,7 @@ public final class RoomCatalogueWriter {
                 // Publish and discard the staging snapshot in the same transaction.
                 // A crash cannot leave a stale build marked active after publication.
                 dao.clearCatalogueBuildRows();
+                ManualProbeQualityStore.clearInitialInTransaction(db);
                 db.appStateDao().remove(RoomCatalogueBuildStore.STAGING_REVISION_KEY);
                 long publishedAt = System.currentTimeMillis();
                 db.appStateDao().put(new AppStateEntity(
