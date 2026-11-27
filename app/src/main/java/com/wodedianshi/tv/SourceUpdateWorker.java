@@ -2192,21 +2192,11 @@ public class SourceUpdateWorker extends Worker {
       SourceUpdateSchedulePolicy.rememberProvisional(pending,stored.optString(i,""));
     if(pending.isEmpty())return Result.success();
     HashMap<String,String> current=new HashMap<>();
-    com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
-        com.wodedianshi.tv.db.RoomCatalogueReader.read(context,page->{
-          for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-            SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-            // Still finish the validated Room read, but no more hashing once
-            // all pending keys have been found. Avoid copying source arrays.
-            if(current.size()==pending.size())break;
-            collectPendingRoute(pending,current,row.url);
-            for(String url:row.sources){
-              if(current.size()==pending.size())break;
-              if(!url.equals(row.url))collectPendingRoute(pending,current,url);
-            }
-          }
-        },pauseRequested);
-    if(snapshot==null)return Result.retry();
+    Long catalogueVersion=com.wodedianshi.tv.db.RoomCatalogueReader.visitRouteUrls(context,url->{
+      collectPendingRoute(pending,current,url);
+      return current.size()==pending.size();
+    },pauseRequested);
+    if(catalogueVersion==null)return Result.retry();
     // Only discard missing keys after a complete, version-consistent read.
     SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,current.keySet(),true);
     ArrayList<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
@@ -2245,7 +2235,7 @@ public class SourceUpdateWorker extends Worker {
     else update.putString("source_probe_scores_v1",scores.toString());
     if(conclusive>0)update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
         java.util.UUID.randomUUID().toString());
-    update.applyAtCatalogueVersion(snapshot.catalogueVersion,pauseRequested);
+    update.applyAtCatalogueVersion(catalogueVersion,pauseRequested);
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+checked
         +" selected="+selected.size()+" conclusive="+conclusive+" pending="+pending.size()
         +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-(stageDeadline-PROBE_STAGE_DEADLINE_MS)));
