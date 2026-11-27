@@ -122,7 +122,7 @@ public class InitialQualityTransactionTest {
             assertFalse(scores.has(key));assertFalse(streaks.has(key));
             assertEquals(Integer.valueOf(900),db.manualProbeQualityDao().find(published,key).score);
             db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
-            assertNull(db.manualProbeQualityDao().find(published,key).score);
+            assertNull(db.manualProbeQualityDao().find(published,key));
             assertEquals(Integer.valueOf(700),db.manualProbeQualityDao().find(published,other).score);
         }finally{db.close();}
     }
@@ -157,6 +157,40 @@ public class InitialQualityTransactionTest {
             assertTrue(ManualProbeQualityStore.hasInitial(db));
             db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
             assertEquals(Integer.valueOf(1500),db.manualProbeQualityDao().find(published,hk).score);
+        }finally{db.close();}
+    }
+
+
+    @Test public void finalCleanupRemovesOnlyPublishedEmptyRowsAndPreservesPrivateOwners(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            db.manualProbeQualityDao().put(java.util.Arrays.asList(
+                new ManualProbeQualityEntity(published,"empty",null,null),
+                new ManualProbeQualityEntity(published,"positive",1200,null),
+                new ManualProbeQualityEntity(published,"negative",-500,null),
+                new ManualProbeQualityEntity(published,"streak",null,2),
+                new ManualProbeQualityEntity("unrelated-private","empty",null,null)));
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,
+                Collections.singletonList(new ManualProbeQualityEntity(initial,"new-empty",null,null)),()->false));
+            assertNotNull(db.manualProbeQualityDao().find(initial,"new-empty"));
+            try{
+                db.runInTransaction(()->{
+                    ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertNotNull(db.manualProbeQualityDao().find(initial,"new-empty"));
+            assertNotNull(db.manualProbeQualityDao().find(published,"empty"));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            assertNull(db.manualProbeQualityDao().find(published,"empty"));
+            assertNull(db.manualProbeQualityDao().find(published,"new-empty"));
+            assertEquals(Integer.valueOf(1200),db.manualProbeQualityDao().find(published,"positive").score);
+            assertEquals(Integer.valueOf(-500),db.manualProbeQualityDao().find(published,"negative").score);
+            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(published,"streak").failureStreak);
+            assertNotNull(db.manualProbeQualityDao().find("unrelated-private","empty"));
         }finally{db.close();}
     }
 
