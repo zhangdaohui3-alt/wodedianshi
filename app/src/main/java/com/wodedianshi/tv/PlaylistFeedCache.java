@@ -102,12 +102,7 @@ public final class PlaylistFeedCache {
                 // A temporary transport failure is not evidence that Range is
                 // unsupported. Keep the durable prefix and let normal feed
                 // rotation retry it instead of immediately downloading twice.
-                Properties retained=readProperties(checkpoint);
-                boolean checkpointRetained=partial.isFile()&&SourceProbeTimePolicy.validDirectoryCheckpoint(
-                    parseLong(retained.getProperty("length"),0L),
-                    parseLong(retained.getProperty("total"),-1L),partial.length(),
-                    retained.getProperty("etag",""),retained.getProperty("location",""));
-                if(SourceProbeTimePolicy.deferRangeFallback(failure,checkpointRetained))throw failure;
+                if(shouldDeferRangeFallback(failure,partial))throw failure;
                 // Other failures retain the existing full-download fallback,
                 // including servers that no longer honor Range.
             }
@@ -307,6 +302,14 @@ public final class PlaylistFeedCache {
         if(!SourceProbeTimePolicy.validDirectoryCheckpoint(offset,total,part.length(),
                 state.getProperty("etag",""),state.getProperty("location","")))return 0;
         return offset==total?2:1;
+    }
+
+    /** A complete retained range needs only local finalization. Do not
+     * redownload it on local I/O failure; the normal bounded retry owns it.
+     * Invalidated checkpoints still follow the ordinary full-body fallback. */
+    static boolean shouldDeferRangeFallback(IOException failure,File partial){
+        int priority=partial.isFile()?rangeRetentionPriority(partial):0;
+        return priority==2||SourceProbeTimePolicy.deferRangeFallback(failure,priority==1);
     }
 
     private static void clearRangeCheckpoint(File checkpoint,File partial) throws IOException {
