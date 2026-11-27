@@ -127,4 +127,37 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+
+    @Test public void previewPublishesOnlyRetainedQualityAndKeepsPrivateBuild()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            String visible="https://example.invalid/visible",hidden="https://example.invalid/hidden";
+            String vk=com.wodedianshi.tv.StableKey.url(visible),hk=com.wodedianshi.tv.StableKey.url(hidden);
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,java.util.Arrays.asList(
+                new ManualProbeQualityEntity(initial,vk,1200,null),
+                new ManualProbeQualityEntity(initial,hk,1500,null)),()->false));
+            try{
+                db.runInTransaction(()->{
+                    new AppStateEditor(context).putInt("preview_milestone",1)
+                        .putInitialPreviewQuality(Collections.singletonList(visible),()->false).applyInTransaction(db);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertNull(db.appStateDao().getValue("preview_milestone"));
+            assertNull(db.manualProbeQualityDao().find(published,vk));
+            db.runInTransaction(()->new AppStateEditor(context).putInt("preview_milestone",1)
+                .putInitialPreviewQuality(Collections.singletonList(visible),()->false).applyInTransaction(db));
+            assertEquals("1",db.appStateDao().getValue("preview_milestone"));
+            assertEquals(Integer.valueOf(1200),db.manualProbeQualityDao().find(published,vk).score);
+            assertNull(db.manualProbeQualityDao().find(published,hk));
+            assertEquals(Integer.valueOf(1500),db.manualProbeQualityDao().find(initial,hk).score);
+            assertTrue(ManualProbeQualityStore.hasInitial(db));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            assertEquals(Integer.valueOf(1500),db.manualProbeQualityDao().find(published,hk).score);
+        }finally{db.close();}
+    }
+
 }
