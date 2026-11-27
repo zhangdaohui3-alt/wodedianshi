@@ -74,3 +74,15 @@ dependencies {
     // Host-side Android 9 / native SQLite integration tests; not packaged in APK.
     testImplementation "org.robolectric:robolectric:4.16.1"
 }
+
+// Surface only numerical detection benchmark results in ordinary CI logs.
+// Do not enable all test stdout (which could include URLs or diagnostics).
+tasks.withType(Test).configureEach {
+    onOutput { descriptor, event ->
+        String line = event.message.trim()
+        if (line ==~ /room_route_scale channels=\d+ routes=\d+ full_read_ms=\d+ route_scan_ms=\d+ early_exit_ms=\d+ cancelled_after=\d+/ ||
+                line ==~ /mixed_probe_comparison full_requests=\d+ fast_requests=\d+ full_body_bytes=\d+ fast_body_bytes=\d+/) {
+            logger.lifecycle(line)
+        }
+    }
+}
