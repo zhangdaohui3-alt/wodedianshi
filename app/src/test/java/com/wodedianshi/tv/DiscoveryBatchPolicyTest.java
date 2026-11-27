@@ -342,4 +342,26 @@ public class DiscoveryBatchPolicyTest {
         assertFalse(DiscoveryBatchPolicy.skipReplayPosition(replay,-1L,2));
         assertEquals(1L<<47,DiscoveryBatchPolicy.noteReplayPosition(0L,47,48));
     }
+
+    @Test public void priorCoveragePrefersUncoveredWithinGeographicPriority(){
+        java.util.List<String> raw=java.util.Arrays.asList("0-covered","0-new","1-covered","1-new","0-new2");
+        java.util.ArrayList<String> page=new java.util.ArrayList<>(raw);
+        long mask=DiscoveryBatchPolicy.coveredPositions(page,s->s.contains("covered"));
+        assertEquals(5L,mask);
+        DiscoveryBatchPolicy.prioritizeUncovered(page,mask,s->s.charAt(0)-'0');
+        assertEquals(java.util.Arrays.asList("0-new","0-new2","0-covered","1-new","1-covered"),page);
+        // Reopening the page after staging changes must use its recorded order.
+        java.util.ArrayList<String> resumed=new java.util.ArrayList<>(raw);
+        long recorded=DiscoveryBatchPolicy.readCoverageMask("body:"+mask,"body",raw.size());
+        DiscoveryBatchPolicy.prioritizeUncovered(resumed,recorded,s->s.charAt(0)-'0');
+        assertEquals(page,resumed);
+    }
+
+    @Test public void invalidCoverageCheckpointCannotBeAppliedToAnotherPage(){
+        assertEquals(-1L,DiscoveryBatchPolicy.readCoverageMask("old:5","new",5));
+        assertEquals(-1L,DiscoveryBatchPolicy.readCoverageMask("body:32","body",5));
+        assertEquals(-1L,DiscoveryBatchPolicy.readCoverageMask("body:-1","body",5));
+        assertEquals(-1L,DiscoveryBatchPolicy.readCoverageMask("body:bad","body",5));
+        assertEquals(0L,DiscoveryBatchPolicy.readCoverageMask("body:0","body",5));
+    }
 }
