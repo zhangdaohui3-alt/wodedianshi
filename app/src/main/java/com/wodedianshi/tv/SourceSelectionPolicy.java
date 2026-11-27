@@ -118,25 +118,32 @@ public final class SourceSelectionPolicy {
      * entries between scheduled runs.
      */
     public static int nextScanStart(List<String> urls, String lastScannedKey, int fallbackIndex) {
-        if (urls == null || urls.isEmpty()) return -1;
+        return urls == null ? -1 : nextScanStart(urls.size(), urls::get, lastScannedKey, fallbackIndex);
+    }
+
+    /** Reverse search preserves the last-occurrence rule and avoids hashing
+     * earlier entries once the exact persisted cursor has been located. */
+    static int nextScanStart(int size, java.util.function.IntFunction<String> urlAt,
+                             String lastScannedKey, int fallbackIndex) {
+        if (size <= 0) return -1;
         if (lastScannedKey != null && !lastScannedKey.isEmpty()) {
-            // Choose the last occurrence: duplicate feed entries for one URL should
-            // not make the scanner repeatedly restart before the same endpoint.
-            int lastMatch = -1;
-            for (int i = 0; i < urls.size(); i++) {
-                if (StableKey.url(urls.get(i)).equals(lastScannedKey)) lastMatch = i;
+            for (int i = size - 1; i >= 0; i--) {
+                if (StableKey.url(urlAt.apply(i)).equals(lastScannedKey)) return (i + 1) % size;
             }
-            if (lastMatch >= 0) return (lastMatch + 1) % urls.size();
         }
-        return wrapIndex(fallbackIndex, urls.size());
+        return wrapIndex(fallbackIndex, size);
     }
 
     /** Returns the stable key of the last item consumed by a scan window. */
     public static String lastScannedKey(List<String> urls, int startIndex, int scannedCount) {
-        if (urls == null || urls.isEmpty() || scannedCount <= 0) return "";
-        int start = wrapIndex(startIndex, urls.size());
-        if (start < 0) return "";
-        int last = (start + scannedCount - 1) % urls.size();
-        return StableKey.url(urls.get(last));
+        return urls == null ? "" : lastScannedKey(urls.size(), urls::get, startIndex, scannedCount);
+    }
+
+    static String lastScannedKey(int size, java.util.function.IntFunction<String> urlAt,
+                                 int startIndex, int scannedCount) {
+        if (size <= 0 || scannedCount <= 0) return "";
+        int start = wrapIndex(startIndex, size);
+        int last = (int)(((long)start + scannedCount - 1) % size);
+        return StableKey.url(urlAt.apply(last));
     }
 }
