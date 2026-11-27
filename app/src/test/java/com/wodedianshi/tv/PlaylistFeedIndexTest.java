@@ -272,4 +272,31 @@ public class PlaylistFeedIndexTest {
         assertEquals(2, page.size());
         assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
     }
+
+    @Test public void initialCachePruningPrefersRetainingCandidatesButKeepsBound() throws Exception {
+        File dir=java.nio.file.Files.createTempDirectory("mytv-cache-test").toFile();
+        try {
+            File first=new File(dir,"initial-old.m3u");
+            File current=new File(dir,"initial-current.m3u");
+            File routine=new File(dir,"routine.m3u");
+            for(File body:new File[]{first,current,routine})
+                try(FileOutputStream out=new FileOutputStream(body)){out.write(new byte[10]);}
+            File index=new File(first.getPath()+".index-data");
+            try(FileOutputStream out=new FileOutputStream(index)){out.write(new byte[10]);}
+            java.util.Set<String> preferred=new java.util.HashSet<>(java.util.Arrays.asList(first.getName(),current.getName()));
+            PlaylistFeedCache.pruneOldEntries(dir,current,preferred,30L);
+            org.junit.Assert.assertFalse(routine.exists());
+            org.junit.Assert.assertTrue(first.exists());
+            org.junit.Assert.assertTrue(index.exists());
+            org.junit.Assert.assertTrue(current.exists());
+            PlaylistFeedCache.pruneOldEntries(dir,current,preferred,10L);
+            org.junit.Assert.assertFalse(first.exists());
+            org.junit.Assert.assertFalse(index.exists());
+            org.junit.Assert.assertTrue(current.exists());
+        } finally {
+            File[] children=dir.listFiles();
+            if(children!=null)for(File child:children)child.delete();
+            dir.delete();
+        }
+    }
 }
