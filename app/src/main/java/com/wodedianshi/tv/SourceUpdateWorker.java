@@ -3651,6 +3651,10 @@ public class SourceUpdateWorker extends Worker {
     final boolean provisional;
     ClearSegmentEvidence(int bytes,long elapsedMs,boolean provisional){this.bytes=bytes;this.elapsedMs=elapsedMs;this.provisional=provisional;}
   }
+  /** Inspect the received prefix in place; copy only when returning a sample. */
+  private static final class SampleBuffer extends ByteArrayOutputStream{
+    boolean confirmedHlsPrefix(){return MediaPayloadValidator.hasConfirmedHlsPrefix(buf,count);}
+  }
   private static class SampleResponse{
     final byte[] bytes;
     final String finalUrl;
@@ -3783,7 +3787,7 @@ public class SourceUpdateWorker extends Worker {
       // wire length. Only use an explicit identity/unencoded HTTP length.
       int promised=!partial&&(encoding==null||"identity".equalsIgnoreCase(encoding.trim()))
           ?c.getContentLength():-1;
-      try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+      try(InputStream in=c.getInputStream();SampleBuffer out=new SampleBuffer()){
         byte[] buffer=new byte[stopOnConfirmedMedia?1024:SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
         while(total<=maxBytes){
           if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
@@ -3818,14 +3822,11 @@ public class SourceUpdateWorker extends Worker {
               return new SampleResponse(prefix,finalUrl,true,true);
             }
           }
-          if(stopOnConfirmedMedia&&total>=16&&total<=maxBytes){
-            byte[] prefix=out.toByteArray();
-            if(MediaPayloadValidator.hasConfirmedHlsPrefix(prefix)){
-              if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
-              // Confirmation only: no byte-rate score or completeness claim.
-              // This path is restricted to unencrypted idle second segments.
-              return new SampleResponse(prefix,finalUrl,true);
-            }
+          if(stopOnConfirmedMedia&&total>=16&&total<=maxBytes&&out.confirmedHlsPrefix()){
+            if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
+            // Confirmation only: no byte-rate score or completeness claim.
+            // This path is restricted to unencrypted idle second segments.
+            return new SampleResponse(out.toByteArray(),finalUrl,true);
           }
           if(slowPlayback&&!paceViewingSample(n,readElapsed,deadline,pauseRequested)){
             probeSampleInterrupted(deadline,pauseRequested,result);
