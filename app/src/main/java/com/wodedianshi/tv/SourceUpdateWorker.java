@@ -3435,7 +3435,7 @@ public class SourceUpdateWorker extends Worker {
       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       try{
         initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested,
-            false,allowProvisional&&initialIdle&&!slowPlayback&&!playlistUrl,result,playlistUrl);
+            false,allowProvisional&&initialIdle&&!slowPlayback&&!playlistUrl,result,playlistUrl,true);
         result.firstRequestReached=initialResponse!=null;
       }catch(TransientProbeHttpException failure){
         // A redirect may have reached a different origin. Do not penalize the
@@ -3708,6 +3708,12 @@ public class SourceUpdateWorker extends Worker {
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
       java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs,
       ProbeResult result,boolean manifestCandidate)throws Exception{
+    return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,
+        stopOnConfirmedMedia,stopOnDirectTs,result,manifestCandidate,false);
+  }
+  private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
+      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs,
+      ProbeResult result,boolean manifestCandidate,boolean rootCandidate)throws Exception{
     // Expand only a confirmed playlist in a non-viewing request. Retain the
     // original media sample cap for mislabeled URLs and all binary resources.
     final int manifestLimit=131072;
@@ -3752,6 +3758,12 @@ public class SourceUpdateWorker extends Worker {
       if(code==416){result.unsupportedPreflight=true;return null;}
       if(code<200||code>=400)return null;
       boolean partial=code==HttpURLConnection.HTTP_PARTIAL;
+      // An extensionless root can be an HLS playlist. If the server ignored
+      // Range and returned a full 200 response, continue that SAME response
+      // only after confirming the playlist marker. Do not enlarge its Range
+      // request, re-fetch a 206 response or expand dependent binary samples.
+      if(rootCandidate&&code==HttpURLConnection.HTTP_OK&&!slowPlayback&&maxBytes<manifestLimit)
+        allowManifestExpansion=true;
       long[] prefixRange=partial?HlsProbeValidationPolicy.parsePrefixRange(c.getHeaderField("Content-Range")):null;
       // A nonzero or malformed Content-Range cannot establish the requested
       // prefix evidence, even if the payload happens to resemble media.
