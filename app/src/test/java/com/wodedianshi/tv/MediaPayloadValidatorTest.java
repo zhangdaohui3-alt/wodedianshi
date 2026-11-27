@@ -188,4 +188,32 @@ public class MediaPayloadValidatorTest {
         sample[7*188+1]=(byte)0x9f;
         assertFalse(MediaPayloadValidator.hasDirectTsScreeningPrefix(sample));
     }
+
+    @Test public void nullOnlyAndTransportErrorSamplesCannotPassEitherTsTier(){
+        byte[] data=new byte[188*12];
+        for(int at=0;at<data.length;at+=188){
+            data[at]=0x47;data[at+1]=0x1f;data[at+2]=(byte)0xff;data[at+3]=0x10;
+        }
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets(data));
+        assertFalse(MediaPayloadValidator.hasConfirmedHlsPrefix(data));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(data));
+        for(int at=0;at<data.length;at+=188){
+            data[at+1]=(byte)0x80;data[at+2]=0x20;
+        }
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets(data));
+        assertFalse(MediaPayloadValidator.hasDirectTsScreeningPrefix(data));
+        assertFalse(MediaPayloadValidator.looksLikeMediaPayload(data));
+    }
+
+    @Test public void alignedCleanPayloadAfterNullAndErrorPacketsCanRecover(){
+        byte[] data=new byte[188*5];
+        for(int at=0;at<data.length;at+=188){
+            data[at]=0x47;data[at+1]=0x1f;data[at+2]=(byte)0xff;data[at+3]=0x10;
+        }
+        data[188+1]=(byte)0x80;data[188+2]=0x20;
+        data[188*3+1]=0;data[188*3+2]=0x20;
+        assertFalse(MediaPayloadValidator.hasTransportStreamPackets(java.util.Arrays.copyOf(data,188*3)));
+        assertTrue(MediaPayloadValidator.hasTransportStreamPackets(data));
+        assertTrue(MediaPayloadValidator.hasConfirmedHlsPrefix(data));
+    }
 }
