@@ -106,6 +106,25 @@ public final class SourceDiscoveryPriorityPolicy {
         return ordinary;
     }
 
+    /** Under actual unfinished-cache pressure, drain a usable indexed feed
+     * instead of evicting it to prepare another directory. Core/viewing gates
+     * retain their previous behavior. No persisted completion is modified. */
+    static int nextInitialFeedWithCache(int start,boolean[] completed,boolean[] attempted,
+            boolean[] visited,boolean[] prepared,boolean[] failed,int mainlandEnd,
+            int regionEnd,boolean preferCore,boolean viewing,boolean acquisitionYield,
+            boolean[] availableUnderPressure) {
+        if(!preferCore&&!viewing&&availableUnderPressure!=null&&completed!=null
+                &&attempted!=null&&completed.length==attempted.length
+                &&availableUnderPressure.length==completed.length){
+            boolean[] drainOnly=attempted.clone();
+            for(int i=0;i<drainOnly.length;i++)drainOnly[i]|=!availableUnderPressure[i];
+            int drain=nextEligibleFeed(start,completed,drainOnly,mainlandEnd,regionEnd,false);
+            if(drain>=0)return drain;
+        }
+        return nextInitialFeed(start,completed,attempted,visited,prepared,failed,
+                mainlandEnd,regionEnd,preferCore,viewing,acquisitionYield);
+    }
+
     /** Select from the highest-priority eligible stage. A temporarily deferred
      * feed remains unfinished in the durable state; the mask below is local
      * to selection and must never be used for progress or final publication. */
