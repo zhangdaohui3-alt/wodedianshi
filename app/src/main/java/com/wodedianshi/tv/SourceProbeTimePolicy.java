@@ -193,6 +193,12 @@ public final class SourceProbeTimePolicy {
         return addressDeadline-5000L;
     }
 
+    /** Apply the existing bounded address budget to full catalogue refresh
+     * as well as first build. Viewing and routine health paths are unchanged. */
+    static boolean usesBoundedAddressBudget(boolean initial,boolean manual,boolean viewing){
+        return initial||(manual&&!viewing);
+    }
+
     // First build prioritizes breadth. Keep one difficult HLS address from
     // monopolizing an entire slice. A timed-out probe is inconclusive.
     public static final long INITIAL_ADDRESS_BUDGET_MS = 15_000L;
