@@ -66,4 +66,21 @@ public class InitialSharedProbeScoreAndroidTest {
         assertEquals(0.0,SourceQualityScorer.rankScore(b,scores,key->null,1000L),0.0);
     }
 
+    @Test public void playbackHistoryRetentionKeepsMostRecentAndUsesStableTieOrder() throws Exception {
+        java.util.Map<String,org.json.JSONObject> history=new java.util.HashMap<>();
+        history.put("stale",new org.json.JSONObject().put("updated",1L));
+        history.put("a",new org.json.JSONObject().put("updated",100L));
+        history.put("b",new org.json.JSONObject().put("updated",100L));
+        org.json.JSONObject newest=new org.json.JSONObject().put("updated",200L).put("stablePlays",3);
+        history.put("recent",newest);
+        SourceMemoryStore.trimPlaybackHistory(history,4);
+        assertEquals(4,history.size());
+        SourceMemoryStore.trimPlaybackHistory(history,2);
+        assertEquals(new java.util.HashSet<>(java.util.Arrays.asList("b","recent")),history.keySet());
+        assertSame(newest,history.get("recent"));
+        assertEquals(3,history.get("recent").getInt("stablePlays"));
+        SourceMemoryStore.trimPlaybackHistory(history,2);
+        assertEquals(2,history.size());
+    }
+
 }
