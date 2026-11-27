@@ -203,7 +203,36 @@ public final class ManualProbeQualityStore {
         SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
-    /** Merge private evidence at final publication, not at interim previews.
+    /** Preview is itself a checked published snapshot. Only evidence for its
+     * retained exact URLs can cross from the private build into playback.
+     * Keep the private owner and every cursor intact for subsequent slices. */
+    static void publishInitialPreviewInTransaction(AppDatabase db,Collection<String> urls,BooleanSupplier paused){
+        requireInitialTransaction(db);
+        if(!hasInitial(db))throw new IllegalStateException("Initial quality not initialized");
+        LinkedHashSet<String> keys=new LinkedHashSet<>();
+        for(String url:urls){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            if(url==null||url.isEmpty())continue;
+            keys.add(StableKey.url(url));keys.add(StableKey.legacyUrl(url));
+            if(keys.size()>=256){
+                publishPreviewPage(db,keys,paused);keys.clear();
+            }
+        }
+        if(!keys.isEmpty())publishPreviewPage(db,keys,paused);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        db.appStateDao().put(new AppStateEntity(PUBLISHED_READY_KEY,"true",System.currentTimeMillis()));
+    }
+
+    private static void publishPreviewPage(AppDatabase db,Set<String> keys,BooleanSupplier paused){
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        List<ManualProbeQualityEntity> rows=db.manualProbeQualityDao().load(INITIAL_OWNER,new ArrayList<>(keys));
+        List<ManualProbeQualityEntity> copy=new ArrayList<>(rows.size());
+        for(ManualProbeQualityEntity row:rows)
+            copy.add(new ManualProbeQualityEntity(PUBLISHED_OWNER,row.sourceKey,row.score,row.failureStreak));
+        if(!copy.isEmpty())db.manualProbeQualityDao().put(copy);
+    }
+
+    /** Merge all remaining private evidence at final publication.
      * Unobserved published keys survive, and explicit nulls remain tombstones.
      * Caller must own the checked full catalogue transaction. */
     static void publishInitialInTransaction(AppDatabase db,BooleanSupplier paused){
