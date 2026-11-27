@@ -1391,9 +1391,7 @@ public class SourceUpdateWorker extends Worker {
             break;
           }
           if(initialDiscoveryChain&&!slowPlayback&&!reuse){
-            if(measured.firstOriginPressure)INITIAL_ORIGINS.observePressure(origin,measuredAt);
-            else INITIAL_ORIGINS.observe(origin,endpoint,measuredAt,
-                measured.firstRequestFailed,measured.firstRequestReached);
+            measured.publishOriginHealth(INITIAL_ORIGINS,origin,endpoint,measuredAt);
             INITIAL_NETWORK.observe(origin,measuredAt,
                 measured.firstRequestFailed,measured.firstRequestReached);
           }
@@ -2364,15 +2362,13 @@ public class SourceUpdateWorker extends Worker {
       SourceProbeTimePolicy.checkPublicationPaused(paused);
       String key=StableKey.url(url);
       sampleRequests+=measured.sampleRequests;sampleBytes+=measured.sampleBytes;
-      if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
-      else recheckOrigins.observe(origin,endpoint,finishedAt,
-          measured.firstRequestFailed,measured.firstRequestReached);
+      measured.publishOriginHealth(recheckOrigins,origin,endpoint,finishedAt);
       boolean fullPositive=SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
           measured.paced,measured.provisional,finishedAt,deadline);
       // A previous fast batch is not permission to keep spending resources
       // after transport pressure or a newly slow response. Use the existing
       // idle read timeout as a conservative elapsed-cost threshold.
-      boolean pressure=measured.firstOriginPressure||measured.socketTimedOut
+      boolean pressure=measured.hasOriginPressure()||measured.socketTimedOut
           ||measured.transientNetworkFailure||finishedAt>=deadline
           ||finishedAt-now>=SourceProbeTimePolicy.sampleReadTimeoutCap(false);
       lastProbeHealthy=fullPositive&&!pressure;
@@ -3303,6 +3299,17 @@ public class SourceUpdateWorker extends Worker {
       if(origin==null||origin.isEmpty())return;
       if(pressureOrigins==null)pressureOrigins=new HashSet<>();
       pressureOrigins.add(origin);
+    }
+    boolean hasOriginPressure(){
+      return firstOriginPressure||(pressureOrigins!=null&&!pressureOrigins.isEmpty());
+    }
+    // Only the serial owner calls this for fresh observations. A healthy
+    // sibling does not erase an explicit pressure signal from another host.
+    void publishOriginHealth(InitialOriginCooldownPolicy policy,String origin,String endpoint,long now){
+      policy.observe(origin,endpoint,now,firstRequestFailed,firstRequestReached);
+      if(firstOriginPressure)policy.observePressure(origin,now);
+      if(pressureOrigins!=null)for(String limited:pressureOrigins)
+        if(!firstOriginPressure||!limited.equals(origin))policy.observePressure(limited,now);
     }
     int score;
     int width,height;
