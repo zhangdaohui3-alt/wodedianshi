@@ -49,11 +49,11 @@ public class SourceUpdateWorker extends Worker {
     RecentProbe(ProbeResult result,long at){this.result=result;this.at=at;}
   }
   // All three owner-confined admission paths use exactly the same cache rule.
-  private RecentProbe reusableInitialProbe(String endpoint,boolean viewing,long now){
+  private RecentProbe reusableInitialProbe(String endpoint,boolean viewing,long now,boolean independentHealth){
     RecentProbe cached=INITIAL_PROBES.get(endpoint);
     return cached!=null&&(!cached.result.provisional||allowProvisionalScreen)
         &&SourceUpdateSchedulePolicy.reusableInitialObservation(
-        cached.result.valid,cached.result.provisional,cached.result.paced,viewing,cached.at,now)
+        cached.result.valid,cached.result.provisional,cached.result.paced,viewing,cached.at,now,independentHealth)
         ?cached:null;
   }
   private static void rememberInitialProbe(String key,ProbeResult result,long at){
@@ -1400,6 +1400,13 @@ public class SourceUpdateWorker extends Worker {
       HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
       HashSet<String> savedStreakUpdatedThisRun=new HashSet<>();
       HashMap<String,ProbeResult> measuredByEndpoint=new HashMap<>();
+      // Discovery and saved health positions may be interleaved. Never let a
+      // cached negative become an independent saved failure via an alias.
+      Set<String> healthEndpoints=manualRefresh?new HashSet<>():Collections.emptySet();
+      if(manualRefresh)for(Entry entry:probeCandidates){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        if(entry.savedSource)healthEndpoints.add(entry.endpoint());
+      }
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(pauseRequested.getAsBoolean()){
           idleWave.close();
@@ -1438,7 +1445,7 @@ public class SourceUpdateWorker extends Worker {
           boolean reuseRecent=initialDiscoveryChain||manualRefresh;
           String cacheKey=reuseRecent?endpoint:"";
           long clock=android.os.SystemClock.elapsedRealtime();
-          RecentProbe cached=reuseRecent?reusableInitialProbe(cacheKey,slowPlayback,clock):null;
+          RecentProbe cached=reuseRecent?reusableInitialProbe(cacheKey,slowPlayback,clock,healthEndpoints.contains(endpoint)):null;
           boolean reuse=cached!=null;
           boolean allowOriginDeferral=InitialOriginCooldownPolicy.mayDefer(
               initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
@@ -1482,7 +1489,7 @@ public class SourceUpdateWorker extends Worker {
             checked++;
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
-                    visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
+                    visitedUrls,healthEndpoints,addressDeadline,probeDeadline,initialDiscoveryChain,
                     DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),
                     DiscoveryBatchPolicy.permitsRollingInitial(initialDiscoveryChain,earlyFirstWatch,
                         preferCoreCoverage,previousStagedSize,priorCoreMask)))){
@@ -1606,7 +1613,7 @@ public class SourceUpdateWorker extends Worker {
           }
           // Fresh positive initial results were already retained before the
           // cancellation gate. Here only cache a definitive negative result.
-          if(initialDiscoveryChain&&!reuse&&!measured.valid)
+          if(reuseRecent&&!reuse&&!measured.valid)
             rememberInitialProbe(cacheKey,measured,measuredAt);
           measuredByEndpoint.put(endpoint,measured);
         }
@@ -3387,7 +3394,7 @@ public class SourceUpdateWorker extends Worker {
     boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
-        Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests,
+        Set<String> visited,Set<String> healthEndpoints,long deadline,long batchDeadline,boolean initial,int remainingRequests,
         boolean rolling){
       rollingEntries=null;
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
@@ -3418,7 +3425,7 @@ public class SourceUpdateWorker extends Worker {
         if(initial&&INITIAL_ORIGINS.requiresSerialProbe(entry.origin(),now))break;
         if(i!=offset){
           RecentProbe cached=(initial||!manualProbeCacheOwner.isEmpty())
-              ?reusableInitialProbe(endpoint,slowPlayback,now):null;
+              ?reusableInitialProbe(endpoint,slowPlayback,now,healthEndpoints.contains(endpoint)):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||cached!=null)break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
@@ -3499,7 +3506,7 @@ public class SourceUpdateWorker extends Worker {
         if(!active.canAdd(endpoint,host))return;
         now=android.os.SystemClock.elapsedRealtime();
         if(INITIAL_ORIGINS.requiresSerialProbe(entry.origin(),now))return;
-        if(reusableInitialProbe(endpoint,slowPlayback,now)!=null)return;
+        if(reusableInitialProbe(endpoint,slowPlayback,now,false)!=null)return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
         if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
         int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
