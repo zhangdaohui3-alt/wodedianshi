@@ -879,6 +879,42 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void unsupportedMediaUriDoesNotPreventHealthySibling()throws Exception{
+        assertUnsupportedUriFallback(true,"file:///not-a-media-resource");
+        assertUnsupportedUriFallback(true,"http://[broken");
+    }
+
+    @Test public void unsupportedMediaUriWithoutSiblingRemainsInconclusive()throws Exception{
+        assertUnsupportedUriFallback(false,"file:///not-a-media-resource");
+    }
+
+    private void assertUnsupportedUriFallback(boolean sibling,String invalidUri)throws Exception{
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                String master="#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000\n/high.m3u8\n"
+                        +(sibling?"#EXT-X-STREAM-INF:BANDWIDTH=200000\n/low.m3u8\n":"");
+                replyRecheck(server,"/master.m3u8",200,bytes(master));
+                replyRecheck(server,"/high.m3u8",200,bytes("#EXTM3U\n#EXTINF:5,\n"+invalidUri+"\n"));
+                if(sibling){
+                    replyRecheck(server,"/low.m3u8",200,bytes("#EXTM3U\n#EXTINF:5,\n/good.ts\n"));
+                    replyRecheck(server,"/good.ts",200,transportSample());
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertEquals(sibling,result.valid);
+            assertEquals(!sibling,result.inconclusive());
+            assertEquals(!sibling,result.unsupportedPreflight);
+            assertEquals(sibling?4L:2L,result.sampleRequests);
+        }finally{serverThread.shutdownNow();}
+    }
+
     @Test public void largerConfirmedManifestUsesSameRequestAndValidatesBothSegments()throws Exception{
         assertLargeManifestUsesSameResponse("/large.m3u8","bytes=0-131072");
     }
