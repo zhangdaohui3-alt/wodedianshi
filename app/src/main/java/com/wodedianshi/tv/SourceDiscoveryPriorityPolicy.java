@@ -106,7 +106,7 @@ public final class SourceDiscoveryPriorityPolicy {
         return ordinary;
     }
 
-    /** Under actual unfinished-cache pressure, drain a usable indexed feed
+    /** Under actual unfinished-cache pressure, drain a locally recoverable acquired feed
      * instead of evicting it to prepare another directory. Core/viewing gates
      * retain their previous behavior. No persisted completion is modified. */
     static int nextInitialFeedWithCache(int start,boolean[] completed,boolean[] attempted,
