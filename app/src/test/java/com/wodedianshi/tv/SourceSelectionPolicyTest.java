@@ -169,6 +169,28 @@ public class SourceSelectionPolicyTest {
         assertEquals(0, SourceSelectionPolicy.nextScanStart(urls, last, 0));
     }
 
+    @Test public void largeCursorSearchPreservesLastDuplicateAndStopsAtExactMatch() {
+        int size=20000;
+        String target="https://example.invalid/last";
+        String key=StableKey.url(target);
+        java.util.concurrent.atomic.AtomicInteger reads=new java.util.concurrent.atomic.AtomicInteger();
+        assertEquals(0,SourceSelectionPolicy.nextScanStart(size,i->{
+            reads.incrementAndGet();
+            return i==2||i==size-1?target:"https://example.invalid/"+i;
+        },key,0));
+        assertEquals(1,reads.get());
+        reads.set(0);
+        assertEquals(7,SourceSelectionPolicy.nextScanStart(size,i->{
+            reads.incrementAndGet();return "https://example.invalid/"+i;
+        },key,7));
+        assertEquals(size,reads.get());
+        reads.set(0);
+        assertEquals(StableKey.url(target),SourceSelectionPolicy.lastScannedKey(size,i->{
+            reads.incrementAndGet();assertEquals(size-1,i);return target;
+        },size-2,2));
+        assertEquals(1,reads.get());
+    }
+
     @Test public void emptyScanDoesNotCreateCursorKey() {
         assertEquals("", SourceSelectionPolicy.lastScannedKey(
                 Arrays.asList("a", "b"), 0, 0));
