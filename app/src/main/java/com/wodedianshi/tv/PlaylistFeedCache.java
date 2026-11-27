@@ -573,7 +573,7 @@ public final class PlaylistFeedCache {
      * This is admission guidance, not a persistent inventory or validity
      * certificate. Completed directories do not consume this reserve. */
     static boolean[] initialCachePressure(Context context,String[] feeds,boolean[] completed,
-            String[] acquiredVersions)throws IOException {
+            String[] acquiredVersions,boolean[] prepared)throws IOException {
         if(feeds==null||completed==null||acquiredVersions==null
                 ||feeds.length!=completed.length||feeds.length!=acquiredVersions.length)return null;
         File[] bodies=new File[feeds.length];
@@ -586,8 +586,19 @@ public final class PlaylistFeedCache {
                 bytes+=cacheEntrySize(body);
             }
         }
+        reconcilePreparedBodies(bodies,completed,prepared);
         if(!initialCacheNeedsDrain(bytes))return null;
         return recoverableInitialBodies(bodies,acquiredVersions);
+    }
+
+    /** Only downgrade absent-body preparation hints during the existing
+     * idle inventory. Missing metadata/index is recoverable, and durable
+     * acquisition versions and cursors must never be erased here. */
+    static void reconcilePreparedBodies(File[] bodies,boolean[] completed,boolean[] prepared){
+        if(bodies==null||completed==null||prepared==null
+                ||bodies.length!=completed.length||bodies.length!=prepared.length)return;
+        for(int i=0;i<bodies.length;i++)
+            if(!completed[i]&&bodies[i]==null)prepared[i]=false;
     }
 
     /** Admission only: the idle owner validates/builds the derived index
