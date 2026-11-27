@@ -222,10 +222,8 @@ public class SourceUpdateWorker extends Worker {
       HashMap<String,Double> quality=new HashMap<>();
       for(String candidate:verified.keySet())quality.put(candidate,(double)scores.get(candidate));
       if(full||existing.size()+verified.size()>MAX_SOURCES_PER_CHANNEL){
-        boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
-        JSONObject priorScores=new JSONObject(indexed?"{}":com.wodedianshi.tv.db.AppStateStore.get(context,"source_probe_scores_v1","{}"));
-        JSONObject streaks=new JSONObject(indexed?"{}":com.wodedianshi.tv.db.AppStateStore.get(context,"source_probe_failure_streaks_v1","{}"));
-        if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
+        JSONObject priorScores=new JSONObject(),streaks=new JSONObject();
+        com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
             com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,existing,new HashSet<>(),priorScores,streaks,paused);
         for(String old:existing){
           String key=StableKey.url(old);
@@ -1162,23 +1160,15 @@ public class SourceUpdateWorker extends Worker {
       IdentityHashMap<JSONObject,Integer> stagedPositions=new IdentityHashMap<>();
       HashSet<Integer> touchedStagedRows=new HashSet<>();
       LinkedHashMap<String,JSONObject> byIdentity=new LinkedHashMap<>();
-      final String scoresKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_SCORES_KEY:"source_probe_scores_v1";
-      final String streaksKey=manualRefresh?com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_STREAKS_KEY:"source_probe_failure_streaks_v1";
-      final boolean publishedQualityAvailable=!manualRefresh&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
-      final boolean indexedPublished=!initialDiscoveryChain&&publishedQualityAvailable;
-      // All initial rebuilds use private indexed quality. Missing private
-      // keys inherit authoritative published evidence on demand, not a copy.
-      final boolean indexedInitial=initialDiscoveryChain;
-      if(indexedInitial&&!com.wodedianshi.tv.db.ManualProbeQualityStore.hasInitial(getApplicationContext()))
-        com.wodedianshi.tv.db.ManualProbeQualityStore.ensureInitial(getApplicationContext(),
-            scoresKey,streaksKey,pauseRequested);
-      final boolean indexedQuality=manualRefresh||indexedPublished||indexedInitial;
-      final String qualityOwner=manualRefresh?manualId:indexedInitial?
+      final boolean routineQuality=!initialDiscoveryChain&&!manualRefresh;
+      if(initialDiscoveryChain)
+        com.wodedianshi.tv.db.ManualProbeQualityStore.ensureInitial(getApplicationContext(),pauseRequested);
+      final String qualityOwner=manualRefresh?manualId:initialDiscoveryChain?
           com.wodedianshi.tv.db.ManualProbeQualityStore.INITIAL_OWNER:com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER;
-      JSONObject measuredScores=new JSONObject(indexedQuality?"{}":roomString(scoresKey,"{}"));
+      JSONObject measuredScores=new JSONObject();
       // A single failed probe merely reduces its score. It cannot delete an
       // existing saved backup; three independent failures are needed.
-      JSONObject probeFailureStreaks=new JSONObject(indexedQuality?"{}":roomString(streaksKey,"{}"));
+      JSONObject probeFailureStreaks=new JSONObject();
       HashSet<String> manualQualityLoaded=new HashSet<>(),manualQualityDirty=new HashSet<>();
       JSONObject observedQoe=new JSONObject(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),"source_qoe_v1","{}"));
       // A failed/empty initial page cannot merge any new identities. Final
@@ -1208,7 +1198,7 @@ public class SourceUpdateWorker extends Worker {
           saved.put(row);byIdentity.put(key,row);
         }
       }
-      if(indexedInitial){
+      if(initialDiscoveryChain){
         // Coverage ordering and committed-route reuse must see the same
         // authoritative scores BEFORE page admission/fingerprint selection.
         LinkedHashSet<String> needed=new LinkedHashSet<>();
@@ -1366,17 +1356,17 @@ public class SourceUpdateWorker extends Worker {
           saved.put(row);byIdentity.put(key,row);
         }
       }
-      if(indexedQuality&&!indexedInitial){
+      if(!initialDiscoveryChain){
         LinkedHashSet<String> needed=new LinkedHashSet<>();
         // Routine still re-ranks the published snapshot; include every
         // retained URL rather than substituting the capped compatibility view.
-        if(indexedPublished)for(int i=0;i<saved.length();i++){
+        if(routineQuality)for(int i=0;i<saved.length();i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           collectQualityUrls(needed,saved.getJSONObject(i));
         }
         // Routine already collected every published row above. Manual staging
         // needs only each distinct target row plus every exact candidate URL.
-        Set<JSONObject> collected=indexedPublished?null:
+        Set<JSONObject> collected=routineQuality?null:
             Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
         for(Entry entry:probeCandidates){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -1619,12 +1609,6 @@ public class SourceUpdateWorker extends Worker {
           if(initialDiscoveryChain&&!reuse&&!measured.valid)
             rememberInitialProbe(cacheKey,measured,measuredAt);
           measuredByEndpoint.put(endpoint,measured);
-          // A previously good source that now fails its probe must lose its old high score.
-          // Keep the URL as a fallback, but rank it below sources that still pass validation.
-          if(!indexedQuality&&!initialDiscoveryChain){
-            exactScoreKey=scoreKey(e.url);oldScoreKey=legacyScoreKey(e.url);
-            storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
-          }
         }
         if(!manualRefresh&&((measured.provisional&&measured.valid)||(!measured.paced&&!measured.provisional))){
           if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
@@ -1632,24 +1616,18 @@ public class SourceUpdateWorker extends Worker {
             SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,exactScoreKey);
           else provisionalKeys.remove(exactScoreKey);
         }
-        if(indexedQuality||initialDiscoveryChain){
-          // One conclusive endpoint observation can be consumed by distinct
-          // exact URLs. Persist each association's own score in both initial
-          // staging and indexed quality, without issuing another probe.
-          if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
-          if(oldScoreKey==null)oldScoreKey=legacyScoreKey(e.url);
-          storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
-          if(indexedQuality){
-            manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
-          }
-        }
+        // Persist each exact URL associated with a conclusive observation.
+        if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
+        if(oldScoreKey==null)oldScoreKey=legacyScoreKey(e.url);
+        storePreflightScore(measuredScores,exactScoreKey,oldScoreKey,measured);
+        manualQualityDirty.add(exactScoreKey);manualQualityDirty.add(oldScoreKey);
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
           String streakKey=exactScoreKey==null?scoreKey(e.url):exactScoreKey;
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
               probeFailureStreaks.optInt(streakKey,0),measured.valid);
           if(streak==0)probeFailureStreaks.remove(streakKey);
           else probeFailureStreaks.put(streakKey,streak);
-          if(indexedQuality)manualQualityDirty.add(streakKey);
+          manualQualityDirty.add(streakKey);
         }
         // A queued old endpoint may have been retired after enqueue. Health
         // checks update its score/streak but cannot resurrect it as a discovery.
@@ -1792,7 +1770,7 @@ public class SourceUpdateWorker extends Worker {
       // full directory sort. A final pass uses the latest saved scoring state.
       Iterable<Integer> rankingRows=(manualRefresh||initialDiscoveryChain&&!finalRanking)?touchedStagedRows:
           allRowIndices(saved);
-      if(indexedInitial&&finalRanking){
+      if(initialDiscoveryChain&&finalRanking){
         LinkedHashSet<String> needed=new LinkedHashSet<>();
         for(int i=0;i<saved.length();i++){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -1805,23 +1783,8 @@ public class SourceUpdateWorker extends Worker {
       // Persist measured quality independently from URL labels so the player can rank
       // candidates by reachability, estimated speed and manifest resolution. This is
       // a preflight score, not a guarantee of audio/video playback.
-      // Capture dirty rows BEFORE trimming the legacy compatibility cache.
-      if(indexedPublished)update.putPublishedQuality(
+      if(routineQuality)update.putPublishedQuality(
           com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
-      // Only legacy published readers still require a compatibility mirror.
-      // After the first indexed preview/final commit, Room rows are the
-      // authority; do not parse, trim or serialize the old JSON each slice.
-      final boolean maintainLegacyQuality=SourceUpdateSchedulePolicy.maintainLegacyQualityMirror(
-          manualRefresh,publishedQualityAvailable);
-      if(maintainLegacyQuality){
-        JSONObject compatibleScores=indexedInitial?
-            mergeCompatibilityQuality(new JSONObject(roomString(scoresKey,"{}")),measuredScores,manualQualityDirty):measuredScores;
-        JSONObject compatibleStreaks=indexedInitial?
-            mergeCompatibilityQuality(new JSONObject(roomString(streaksKey,"{}")),probeFailureStreaks,manualQualityDirty):probeFailureStreaks;
-        trimProbeScores(compatibleScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
-        trimProbeScores(compatibleStreaks,savedPool,probeCandidates,false,Collections.emptySet());
-        update.putString(scoresKey,compatibleScores.toString()).putString(streaksKey,compatibleStreaks.toString());
-      }
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
       // Playback can begin after the last probe-loop check but before persistence.
@@ -2222,7 +2185,7 @@ public class SourceUpdateWorker extends Worker {
       }
       // Commit one unit: either unpublished staging + progress or published
       // rows + checkpoint + progress. Cancellation rolls back the whole unit.
-      if(indexedInitial)update.putInitialQuality(
+      if(initialDiscoveryChain)update.putInitialQuality(
           com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
       final long commitStartedAt=android.os.SystemClock.elapsedRealtime();
       if(initialDiscoveryChain)update.putString(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY,
@@ -2454,15 +2417,12 @@ public class SourceUpdateWorker extends Worker {
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
-    final boolean indexed=!selected.isEmpty()&&com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(context);
-    // Indexed quality supports bounded atomic checkpoints. Compatibility JSON
-    // keeps the old single write to avoid repeated whole-score serialization.
-    java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=indexed?batch->{
-      try{publishQualityRecheckCheckpoint(context,pending,batch,catalogueVersion,true,false);}
+    java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=batch->{
+      try{publishQualityRecheckCheckpoint(context,pending,batch,catalogueVersion,false);}
       catch(JSONException malformed){throw new IllegalStateException("Quality checkpoint encoding failed",malformed);}
-    }:null;
+    };
     QualityRecheckSlice slice=probeQualityRecheckSlice(selected,pending,stageDeadline,pauseRequested,catalogueVersion,checkpoint);
-    publishQualityRecheckCheckpoint(context,pending,slice.completed,catalogueVersion,indexed,true);
+    publishQualityRecheckCheckpoint(context,pending,slice.completed,catalogueVersion,true);
     int conclusive=slice.conclusive;
     android.util.Log.i("MyTVSourceDiscovery","provisional_quality_recheck checked="+slice.checked
         +" selected="+selected.size()+" conclusive="+conclusive+" origin_deferred="+slice.originDeferred
@@ -2474,16 +2434,15 @@ public class SourceUpdateWorker extends Worker {
     return Result.success();
   }
   private void publishQualityRecheckCheckpoint(Context context,Set<String> pending,
-      Map<String,ProbeResult> completed,long catalogueVersion,boolean indexed,boolean finished)throws JSONException{
+      Map<String,ProbeResult> completed,long catalogueVersion,boolean finished)throws JSONException{
     // Only completed measurements need quality rows. Skipped, timed-out and
     // never-admitted candidates must not incur score hydration or writes.
     JSONObject scores=new JSONObject(),streaks=new JSONObject();
     HashSet<String> dirty=new HashSet<>();
     if(!completed.isEmpty()){
-      if(indexed)com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
+      com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(context,
           com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,completed.keySet(),
           new HashSet<>(),scores,streaks,pauseRequested);
-      else scores=new JSONObject(roomString("source_probe_scores_v1","{}"));
       for(Map.Entry<String,ProbeResult> entry:completed.entrySet()){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         String url=entry.getKey();
@@ -2498,9 +2457,8 @@ public class SourceUpdateWorker extends Worker {
     // A partial checkpoint must not postpone the unfinished queue until tomorrow.
     if(finished)update.putLong(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,System.currentTimeMillis());
     if(!completed.isEmpty()){
-      if(indexed)update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
+      update.putPublishedQuality(com.wodedianshi.tv.db.ManualProbeQualityStore.changes(
           com.wodedianshi.tv.db.ManualProbeQualityStore.PUBLISHED_OWNER,dirty,scores,streaks),pauseRequested);
-      else update.putString("source_probe_scores_v1",scores.toString());
       update.putString(SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,
           java.util.UUID.randomUUID().toString());
     }
@@ -2723,14 +2681,6 @@ public class SourceUpdateWorker extends Worker {
     needed.add(row.optString("url"));
     JSONArray urls=row.optJSONArray("sources");
     if(urls!=null)for(int i=0;i<urls.length();i++)needed.add(urls.optString(i));
-  }
-  static JSONObject mergeCompatibilityQuality(JSONObject compatible,JSONObject authoritative,
-      Set<String> dirty)throws JSONException{
-    for(String key:dirty){
-      if(authoritative.has(key))compatible.put(key,authoritative.get(key));
-      else compatible.remove(key);
-    }
-    return compatible;
   }
   private Iterable<Integer> allRowIndices(JSONArray rows){
     return ()->new Iterator<Integer>(){private int index;public boolean hasNext(){return index<rows.length();}public Integer next(){return index++;}};
@@ -3675,56 +3625,6 @@ public class SourceUpdateWorker extends Worker {
     long latencyMs;
     long bitrate;
     long sampleRequests,sampleBytes;
-  }
-  // Keep the persisted preflight-score index bounded. Discovery feeds can rotate
-  // thousands of URLs over time; an unbounded JSON object would slow every update
-  // and gradually consume device storage. The current scan rewrites recent entries.
-  private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
-  private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates,
-      boolean preferValidated,Set<String> provisional){
-    if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
-    // JSONObject key iteration order is not an LRU contract. Preserve scores for
-    // currently saved channel URLs first, then this run's recent candidates, before
-    // filling remaining capacity with older entries.
-    LinkedHashSet<String> keep=new LinkedHashSet<>();
-    if(savedPool!=null)for(Entry entry:savedPool){
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      if(keep.size()>=MAX_PERSISTED_PROBE_SCORES)break;
-      String key=scoreKey(entry.url);if(scores.has(key))keep.add(key);
-    }
-    if(recentCandidates!=null)for(int i=recentCandidates.size()-1;i>=0&&keep.size()<MAX_PERSISTED_PROBE_SCORES;i--){
-      String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
-    }
-    fillRetainedScoreKeys(scores,keep,MAX_PERSISTED_PROBE_SCORES,preferValidated,provisional,pauseRequested);
-    // JSONObject ordering is not a retention guarantee. Preserve precisely
-    // the chosen key/value set in this slice, without clearing/reinserting
-    // thousands of unchanged entries. Remove after the iteration completes.
-    for(String key:SourceRankingRetentionPolicy.surplusScoreKeys(
-        scores.keys(),keep,pauseRequested)){
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      scores.remove(key);
-    }
-  }
-  /** After required and recent keys, keep measured positive evidence ahead
-   * of arbitrary historical negatives in the bounded initial compatibility
-   * cache. Not a validity certificate; normal ownership/reuse gates remain. */
-  static void fillRetainedScoreKeys(JSONObject scores,Set<String> keep,int limit,
-      boolean preferValidated,Set<String> provisional,java.util.function.BooleanSupplier paused){
-    if(preferValidated&&keep.size()<limit){
-      Iterator<String> keys=scores.keys();
-      while(keys.hasNext()&&keep.size()<limit){
-        SourceProbeTimePolicy.checkPublicationPaused(paused);
-        String key=keys.next();
-        double score=scores.optDouble(key,Double.NaN);
-        if(key.startsWith("v2:")&&Double.isFinite(score)&&score>0
-            &&!provisional.contains(key))keep.add(key);
-      }
-    }
-    Iterator<String> keys=scores.keys();
-    while(keys.hasNext()&&keep.size()<limit){
-      SourceProbeTimePolicy.checkPublicationPaused(paused);
-      keep.add(keys.next());
-    }
   }
   static void storePreflightScore(JSONObject scores,String key,String legacyKey,ProbeResult result)throws JSONException{
     double prior=scores.has(key)?scores.optDouble(key,0.0):scores.optDouble(legacyKey,0.0);
