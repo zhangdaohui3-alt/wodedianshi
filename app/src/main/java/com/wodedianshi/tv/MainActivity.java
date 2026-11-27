@@ -1089,7 +1089,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
     if(!broadcaster.isEmpty())return displayChannelName(broadcaster);
-    return ChannelNamePolicy.canonicalLocalDisplayName(
+    return ChannelNamePolicy.chineseDisplayName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
   }
   private String displayLiveChannelGroup(Channel c){
@@ -5856,7 +5856,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(selected<0||selected>=channels.size()){toast("请先选择频道");return;}
     Channel c=channels.get(selected);
     boolean favorite=toggleFavoriteMembership(c.key());
-    toast((favorite?"已加入收藏：":"已取消收藏：")+c.name);
+    toast((favorite?"已加入收藏：":"已取消收藏：")+displayChannelName(c));
     queueFavoriteMutation(c.key(),favorite);
 
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
@@ -6370,7 +6370,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     PendingSingleChannelRefresh request=new PendingSingleChannelRefresh(target,active,
         liveTuneRequestSerial,android.os.SystemClock.elapsedRealtime()+90000L);
     pendingSingleChannelRefresh=request;
-    toast("已申请刷新："+target.name+"，保持当前播放，待安全时检测");
+    toast("已申请刷新："+displayChannelName(target)+"，保持当前播放，待安全时检测");
     uiHandler.postDelayed(()->pollSingleChannelRefresh(request),1000L);
   }
   private void pollSingleChannelRefresh(PendingSingleChannelRefresh request){
@@ -6493,7 +6493,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       displayedUrls.add(url);
     }
     labels.add("屏蔽本频道当前源（广告、错台或异常内容）");
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(c.name+" · 选择播放源")
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(displayChannelName(c)+" · 选择播放源")
       .setItems(labels.toArray(new String[0]),(d,which)->{
         if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
         Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
@@ -7239,7 +7239,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     target.activeSource=0;
     applyLastKnownGoodSource(target);
     sortSourcesByObservedQuality(target);
-    info.setText(reason+"，自动切换到下一频道："+target.name);
+    info.setText(reason+"，自动切换到下一频道："+displayChannelName(target));
     startCurrentSource();
   }
   private void play(int ix){
@@ -7376,7 +7376,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     Channel c=channels.get(selected);
     if(c.backups==null||c.backups.isEmpty()){
       saveLiveDiagnostic("SOURCE_SKIP","channel="+c.name+" has no playable URL entries");
-      info.setText(c.name+" 没有可用播放地址，正在跳过…");
+      info.setText(displayChannelName(c)+" 没有可用播放地址，正在跳过…");
       advanceToNextChannelAutomatically("当前频道没有可用播放地址");
       return;
     }
@@ -7411,7 +7411,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     saveLastChannel();
     final long generation=++playbackGeneration;
     currentMediaId=generation+":"+selected+":"+c.activeSource;
-    info.setText("正在尝试："+c.name+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
+    info.setText("正在尝试："+displayChannelName(c)+"（源 "+(c.activeSource+1)+"/"+c.backups.size()+"）");
     updateLiveChannelSelection(selected);
     saveLiveDiagnostic("SOURCE_START","channel="+c.name+" sourceIndex="+(c.activeSource+1)+" total="+c.backups.size()+" route="+StableKey.url(SourceSelectionPolicy.endpointKey(c.backups.get(c.activeSource))).substring(0,19));
     try{
@@ -7627,9 +7627,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             scheduleAudioTrackCheck();
             if(selected>=0&&selected<channels.size()){
               saveLastChannel();
-              info.setText("正在播放："+channels.get(selected).name+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
+              info.setText("正在播放："+displayChannelName(channels.get(selected))+"（源 "+(channels.get(selected).activeSource+1)+"/"+channels.get(selected).backups.size()+"）");
               if(manualSourceSwitch){
-                showChannelZapMessage(channels.get(selected).name+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
+                showChannelZapMessage(displayChannelName(channels.get(selected))+"\n已连接第 "+(channels.get(selected).activeSource+1)+" / "+channels.get(selected).backups.size()+" 个源");
                 manualSourceSwitch=false;
               }
             }
@@ -7728,8 +7728,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             cancelLibVlcStartTimeout();
             usingLibVlc=true;
             sourceReadyAt=android.os.SystemClock.elapsedRealtime();
-            info.setText("检测到 VLC 视频输出："+channels.get(selected).name+"（画面尚待确认）");
-            showChannelZapMessage(channels.get(selected).name+"\\n已切换独立 VLC 播放器");
+            info.setText("检测到 VLC 视频输出："+displayChannelName(channels.get(selected))+"（画面尚待确认）");
+            showChannelZapMessage(displayChannelName(channels.get(selected))+"\\n已切换独立 VLC 播放器");
             saveLiveDiagnostic("ENGINE_VOUT","LibVLC reports "+count+" active video output(s); rendered frame still requires device validation");
             scheduleLibVlcWatchdog(expectedMediaId,expectedChannel);
             // A visible VLC video output is not enough: a video-only stream can
