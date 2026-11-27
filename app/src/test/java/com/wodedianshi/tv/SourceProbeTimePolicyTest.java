@@ -356,4 +356,19 @@ public class SourceProbeTimePolicyTest {
         assertTrue(SourceProbeTimePolicy.initialProbeInconclusive(false,15000L,15000L));
         assertFalse(SourceProbeTimePolicy.initialProbeInconclusive(false,14999L,15000L));
     }
+
+    @Test public void probeDiagnosticReasonsAreExclusiveAndDoNotChangeAcceptance(){
+        SourceUpdateWorker.ProbeResult p=new SourceUpdateWorker.ProbeResult();
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.PACED,p.uncertainReason(false));
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.BUDGET,p.uncertainReason(true));
+        p.incompleteManifest=true;
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.MEDIA,p.uncertainReason(false));
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.BUDGET,p.uncertainReason(true));
+        p.transientNetworkFailure=true;
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.TRANSPORT,p.uncertainReason(true));
+        p.socketTimedOut=true;
+        assertEquals(SourceUpdateWorker.ProbeResult.UncertainReason.SOCKET,p.uncertainReason(true));
+        assertFalse(p.valid);
+        assertTrue(p.inconclusive());
+    }
 }
