@@ -315,12 +315,17 @@ public class PlaylistFeedIndexTest {
             String version=body.getName()+":"+digest;
             assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(body));
             assertEquals(body,PlaylistFeedCache.matchingAcquiredBody(body,version));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,version));
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,"different-version"));
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,""));
             assertEquals(1,PlaylistFeedIndex.readPage(body,0,1,ignored->{}));
             assertEquals(version,PlaylistFeedCache.contentVersion(body));
+            org.junit.Assert.assertTrue(PlaylistFeedCache.hasAcquiredInitialIndex(body,version));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,"old-version"));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,null));
             try(FileOutputStream out=new FileOutputStream(body,true)){out.write(10);}
             org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,version));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.hasAcquiredInitialIndex(body,version));
         }finally{
             File[] children=dir.listFiles();
             if(children!=null)for(File child:children)child.delete();
