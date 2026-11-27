@@ -332,4 +332,42 @@ public class PlaylistFeedIndexTest {
             dir.delete();
         }
     }
+
+    @Test public void initialIndexPromotesStationsAcrossRawPagesAndPreservesEveryBackup() throws Exception {
+        StringBuilder m3u=new StringBuilder("#EXTM3U\n");
+        for(int n=0;n<60;n++)m3u.append("#EXTINF:-1,CCTV-1\nhttps://example.invalid/one/").append(n).append("\n");
+        m3u.append("#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n");
+        m3u.append("#EXTINF:-1,CCTV-3\nhttps://example.invalid/three\n");
+        File feed=playlist(m3u.toString());
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(3,PlaylistFeedIndex.readPage(feed,0,3,page::add));
+        assertEquals("CCTV-1",page.get(1).name);
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.hasCoverageOrder(feed));
+        page.clear();
+        assertEquals(3,PlaylistFeedIndex.readInitialPage(feed,0,3,page::add,()->false));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(feed));
+        assertEquals("CCTV-1",page.get(0).name);
+        assertEquals("CCTV-2",page.get(1).name);
+        assertEquals("CCTV-3",page.get(2).name);
+        assertEquals(62,PlaylistFeedIndex.indexedEntryCount(feed));
+        page.clear();
+        assertEquals(59,PlaylistFeedIndex.readExistingPage(feed,3,100,page::add,()->false));
+        for(int n=0;n<59;n++)assertEquals("https://example.invalid/one/"+(n+1),page.get(n).url);
+        File offsets=new File(feed.getPath()+".index-offsets");
+        try(RandomAccessFile broken=new RandomAccessFile(offsets,"rw")){broken.setLength(5);}
+        page.clear();
+        assertEquals(2,PlaylistFeedIndex.readInitialPage(feed,1,2,page::add,()->false));
+        assertEquals("CCTV-2",page.get(0).name);
+        assertEquals("CCTV-3",page.get(1).name);
+        assertEquals(62,PlaylistFeedIndex.indexedEntryCount(feed));
+    }
+
+    @Test public void orderedProbeVersionCannotResumeLegacyRawPosition(){
+        String raw="feed:body-digest";
+        String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
+        assertEquals(raw,PlaylistFeedIndex.initialProbeVersion(raw,false));
+        assertEquals(0,DiscoveryBatchPolicy.cursorForVersion(48,raw,ordered));
+        assertEquals(48,DiscoveryBatchPolicy.cursorForVersion(48,ordered,ordered));
+        assertEquals(0,DiscoveryBatchPolicy.cursorForVersion(48,ordered,raw));
+    }
 }
