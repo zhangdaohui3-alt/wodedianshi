@@ -38,6 +38,10 @@ public class SourceUpdateWorker extends Worker {
       new LinkedHashMap<>(64,0.75f,true);
   private static final int INITIAL_PROBE_CACHE_CAP=1024;
   private static long initialProbeEarliestExpiry=Long.MAX_VALUE;
+  private static String manualProbeCacheOwner="";
+  private static void clearRecentProbeCache(){
+    INITIAL_PROBES.clear();initialProbeEarliestExpiry=Long.MAX_VALUE;manualProbeCacheOwner="";
+  }
   private static final InitialOriginCooldownPolicy INITIAL_ORIGINS=new InitialOriginCooldownPolicy();
   private static final InitialNetworkConcurrencyPolicy INITIAL_NETWORK=new InitialNetworkConcurrencyPolicy();
   private static final class RecentProbe {
@@ -393,6 +397,9 @@ public class SourceUpdateWorker extends Worker {
         String owner=roomString(manualOwnerKey,"");
         boolean resume=manualId.equals(owner)&&manualId.equals(roomString("source_manual_active_id",""))
             &&config.equals(roomString("source_manual_feed_config",""));
+        if(!resume||!manualId.equals(manualProbeCacheOwner)){
+          clearRecentProbeCache();manualProbeCacheOwner=manualId;
+        }
         if(!resume){
           // An older cancelled/failed request may leave private staging, never
           // a partially published directory. Only the source owner discards it.
@@ -485,7 +492,7 @@ public class SourceUpdateWorker extends Worker {
             return deferInitialDirectory("已有暂存目录，等待空闲重建，保留观看");
           // Empty staging initialization is only a small state transaction.
           // It must not block first discovery forever on a playing seed channel.
-          INITIAL_PROBES.clear();initialProbeEarliestExpiry=Long.MAX_VALUE;INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();
+          clearRecentProbeCache();INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();
           LIVE_DIRECTORY_RETRY_AFTER.clear();
           discardStagingReuse();
           // Start from an empty isolated Room staging set. The live catalogue is
@@ -1279,9 +1286,10 @@ public class SourceUpdateWorker extends Worker {
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
-          String cacheKey=initialDiscoveryChain?endpoint:"";
+          boolean reuseRecent=initialDiscoveryChain||manualRefresh;
+          String cacheKey=reuseRecent?endpoint:"";
           long clock=android.os.SystemClock.elapsedRealtime();
-          RecentProbe cached=initialDiscoveryChain?reusableInitialProbe(cacheKey,slowPlayback,clock):null;
+          RecentProbe cached=reuseRecent?reusableInitialProbe(cacheKey,slowPlayback,clock):null;
           boolean reuse=cached!=null;
           boolean allowOriginDeferral=InitialOriginCooldownPolicy.mayDefer(
               initialDiscoveryChain,slowPlayback,preferCoreCoverage,e.savedSource,
@@ -1361,7 +1369,7 @@ public class SourceUpdateWorker extends Worker {
           // A completed positive observation can be reused on the next slice
           // even if a new user action prevents this slice from committing.
           // Never renew the timestamp of a reused result.
-          if(initialDiscoveryChain&&!reuse)
+          if(reuseRecent&&!reuse)
             retainCompletedInitialSuccess(cacheKey,measured,measuredAt,addressDeadline,probeDeadline);
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             idleWave.close();
@@ -2129,7 +2137,7 @@ public class SourceUpdateWorker extends Worker {
       // Routine failures rotate to other directories and wait for the next idle
       // eligibility check; no aggressive WorkManager retry loop on dead feeds.
       if(!initialDiscoveryChain)return Result.success();
-      if(initialDiscoveryComplete){INITIAL_PROBES.clear();initialProbeEarliestExpiry=Long.MAX_VALUE;INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();discardStagingReuse();}
+      if(initialDiscoveryComplete){clearRecentProbeCache();INITIAL_ORIGINS.clear();INITIAL_NETWORK.clear();discardStagingReuse();}
       return (discoveryUnavailable&&!initialDiscoveryComplete
               &&!(initialDiscoveryChain&&candidates.size()>0))
           ||(initialDiscoveryChain&&!initialDiscoveryComplete&&candidates.isEmpty())
@@ -2263,6 +2271,7 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.RoomCatalogueWriter.publishReconciledManualSnapshot(
             getApplicationContext(),rows,reconciledVersion,manualId,reconciledStructure,pauseRequested,finish);
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
+    clearRecentProbeCache();
     return Result.success();
   }
   private JSONObject manualCompatibilityScores(JSONArray rows,JSONObject all)throws JSONException{
@@ -2900,7 +2909,7 @@ public class SourceUpdateWorker extends Worker {
     int launched,serialProbes;
     final java.util.concurrent.atomic.AtomicInteger activeProbes=new java.util.concurrent.atomic.AtomicInteger();
     final java.util.concurrent.atomic.AtomicInteger peakProbes=new java.util.concurrent.atomic.AtomicInteger();
-    boolean initialWave;
+    boolean retainWaveEvidence;
     long waveBatchDeadline;
     List<Entry> rollingEntries;
     Map<String,ProbeResult> rollingMeasured;
@@ -2940,7 +2949,8 @@ public class SourceUpdateWorker extends Worker {
         if(!wavePolicy.canAdd(endpoint,host))break;
         if(allowOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))break;
         if(i!=offset){
-          RecentProbe cached=initial?reusableInitialProbe(endpoint,slowPlayback,now):null;
+          RecentProbe cached=(initial||!manualProbeCacheOwner.isEmpty())
+              ?reusableInitialProbe(endpoint,slowPlayback,now):null;
           if(measured.containsKey(endpoint)||visited.contains(endpoint)||cached!=null)break;
         }
         wavePolicy.add(endpoint,host);wave.add(entry);
@@ -2958,7 +2968,7 @@ public class SourceUpdateWorker extends Worker {
           r.run();
         },"mytv-idle-probe");
       });
-      initialWave=initial;
+      retainWaveEvidence=initial||!manualProbeCacheOwner.isEmpty();
       waveBatchDeadline=batchDeadline;
       for(Entry entry:wave)submit(entry,deadline);
       if(rolling&&initial){
@@ -3049,7 +3059,7 @@ public class SourceUpdateWorker extends Worker {
     // cancelling unfinished work. No cursor, quality score or channel is
     // committed here; the next owner must consume the exact candidate again.
     private void retainCompletedSuccesses(){
-      if(!initialWave)return;
+      if(!retainWaveEvidence)return;
       for(Map.Entry<String,java.util.concurrent.Future<TimedProbe>> entry:pending.entrySet()){
         java.util.concurrent.Future<TimedProbe> task=entry.getValue();
         if(!task.isDone()||task.isCancelled())continue;
