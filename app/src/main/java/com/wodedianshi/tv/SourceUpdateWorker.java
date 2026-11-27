@@ -2278,7 +2278,7 @@ public class SourceUpdateWorker extends Worker {
     HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
     int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
     int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
-    boolean extended=false;
+    boolean extended=false,lastProbeHealthy=false;
     long startedAt=android.os.SystemClock.elapsedRealtime();
     long sampleRequests=0L,sampleBytes=0L;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
@@ -2290,7 +2290,7 @@ public class SourceUpdateWorker extends Worker {
       if(now>=stageDeadline)break;
       // The default quota remains unchanged for slow, inconclusive or
       // cache-heavy batches. Only measured healthy fresh probes can extend.
-      if(!extended&&checked>=limit&&SourceUpdateSchedulePolicy.permitsFastRecheckExtension(
+      if(!extended&&lastProbeHealthy&&checked>=limit&&SourceUpdateSchedulePolicy.permitsFastRecheckExtension(
           checked,positive,now-startedAt,sampleRequests,sampleBytes)){
         extended=true;limit=SourceUpdateSchedulePolicy.PROVISIONAL_FAST_LIMIT;
       }
@@ -2320,17 +2320,27 @@ public class SourceUpdateWorker extends Worker {
       if(measured.firstOriginPressure)recheckOrigins.observePressure(origin,finishedAt);
       else recheckOrigins.observe(origin,endpoint,finishedAt,
           measured.firstRequestFailed,measured.firstRequestReached);
+      boolean fullPositive=SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
+          measured.paced,measured.provisional,finishedAt,deadline);
+      // A previous fast batch is not permission to keep spending resources
+      // after transport pressure or a newly slow response. Use the existing
+      // idle read timeout as a conservative elapsed-cost threshold.
+      boolean pressure=measured.firstOriginPressure||measured.socketTimedOut
+          ||measured.transientNetworkFailure||finishedAt>=deadline
+          ||finishedAt-now>=SourceProbeTimePolicy.sampleReadTimeoutCap(false);
+      lastProbeHealthy=fullPositive&&!pressure;
       if(measured.inconclusive()
           ||finishedAt>=deadline){
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
+        if(extended&&pressure)break;
         continue;
       }
-      if(SourceUpdateSchedulePolicy.reusableFullRecheck(measured.valid,measured.inconclusive(),
-          measured.paced,measured.provisional,finishedAt,deadline)){
+      if(fullPositive){
         successfulEndpoints.put(endpoint,measured);positive++;
       }
       completed.put(url,measured);
       pending.remove(key);conclusive++;
+      if(extended&&pressure)break;
     }
     SourceProbeTimePolicy.checkPublicationPaused(paused);
     return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes,extended);
