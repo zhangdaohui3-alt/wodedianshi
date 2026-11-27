@@ -5311,12 +5311,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // Saved country membership is first read from the authoritative Room-backed
   // in-memory snapshot. A country TVG-ID suffix is trustworthy enough to identify
   // the country, while finer province/city filtering requires actual feed membership.
-  private HashSet<String> savedGeoChannelKeys(String scope,String country){
-    final ArrayList<Channel> snapshot;
-    final long epoch;
-    synchronized(channels){snapshot=new ArrayList<>(channels);epoch=catalogueMembershipGeneration;}
-    return new HashSet<>(geoKeysForSnapshot(snapshot,epoch,scope,country));
-  }
   private Set<String> geoKeysForSnapshot(List<Channel> snapshot,long epoch,String scope,String country){
     SnapshotCategoryIndex.PreparedLocal prepared=preparedLocalSnapshot;
     if(prepared!=null&&prepared.matches(epoch,snapshot.size())){
@@ -7064,9 +7058,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     livePictureGate.cover();
     if(livePictureCover!=null)livePictureCover.setVisibility(View.VISIBLE);
   }
-  private void revealLivePicture(Object owner,String mediaId){
-    if(livePictureGate.reveal(owner,mediaId)&&livePictureCover!=null)
-      livePictureCover.setVisibility(View.GONE);
+  private boolean revealLivePicture(Object owner,String mediaId,long renderedAt){
+    if(!livePictureGate.reveal(owner,mediaId,renderedAt))return false;
+    if(livePictureCover!=null)livePictureCover.setVisibility(View.GONE);
+    return true;
   }
   private void releaseLivePlayerSafely(){
     pauseStableDiscovery();
@@ -7446,8 +7441,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Reject even a matching timeline if the renderer's actual frame time
           // predates this media assignment; delivery can be delayed on the UI queue.
-          if(!livePictureGate.revealRendered(listenerOwner,currentMediaId,renderTimeMs))return;
-          if(livePictureCover!=null)livePictureCover.setVisibility(View.GONE);
+          if(!revealLivePicture(listenerOwner,currentMediaId,renderTimeMs))return;
           sourceFirstFrameRecorded=true;
           long firstFrameAt=android.os.SystemClock.elapsedRealtime();
           lastVideoPipelineActivityAt=firstFrameAt;
@@ -7710,7 +7704,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             // VLC exposes Vout creation, not a rendered-first-frame callback.
             // Its current engine may now show the new output; device compositor
             // timing still needs verification. This is not playback health evidence.
-            revealLivePicture(engine,expectedMediaId);
+            revealLivePicture(engine,expectedMediaId,0L);
             pauseStableDiscovery();
             resetLibVlcHealthEvidence();
             libVlcStableRecorded=false;
