@@ -142,22 +142,22 @@ final class SingleChannelCandidateSearch {
     /** Count only rows actually visited. A candidate limit must not skip the
      * rest of an indexed page or a streaming page. */
     private static final class ScanPage {
-        final Target target;
+        final SingleChannelRefreshPolicy.StationMatcher matcher;
         final String feedScope;
         final HashSet<String> seen=new HashSet<>();
         final int candidateLimit;
         final List<Candidate> result;
         int scanned;
         ScanPage(Target target,String feedScope,Collection<String> excluded,int candidateLimit,List<Candidate> result){
-            this.target=target;this.feedScope=feedScope;this.candidateLimit=candidateLimit;this.result=result;
+            this.matcher=new SingleChannelRefreshPolicy.StationMatcher(target.name,target.group,target.tvgId,target.tvgName);
+            this.feedScope=feedScope;this.candidateLimit=candidateLimit;this.result=result;
             for(String url:excluded)seen.add(SourceSelectionPolicy.endpointKey(url));
         }
         void accept(PlaylistParser.ChannelSource entry){
             scanned++;
             String endpoint=SourceSelectionPolicy.endpointKey(entry.url);
             if(endpoint.isEmpty()||seen.contains(endpoint))return;
-            if(!SingleChannelRefreshPolicy.matchesStation(target.name,target.group,target.tvgId,target.tvgName,
-                    entry.name,entry.group,entry.tvgId,entry.tvgName))return;
+            if(!matcher.matches(entry.name,entry.group,entry.tvgId,entry.tvgName))return;
             if(SingleChannelRefreshPolicy.appendCandidates(
                     java.util.Collections.emptyList(),java.util.Collections.singletonList(entry.url),1).isEmpty())return;
             seen.add(endpoint);
