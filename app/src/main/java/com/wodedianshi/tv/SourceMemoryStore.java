@@ -200,6 +200,9 @@ public final class SourceMemoryStore {
                         m.put("stablePlays",m.optInt("stablePlays",0)+1); m.put("lastStable",at);
                     } else return;
                     m.put("updated",at);
+                    // Explicitly record the last event; timestamp equality alone
+                    // cannot order two callbacks in the same millisecond.
+                    m.put("lastEvent",event);
                     qoe.put(key,m);
                     if (!key.equals(legacy)) qoe.remove(legacy);
                     // A flush queued behind existing metric tasks combines a burst.
