@@ -121,6 +121,18 @@ public final class ManualProbeQualityStore {
 
     static void loadUrls(AppDatabase db,String owner,Collection<String> urls,Set<String> loaded,
             JSONObject scores,JSONObject streaks,BooleanSupplier paused)throws JSONException{
+        loadUrls(db,owner,urls,loaded,scores,streaks,null,paused);
+    }
+
+    /** While hydrating a manual slice, distinguish current-round observations
+     * from inherited published scores without an additional database read. */
+    public static void loadManualUrls(Context context,String owner,Collection<String> urls,Set<String> loaded,
+            JSONObject scores,JSONObject streaks,Set<String> ownPositive,BooleanSupplier paused)throws JSONException{
+        loadUrls(RoomDatabaseProvider.get(context),owner,urls,loaded,scores,streaks,ownPositive,paused);
+    }
+
+    static void loadUrls(AppDatabase db,String owner,Collection<String> urls,Set<String> loaded,
+            JSONObject scores,JSONObject streaks,Set<String> ownPositive,BooleanSupplier paused)throws JSONException{
         LinkedHashSet<String> keys=new LinkedHashSet<>();
         for(String url:urls){
             SourceProbeTimePolicy.checkPublicationPaused(paused);
@@ -143,6 +155,8 @@ public final class ManualProbeQualityStore {
             for(ManualProbeQualityEntity row:rows){
                 if(row.score!=null)scores.put(row.sourceKey,row.score);
                 if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
+                if(ownPositive!=null&&owner.equals(row.owner)&&row.score!=null&&row.score>0)
+                    ownPositive.add(row.sourceKey);
             }
             loaded.addAll(page);
         }
