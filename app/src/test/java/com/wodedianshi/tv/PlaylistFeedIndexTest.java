@@ -422,6 +422,17 @@ public class PlaylistFeedIndexTest {
         assertEquals("https://example.invalid/backup",page.get(2).url);
     }
 
+    @Test public void startedRawOrderIsKeptOnlyForExactBody(){
+        String raw="feed:body-digest";
+        String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.preferCoverageOrder(raw,raw,48,0));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.preferCoverageOrder(raw,raw,0,3));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.preferCoverageOrder(raw,raw,0,0));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.preferCoverageOrder(raw,ordered,48,3));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.preferCoverageOrder(raw,"old-body",48,3));
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.preferCoverageOrder(raw,"",0,3));
+    }
+
     @Test public void orderedProbeVersionCannotResumeLegacyRawPosition(){
         String raw="feed:body-digest";
         String ordered=PlaylistFeedIndex.initialProbeVersion(raw,true);
