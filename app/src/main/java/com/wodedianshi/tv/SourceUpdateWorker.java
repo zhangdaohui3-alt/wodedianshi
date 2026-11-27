@@ -1422,7 +1422,7 @@ public class SourceUpdateWorker extends Worker {
             // Do not expand ordinary timeout retries across the full catalogue.
             if(initialDiscoveryChain&&pageFeed>=0&&!slowPlayback&&!e.savedSource
                 &&transientRecheck==DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK){
-              boolean coreTimeout=measured.socketTimedOut&&preferCoreCoverage
+              boolean coreTimeout=measured.recoverableCoreWindow()&&preferCoreCoverage
                   &&ChinaDiscoveryCandidatePolicy.isClearlyMainland(e.scope,e.name,e.group,e.tvgName,e.tvgId)
                   &&DiscoveryBatchPolicy.shouldRecheckCoreTimeout(true,saved.length(),
                       (long)initialCheckedAtStart+checked,observedCoreMask,
@@ -3285,9 +3285,12 @@ public class SourceUpdateWorker extends Worker {
   static final class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
-    boolean transientNetworkFailure,incompleteManifest,incompleteSample,unsupportedPreflight;
-    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample||unsupportedPreflight;}
-    boolean deterministicEvidenceLimit(){return (unsupportedPreflight||incompleteManifest)
+    boolean transientNetworkFailure,incompleteManifest,incompleteSample,unsupportedPreflight,emptyLiveWindow;
+    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample||unsupportedPreflight||emptyLiveWindow;}
+    // Reuse the existing bounded domestic-core suffix replay for a genuinely
+    // temporary empty live window, but not for a deterministic parser limit.
+    boolean recoverableCoreWindow(){return socketTimedOut||emptyLiveWindow;}
+    boolean deterministicEvidenceLimit(){return (unsupportedPreflight||incompleteManifest||emptyLiveWindow)
         &&!socketTimedOut&&!transientNetworkFailure&&!incompleteSample;}
     boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
@@ -3467,7 +3470,7 @@ public class SourceUpdateWorker extends Worker {
               // segments (startup, encoder gap, LL-HLS publication delay).
               // Keep it unconfirmed, not a permanent negative observation.
               if(HlsMediaPlaylistPolicy.isEmptyLiveWindow(candidateManifest))
-                result.incompleteManifest=true;
+                result.emptyLiveWindow=true;
               continue;
             }
             // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
@@ -3541,6 +3544,7 @@ public class SourceUpdateWorker extends Worker {
             result.socketTimedOut=false;
             result.transientNetworkFailure=false;
             result.incompleteManifest=false;
+            result.emptyLiveWindow=false;
             result.incompleteSample=false;
             result.unsupportedPreflight=false;
             result.valid=true;result.provisional=evidence.provisional;
