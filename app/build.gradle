@@ -10,8 +10,26 @@ android {
         applicationId 'com.wodedianshi.tv'
         minSdk 23
         targetSdk 28
-        versionCode 147
-        versionName '2.65.0'
+        versionCode 162
+        versionName '2.74.6'
+        // Android TV boxes use ARM; retain both 32-bit and 64-bit ARM for older Dangbei models.
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += ["room.schemaLocation": "$projectDir/schemas".toString()]
+            }
+        }
+    }
+
+    // Keep a universal APK for unknown/older TV boxes, and produce smaller
+    // per-ABI packages so users can install only the native libraries they need.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a'
+            universalApk true
+        }
     }
 
     signingConfigs {
@@ -44,6 +62,28 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-smoothstreaming:1.11.1"
     implementation "androidx.media3:media3-exoplayer-rtsp:1.11.1"
     implementation "androidx.media3:media3-ui:1.11.1"
+    // Independent native playback engine; intentionally separate from Media3 renderers.
+    implementation "org.videolan.android:libvlc-all:3.7.7"
     implementation "androidx.work:work-runtime:2.10.1"
+    implementation "androidx.activity:activity:1.10.1"
+    // Room 2.x is the stable Java-friendly Room line for this Java Android TV app.
+    implementation "androidx.room:room-runtime:2.8.5"
+    annotationProcessor "androidx.room:room-compiler:2.8.5"
+    testImplementation "androidx.room:room-testing:2.8.5"
     testImplementation "junit:junit:4.13.2"
+    // Host-side Android 9 / native SQLite integration tests; not packaged in APK.
+    testImplementation "org.robolectric:robolectric:4.16.1"
+}
+
+// Surface only numerical detection benchmark results in ordinary CI logs.
+// Do not enable all test stdout (which could include URLs or diagnostics).
+tasks.withType(Test).configureEach {
+    onOutput { descriptor, event ->
+        String line = event.message.trim()
+        if (line ==~ /room_route_scale channels=\d+ routes=\d+ full_read_ms=\d+ route_scan_ms=\d+ early_exit_ms=\d+ cancelled_after=\d+/ ||
+                line ==~ /mixed_probe_comparison full_requests=\d+ fast_requests=\d+ full_body_bytes=\d+ fast_body_bytes=\d+/ ||
+                line ==~ /room_pending_scale pending=\d+ matched_early_visited=\d+ matched_early_ms=\d+ missing_visited=\d+ missing_ms=\d+/) {
+            logger.lifecycle(line)
+        }
+    }
 }
