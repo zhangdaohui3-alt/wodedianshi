@@ -3445,7 +3445,8 @@ public class SourceUpdateWorker extends Worker {
           HlsVariantPolicy.Variant candidate=variants.get(variantIndex);
           if(probeSampleInterrupted(deadline,pauseRequested,result))return result;
           final long renditionDeadline=SourceProbeTimePolicy.initialRenditionDeadline(
-              initialIdle&&!slowPlayback,variantIndex+1<variants.size(),
+              SourceProbeTimePolicy.reserveRenditionBudget(initialIdle,slowPlayback,started,deadline),
+              variantIndex+1<variants.size(),
               android.os.SystemClock.elapsedRealtime(),deadline);
           try{
             String candidateManifestUrl=candidate.url;
