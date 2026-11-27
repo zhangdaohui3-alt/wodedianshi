@@ -2325,6 +2325,9 @@ public class SourceUpdateWorker extends Worker {
     // Scope positive full evidence to this single idle slice. Exact URL
     // keys still own their queue membership and durable quality records.
     HashMap<String,ProbeResult> successfulEndpoints=new HashMap<>();
+    // One unresolved observation per exact endpoint per slice. This is
+    // admission only, never a negative result or durable blacklist.
+    HashSet<String> unresolvedEndpoints=new HashSet<>();
     int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
     int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
     boolean extended=false,lastProbeHealthy=false,tailUsed=false;
@@ -2359,6 +2362,7 @@ public class SourceUpdateWorker extends Worker {
         flushQualityCheckpoint(completed,checkpoint,paused);
         continue;
       }
+      if(unresolvedEndpoints.contains(endpoint))continue;
       if(checked>=limit){
         // No further network admissions. An unmeasured row need not hide
         // a later alias of a full positive result already in this slice.
@@ -2402,6 +2406,7 @@ public class SourceUpdateWorker extends Worker {
       lastProbeHealthy=fullPositive&&!pressure;
       if(measured.inconclusive()
           ||finishedAt>=deadline){
+        unresolvedEndpoints.add(endpoint);
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
         if(extended&&pressure)break;
         continue;
