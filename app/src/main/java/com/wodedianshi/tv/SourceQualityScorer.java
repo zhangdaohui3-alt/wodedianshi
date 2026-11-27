@@ -11,6 +11,35 @@ import java.util.Locale;
 public final class SourceQualityScorer {
     private SourceQualityScorer() {}
 
+    /** The worker persists -500 when a current media preflight fails. */
+    public static boolean isFailedProbeScore(double probeScore) {
+        return probeScore <= -500.0d;
+    }
+
+    // Pacing controls the reader, not the origin. A successful paced sample
+    // proves media structure but cannot measure available throughput or latency.
+    static int preflightSpeedBonus(boolean paced,int bytes,long elapsedMs) {
+        if(paced)return 150; // provisional midpoint, not measured throughput
+        return (int)Math.min(300L,Math.max(0,bytes)*1000L/Math.max(1L,elapsedMs)/2048L);
+    }
+    static int preflightLatencyPenalty(boolean paced,long elapsedMs) {
+        return paced?125:(int)Math.min(250L,Math.max(0L,elapsedMs)/20L);
+    }
+    static double successfulPreflightScore(boolean paced,double previous,int candidate) {
+        return paced&&Double.isFinite(previous)&&previous>0.0?previous:candidate;
+    }
+    // A short structural screen, like paced sampling, must not replace a
+    // previously measured positive quality score with a synthetic estimate.
+    static double successfulPreflightScore(boolean paced,boolean provisional,double previous,int candidate) {
+        return successfulPreflightScore(paced||provisional,previous,candidate);
+    }
+    static boolean reusableProbeMode(boolean cachedPaced,boolean viewing) {
+        return viewing||!cachedPaced;
+    }
+    static boolean inconclusivePacedProbe(boolean paced,boolean valid) {
+        return paced&&!valid;
+    }
+
     public static int labelScore(String source) {
         if (source == null) return 0;
         String u = source.toLowerCase(Locale.ROOT);
