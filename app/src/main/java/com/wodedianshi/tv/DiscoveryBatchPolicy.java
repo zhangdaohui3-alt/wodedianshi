@@ -50,6 +50,15 @@ public final class DiscoveryBatchPolicy {
         return !viewing&&indexedEntries>0&&elapsedMs>=0L&&elapsedMs<=10000L;
     }
 
+    /** When a selected directory has just recovered its local index under
+     * cache pressure, consume a bounded page before rotating and risking
+     * another eviction. Ordinary preparation retains peer priority. */
+    static boolean canProbePreparedDirectory(boolean viewing,int indexedEntries,long elapsedMs,
+            boolean sameNextDirectory,boolean restoredLocalBody,boolean cachePressure){
+        return canProbeAfterQuickAcquisition(viewing,indexedEntries,elapsedMs)
+                &&(sameNextDirectory||(restoredLocalBody&&cachePressure));
+    }
+
     /** Stop only at a drained wave boundary after a first useful mainland
      * preview has been merged in memory. Commit the contiguous prefix through
      * the normal staging and publication transaction; never discard a suffix. */
