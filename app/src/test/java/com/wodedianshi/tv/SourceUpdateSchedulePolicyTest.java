@@ -391,12 +391,12 @@ public class SourceUpdateSchedulePolicyTest {
     }
 
     @Test public void oneReuseRuleRespectsEvidenceGradeAgeAndViewingMode(){
-        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,100000L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,true,false,false,1000L,100000L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L));
-        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,true,1000L,2000L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16001L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,100000L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,true,false,false,1000L,100000L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L,false));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,true,1000L,2000L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16001L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,2000L,1000L,false));
     }
 
     @Test public void onlyRecentExplicitStableOutputDefersExtraQualityProbe(){
@@ -581,9 +581,9 @@ public class SourceUpdateSchedulePolicyTest {
         assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,"manual-b","manual-a"));
         assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,"",""));
         assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,null,null));
-        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301000L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301001L));
-        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301000L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301001L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L,false));
         assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(false,false,2000L,3000L,4000L));
         assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,true,2000L,3000L,4000L));
         assertTrue(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,2000L,3000L,4000L));
@@ -619,5 +619,12 @@ public class SourceUpdateSchedulePolicyTest {
     }
 
 
+
+    @Test public void negativeDiscoveryEvidenceNeverSubstitutesForSavedHealthFailure(){
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16000L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,16001L,false));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(false,false,false,false,1000L,1001L,true));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,1001L,true));
+    }
 
 }
