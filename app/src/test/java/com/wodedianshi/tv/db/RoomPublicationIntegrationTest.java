@@ -347,24 +347,26 @@ public class RoomPublicationIntegrationTest {
             RoomCatalogueWriter.writeSnapshotWithProgress(context,oldRows,empty,true,
                     ()->false,new AppStateEditor(context).putInt(PERCENT,100));
             long base=RoomCatalogueReader.read(context).catalogueVersion;
-            // Seed the public compatibility state, exactly as the production
-            // legacy-to-indexed path does. The checked staging transaction
-            // captures it, rather than accepting a caller-supplied private mirror.
-            AppStateStore.put(context,"source_probe_scores_v1",new JSONObject().put(oldKey,600).toString());
-            AppStateStore.put(context,"source_probe_failure_streaks_v1",new JSONObject().put(oldKey,2).toString());
+            // Establish the new-version Room quality base; legacy JSON must
+            // neither populate nor override private observations.
+            AppDatabase db=RoomDatabaseProvider.get(context);
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,publishedOwnerBefore=ManualProbeQualityStore.PUBLISHED_OWNER;
+            db.runInTransaction(()->{
+                ManualProbeQualityStore.seedInitialInTransaction(db,java.util.Collections.singletonList(
+                    new ManualProbeQualityEntity(initial,oldKey,600,2)),()->false);
+                ManualProbeQualityStore.publishInitialInTransaction(db,()->false);
+            });
+            AppStateStore.put(context,"source_probe_scores_v1",new JSONObject().put(oldKey,999).toString());
             RoomCatalogueBuildStore.seedManual(context,oldRows,base,owner,()->false,
                     new AppStateEditor(context).putInt("source_manual_next_feed",0));
-            assertEquals(600,new JSONObject(AppStateStore.get(context,
-                    RoomCatalogueBuildStore.MANUAL_SCORES_KEY,"{}")).getInt(oldKey));
-            assertEquals(2,new JSONObject(AppStateStore.get(context,
-                    RoomCatalogueBuildStore.MANUAL_STREAKS_KEY,"{}")).getInt(oldKey));
-            // A later compatibility write cannot alter the already captured seed.
-            AppStateStore.put(context,"source_probe_scores_v1",new JSONObject().put(oldKey,999).toString());
             ManualProbeQualityStore.ensure(context,owner,()->false);
-            AppDatabase db=RoomDatabaseProvider.get(context);
-            assertEquals(Integer.valueOf(600),db.manualProbeQualityDao().find(owner,oldKey).score);
-            assertEquals(Integer.valueOf(2),db.manualProbeQualityDao().find(owner,oldKey).failureStreak);
-            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            assertNull(db.manualProbeQualityDao().find(owner,oldKey));
+            JSONObject inheritedScores=new JSONObject(),inheritedStreaks=new JSONObject();
+            ManualProbeQualityStore.loadUrls(context,owner,java.util.Collections.singletonList(oldUrl),
+                    new java.util.HashSet<>(),inheritedScores,inheritedStreaks,()->false);
+            assertEquals(600,inheritedScores.getInt(oldKey));
+            assertEquals(2,inheritedStreaks.getInt(oldKey));
+            assertTrue(ManualProbeQualityStore.hasPublished(context));
             JSONArray newRows=new JSONArray().put(channel("CCTV-2",newUrl));
             assertFalse(RoomCatalogueBuildStore.commitManualIndexed(context,owner,1,
                     java.util.Collections.emptyList(),newRows,java.util.Collections.singleton(0),
@@ -394,7 +396,9 @@ public class RoomPublicationIntegrationTest {
             assertEquals("true",ready.appStateDao().getValue(RoomCatalogueBuildStore.MANUAL_READY_KEY));
             assertEquals(0,ready.manualProbeQueueDao().countPending(owner));
             assertEquals(Integer.valueOf(900),ready.manualProbeQualityDao().find(owner,newKey).score);
-            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            assertEquals(Integer.valueOf(600),ready.manualProbeQualityDao().find(publishedOwnerBefore,oldKey).score);
+            assertNull(ready.manualProbeQualityDao().find(publishedOwnerBefore,newKey));
+            assertTrue(ManualProbeQualityStore.hasPublished(context));
             assertEquals(base,RoomCatalogueReader.read(context).catalogueVersion);
             assertEquals(1,RoomCatalogueReader.read(context).channelCount);
             try{
@@ -416,7 +420,9 @@ public class RoomPublicationIntegrationTest {
             assertEquals(2,restored.manualProbeQueueDao().count(owner));
             assertEquals(0,restored.manualProbeQueueDao().countPending(owner));
             assertEquals(Integer.valueOf(900),restored.manualProbeQualityDao().find(owner,newKey).score);
-            assertFalse(ManualProbeQualityStore.hasPublished(context));
+            assertEquals(Integer.valueOf(600),restored.manualProbeQualityDao().find(publishedOwnerBefore,oldKey).score);
+            assertNull(restored.manualProbeQualityDao().find(publishedOwnerBefore,newKey));
+            assertTrue(ManualProbeQualityStore.hasPublished(context));
             assertEquals(2,RoomCatalogueWriter.publishManualSnapshot(context,staged,base,owner,()->false,
                     new AppStateEditor(context).putString(completed,owner)));
             closeProvider();
