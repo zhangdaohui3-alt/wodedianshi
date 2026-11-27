@@ -83,4 +83,20 @@ public class InitialSharedProbeScoreAndroidTest {
         assertEquals(2,history.size());
     }
 
+    @Test public void playbackSnapshotKeepsPublishedEvidenceWhenLiveEntriesAreReplaced() throws Exception {
+        java.util.Map<String,org.json.JSONObject> history=new java.util.concurrent.ConcurrentHashMap<>();
+        org.json.JSONObject original=new org.json.JSONObject().put("stablePlays",2);
+        history.put("a",original);
+        java.util.Map<String,org.json.JSONObject> snapshot=SourceMemoryStore.freezePlaybackHistory(history);
+        history.put("a",new org.json.JSONObject().put("stablePlays",3));
+        history.put("b",new org.json.JSONObject());
+        assertSame(original,snapshot.get("a"));
+        assertEquals(2,snapshot.get("a").getInt("stablePlays"));
+        assertFalse(snapshot.containsKey("b"));
+        try{
+            snapshot.remove("a");
+            fail("Snapshot structure must be read only");
+        }catch(UnsupportedOperationException expected){}
+    }
+
 }
