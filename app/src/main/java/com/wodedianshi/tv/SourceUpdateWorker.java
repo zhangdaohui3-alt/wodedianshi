@@ -3392,7 +3392,7 @@ public class SourceUpdateWorker extends Worker {
     result.paced=slowPlayback;
     long started=android.os.SystemClock.elapsedRealtime();
     try{
-      if(probeDeadlineReached(deadline,pauseRequested))return result;
+      if(probeSampleInterrupted(deadline,pauseRequested,result))return result;
       SampleResponse initialResponse;
       String lower=address.toLowerCase(Locale.ROOT);
       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
@@ -3443,7 +3443,7 @@ public class SourceUpdateWorker extends Worker {
         HashMap<String,ClearSegmentEvidence> confirmedClearFirstSegments=new HashMap<>();
         for(int variantIndex=0;variantIndex<variants.size();variantIndex++){
           HlsVariantPolicy.Variant candidate=variants.get(variantIndex);
-          if(probeDeadlineReached(deadline,pauseRequested))return result;
+          if(probeSampleInterrupted(deadline,pauseRequested,result))return result;
           final long renditionDeadline=SourceProbeTimePolicy.initialRenditionDeadline(
               initialIdle&&!slowPlayback,variantIndex+1<variants.size(),
               android.os.SystemClock.elapsedRealtime(),deadline);
@@ -3514,7 +3514,7 @@ public class SourceUpdateWorker extends Worker {
                 if(!HlsAes128Preflight.validatesMediaSegment(
                     candidateSample,aesKey,segmentIv,HlsProbeValidationPolicy.isCompleteSample(candidateSampleResponse.truncated)))continue;
               }else if(!looksLikeHlsSegment(candidateSample))continue;
-              if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
+              if(probeSampleInterrupted(renditionDeadline,pauseRequested,result))continue;
               evidence=new ClearSegmentEvidence(candidateSample.length,
                   Math.max(1L,android.os.SystemClock.elapsedRealtime()-candidateSegmentStart),candidateSampleResponse.earlyDirectTs);
               if(reusableClear)confirmedClearFirstSegments.put(candidateSegmentUrl,evidence);
@@ -3540,7 +3540,7 @@ public class SourceUpdateWorker extends Worker {
               }
               if(!HlsProbeValidationPolicy.acceptsSecondSegment(secondSegmentOk))continue;
             }
-            if(probeDeadlineReached(renditionDeadline,pauseRequested))continue;
+            if(probeSampleInterrupted(renditionDeadline,pauseRequested,result))continue;
             result.socketTimedOut=false;
             result.transientNetworkFailure=false;
             result.incompleteManifest=false;
@@ -3629,6 +3629,15 @@ public class SourceUpdateWorker extends Worker {
   // A pressure event interrupts pacing at the next poll. A blocked socket
   // remains subject to its separate inactivity timeout; do not promise instant
   // cancellation or create another player/network thread.
+  // A cancelled or out-of-budget sample is not negative media evidence.
+  // Keep cancellation local; never convert it into a global viewing latch.
+  private static boolean probeSampleInterrupted(long deadline,
+      java.util.function.BooleanSupplier paused,ProbeResult result){
+    if(!probeDeadlineReached(deadline,paused))return false;
+    if(android.os.SystemClock.elapsedRealtime()>=deadline)result.socketTimedOut=true;
+    else result.incompleteSample=true;
+    return true;
+  }
   private static boolean paceViewingSample(int bytes,long readElapsedMs,long deadline,java.util.function.BooleanSupplier pauseRequested){
     long rate=SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(android.os.SystemClock.elapsedRealtime());
     long delay=SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(bytes,readElapsedMs,rate);
@@ -3667,17 +3676,17 @@ public class SourceUpdateWorker extends Worker {
     boolean allowManifestExpansion=manifestCandidate&&!slowPlayback&&maxBytes<manifestLimit;
     HttpURLConnection c=null;
     try{
-      if(probeDeadlineReached(deadline,pauseRequested))return null;
+      if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
       c=(HttpURLConnection)new URL(address).openConnection();
       // URLConnection options must be configured before the first operation that connects it.
       // Reserve half the remaining budget for connection setup and the rest for response reads.
       long now=android.os.SystemClock.elapsedRealtime();
       long remaining=deadline-now;
-      if(remaining<2L)return null;
+      if(remaining<2L){result.socketTimedOut=true;return null;}
       int connectTimeout=(int)Math.min(SourceProbeTimePolicy.sampleConnectTimeoutCap(slowPlayback),Math.max(1L,remaining/2L));
       int readTimeout=SourceProbeTimePolicy.boundedTimeoutMillis(
           deadline,now+connectTimeout,SourceProbeTimePolicy.sampleReadTimeoutCap(slowPlayback));
-      if(readTimeout<=0)return null;
+      if(readTimeout<=0){result.socketTimedOut=true;return null;}
       c.setConnectTimeout(connectTimeout);
       c.setReadTimeout(readTimeout);
       c.setInstanceFollowRedirects(true);
@@ -3687,8 +3696,12 @@ public class SourceUpdateWorker extends Worker {
       c.setRequestProperty("Range","bytes=0-"+(allowManifestExpansion?manifestLimit:maxBytes));
       result.sampleRequests++;
       int code=c.getResponseCode();
-      if(probeDeadlineReached(deadline,pauseRequested))return null;
+      if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
       if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
+      // A rejected byte range proves this sampling method failed, not
+      // that the original stream is unplayable. Do not retry without Range
+      // in this bounded probe.
+      if(code==416){result.unsupportedPreflight=true;return null;}
       if(code<200||code>=400)return null;
       boolean partial=code==HttpURLConnection.HTTP_PARTIAL;
       long[] prefixRange=partial?HlsProbeValidationPolicy.parsePrefixRange(c.getHeaderField("Content-Range")):null;
@@ -3706,7 +3719,7 @@ public class SourceUpdateWorker extends Worker {
       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
         byte[] buffer=new byte[stopOnConfirmedMedia?1024:SourceProbeTimePolicy.VIEWING_SAMPLE_CHUNK_BYTES];int n,total=0;
         while(total<=maxBytes){
-          if(probeDeadlineReached(deadline,pauseRequested))return null;
+          if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
           int length=SourceProbeTimePolicy.sampleReadLength(maxBytes,total,buffer.length);
           // Fragmented socket reads must not overshoot the first screening threshold.
           if(stopOnDirectTs&&total<4096)length=Math.min(length,4096-total);
@@ -3719,7 +3732,7 @@ public class SourceUpdateWorker extends Worker {
           }
           if(n>0)result.sampleBytes+=n;
           long readElapsed=slowPlayback?android.os.SystemClock.elapsedRealtime()-readStarted:0L;
-          if(probeDeadlineReached(deadline,pauseRequested))return null;
+          if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
           if(partial&&total>prefixRange[0]){result.incompleteSample=true;return null;}
@@ -3734,22 +3747,25 @@ public class SourceUpdateWorker extends Worker {
             stopOnDirectTs=false;
             byte[] prefix=out.toByteArray();
             if(MediaPayloadValidator.hasDirectTsScreeningPrefix(prefix)){
-              if(probeDeadlineReached(deadline,pauseRequested))return null;
+              if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
               return new SampleResponse(prefix,finalUrl,true,true);
             }
           }
           if(stopOnConfirmedMedia&&total>=16&&total<=maxBytes){
             byte[] prefix=out.toByteArray();
             if(MediaPayloadValidator.hasConfirmedHlsPrefix(prefix)){
-              if(probeDeadlineReached(deadline,pauseRequested))return null;
+              if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
               // Confirmation only: no byte-rate score or completeness claim.
               // This path is restricted to unencrypted idle second segments.
               return new SampleResponse(prefix,finalUrl,true);
             }
           }
-          if(slowPlayback&&!paceViewingSample(n,readElapsed,deadline,pauseRequested))return null;
+          if(slowPlayback&&!paceViewingSample(n,readElapsed,deadline,pauseRequested)){
+            probeSampleInterrupted(deadline,pauseRequested,result);
+            return null;
+          }
         }
-        if(probeDeadlineReached(deadline,pauseRequested))return null;
+        if(probeSampleInterrupted(deadline,pauseRequested,result))return null;
         byte[] received=out.toByteArray();
         if(promised>=0&&received.length<=maxBytes&&received.length<promised){
           result.incompleteSample=true;return null;
