@@ -2318,6 +2318,17 @@ public class SourceUpdateWorker extends Worker {
     return probeQualityRecheckSlice(selected,pending,stageDeadline,paused,catalogueVersion,null);
   }
   static final int QUALITY_CHECKPOINT_SIZE=16;
+  private static boolean reusableQualityRetry(RecentProbe cached,long now){
+    return cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,cached.at,now)
+        &&cached.result.valid&&!cached.result.inconclusive()&&!cached.result.paced&&!cached.result.provisional;
+  }
+  private static boolean hasQualityRetryEvidence(String prefix,long now){
+    if(prefix==null)return false;
+    // Owner-local read: iterating does not update the access-order cache.
+    for(Map.Entry<String,RecentProbe> entry:INITIAL_PROBES.entrySet())
+      if(entry.getKey().startsWith(prefix)&&reusableQualityRetry(entry.getValue(),now))return true;
+    return false;
+  }
   static QualityRecheckSlice probeQualityRecheckSlice(List<String> selected,LinkedHashSet<String> pending,
       long stageDeadline,java.util.function.BooleanSupplier paused,Long catalogueVersion,
       java.util.function.Consumer<Map<String,ProbeResult>> checkpoint){
@@ -2331,6 +2342,8 @@ public class SourceUpdateWorker extends Worker {
     int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
     int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
     boolean extended=false,lastProbeHealthy=false,tailUsed=false;
+    String retryPrefix=catalogueVersion==null?null:"quality-recheck\n"+catalogueVersion+"\n";
+    Boolean retryEvidenceAvailable=null;
     long startedAt=android.os.SystemClock.elapsedRealtime();
     long sampleRequests=0L,sampleBytes=0L;
     // Reuse the bounded cooldown policy, but keep routine evidence local to
@@ -2349,12 +2362,10 @@ public class SourceUpdateWorker extends Worker {
       if(conclusive>=limit)break;
       String endpoint=SourceSelectionPolicy.endpointKey(url);
       ProbeResult previous=successfulEndpoints.get(endpoint);
-      String retryKey=catalogueVersion==null?null:"quality-recheck\n"+catalogueVersion+"\n"+endpoint;
+      String retryKey=retryPrefix==null?null:retryPrefix+endpoint;
       if(previous==null&&retryKey!=null){
         RecentProbe cached=INITIAL_PROBES.get(retryKey);
-        if(cached!=null&&SourceUpdateSchedulePolicy.canReuseInitialProbe(true,false,cached.at,now)
-            &&cached.result.valid&&!cached.result.inconclusive()&&!cached.result.paced&&!cached.result.provisional)
-          previous=cached.result;
+        if(reusableQualityRetry(cached,now))previous=cached.result;
       }
       if(previous!=null){
         completed.put(url,previous);
@@ -2371,7 +2382,14 @@ public class SourceUpdateWorker extends Worker {
         // Every exhausted network budget uses the same cache-only tail.
         // A fresh row must not hide later full evidence from this slice or
         // the same-version retry cache. Keep a nominal commit margin.
-        if(stageDeadline-now<2000L||(successfulEndpoints.isEmpty()&&catalogueVersion==null))break;
+        if(stageDeadline-now<2000L)break;
+        if(successfulEndpoints.isEmpty()){
+          // Without local positives or fresh versioned retry evidence, the
+          // remaining bounded queue cannot complete anything without I/O.
+          // Once network admission is exhausted it cannot reopen in this slice.
+          if(retryEvidenceAvailable==null)retryEvidenceAvailable=hasQualityRetryEvidence(retryPrefix,now);
+          if(!retryEvidenceAvailable)break;
+        }
         continue;
       }
       String origin=InitialOriginCooldownPolicy.origin(url);
