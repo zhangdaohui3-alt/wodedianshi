@@ -1426,7 +1426,8 @@ public class SourceUpdateWorker extends Worker {
                 &&!e.savedSource&&!preferCoreCoverage
                 &&transientRecheck!=DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED
                 &&measured.socketTimedOut&&!measured.transientNetworkFailure;
-            if(SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts,ordinaryInitialIdleTimeout))
+            if(!measured.deterministicEvidenceLimit()
+                &&SourceProbeTimePolicy.retryInconclusiveWithinSlice(attempts,ordinaryInitialIdleTimeout))
               visitedUrls.remove(endpoint);
             continue;
           }
@@ -3092,8 +3093,10 @@ public class SourceUpdateWorker extends Worker {
   static final class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
-    boolean transientNetworkFailure,incompleteManifest,incompleteSample;
-    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample;}
+    boolean transientNetworkFailure,incompleteManifest,incompleteSample,unsupportedPreflight;
+    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample||unsupportedPreflight;}
+    boolean deterministicEvidenceLimit(){return (unsupportedPreflight||incompleteManifest)
+        &&!socketTimedOut&&!transientNetworkFailure&&!incompleteSample;}
     boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
     int score;
@@ -3260,7 +3263,10 @@ public class SourceUpdateWorker extends Worker {
             HlsMediaPlaylistPolicy.Resources resources=
                 HlsMediaPlaylistPolicy.parse(candidateManifest,candidateManifestUrl);
             ArrayList<String> candidateSegments=resources.mediaUrls;
-            if(candidateSegments.isEmpty()||resources.unsupportedInitializationByteRange||resources.unsupportedInitializationMap||resources.unsupportedEncryption)continue;
+            if(resources.requiresUnsupportedPreflight()){
+              result.unsupportedPreflight=true;continue;
+            }
+            if(candidateSegments.isEmpty())continue;
             // Fetch identity AES-128 key only for in-memory preflight; never log or persist key bytes.
             byte[] aesKey=null;
             if(resources.aes128Encrypted){
@@ -3323,6 +3329,7 @@ public class SourceUpdateWorker extends Worker {
             result.transientNetworkFailure=false;
             result.incompleteManifest=false;
             result.incompleteSample=false;
+            result.unsupportedPreflight=false;
             result.valid=true;result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
             int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
