@@ -108,6 +108,14 @@ public final class SourceUpdateSchedulePolicy {
         return selected;
     }
 
+    /** One retry of an interrupted, already-started quality pass can consume
+     * fresh cached evidence. Never retry an initial busy admission or keep
+     * waking an active viewer; the next attempt still uses all idle gates. */
+    static boolean retryInterruptedQualityPass(boolean provisionalOnly,int runAttempt,
+            boolean stopped,boolean interrupted){
+        return provisionalOnly&&runAttempt==0&&!stopped&&!interrupted;
+    }
+
     /** Only the existing idle eligibility worker may run this extra small
      * quality-only batch. Ordinary full maintenance takes precedence. */
     static boolean provisionalRecheckDue(boolean pending,long last,long now){
