@@ -128,7 +128,7 @@ public final class RoomCatalogueReader {
                 com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
                 if(row==null)continue;
                 loaded++;
-                if(visitRowRoutes(row,visitor)){matched=true;break;}
+                if(visitRowRoutes(row,visitor,paused)){matched=true;break;}
             }
         }
         com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
@@ -140,14 +140,24 @@ public final class RoomCatalogueReader {
     }
 
     static boolean visitRowRoutes(ChannelDao.RouteMembership row,java.util.function.Predicate<String> visitor){
+        return visitRowRoutes(row,visitor,null);
+    }
+
+    static boolean visitRowRoutes(ChannelDao.RouteMembership row,java.util.function.Predicate<String> visitor,
+            java.util.function.BooleanSupplier paused){
+        com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         String legacy=legacyRoute(row.name,row.legacyKey,row.primaryUrl);
         if(visitor.test(legacy))return true;
         boolean hasSources=false;
         if(row.urls!=null)for(String source:row.urls){
+            // A channel may have many backup routes; yield before hashing the
+            // next address, not just at channel/page boundaries.
+            com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
             if(source==null||source.isEmpty())continue;
             hasSources=true;
             if(!source.equals(legacy)&&visitor.test(source))return true;
         }
+        com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         String primary=row.primaryUrl;
         return !hasSources&&primary!=null&&!primary.isEmpty()&&!primary.equals(legacy)&&visitor.test(primary);
     }
