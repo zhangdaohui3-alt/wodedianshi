@@ -11,6 +11,30 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest=Config.NONE,sdk=28)
 public class CommittedRouteEvidenceTest {
+    @Test public void qualityPreparationTraversesEachRetainedRowOnlyOnce() throws Exception {
+        java.util.List<String> visits=new java.util.ArrayList<>();
+        java.util.Set<String> needed=new java.util.LinkedHashSet<String>(){
+            @Override public boolean add(String url){visits.add(url);return super.add(url);}
+        };
+        java.util.Set<JSONObject> collected=java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap<JSONObject,Boolean>());
+        JSONObject first=new JSONObject().put("url","primary")
+            .put("sources",new JSONArray().put("primary").put("backup"));
+        JSONObject second=new JSONObject().put("url","other")
+            .put("sources",new JSONArray().put("backup").put("other"));
+        needed.add("candidate-A");
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,first);
+        needed.add("candidate-B");
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,first);
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,null);
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,second);
+        assertEquals(java.util.Arrays.asList("candidate-A","primary","primary","backup",
+            "candidate-B","other","backup","other"),visits);
+        assertEquals(java.util.Arrays.asList("candidate-A","primary","backup","candidate-B","other"),
+            new java.util.ArrayList<>(needed));
+        assertEquals(2,collected.size());
+    }
+
     @Test public void candidateReusesUnchangedMergeIdentityAcrossOwnerStages(){
         SourceUpdateWorker.Entry candidate=new SourceUpdateWorker.Entry(
             "深圳都市频道","https://example.invalid/live","地方",false,"china","provider.id","");
