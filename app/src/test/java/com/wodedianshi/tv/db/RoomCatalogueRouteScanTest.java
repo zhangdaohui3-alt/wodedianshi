@@ -11,6 +11,16 @@ public class RoomCatalogueRouteScanTest {
         row.sources=Arrays.asList(sources);
         return row;
     }
+    private ChannelDao.RouteMembership projection(ChannelWithSources row){
+        ChannelDao.RouteMembership projected=new ChannelDao.RouteMembership();
+        projected.id=row.channel.id;
+        projected.name=row.channel.name;
+        projected.legacyKey=row.channel.legacyKey;
+        projected.primaryUrl=row.channel.primaryUrl;
+        projected.urls=new ArrayList<>();
+        for(BackupSourceEntity source:row.sources)projected.urls.add(source.url);
+        return projected;
+    }
     @Test public void addressMembershipMatchesFullRecordWithoutSortingOrScopeParsing(){
         ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/first",
             new BackupSourceEntity("id","https://example.invalid/second",1,"[]"),
@@ -19,20 +29,20 @@ public class RoomCatalogueRouteScanTest {
         RoomCatalogueReader.ChannelRecord full=new RoomCatalogueReader.ChannelRecord(row.channel,row.getSourcesInPriorityOrder());
         Set<String> expected=new HashSet<>(full.sources);expected.add(full.url);
         List<String> actual=new ArrayList<>();
-        assertFalse(RoomCatalogueReader.visitRowRoutes(row,url->{actual.add(url);return false;}));
+        assertFalse(RoomCatalogueReader.visitRowRoutes(projection(row),url->{actual.add(url);return false;}));
         assertEquals(expected,new HashSet<>(actual));
         assertEquals(expected.size(),actual.size());
     }
     @Test public void matchStopsBeforeOtherRoutesAndFallbackMatchesOriginalSemantics(){
         ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/partition");
         List<String> actual=new ArrayList<>();
-        assertTrue(RoomCatalogueReader.visitRowRoutes(row,url->{actual.add(url);return true;}));
+        assertTrue(RoomCatalogueReader.visitRowRoutes(projection(row),url->{actual.add(url);return true;}));
         assertEquals(Collections.singletonList("https://example.invalid/original"),actual);
         actual.clear();
-        assertFalse(RoomCatalogueReader.visitRowRoutes(row,url->{actual.add(url);return false;}));
+        assertFalse(RoomCatalogueReader.visitRowRoutes(projection(row),url->{actual.add(url);return false;}));
         assertEquals(Arrays.asList("https://example.invalid/original","https://example.invalid/partition"),actual);
         actual.clear();
-        assertFalse(RoomCatalogueReader.visitRowRoutes(row("different","https://example.invalid/partition"),
+        assertFalse(RoomCatalogueReader.visitRowRoutes(projection(row("different","https://example.invalid/partition")),
                 url->{actual.add(url);return false;}));
         assertEquals(Collections.singletonList("https://example.invalid/partition"),actual);
     }
