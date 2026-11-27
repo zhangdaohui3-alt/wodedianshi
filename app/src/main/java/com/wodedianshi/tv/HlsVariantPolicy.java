@@ -53,6 +53,13 @@ public final class HlsVariantPolicy {
         return false;
     }
 
+    /** Decode once after classification. Remove a leading UTF-8 BOM only,
+     * not characters within URI lines or signed query strings. */
+    static String decodePlaylist(byte[] data) {
+        String text=new String(data,java.nio.charset.StandardCharsets.UTF_8);
+        return !text.isEmpty()&&text.charAt(0)==0xFEFF?text.substring(1):text;
+    }
+
     public static ArrayList<Variant> parse(String manifest, String finalManifestUrl) throws Exception {
         ArrayList<Variant> variants = new ArrayList<>();
         if (manifest == null || finalManifestUrl == null) return variants;
