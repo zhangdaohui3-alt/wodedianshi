@@ -61,6 +61,14 @@ public final class PlaylistFeedIndex {
         return coverage?bodyVersion+"|station-first-v1":bodyVersion;
     }
 
+    /** Keep an exact raw-order checkpoint instead of restarting already
+     * inspected rows for a sorting optimization. A changed/unknown body
+     * receives the normal station-first preparation. */
+    static boolean preferCoverageOrder(String bodyVersion,String savedVersion,int cursor,int partialScanned){
+        return !(DiscoveryBatchPolicy.isPreparedInitialFeed(savedVersion,bodyVersion)
+                &&(cursor>0||partialScanned>0));
+    }
+
     static boolean hasCoverageOrder(File playlist){
         if(playlist==null)return false;
         File records=new File(playlist.getAbsolutePath()+".index-data");
