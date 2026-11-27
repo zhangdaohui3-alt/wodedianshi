@@ -1773,8 +1773,8 @@ public class SourceUpdateWorker extends Worker {
       if(indexedPublished)update.putPublishedQuality(
           com.wodedianshi.tv.db.ManualProbeQualityStore.changes(qualityOwner,manualQualityDirty,measuredScores,probeFailureStreaks),pauseRequested);
       if(!manualRefresh){
-        trimProbeScores(measuredScores,savedPool,probeCandidates);
-        trimProbeScores(probeFailureStreaks,savedPool,probeCandidates);
+        trimProbeScores(measuredScores,savedPool,probeCandidates,initialDiscoveryChain,provisionalKeys);
+        trimProbeScores(probeFailureStreaks,savedPool,probeCandidates,false,Collections.emptySet());
       }
       // The database snapshot is checked again at commit time by Room's transaction;
       // no SharedPreferences catalogue comparison participates in this update.
@@ -3621,7 +3621,8 @@ public class SourceUpdateWorker extends Worker {
   // thousands of URLs over time; an unbounded JSON object would slow every update
   // and gradually consume device storage. The current scan rewrites recent entries.
   private static final int MAX_PERSISTED_PROBE_SCORES = 8000;
-  private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates){
+  private void trimProbeScores(JSONObject scores,List<Entry> savedPool,List<Entry> recentCandidates,
+      boolean preferValidated,Set<String> provisional){
     if(scores==null||scores.length()<=MAX_PERSISTED_PROBE_SCORES)return;
     // JSONObject key iteration order is not an LRU contract. Preserve scores for
     // currently saved channel URLs first, then this run's recent candidates, before
@@ -3635,11 +3636,7 @@ public class SourceUpdateWorker extends Worker {
     if(recentCandidates!=null)for(int i=recentCandidates.size()-1;i>=0&&keep.size()<MAX_PERSISTED_PROBE_SCORES;i--){
       String key=scoreKey(recentCandidates.get(i).url);if(scores.has(key))keep.add(key);
     }
-    Iterator<String> keys=scores.keys();
-    while(keys.hasNext()&&keep.size()<MAX_PERSISTED_PROBE_SCORES){
-      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      keep.add(keys.next());
-    }
+    fillRetainedScoreKeys(scores,keep,MAX_PERSISTED_PROBE_SCORES,preferValidated,provisional,pauseRequested);
     // JSONObject ordering is not a retention guarantee. Preserve precisely
     // the chosen key/value set in this slice, without clearing/reinserting
     // thousands of unchanged entries. Remove after the iteration completes.
@@ -3647,6 +3644,27 @@ public class SourceUpdateWorker extends Worker {
         scores.keys(),keep,pauseRequested)){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       scores.remove(key);
+    }
+  }
+  /** After required and recent keys, keep measured positive evidence ahead
+   * of arbitrary historical negatives in the bounded initial compatibility
+   * cache. Not a validity certificate; normal ownership/reuse gates remain. */
+  static void fillRetainedScoreKeys(JSONObject scores,Set<String> keep,int limit,
+      boolean preferValidated,Set<String> provisional,java.util.function.BooleanSupplier paused){
+    if(preferValidated&&keep.size()<limit){
+      Iterator<String> keys=scores.keys();
+      while(keys.hasNext()&&keep.size()<limit){
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        String key=keys.next();
+        double score=scores.optDouble(key,Double.NaN);
+        if(key.startsWith("v2:")&&Double.isFinite(score)&&score>0
+            &&!provisional.contains(key))keep.add(key);
+      }
+    }
+    Iterator<String> keys=scores.keys();
+    while(keys.hasNext()&&keep.size()<limit){
+      SourceProbeTimePolicy.checkPublicationPaused(paused);
+      keep.add(keys.next());
     }
   }
   static void storePreflightScore(JSONObject scores,String key,String legacyKey,ProbeResult result)throws JSONException{
