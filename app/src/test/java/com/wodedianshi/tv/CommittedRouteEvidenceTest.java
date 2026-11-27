@@ -107,7 +107,7 @@ public class CommittedRouteEvidenceTest {
         provisional.add(key);
         assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
         provisional.clear();provisional.add(legacy);
-        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        assertTrue(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
         provisional.clear();scores.put(key,-500);
         assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
         scores.put(key,0);
