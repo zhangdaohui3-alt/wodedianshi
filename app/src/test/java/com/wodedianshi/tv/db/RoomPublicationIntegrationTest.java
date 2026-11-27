@@ -149,6 +149,42 @@ public class RoomPublicationIntegrationTest {
             System.out.println("room_route_scale channels=2500 routes=20000 full_read_ms="
                     +fullNanos/1000000L+" route_scan_ms="+routeNanos/1000000L
                     +" early_exit_ms="+earlyNanos/1000000L+" cancelled_after="+visited.get());
+            // Match the actual quality-recheck membership workload: exact
+            // persistent URL digests, not just raw URL equality in a set.
+            java.util.Set<String> pending=new java.util.HashSet<>();
+            for(int i=0;i<256;i++)for(int j=0;j<8;j++)
+                pending.add(com.wodedianshi.tv.StableKey.url("https://example.invalid/route/"+i+"/"+j));
+            assertEquals(2048,pending.size());
+            java.util.Set<String> matched=new java.util.HashSet<>();
+            visited.set(0);
+            long pendingStart=System.nanoTime();
+            assertEquals(version,RoomCatalogueReader.visitRouteUrls(context,url->{
+                visited.incrementAndGet();
+                String key=com.wodedianshi.tv.StableKey.url(url);
+                if(pending.contains(key))matched.add(key);
+                return matched.size()==pending.size();
+            },()->false));
+            long pendingMs=(System.nanoTime()-pendingStart)/1000000L;
+            assertEquals(pending,matched);
+            int earlyVisited=visited.get();
+            assertTrue(earlyVisited>=2048);assertTrue(earlyVisited<20000);
+            // A missing key must force a complete scan before pruning.
+            pending.remove(com.wodedianshi.tv.StableKey.url("https://example.invalid/route/0/0"));
+            String missing=com.wodedianshi.tv.StableKey.url("https://example.invalid/missing");
+            pending.add(missing);matched.clear();visited.set(0);
+            long missingStart=System.nanoTime();
+            assertEquals(version,RoomCatalogueReader.visitRouteUrls(context,url->{
+                visited.incrementAndGet();
+                String key=com.wodedianshi.tv.StableKey.url(url);
+                if(pending.contains(key))matched.add(key);
+                return matched.size()==pending.size();
+            },()->false));
+            long missingMs=(System.nanoTime()-missingStart)/1000000L;
+            assertEquals(20000,visited.get());
+            assertEquals(2047,matched.size());
+            assertFalse(matched.contains(missing));
+            System.out.println("room_pending_scale pending=2048 matched_early_visited="+earlyVisited
+                    +" matched_early_ms="+pendingMs+" missing_visited="+visited.get()+" missing_ms="+missingMs);
             assertEquals(version,Long.valueOf(RoomCatalogueReader.read(context).catalogueVersion));
         });
     }
