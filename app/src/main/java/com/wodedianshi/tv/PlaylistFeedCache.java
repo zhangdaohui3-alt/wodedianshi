@@ -515,6 +515,36 @@ public final class PlaylistFeedCache {
         }
     }
 
+    /** Return currently usable unfinished initial indexes only when their
+     * disk footprint leaves insufficient headroom for one maximum body.
+     * This is admission guidance, not a persistent inventory or validity
+     * certificate. Completed directories do not consume this reserve. */
+    static boolean[] initialCachePressure(Context context,String[] feeds,boolean[] completed)throws IOException {
+        if(feeds==null||completed==null||feeds.length!=completed.length)return null;
+        File[] bodies=new File[feeds.length];
+        long bytes=0L;
+        for(int i=0;i<feeds.length;i++){
+            if(completed[i])continue;
+            File body=initialBody(context,feeds[i]);
+            if(body.isFile()){
+                bodies[i]=body;
+                bytes+=cacheEntrySize(body);
+            }
+        }
+        if(!initialCacheNeedsDrain(bytes))return null;
+        boolean[] available=new boolean[feeds.length];
+        for(int i=0;i<bodies.length;i++){
+            File body=bodies[i];
+            available[i]=body!=null&&matchesBody(readProperties(new File(body.getPath()+".properties")),body)
+                &&PlaylistFeedIndex.indexedEntryCount(body)>=0;
+        }
+        return available;
+    }
+
+    static boolean initialCacheNeedsDrain(long unfinishedBytes){
+        return unfinishedBytes>=MAX_CACHE_BYTES-MAX_BYTES;
+    }
+
     /** Index construction adds bytes after download pruning. Recheck the same
      * bounded cache after a successful initial index, keeping its current body. */
     static void trimPreparedInitial(File playlist) throws IOException {
