@@ -172,21 +172,6 @@ public final class ManualProbeQualityStore {
         return result;
     }
 
-    public static void readFinal(Context context,String owner,JSONObject scores,JSONObject streaks,
-            BooleanSupplier paused)throws JSONException{
-        ManualProbeQualityDao dao=RoomDatabaseProvider.get(context).manualProbeQualityDao();
-        String after="";
-        for(;;){
-            SourceProbeTimePolicy.checkPublicationPaused(paused);
-            List<ManualProbeQualityEntity> page=dao.page(owner,after,256);
-            if(page.isEmpty())break;
-            for(ManualProbeQualityEntity row:page){
-                if(row.score!=null)scores.put(row.sourceKey,row.score);
-                if(row.failureStreak!=null)streaks.put(row.sourceKey,row.failureStreak);
-            }
-            after=page.get(page.size()-1).sourceKey;
-        }
-    }
     static void publishInTransaction(AppDatabase db,String owner,BooleanSupplier paused){
         RoomCatalogueBuildStore.requireManualOwner(db,owner);
         RoomCatalogueBuildStore.requireMatchingOwner(owner,db.appStateDao().getValue(READY_KEY));
