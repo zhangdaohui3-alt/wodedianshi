@@ -273,6 +273,25 @@ public class PlaylistFeedIndexTest {
         assertEquals(0, PlaylistFeedIndex.readPage(feed, 2, 10, ignored -> { }));
     }
 
+    @Test public void syncedRangeCheckpointRequiresExactBytesAndStrongIdentity() throws Exception {
+        java.util.Properties state=PlaylistFeedCache.completedRangeState(8,12,8,"\"etag\"","location");
+        assertEquals("8",state.getProperty("length"));
+        assertEquals("12",state.getProperty("total"));
+        assertEquals("\"etag\"",state.getProperty("etag"));
+        assertEquals("location",state.getProperty("location"));
+        assertEquals("12",PlaylistFeedCache.completedRangeState(12,12,12,"\"etag\"","location").getProperty("length"));
+        for(long invalid:new long[]{7,9}){
+            try{
+                PlaylistFeedCache.completedRangeState(8,12,invalid,"\"etag\"","location");
+                org.junit.Assert.fail("Mismatched synced bytes");
+            }catch(java.io.IOException expected){}
+        }
+        try{
+            PlaylistFeedCache.completedRangeState(8,12,8,"W/\"etag\"","location");
+            org.junit.Assert.fail("Weak validator");
+        }catch(java.io.IOException expected){}
+    }
+
     @Test public void completedRangeCheckpointOutranksNewerPartialAndInvalidFiles() throws Exception {
         File dir=java.nio.file.Files.createTempDirectory("mytv-range-priority").toFile();
         try{
