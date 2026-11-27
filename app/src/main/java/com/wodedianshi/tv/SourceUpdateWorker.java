@@ -2284,6 +2284,11 @@ public class SourceUpdateWorker extends Worker {
   }
   private void rankCatalogueRows(JSONArray saved,Iterable<Integer> rankingRows,JSONObject measuredScores,
       JSONObject observedQoe)throws JSONException {
+      // The score inputs do not change during this ranking pass. Share a small
+      // bounded cache and one recency clock across all rows, not across merges.
+      final long rankingTime=System.currentTimeMillis();
+      java.util.Comparator<String> bestFirst=SourceRankingRetentionPolicy.boundedBestFirst(
+          url->combinedScore(url,measuredScores,observedQoe,rankingTime),1024);
       for(int i:rankingRows){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject channel=saved.optJSONObject(i);if(channel==null)continue;
@@ -2304,11 +2309,15 @@ public class SourceUpdateWorker extends Worker {
         String stablePrimaryUrl=channel.optString("url","");
         // Preserve both the stable channel identity and the user's last selected
         // source even when the ranked list is trimmed to the eight-source cap.
-        java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
         ordered.sort(bestFirst);
-        ordered=new ArrayList<>(SourceRankingRetentionPolicy.retainRequiredAndBest(
-            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL));
-        ordered.sort(bestFirst);
+        // Required-first retention can change tie order even within the cap;
+        // keep the existing stable re-sort semantics when needed.
+        List<String> retained=SourceRankingRetentionPolicy.retainRequiredAndBest(
+            ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL);
+        if(!ordered.equals(retained)){
+          ordered=new ArrayList<>(retained);
+          ordered.sort(bestFirst);
+        }
         JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
         for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
         if(ranked.length()>0){
