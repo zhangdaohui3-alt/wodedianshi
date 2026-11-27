@@ -2669,8 +2669,21 @@ public class SourceUpdateWorker extends Worker {
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     // Ranking is reproducible from the durable ready snapshot; a retry does
     // not repeat network work. Do this before rebase so user-edited rows win.
-    JSONObject finalScores=new JSONObject(),finalStreaks=new JSONObject();
-    com.wodedianshi.tv.db.ManualProbeQualityStore.readFinal(getApplicationContext(),manualId,finalScores,finalStreaks,pauseRequested);
+    final boolean indexed=com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext());
+    JSONObject finalScores,finalStreaks=new JSONObject();
+    if(indexed){
+      LinkedHashSet<String> needed=new LinkedHashSet<>();
+      for(int i=0;i<rows.length();i++){
+        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+        collectQualityUrls(needed,rows.optJSONObject(i));
+      }
+      finalScores=com.wodedianshi.tv.db.ManualProbeQualityStore.readManualRankingScores(
+          getApplicationContext(),manualId,needed,pauseRequested);
+    }else{
+      finalScores=new JSONObject();
+      com.wodedianshi.tv.db.ManualProbeQualityStore.readFinal(
+          getApplicationContext(),manualId,finalScores,finalStreaks,pauseRequested);
+    }
     rankCatalogueRows(rows,allRowIndices(rows),finalScores,new JSONObject(roomString("source_qoe_v1","{}")));
     String reconciledStructure=null;
     long reconciledVersion=-1L;
@@ -2692,17 +2705,19 @@ public class SourceUpdateWorker extends Worker {
         .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
             com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
     if(checkpoint==null)throw new IllegalStateException("Live catalogue checkpoint unavailable");
-    // Existing playback/routine consumers still read the bounded legacy view.
-    // The final writer retains all private quality rows under the published owner.
-    JSONObject compatibleScores=manualCompatibilityScores(rows,finalScores),compatibleStreaks=manualCompatibilityScores(rows,finalStreaks);
+    // Keep the first indexed publication's legacy bridge only. After an
+    // indexed publication, playback and maintenance read authoritative Room
+    // quality. The writer still promotes every private quality row in SQL.
     com.wodedianshi.tv.db.AppStateEditor finish=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
         .putString("source_manual_completed_id",manualId)
         .remove("source_manual_active_id")
-        .putString("source_probe_scores_v1",compatibleScores.toString())
-        .putString("source_probe_failure_streaks_v1",compatibleStreaks.toString())
         .putString("source_update_time",now())
         .putLong("source_update_last_success_at",System.currentTimeMillis())
         .putString("source_update_result",roomString("source_update_result","")+" 已原子发布完整手动目录。");
+    if(!indexed){
+      finish.putString("source_probe_scores_v1",manualCompatibilityScores(rows,finalScores).toString());
+      finish.putString("source_probe_failure_streaks_v1",manualCompatibilityScores(rows,finalStreaks).toString());
+    }
     for(String key:ManualSavedCoverage.keys())finish.remove(key);
     int written=reconciledStructure==null?com.wodedianshi.tv.db.RoomCatalogueWriter.publishManualSnapshot(
         getApplicationContext(),rows,checkpoint.completedAt,manualId,pauseRequested,finish):
