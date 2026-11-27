@@ -35,10 +35,7 @@ public final class RoomCatalogueReader {
 
         ChannelRecord(ChannelEntity channel, List<BackupSourceEntity> sourceRows) {
             name = channel.name == null ? "" : channel.name;
-            String legacyKey = channel.legacyKey == null ? "" : channel.legacyKey;
-            String prefix = name + "|";
-            url = legacyKey.startsWith(prefix) ? legacyKey.substring(prefix.length())
-                    : (channel.primaryUrl == null ? "" : channel.primaryUrl);
+            url = legacyRoute(channel);
             group = channel.groupName == null ? "" : channel.groupName;
             tvgId = channel.tvgId == null ? "" : channel.tvgId;
             tvgName = channel.tvgName == null ? "" : channel.tvgName;
@@ -100,6 +97,59 @@ public final class RoomCatalogueReader {
     }
 
     private RoomCatalogueReader() {}
+
+    private static String legacyRoute(ChannelEntity channel) {
+        String name=channel.name==null?"":channel.name;
+        String key=channel.legacyKey==null?"":channel.legacyKey;
+        String prefix=name+"|";
+        return key.startsWith(prefix)?key.substring(prefix.length()):
+                (channel.primaryUrl==null?"":channel.primaryUrl);
+    }
+
+    /** Route membership only: no scope parsing, source sorting or favorites.
+     * Visitor returns true only when every requested route has been found.
+     * A missing route requires a complete scan; both paths verify the version. */
+    public static Long visitRouteUrls(Context context,java.util.function.Predicate<String> visitor,
+            java.util.function.BooleanSupplier paused){
+        com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+        ChannelDao dao=RoomDatabaseProvider.get(context).channelDao();
+        CatalogueMigrationEntity checkpoint=dao.getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY);
+        if(checkpoint==null)return null;
+        long version=checkpoint.completedAt;
+        int total=checkpoint.channelsCount,loaded=0;
+        boolean matched=false;
+        for(int offset=0;offset<total&&!matched;offset+=PAGE_SIZE){
+            com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<ChannelWithSources> page=dao.getAllChannelsPage(PAGE_SIZE,offset);
+            if(page==null||page.isEmpty())break;
+            for(ChannelWithSources row:page){
+                com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+                if(row==null||row.channel==null)continue;
+                loaded++;
+                if(visitRowRoutes(row,visitor)){matched=true;break;}
+            }
+        }
+        com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+        CatalogueMigrationEntity end=dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
+        if(end==null||end.completedAt!=version)throw new StaleSnapshotException();
+        if(!matched)CatalogueReadCompletenessPolicy.requireComplete(total,loaded);
+        com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
+        return version;
+    }
+
+    static boolean visitRowRoutes(ChannelWithSources row,java.util.function.Predicate<String> visitor){
+        String legacy=legacyRoute(row.channel);
+        if(visitor.test(legacy))return true;
+        boolean hasSources=false;
+        if(row.sources!=null)for(BackupSourceEntity source:row.sources){
+            if(source==null||source.url==null||source.url.isEmpty())continue;
+            hasSources=true;
+            if(!source.url.equals(legacy)&&visitor.test(source.url))return true;
+        }
+        String primary=row.channel.primaryUrl;
+        return !hasSources&&primary!=null&&!primary.isEmpty()&&!primary.equals(legacy)&&visitor.test(primary);
+    }
+
 
     /** Readiness only: no channel/source objects, no paged catalogue read.
      * A publication must still read a complete current snapshot and check its version. */
