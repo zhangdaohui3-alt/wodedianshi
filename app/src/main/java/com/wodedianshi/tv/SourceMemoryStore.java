@@ -217,6 +217,14 @@ public final class SourceMemoryStore {
         }
     }
 
+    /** Freeze the current immutable-per-entry observations for one background
+     * ranking pass. The worker and activity run in the same process, so
+     * repeated source slices need not deserialize the durable history again. */
+    static java.util.Map<String,JSONObject> playbackSnapshot(Context context){
+        initialize(context);
+        return java.util.Collections.unmodifiableMap(new java.util.HashMap<>(qoe));
+    }
+
     /** Published metrics are read here only; never expose mutable JSON to callers. */
     static double rankedScore(String url,JSONObject probes,long now){
         return SourceQualityScorer.rankScore(url,probes,qoe::get,now);
