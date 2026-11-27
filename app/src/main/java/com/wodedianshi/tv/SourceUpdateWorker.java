@@ -3184,7 +3184,7 @@ public class SourceUpdateWorker extends Worker {
       boolean playlistUrl=lower.contains(".m3u8")||lower.contains("m3u8?");
       try{
         initialResponse=fetchSampleResponse(address,32768,deadline,slowPlayback,pauseRequested,
-            false,initialIdle&&!slowPlayback&&!playlistUrl,result);
+            false,initialIdle&&!slowPlayback&&!playlistUrl,result,playlistUrl);
         result.firstRequestReached=initialResponse!=null;
       }catch(TransientProbeHttpException failure){
         // A redirect may have reached a different origin. Do not penalize the
@@ -3238,7 +3238,7 @@ public class SourceUpdateWorker extends Worker {
             String candidateManifestUrl=candidate.url;
             String candidateManifest=manifest;
             if(!candidate.url.equals(manifestUrl)){
-              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested,false,false,result);
+              SampleResponse variantResponse=fetchSampleResponse(candidate.url,65536,renditionDeadline,slowPlayback,pauseRequested,false,false,result,true);
               byte[] variant=variantResponse==null?null:variantResponse.bytes;
               if(variant==null||variant.length==0)continue;
               candidateManifest=new String(variant,"UTF-8").replace("\\uFEFF","");
@@ -3416,6 +3416,16 @@ public class SourceUpdateWorker extends Worker {
   private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
       java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs,
       ProbeResult result)throws Exception{
+    return fetchSampleResponse(address,maxBytes,deadline,slowPlayback,pauseRequested,
+        stopOnConfirmedMedia,stopOnDirectTs,result,false);
+  }
+  private static SampleResponse fetchSampleResponse(String address,int maxBytes,long deadline,boolean slowPlayback,
+      java.util.function.BooleanSupplier pauseRequested,boolean stopOnConfirmedMedia,boolean stopOnDirectTs,
+      ProbeResult result,boolean manifestCandidate)throws Exception{
+    // Expand only a confirmed playlist in a non-viewing request. Retain the
+    // original media sample cap for mislabeled URLs and all binary resources.
+    final int manifestLimit=131072;
+    boolean allowManifestExpansion=manifestCandidate&&!slowPlayback&&maxBytes<manifestLimit;
     HttpURLConnection c=null;
     try{
       if(probeDeadlineReached(deadline,pauseRequested))return null;
@@ -3435,14 +3445,13 @@ public class SourceUpdateWorker extends Worker {
       c.setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Safari/537.36 MyTV/1.24");
       // Read one sentinel byte beyond the retained sample to distinguish an
       // exact-length resource from a longer segment truncated at the sample cap.
-      c.setRequestProperty("Range","bytes=0-"+maxBytes);
+      c.setRequestProperty("Range","bytes=0-"+(allowManifestExpansion?manifestLimit:maxBytes));
       result.sampleRequests++;
       int code=c.getResponseCode();
       if(probeDeadlineReached(deadline,pauseRequested))return null;
       if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
       if(code<200||code>=400)return null;
-      boolean rangeIncomplete=code==HttpURLConnection.HTTP_PARTIAL
-          &&HlsProbeValidationPolicy.isIncompleteContentRange(c.getHeaderField("Content-Range"),maxBytes);
+      String contentRange=code==HttpURLConnection.HTTP_PARTIAL?c.getHeaderField("Content-Range"):null;
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
@@ -3461,6 +3470,11 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
+          if(allowManifestExpansion&&total>=maxBytes){
+            allowManifestExpansion=false;
+            if(HlsVariantPolicy.isPlaylist(new String(out.toByteArray(),java.nio.charset.StandardCharsets.UTF_8)))
+              maxBytes=manifestLimit;
+          }
           // Inspect at most once after a small prefix is available. If not TS,
           // retain the normal full read (including extensionless HLS manifests).
           if(stopOnDirectTs&&total>=4096){
@@ -3484,7 +3498,8 @@ public class SourceUpdateWorker extends Worker {
         }
         if(probeDeadlineReached(deadline,pauseRequested))return null;
         byte[] received=out.toByteArray();
-        boolean truncated=rangeIncomplete
+        boolean truncated=(code==HttpURLConnection.HTTP_PARTIAL
+            &&HlsProbeValidationPolicy.isIncompleteContentRange(contentRange,maxBytes))
             ||HlsProbeValidationPolicy.isTruncatedSample(received.length,maxBytes);
         int retained=SourceProbeTimePolicy.sampleRetainedLength(received.length,maxBytes);
         byte[] bounded=retained<received.length?Arrays.copyOf(received,retained):received;
