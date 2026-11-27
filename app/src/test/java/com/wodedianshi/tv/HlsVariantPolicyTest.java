@@ -109,4 +109,29 @@ public class HlsVariantPolicyTest {
                 "#EXTM3U\n#EXTINF:6.0,\nseg.ts\n",
                 "https://cdn.example/live.m3u8").isEmpty());
     }
+
+    @Test public void byteMarkerMatchesExistingTextClassifierWithoutDecodingMedia(){
+        String bom=String.valueOf((char)0xFEFF);
+        String[] fixtures={"", "#EXTM3U", " \t\r\n#EXTM3U\nseg.ts",
+                bom+" #EXTM3U", "#EXT"+bom+"M3U", "#EXTM3", "<html>#EXTM3U</html>",
+                "prefix#EXTM3U", "#EXTINF:5", "  "+bom+"#EXTM3U"};
+        for(String fixture:fixtures)
+            assertEquals(fixture,HlsVariantPolicy.isPlaylist(fixture),
+                    HlsVariantPolicy.hasPlaylistMarker(fixture.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        java.util.Random random=new java.util.Random(73L);
+        byte[] binary=new byte[32768];
+        for(int i=0;i<100;i++){
+            random.nextBytes(binary);
+            assertEquals(HlsVariantPolicy.isPlaylist(new String(binary,java.nio.charset.StandardCharsets.UTF_8)),
+                    HlsVariantPolicy.hasPlaylistMarker(binary));
+        }
+        assertFalse(HlsVariantPolicy.hasPlaylistMarker(null));
+    }
+
+    @Test public void decodingRemovesLeadingBomButPreservesResourceText(){
+        String bom=String.valueOf((char)0xFEFF);
+        String body="#EXTM3U\n#EXTINF:5,\nsegment.ts?token="+bom+"abc\n";
+        assertEquals(body,HlsVariantPolicy.decodePlaylist(
+                (bom+body).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
 }
