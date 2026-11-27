@@ -140,7 +140,7 @@ public class HlsWorkerProbeIntegrationTest {
         assertFalse(r.valid);assertTrue(r.socketTimedOut);
     }
 
-    @Test public void scoreWriteRetainsExactAliasIdentityAndMigratesLegacyKey()throws Exception{
+    @Test public void scoreWriteRetainsExactAliasIdentityAndIgnoresLegacyKey()throws Exception{
         String raw="https://EXAMPLE.invalid:443/live?token=AbC";
         String alias="https://example.invalid/live?token=AbC";
         assertEquals(SourceSelectionPolicy.endpointKey(raw),SourceSelectionPolicy.endpointKey(alias));
@@ -149,13 +149,13 @@ public class HlsWorkerProbeIntegrationTest {
         assertNotEquals(key,aliasKey);
         org.json.JSONObject scores=new org.json.JSONObject().put(legacy,850).put(aliasKey,925);
         SourceUpdateWorker.ProbeResult bad=new SourceUpdateWorker.ProbeResult();
-        SourceUpdateWorker.storePreflightScore(scores,key,legacy,bad);
+        SourceUpdateWorker.storePreflightScore(scores,key,bad);
         assertEquals(-500.0,scores.getDouble(key),0.0);
-        assertFalse(scores.has(legacy));
+        assertEquals(850.0,scores.getDouble(legacy),0.0);
         assertEquals(925.0,scores.getDouble(aliasKey),0.0);
         SourceUpdateWorker.ProbeResult good=new SourceUpdateWorker.ProbeResult();
         good.valid=true;good.score=700;
-        SourceUpdateWorker.storePreflightScore(scores,key,legacy,good);
+        SourceUpdateWorker.storePreflightScore(scores,key,good);
         assertEquals(700.0,scores.getDouble(key),0.0);
         assertEquals(925.0,scores.getDouble(aliasKey),0.0);
     }
