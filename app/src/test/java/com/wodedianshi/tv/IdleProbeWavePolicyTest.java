@@ -41,6 +41,17 @@ public class IdleProbeWavePolicyTest {
             v->v.substring(1,2),v->v.substring(2,3),v->v.charAt(0)-'0',v->v.substring(3,4)));
     }
 
+    @Test public void coverageOrderReusesHostClassificationWithoutChangingOutput(){
+        java.util.List<String> input=Arrays.asList("0AaF1","0BaF1","0CaG1","0DbF1","0EbG1","0AaF2","1ZaG1");
+        java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<String> result=IdleProbeWavePolicy.coverageFirst(input,
+            v->v.substring(1,2),v->{calls.incrementAndGet();return v.substring(2,3);},
+            v->v.charAt(0)-'0',v->v.substring(3,4));
+        assertEquals(Arrays.asList("0AaF1","0DbF1","0CaG1","0EbG1","0BaF1","0AaF2","1ZaG1"),result);
+        assertEquals(input.size(),calls.get());
+        assertEquals(input.size(),result.size());
+    }
+
     @Test public void coverageBeforeBackupsKeepsEveryRouteAndPriority(){
         java.util.List<String> input=Arrays.asList("0Aa1","0Ab2","0Aa3","0Ba1","0Cc1","0Cb2","1Za1","1Za1");
         java.util.List<String> expected=Arrays.asList("0Aa1","0Cc1","0Ba1","0Ab2","0Cb2","0Aa3","1Za1","1Za1");
