@@ -76,6 +76,12 @@ public final class PlaylistFeedIndex {
                 &&initialProbeVersion(bodyVersion,true).equals(savedVersion);
     }
 
+    static boolean requiresIdleCoverageRepair(File body,String bodyVersion,String savedVersion,
+            int cursor,int partialScanned){
+        return needsCoverageRecovery(bodyVersion,savedVersion,cursor,partialScanned)
+                &&!hasCoverageOrder(body);
+    }
+
     static boolean hasCoverageOrder(File playlist){
         if(playlist==null)return false;
         File records=new File(playlist.getAbsolutePath()+".index-data");
