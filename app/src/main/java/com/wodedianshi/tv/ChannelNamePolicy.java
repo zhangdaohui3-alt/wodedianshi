@@ -91,7 +91,7 @@ final class ChannelNamePolicy {
     private static final Pattern CCTV_ASIA = Pattern.compile(
             "(?:CCTV|中央电视台|央视)[-]?4(?:ASIA|亚洲)");
     private static final Pattern CCTV_STANDARD = Pattern.compile(
-            "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS)");
+            "(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}(?:\\+|PLUS)?|NEWS)");
 
     private static String[][] normalizedAliases(String[][] aliases) {
         String[][] result = new String[aliases.length][];
@@ -460,8 +460,29 @@ final class ChannelNamePolicy {
         java.util.regex.Matcher asia = CCTV_ASIA.matcher(value);
         if (asia.find()) return "CCTV-4 Asia";
         java.util.regex.Matcher matcher = CCTV_STANDARD.matcher(value);
-        if (matcher.find()) return "CCTV-" + matcher.group(1);
+        if (matcher.find()) return "CCTV-" + matcher.group(1).replace("PLUS","+");
         return "";
+    }
+
+    // null denotes contradictory recognized broadcaster labels.
+    static String consistentBroadcaster(String... fields){
+        String found="";
+        for(String field:fields){
+            if(field==null||field.trim().isEmpty())continue;
+            String value=canonicalBroadcasterName(field,"","","");
+            if(value.isEmpty()){
+                // The broad discovery identity recognizes these traditional
+                // CCTV labels, but canonicalBroadcasterName does not.
+                // Limit this fallback to an exact national channel label.
+                String alias=field.trim();
+                if(alias.matches("中央(?:电视台)?(?:十[一二三四五六七]|十|[一二三四五六七八九])套"))
+                    value=SourceDiscoveryIdentityPolicy.canonicalName(alias);
+            }
+            if(value.isEmpty())continue;
+            if(!found.isEmpty()&&!found.equals(value))return null;
+            found=value;
+        }
+        return found;
     }
 
     static String canonicalSatelliteName(String name) {
