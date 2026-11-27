@@ -65,15 +65,18 @@ public final class SourceDiscoveryPriorityPolicy {
         return nextEligibleFeed(preferredStart,completed,attempted,mainlandEnd,regionEnd,preferCore);
     }
 
+    // Only scheduling: a committed partial download grants one ordinary turn.
+    static final String ACQUISITION_YIELD_KEY="source_initial_acquisition_yield";
+
     /** After first-watch/core coverage, prepare fresh directory bodies within
      * the next eligible region before probing more pages of prepared bodies.
      * Prior failed acquisitions retain ordinary fair rotation; prepared
      * markers are scheduling hints only, never proof of a current cache file. */
     static int nextInitialFeed(int start,boolean[] completed,boolean[] attempted,
             boolean[] visited,boolean[] prepared,boolean[] failed,int mainlandEnd,
-            int regionEnd,boolean preferCore,boolean viewing) {
+            int regionEnd,boolean preferCore,boolean viewing,boolean acquisitionYield) {
         int ordinary=nextCoverageFeed(start,completed,attempted,visited,mainlandEnd,regionEnd,preferCore);
-        if(ordinary<0||preferCore||viewing||prepared==null||failed==null
+        if(ordinary<0||preferCore||viewing||acquisitionYield||prepared==null||failed==null
                 ||prepared.length!=completed.length||failed.length!=completed.length)return ordinary;
         int size=completed.length;
         int china=bound(mainlandEnd,size),regions=Math.max(china,bound(regionEnd,size));
