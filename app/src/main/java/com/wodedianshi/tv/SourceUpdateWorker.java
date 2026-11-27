@@ -740,6 +740,7 @@ public class SourceUpdateWorker extends Worker {
       boolean[] failedForCoverage=new boolean[feeds.length];
       boolean acquisitionYield=false;
       boolean[] availableUnderPressure=null;
+      boolean[] orderedReadyUnderPressure=new boolean[feeds.length];
       String[] acquiredVersions=new String[feeds.length];
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
@@ -752,6 +753,7 @@ public class SourceUpdateWorker extends Worker {
         System.arraycopy(admission.failed,0,failedForCoverage,0,feeds.length);
         acquisitionYield=admission.acquisitionYield;
         availableUnderPressure=admission.availableUnderPressure;
+        orderedReadyUnderPressure=admission.orderedReadyUnderPressure;
         acquiredVersions=admission.acquiredVersions;
         final long[] recheckRemaining=admission.remaining;
         if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
@@ -760,7 +762,7 @@ public class SourceUpdateWorker extends Worker {
             &&SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,inspectedFeeds,
                 attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure)<0){
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure,orderedReadyUnderPressure)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
           enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(inspectedFeeds,
@@ -780,7 +782,7 @@ public class SourceUpdateWorker extends Worker {
             ?SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure)
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure,orderedReadyUnderPressure)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Prefer mainland, then HK/Macau/Taiwan, then international feeds.
@@ -873,13 +875,13 @@ public class SourceUpdateWorker extends Worker {
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
             acquiredVersions[feedIndex]=PlaylistFeedCache.contentVersion(cachedFeed);
-            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions,preparedForCoverage);
+            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions,preparedForCoverage,orderedReadyUnderPressure);
             // Yield to another fresh eligible directory before deep scans; retain
             // immediate first-watch and the ordinary probe budget when none remains.
             int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(feedIndex,
                 inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,availableUnderPressure);
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,availableUnderPressure,orderedReadyUnderPressure);
             if(!DiscoveryBatchPolicy.canProbePreparedDirectory(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt,nextPreparation==feedIndex,
@@ -2271,7 +2273,7 @@ public class SourceUpdateWorker extends Worker {
           int next=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
               admission.completed,admission.deferred,admission.visited,admission.prepared,admission.failed,
               SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false,admission.acquisitionYield,admission.availableUnderPressure);
+              SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreNow,false,admission.acquisitionYield,admission.availableUnderPressure,admission.orderedReadyUnderPressure);
           int attempted=feedBatches.get(feedBatches.size()-1).index;
           freshDifferentNextFeed=next>=0&&next!=attempted&&!admission.failed[next];
         }
@@ -4135,11 +4137,13 @@ public class SourceUpdateWorker extends Worker {
     final long[] remaining;
     boolean acquisitionYield;
     boolean[] availableUnderPressure;
+    final boolean[] orderedReadyUnderPressure;
     final String[] acquiredVersions;
     InitialFeedAdmission(int count){
       completed=new boolean[count];deferred=new boolean[count];
       visited=new boolean[count];failed=new boolean[count];prepared=new boolean[count];remaining=new long[count];
       acquiredVersions=new String[count];
+      orderedReadyUnderPressure=new boolean[count];
     }
   }
   /** One consistent Room read for both admission and the post-commit delay
@@ -4185,7 +4189,7 @@ public class SourceUpdateWorker extends Worker {
       }
     }
     if(!viewing){
-      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed,admission.acquiredVersions,admission.prepared);}
+      try{admission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,admission.completed,admission.acquiredVersions,admission.prepared,admission.orderedReadyUnderPressure);}
       catch(IOException unavailable){android.util.Log.w("MyTVSourceDiscovery","initial_cache_inventory_unavailable");}
     }
     return admission;
