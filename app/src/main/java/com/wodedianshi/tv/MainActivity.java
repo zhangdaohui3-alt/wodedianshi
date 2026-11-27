@@ -293,7 +293,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
-  private volatile String roomSourceProbeJson="{}";
   private volatile long roomSourceUpdateLastSuccessAt=0L;
   private volatile long roomFullRebuildCompletedAt=0L;
   private volatile long roomChinaSupplementLastSuccess=0L;
@@ -836,7 +835,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           cachedProbeScoreJson=indexed;indexedPlaybackScoreVersion=roomSnapshot.catalogueVersion;
           indexedPlaybackQualityRevision=qualityRevision;
         }
-      }catch(Exception qualityFailure){android.util.Log.w("MyTVStartup","Indexed quality restore deferred; compatibility cache retained",qualityFailure);}
+      }catch(Exception qualityFailure){android.util.Log.w("MyTVStartup","Indexed quality restore deferred; startup continues with available evidence",qualityFailure);}
       int sourceCount=countChannelSources();
       logCatalogueMemory("room_restore_ready",roomSnapshot.channelCount,sourceCount,
           android.os.SystemClock.elapsedRealtime()-restoreStarted);
@@ -917,9 +916,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getApplicationContext(),ROOM_STATE_VOD_FAVORITES,"[]");
     roomVodHistoryJson=com.wodedianshi.tv.db.AppStateStore.get(
         getApplicationContext(),ROOM_STATE_VOD_HISTORY,"[]");
-    roomSourceProbeJson=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
-    publishProbeScores(roomSourceProbeJson);
+    // Indexed Room is authoritative. Do not load a stale compatibility
+    // mirror before the version-checked score restore.
+    cachedProbeScoreJson=new org.json.JSONObject();
+    reloadLegacyProbeScoresIfNeeded();
     indexedPlaybackScoreVersion=-1L;indexedPlaybackQualityRevision="";
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
@@ -8725,14 +8725,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
         SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,"");
   }
+  private void reloadLegacyProbeScoresIfNeeded(){
+    if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))
+      publishProbeScores(com.wodedianshi.tv.db.AppStateStore.get(
+          getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}"));
+  }
   private void reloadRoomSourceMetrics(){
-    String probe=com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),ROOM_STATE_SOURCE_PROBE,"{}");
     roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
-    roomSourceProbeJson=probe;
-    // Once indexed quality is available, do not overwrite its full cache
-    // with the legacy 8000-entry compatibility view on every onStart.
-    if(!com.wodedianshi.tv.db.ManualProbeQualityStore.hasPublished(getApplicationContext()))publishProbeScores(probe);
+    // Keep the current read-only indexed cache while the next version loads.
+    reloadLegacyProbeScoresIfNeeded();
   }
 
 
