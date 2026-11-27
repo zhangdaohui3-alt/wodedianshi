@@ -99,4 +99,33 @@ public class InitialOriginCooldownPolicyTest {
         p.observePressure(a,213002);
         assertFalse(p.cooling(a,243002));
     }
+
+    @Test public void recoveryStaysSerialUntilFreshReachabilityOrHistoryExpiry(){
+        InitialOriginCooldownPolicy p=new InitialOriginCooldownPolicy();
+        String a="origin";
+        p.observePressure(a,1000);
+        assertTrue(p.requiresSerialProbe(a,2000));
+        assertFalse(p.requiresSerialProbe("other",2000));
+        assertFalse(p.cooling(a,31000));
+        assertTrue(p.requiresSerialProbe(a,31000));
+        p.observe(a,"trial",31001,true,false);
+        assertTrue(p.requiresSerialProbe(a,31001));
+        p.observe(a,"recovered",31002,false,true);
+        assertFalse(p.requiresSerialProbe(a,31002));
+        p.observePressure(a,32000);
+        assertFalse(p.requiresSerialProbe(a,182000));
+    }
+
+    @Test public void activePressureKeepsExemptTrialsSerialDespiteConcurrentSuccess(){
+        InitialOriginCooldownPolicy p=new InitialOriginCooldownPolicy();
+        p.observePressure("origin",1000);
+        p.observe("origin","already-launched",2000,false,true);
+        assertTrue(p.requiresSerialProbe("origin",2000));
+        assertTrue(p.requiresSerialProbe("origin",31000));
+        p.observePressure("origin",31001);
+        assertTrue(p.cooling("origin",91000));
+        assertTrue(p.requiresSerialProbe("origin",91001));
+        p.clear();
+        assertFalse(p.requiresSerialProbe("origin",91001));
+    }
 }
