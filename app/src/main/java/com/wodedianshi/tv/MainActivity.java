@@ -7444,9 +7444,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         @Override public void onRenderedFirstFrame(AnalyticsListener.EventTime eventTime,Object output,long renderTimeMs){
           if(listenerOwner!=MainActivity.this.player||sourceFirstFrameRecorded
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
-          // Only count a frame after Media3 confirms it was rendered to the output.
+          // Reject even a matching timeline if the renderer's actual frame time
+          // predates this media assignment; delivery can be delayed on the UI queue.
+          if(!livePictureGate.revealRendered(listenerOwner,currentMediaId,renderTimeMs))return;
+          if(livePictureCover!=null)livePictureCover.setVisibility(View.GONE);
           sourceFirstFrameRecorded=true;
-          revealLivePicture(listenerOwner,currentMediaId);
           long firstFrameAt=android.os.SystemClock.elapsedRealtime();
           lastVideoPipelineActivityAt=firstFrameAt;
           String renderedUrl=currentSourceUrl();
@@ -7642,7 +7644,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     saveCriticalEngineStage("TUNE_STAGE","media item assignment begin");
     // setMediaItem replaces the previous playlist atomically; a separate stop()+
     // clearMediaItems() adds two redundant synchronous player-thread round trips.
-    livePictureGate.arm(player,currentMediaId);
+    livePictureGate.arm(player,currentMediaId,android.os.SystemClock.elapsedRealtime());
     player.setMediaItem(item);
     saveCriticalEngineStage("TUNE_STAGE","media item assigned");
     saveCriticalEngineStage("TUNE_STAGE","Media3 prepare begin");
