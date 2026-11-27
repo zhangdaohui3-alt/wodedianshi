@@ -44,6 +44,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean decoderInventoryRecorded=false;
   private PlayerView video;
   private FrameLayout liveStage;
+  private View livePictureCover;
+  private final LivePictureGate livePictureGate=new LivePictureGate();
   private VLCVideoLayout vlcVideoLayout;
   private volatile LibVlcPlaybackEngine libVlcEngine;
   // Serialize every new live tune behind asynchronous LibVLC teardown. The
@@ -1585,7 +1587,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ownsVideoGesture=false;tapCandidate=false;
         super.onDetachedFromWindow();
       }
-    };liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
+    };liveStage.setFocusable(true);liveStage.setFocusableInTouchMode(true);video=new PlayerView(this);video.setKeepContentOnPlayerReset(false);video.setShutterBackgroundColor(Color.BLACK);liveStage.addView(video,new FrameLayout.LayoutParams(-1,-1));vlcVideoLayout=new VLCVideoLayout(this);vlcVideoLayout.setFocusable(false);vlcVideoLayout.setFocusableInTouchMode(false);vlcVideoLayout.setClickable(false);vlcVideoLayout.setVisibility(View.GONE);liveStage.addView(vlcVideoLayout,new FrameLayout.LayoutParams(-1,-1));
+    livePictureCover=new View(this);livePictureCover.setBackgroundColor(Color.BLACK);
+    livePictureCover.setElevation(dp(1));livePictureCover.setFocusable(false);livePictureCover.setClickable(false);
+    livePictureCover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    liveStage.addView(livePictureCover,new FrameLayout.LayoutParams(-1,-1));
+    int liveAspect=getSharedPreferences("mytv",0).getInt("live_aspect_mode",0);video.setResizeMode(liveAspect==1?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM:liveAspect==2?androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL:androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);// 按原始比例完整显示，避免部分直播源全屏时被放大裁切。直播采用实时电视控制：不显示进度条、快退/快进和暂停控制；音量仍由电视遥控器系统音量键控制。
     video.setUseController(false);video.setFocusable(true);video.setFocusableInTouchMode(true);video.setBackgroundColor(Color.BLACK);video.setOnClickListener(v->{if(fullScreenPlayback){if(fullscreenControlsVisible)hideFullscreenControlsNow();else showFullscreenControls();}});fullscreenMenuButton=new TextView(this);fullscreenMenuButton.setText("☰ 频道选择");fullscreenMenuButton.setTextColor(Color.WHITE);fullscreenMenuButton.setTextSize(16);fullscreenMenuButton.setGravity(Gravity.CENTER);fullscreenMenuButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenMenuButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenMenuButton.setFocusable(true);fullscreenMenuButton.setClickable(true);fullscreenMenuButton.setElevation(dp(12));fullscreenMenuButton.setOnClickListener(v->showFullscreenChannelMenu());liveStage.addView(fullscreenMenuButton,new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.LEFT));fullscreenMenuButton.setVisibility(View.GONE);channelZapOverlay=new TextView(this);channelZapOverlay.setTextColor(Color.WHITE);channelZapOverlay.setTextSize(17);channelZapOverlay.setTypeface(null,android.graphics.Typeface.BOLD);channelZapOverlay.setMaxWidth(dp(420));channelZapOverlay.setMaxLines(2);channelZapOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);channelZapOverlay.setPadding(dp(12),dp(7),dp(12),dp(7));GradientDrawable zapBg=new GradientDrawable();zapBg.setColor(0xDD101A2A);zapBg.setCornerRadius(dp(9));zapBg.setStroke(dp(1),0xFF6EA8E8);channelZapOverlay.setBackground(zapBg);channelZapOverlay.setElevation(dp(16));channelZapOverlay.setClickable(true);channelZapOverlay.setContentDescription("点击此状态框查看直播诊断记录");channelZapOverlay.setOnClickListener(v->showLiveDiagnostics());channelZapOverlay.setVisibility(View.GONE);FrameLayout.LayoutParams zapParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);zapParams.topMargin=dp(16);liveStage.addView(channelZapOverlay,zapParams);fullscreenSourceButton=new TextView(this);fullscreenSourceButton.setText("换源");fullscreenSourceButton.setTextColor(Color.WHITE);fullscreenSourceButton.setTextSize(15);fullscreenSourceButton.setGravity(Gravity.CENTER);fullscreenSourceButton.setPadding(dp(14),dp(9),dp(14),dp(9));fullscreenSourceButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenSourceButton.setElevation(dp(12));fullscreenSourceButton.setFocusable(true);fullscreenSourceButton.setClickable(true);fullscreenSourceButton.setOnClickListener(v->showSourcePicker());FrameLayout.LayoutParams sourceParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);sourceParams.topMargin=dp(8);sourceParams.rightMargin=dp(8);liveStage.addView(fullscreenSourceButton,sourceParams);fullscreenSourceButton.setVisibility(View.GONE);fullscreenFavoriteButton=new TextView(this);fullscreenFavoriteButton.setText("☆ 收藏");fullscreenFavoriteButton.setTextColor(Color.WHITE);fullscreenFavoriteButton.setTextSize(15);fullscreenFavoriteButton.setGravity(Gravity.CENTER);fullscreenFavoriteButton.setPadding(dp(12),dp(9),dp(12),dp(9));fullscreenFavoriteButton.setBackground(makeButtonBg(Color.rgb(20,35,58),false));fullscreenFavoriteButton.setElevation(dp(12));fullscreenFavoriteButton.setFocusable(true);fullscreenFavoriteButton.setClickable(true);fullscreenFavoriteButton.setContentDescription("收藏当前频道");fullscreenFavoriteButton.setOnClickListener(v->toggleCurrentLiveFavorite());FrameLayout.LayoutParams favoriteParams=new FrameLayout.LayoutParams(-2,dp(46),Gravity.TOP|Gravity.RIGHT);favoriteParams.topMargin=dp(8);favoriteParams.rightMargin=dp(76);liveStage.addView(fullscreenFavoriteButton,favoriteParams);fullscreenFavoriteButton.setVisibility(View.GONE);
     fullscreenActionsButton=new TextView(this);fullscreenActionsButton.setText("⚙ 功能");
     fullscreenActionsButton.setTextColor(Color.WHITE);fullscreenActionsButton.setTextSize(16);
@@ -7053,9 +7060,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   // A given live stream may report error, buffering timeout and ENDED almost together.
   // Only allow one automatic failover for each playback generation.
   private String lastAutoFailoverMediaId="";
+  private void coverLivePicture(){
+    livePictureGate.cover();
+    if(livePictureCover!=null)livePictureCover.setVisibility(View.VISIBLE);
+  }
+  private void revealLivePicture(Object owner,String mediaId){
+    if(livePictureGate.reveal(owner,mediaId)&&livePictureCover!=null)
+      livePictureCover.setVisibility(View.GONE);
+  }
   private void releaseLivePlayerSafely(){
     pauseStableDiscovery();
     ExoPlayer old=player;
+    if(old!=null||(video!=null&&video.getPlayer()!=null))coverLivePicture();
     // Invalidate callbacks first. Preserve independent cleanup stages even when
     // a vendor codec call fails; stage timing is diagnostic, not a new teardown path.
     player=null;
@@ -7320,6 +7336,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void startCurrentSourceInternal(){
     if(selected<0||selected>=channels.size())return;
+    // Cover the outgoing picture before either surface is shown or released.
+    coverLivePicture();
     // LibVLC teardown can block on Android 9 vendor decoders. Never start a
     // Media3 tune while that native audio/video session is still being released.
     // Multiple rapid tune requests queue behind the same release; only the latest
@@ -7428,6 +7446,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               ||!isCurrentLiveAnalyticsEvent(eventTime))return;
           // Only count a frame after Media3 confirms it was rendered to the output.
           sourceFirstFrameRecorded=true;
+          revealLivePicture(listenerOwner,currentMediaId);
           long firstFrameAt=android.os.SystemClock.elapsedRealtime();
           lastVideoPipelineActivityAt=firstFrameAt;
           String renderedUrl=currentSourceUrl();
@@ -7623,6 +7642,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     saveCriticalEngineStage("TUNE_STAGE","media item assignment begin");
     // setMediaItem replaces the previous playlist atomically; a separate stop()+
     // clearMediaItems() adds two redundant synchronous player-thread round trips.
+    livePictureGate.arm(player,currentMediaId);
     player.setMediaItem(item);
     saveCriticalEngineStage("TUNE_STAGE","media item assigned");
     saveCriticalEngineStage("TUNE_STAGE","Media3 prepare begin");
@@ -7642,6 +7662,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean tryStartLibVlcFallback(String reason){
     if(isAnyPlaybackLockActive()||currentVodPanel!=null||!activityStarted)return false;
     if(libVlcAttemptedForSource||selected<0||selected>=channels.size()||currentSourceUrl().isEmpty())return false;
+    coverLivePicture();
     libVlcAttemptedForSource=true;
     libVlcVideoOutputReady=false;
     libVlcAudioTrackCheckAttempts=0;
@@ -7665,6 +7686,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!acquireDecoderOwnership())return false;
       final LibVlcPlaybackEngine engine=new LibVlcPlaybackEngine(this,vlcVideoLayout);
       libVlcEngine=engine;
+      livePictureGate.arm(engine,expectedMediaId);
       engine.setListener(new LibVlcPlaybackEngine.Listener(){
         // Native VLC events may already be queued on the UI thread when an engine is
         // released. Match both the channel generation and the exact engine instance so
@@ -7683,6 +7705,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             // Duplicate positive Vout events must not restart the health timer.
             if(libVlcVideoOutputReady)return;
             libVlcVideoOutputReady=true;
+            // VLC exposes Vout creation, not a rendered-first-frame callback.
+            // Its current engine may now show the new output; device compositor
+            // timing still needs verification. This is not playback health evidence.
+            revealLivePicture(engine,expectedMediaId);
             pauseStableDiscovery();
             resetLibVlcHealthEvidence();
             libVlcStableRecorded=false;
@@ -8017,7 +8043,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void releaseLibVlcEngine(Runnable afterRelease){
     cancelLibVlcStartTimeout();cancelLibVlcWatchdog();cancelLibVlcBufferingTimeout();
     LibVlcPlaybackEngine old=libVlcEngine;
-    if(old!=null||usingLibVlc)pauseStableDiscovery();
+    if(old!=null||usingLibVlc){coverLivePicture();pauseStableDiscovery();}
     libVlcEngine=null;usingLibVlc=false;libVlcRebuffering=false;libVlcVideoOutputReady=false;libVlcAudioTrackReady=false;resetLibVlcHealthEvidence();libVlcStableRecorded=false;
     if(vlcVideoLayout!=null)vlcVideoLayout.setVisibility(View.GONE);
     if(afterRelease!=null&&!decoderReleaseUnconfirmed){
