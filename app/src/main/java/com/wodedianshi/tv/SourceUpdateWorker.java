@@ -1406,7 +1406,7 @@ public class SourceUpdateWorker extends Worker {
             if(IdleProbeWavePolicy.permitsParallel(initialDiscoveryChain,manualRefresh,slowPlayback)
                 &&(prefetched||idleWave.start(probeCandidates,offset,measuredByEndpoint,
                     visitedUrls,addressDeadline,probeDeadline,initialDiscoveryChain,
-                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),allowOriginDeferral,
+                    DiscoveryBatchPolicy.waveRequestAllowance(runProbeLimit,checked),
                     DiscoveryBatchPolicy.permitsRollingInitial(initialDiscoveryChain,earlyFirstWatch,
                         preferCoreCoverage,previousStagedSize,priorCoreMask)))){
               noteInitialStage("空闲并发检测 · 本组待合并 "+idleWave.pending.size()+" 条 · 本批第 "+checked+" 条（尚未提交）");
@@ -3224,13 +3224,12 @@ public class SourceUpdateWorker extends Worker {
     Map<String,ProbeResult> rollingMeasured;
     Set<String> rollingVisited;
     int rollingNext,rollingRemaining;
-    boolean rollingOriginDeferral;
     boolean has(String endpoint){return pending.containsKey(endpoint);}
     boolean hasPending(){return !pending.isEmpty();}
     
     boolean start(List<Entry> entries,int offset,Map<String,ProbeResult> measured,
         Set<String> visited,long deadline,long batchDeadline,boolean initial,int remainingRequests,
-        boolean allowOriginDeferral,boolean rolling){
+        boolean rolling){
       rollingEntries=null;
       if(!pending.isEmpty())throw new IllegalStateException("Unconsumed probe wave");
       if(pauseRequested.getAsBoolean())throw new SourceProbeTimePolicy.PublicationPausedException();
@@ -3257,7 +3256,7 @@ public class SourceUpdateWorker extends Worker {
         if(!http)break;
         String host=probeHost(entry.url);
         if(!wavePolicy.canAdd(endpoint,host))break;
-        if(allowOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))break;
+        if(initial&&INITIAL_ORIGINS.requiresSerialProbe(InitialOriginCooldownPolicy.origin(entry.url),now))break;
         if(i!=offset){
           RecentProbe cached=(initial||!manualProbeCacheOwner.isEmpty())
               ?reusableInitialProbe(endpoint,slowPlayback,now):null;
@@ -3287,7 +3286,6 @@ public class SourceUpdateWorker extends Worker {
       if(rolling&&initial){
         rollingEntries=entries;rollingMeasured=measured;rollingVisited=visited;
         rollingNext=i;rollingRemaining=remainingRequests-wave.size();
-        rollingOriginDeferral=allowOriginDeferral;
       }
       return true;
     }
@@ -3339,7 +3337,7 @@ public class SourceUpdateWorker extends Worker {
         String host=probeHost(entry.url);
         if(!active.canAdd(endpoint,host))return;
         now=android.os.SystemClock.elapsedRealtime();
-        if(rollingOriginDeferral&&INITIAL_ORIGINS.cooling(InitialOriginCooldownPolicy.origin(entry.url),now))return;
+        if(INITIAL_ORIGINS.requiresSerialProbe(InitialOriginCooldownPolicy.origin(entry.url),now))return;
         if(reusableInitialProbe(endpoint,slowPlayback,now)!=null)return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
         if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
