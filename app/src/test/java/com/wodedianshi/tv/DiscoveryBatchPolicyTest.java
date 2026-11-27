@@ -386,4 +386,21 @@ public class DiscoveryBatchPolicyTest {
         assertEquals(-1L,DiscoveryBatchPolicy.readCoverageMask("body:bad","body",5));
         assertEquals(0L,DiscoveryBatchPolicy.readCoverageMask("body:0","body",5));
     }
+
+    @Test public void idleInitialDeadlineConsumesOnlyDeterministicContiguousTail(){
+        assertTrue(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(true,false,false,true));
+        assertFalse(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(true,false,false,false));
+        assertFalse(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(true,true,false,true));
+        assertFalse(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(false,false,false,true));
+        assertTrue(DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(false,false,true,false));
+        // Stop at the first fresh/unresolved position, never skip ahead.
+        boolean[] known={true,true,false,true};
+        int consumed=0;
+        for(boolean item:known){
+            if(!DiscoveryBatchPolicy.canConsumeAfterProbeDeadline(true,false,false,item))break;
+            consumed++;
+        }
+        assertEquals(2,consumed);
+    }
+
 }
