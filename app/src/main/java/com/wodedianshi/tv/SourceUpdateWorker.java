@@ -791,6 +791,9 @@ public class SourceUpdateWorker extends Worker {
         String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):
             manualRefresh?manualFeedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
         int feedCursor=roomInt(cursorKey,0);
+        final String savedProbeVersion=roomString(cursorKey+"_version","");
+        final int savedPartialScanned=initialDiscoveryChain?
+            roomInt(DiscoveryBatchPolicy.initialBatchPrefix(feedIndex)+"scanned",0):0;
         String feedVersion="";
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
@@ -861,7 +864,10 @@ public class SourceUpdateWorker extends Worker {
                   .apply();
               return continueAfterAcquisition();
             }
-            PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
+            if(PlaylistFeedIndex.preferCoverageOrder(PlaylistFeedCache.contentVersion(cachedFeed),
+                savedProbeVersion,feedCursor,savedPartialScanned))
+              PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
+            else PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
             preparedForCoverage[feedIndex]=true;
@@ -921,7 +927,9 @@ public class SourceUpdateWorker extends Worker {
               return Result.success();
             }
           }
-          if(initialDiscoveryChain&&!slowPlayback&&!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)){
+          if(initialDiscoveryChain&&!slowPlayback&&!PlaylistFeedIndex.hasCoverageOrder(cachedFeed)
+              &&PlaylistFeedIndex.preferCoverageOrder(PlaylistFeedCache.contentVersion(cachedFeed),
+                  savedProbeVersion,feedCursor,savedPartialScanned)){
             noteInitialStage("空闲时整理频道首源顺序 "+(feedIndex+1)+"/"+feeds.length);
             PlaylistFeedIndex.readInitialPage(cachedFeed,0,1,source->{},pauseRequested);
             PlaylistFeedCache.trimPreparedInitial(getApplicationContext(),cachedFeed);
@@ -929,10 +937,10 @@ public class SourceUpdateWorker extends Worker {
             return continueAfterAcquisition();
           }
           feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
+          final boolean coverageOrderForRead=initialDiscoveryChain&&PlaylistFeedIndex.hasCoverageOrder(cachedFeed);
           if(initialDiscoveryChain)feedVersion=PlaylistFeedIndex.initialProbeVersion(
-              feedVersion,PlaylistFeedIndex.hasCoverageOrder(cachedFeed));
-          feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,
-              roomString(cursorKey+"_version",""),feedVersion);
+              feedVersion,coverageOrderForRead);
+          feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,savedProbeVersion,feedVersion);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
@@ -949,7 +957,7 @@ public class SourceUpdateWorker extends Worker {
                 source.tvgId,source.tvgName));
           };
           parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
-              initialDiscoveryChain?PlaylistFeedIndex.readInitialPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
+              coverageOrderForRead?PlaylistFeedIndex.readInitialPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
           if(initialDiscoveryChain){
             // Dedupe exact records only within the fixed raw page. Raw index
@@ -1872,9 +1880,17 @@ public class SourceUpdateWorker extends Worker {
         update.putString(batchPrefix+"fingerprint",discoveryFingerprint)
             .putInt(batchPrefix+"scanned",nextBatchScanned);
         if(!coverageOrder.isEmpty())update.putString(batchPrefix+"coverage_order",coverageOrder);
-        if(initialDiscoveryChain&&pageFeed>=0)
+        if(initialDiscoveryChain&&pageFeed>=0){
           update.putInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),transientRecheck)
               .putString(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),Long.toString(replayMask));
+          // Bind even a partially inspected first page to the exact body/order.
+          // The cursor remains at the page start until every candidate is done.
+          for(FeedBatch batch:feedBatches)if(batch.index==pageFeed&&batch.success&&!batch.unavailable){
+            update.putInt(feedCursorKey(pageFeed),batch.cursor)
+                .putString(feedCursorKey(pageFeed)+"_version",batch.version);
+            break;
+          }
+        }
       }
       if(!initialDiscoveryChain&&feedBatchComplete){
         int stillUnavailable=0;
