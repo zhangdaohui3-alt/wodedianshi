@@ -328,4 +328,48 @@ public class HlsWorkerProbeIntegrationTest {
             assertEquals(full.sampleBytes,8L*screen.sampleBytes);
         }finally{serverThread.shutdownNow();}
     }
+
+    @Test public void idleSiblingFallbackReusesClearFirstSegmentButChecksDistinctSecond()throws Exception{
+        String[] expected={"/master.m3u8","/high.m3u8","/shared.ts","/high2.ts",
+                "/low.m3u8","/low2.ts"};
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                for(String path:expected){
+                    try(Socket socket=server.accept()){
+                        socket.setSoTimeout(5000);
+                        BufferedReader reader=new BufferedReader(new InputStreamReader(
+                                socket.getInputStream(),StandardCharsets.US_ASCII));
+                        String start=reader.readLine();
+                        assertNotNull(start);
+                        assertTrue(start,start.startsWith("GET "+path+" "));
+                        for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                        byte[] body;
+                        if("/master.m3u8".equals(path))body=bytes(MASTER);
+                        else if("/high.m3u8".equals(path))body=bytes(media("high").replace("/high1.ts","/shared.ts"));
+                        else if("/low.m3u8".equals(path))body=bytes(media("low").replace("/low1.ts","/shared.ts"));
+                        else if("/high2.ts".equals(path))body=bytes("not media");
+                        else body=transportSample();
+                        OutputStream out=socket.getOutputStream();
+                        out.write(bytes("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                +"Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n"));
+                        out.write(body);out.flush();
+                    }
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result=SourceUpdateWorker.probe(
+                    "http://127.0.0.1:"+server.getLocalPort()+"/master.m3u8",
+                    SystemClock.elapsedRealtime()+15000L,false,()->false,true);
+            served.get(15,TimeUnit.SECONDS);
+            assertTrue(result.valid);
+            assertEquals(640,result.width);
+            assertEquals(6L,result.sampleRequests);
+            assertEquals(bytes(MASTER).length+bytes(media("high").replace("/high1.ts","/shared.ts")).length
+                    +bytes(media("low").replace("/low1.ts","/shared.ts")).length
+                    +bytes("not media").length+2L*transportSample().length,result.sampleBytes);
+        }finally{serverThread.shutdownNow();}
+    }
 }
