@@ -13,6 +13,11 @@ public final class LivePagePolicy {
         return targetPage>=0 && targetPage<pageCount(itemCount,pageSize);
     }
 
+    /** Reject overlapping or out-of-range actions without disabling focused controls. */
+    static boolean canRequestPage(int target,int current,int itemCount,int pageSize,boolean busy){
+        return !busy&&target!=current&&canSelectPage(target,itemCount,pageSize);
+    }
+
     public static boolean canAdvance(int currentPage, int itemCount, int pageSize) {
         return currentPage >= 0 && currentPage + 1 < pageCount(itemCount, pageSize);
     }
