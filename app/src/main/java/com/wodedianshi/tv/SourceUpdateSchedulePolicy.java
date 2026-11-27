@@ -54,6 +54,18 @@ public final class SourceUpdateSchedulePolicy {
         return requests>=0L&&requests<384L&&bytes>=0L&&bytes<4L*1024L*1024L;
     }
 
+    /** Admit at most one shortened final full-quality probe after a healthy
+     * batch. Preserve two seconds for the owner and never extend the stage. */
+    static long qualityRecheckDeadline(long stageDeadline,long now,boolean tailUsed,
+            boolean lastHealthy,int attempted,int positive,long requests,long bytes){
+        long ordinary=SourceProbeTimePolicy.initialAddressDeadline(stageDeadline,now);
+        if(ordinary!=0L)return ordinary;
+        if(now<0L||stageDeadline<now||stageDeadline-now<8000L||tailUsed||!lastHealthy
+                ||attempted<4||positive<4||positive>attempted
+                ||4L*positive<3L*attempted||!permitsExtendedRecheckProbe(requests,bytes))return 0L;
+        return stageDeadline-2000L;
+    }
+
     // Real stable output is stronger availability evidence than another
     // structural sample, but cannot replace a measured throughput score.
     // Defer only the extra quality pass, for a short freshness window.
