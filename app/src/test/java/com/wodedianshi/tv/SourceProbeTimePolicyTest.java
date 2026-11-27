@@ -35,6 +35,18 @@ public class SourceProbeTimePolicyTest {
         org.junit.Assert.assertFalse(SourceProbeTimePolicy.transientProbeNetworkException(new java.io.IOException()));
     }
 
+    @Test public void fullBoundedIdleProbeReservesSiblingWithoutEnablingFastScreen(){
+        long start=1000L,end=16000L;
+        assertTrue(SourceProbeTimePolicy.reserveRenditionBudget(false,false,start,end));
+        assertFalse(SourceProbeTimePolicy.reserveRenditionBudget(false,true,start,end));
+        assertFalse(SourceProbeTimePolicy.reserveRenditionBudget(false,false,start,end+1));
+        assertFalse(SourceProbeTimePolicy.reserveRenditionBudget(false,false,start,start));
+        boolean reserve=SourceProbeTimePolicy.reserveRenditionBudget(false,false,start,end);
+        assertEquals(11000L,SourceProbeTimePolicy.initialRenditionDeadline(reserve,true,2000L,end));
+        assertEquals(end,SourceProbeTimePolicy.initialRenditionDeadline(reserve,false,2000L,end));
+        assertEquals(end,SourceProbeTimePolicy.initialRenditionDeadline(reserve,true,6000L,end));
+    }
+
     @Test public void transientRangeFailureKeepsValidCheckpointWithoutImmediateFullRetry() {
         assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.net.SocketTimeoutException(),true));
         assertTrue(SourceProbeTimePolicy.deferRangeFallback(new java.net.SocketException(),true));
