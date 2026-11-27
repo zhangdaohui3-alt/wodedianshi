@@ -3361,10 +3361,13 @@ public class SourceUpdateWorker extends Worker {
     // Only the serial owner calls this for fresh observations. A healthy
     // sibling does not erase an explicit pressure signal from another host.
     void publishOriginHealth(InitialOriginCooldownPolicy policy,String origin,String endpoint,long now){
-      policy.observe(origin,endpoint,now,firstRequestFailed,firstRequestReached);
-      if(firstOriginPressure)policy.observePressure(origin,now);
+      // Pressure wins over mere transport reachability, including a throttled
+      // child on the same origin. Do not erase recovery history just before
+      // recording the very response that demonstrates persistent pressure.
+      if(firstOriginPressure||originDeferred(origin))policy.observePressure(origin,now);
+      else policy.observe(origin,endpoint,now,firstRequestFailed,firstRequestReached);
       if(pressureOrigins!=null)for(String limited:pressureOrigins)
-        if(!firstOriginPressure||!limited.equals(origin))policy.observePressure(limited,now);
+        if(!limited.equals(origin))policy.observePressure(limited,now);
     }
     int score;
     int width,height;
