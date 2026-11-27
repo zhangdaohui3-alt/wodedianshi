@@ -349,8 +349,7 @@ public final class PlaylistFeedCache {
         // eviction, or migration from an older cache format.
         if (hasValidCache && !matchesBody(old, cached)) {
             invalidateIndex(cached);
-            old = new Properties();
-            describeBody(old, cached, contentDigest(cached, paused));
+            old = recoveredBodyMetadata(cached,paused,initialDiscovery);
             writePropertiesAtomically(metadata, new File(metadata.getPath()+".tmp"), old);
         } else if (!hasValidCache) {
             old = new Properties();
@@ -493,8 +492,27 @@ public final class PlaylistFeedCache {
     /** A committed acquisition identifies the full body independently of its
      * derived index. Repair a missing index from that exact body at idle speed;
      * do not revalidate a previously acquired, still matching body over HTTP. */
-    static File findAcquiredInitialBody(Context context,String feedUrl,String acquiredVersion)throws IOException {
-        return matchingAcquiredBody(initialBody(context,feedUrl),acquiredVersion);
+    static File findAcquiredInitialBody(Context context,String feedUrl,String acquiredVersion,
+            java.util.function.BooleanSupplier paused)throws IOException {
+        File body=initialBody(context,feedUrl);
+        File matched=matchingAcquiredBody(body,acquiredVersion);
+        if(matched!=null)return matched;
+        // A crash between publishing a complete body and its sidecar must
+        // not force a download of the exact committed acquisition again.
+        if(acquiredVersion==null||!acquiredVersion.startsWith(body.getName()+":")
+                ||!body.isFile()||body.length()<=0L||body.length()>MAX_BYTES)return null;
+        File metadata=new File(body.getPath()+".properties");
+        if(matchesBody(readProperties(metadata),body)||!isPlaylistFile(body))return null;
+        Properties recovered=recoveredBodyMetadata(body,paused,true);
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        invalidateIndex(body);
+        writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),recovered);
+        return matchesRecoveredAcquisition(body,recovered,acquiredVersion)?body:null;
+    }
+
+    static boolean matchesRecoveredAcquisition(File body,Properties metadata,String acquiredVersion){
+        return matchesBody(metadata,body)&&DiscoveryBatchPolicy.isPreparedInitialFeed(
+                acquiredVersion,body.getName()+":"+metadata.getProperty("bodySha256"));
     }
 
     static File matchingAcquiredBody(File cached,String acquiredVersion)throws IOException {
@@ -728,6 +746,25 @@ public final class PlaylistFeedCache {
         return body.isFile() && digest.matches("[0-9a-f]{64}")
             && parseLong(p.getProperty("bodyLength"),-1L)==body.length()
             && parseLong(p.getProperty("bodyModified"),-1L)==body.lastModified();
+    }
+
+    /** Rebuild identity without restoring stale HTTP validators. For an
+     * initial published body, its existing mtime is the conservative age
+     * baseline, never the time of recovery. Routine/manual freshness stays
+     * unchanged. The caller validates the body header before this method. */
+    static Properties recoveredBodyMetadata(File body,java.util.function.BooleanSupplier paused,
+            boolean initial)throws IOException {
+        Properties recovered=new Properties();
+        long length=body.length(),modified=body.lastModified();
+        String digest=contentDigest(body,paused);
+        SourceProbeTimePolicy.checkPaused(paused);
+        if(!body.isFile()||length!=body.length()||modified!=body.lastModified())
+            throw new IOException("Playlist changed during local recovery");
+        recovered.setProperty("bodySha256",digest);
+        recovered.setProperty("bodyLength",Long.toString(length));
+        recovered.setProperty("bodyModified",Long.toString(modified));
+        if(initial)recovered.setProperty("cachedAt",Long.toString(modified));
+        return recovered;
     }
 
     private static void describeBody(Properties p, File body, String digest) {
