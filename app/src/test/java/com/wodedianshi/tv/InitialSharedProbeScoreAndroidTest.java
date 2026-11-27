@@ -18,13 +18,13 @@ public class InitialSharedProbeScoreAndroidTest {
         SourceUpdateWorker.ProbeResult result=new SourceUpdateWorker.ProbeResult();
         result.valid=true;result.score=1200;result.paced=true;
         scores.put(ak,1900);
-        SourceUpdateWorker.storePreflightScore(scores,ak,StableKey.legacyUrl(a),result);
-        SourceUpdateWorker.storePreflightScore(scores,bk,StableKey.legacyUrl(b),result);
+        SourceUpdateWorker.storePreflightScore(scores,ak,result);
+        SourceUpdateWorker.storePreflightScore(scores,bk,result);
         assertEquals(1900.0,scores.getDouble(ak),0.0);
         assertEquals(1200.0,scores.getDouble(bk),0.0);
         result.paced=false;result.valid=false;
-        SourceUpdateWorker.storePreflightScore(scores,ak,StableKey.legacyUrl(a),result);
-        SourceUpdateWorker.storePreflightScore(scores,bk,StableKey.legacyUrl(b),result);
+        SourceUpdateWorker.storePreflightScore(scores,ak,result);
+        SourceUpdateWorker.storePreflightScore(scores,bk,result);
         assertEquals(-500.0,scores.getDouble(ak),0.0);
         assertEquals(-500.0,scores.getDouble(bk),0.0);
     }
@@ -51,6 +51,19 @@ public class InitialSharedProbeScoreAndroidTest {
             fail("Failed probe must not consult playback history");return null;
         },now),0.0);
         assertEquals(12.0,SourceQualityScorer.rankScore(b,new org.json.JSONObject(),key->null,now),0.0);
+    }
+
+    @Test public void legacyHashCollisionCannotTransferQualityBetweenDistinctUrls() throws Exception {
+        String a="https://example.invalid/Aa",b="https://example.invalid/BB";
+        assertEquals(StableKey.legacyUrl(a),StableKey.legacyUrl(b));
+        assertNotEquals(StableKey.url(a),StableKey.url(b));
+        org.json.JSONObject scores=new org.json.JSONObject().put(StableKey.legacyUrl(a),1800);
+        assertEquals(0.0,SourceQualityScorer.rankScore(b,scores,key->null,1000L),0.0);
+        SourceUpdateWorker.ProbeResult result=new SourceUpdateWorker.ProbeResult();
+        result.valid=true;result.paced=true;result.score=700;
+        SourceUpdateWorker.storePreflightScore(scores,StableKey.url(a),result);
+        assertEquals(700,scores.getInt(StableKey.url(a)));
+        assertEquals(0.0,SourceQualityScorer.rankScore(b,scores,key->null,1000L),0.0);
     }
 
 }
