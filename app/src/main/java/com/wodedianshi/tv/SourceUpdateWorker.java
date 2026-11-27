@@ -2155,6 +2155,12 @@ public class SourceUpdateWorker extends Worker {
       // query/enqueue, either of which can block this background owner.
       idleWave.close();
       saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
+      // A quality pass that already began may have fresh full evidence in
+      // the existing process cache. One WorkManager retry, not a successor
+      // task or a polling loop. Busy admission on that retry exits normally.
+      if(SourceUpdateSchedulePolicy.retryInterruptedQualityPass(provisionalOnly,
+          getRunAttemptCount(),isStopped(),Thread.currentThread().isInterrupted()))
+        return Result.retry();
       return deferredViewingResult(manual,initialDiscoveryChain);
     }catch(Exception e){idleWave.close();saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
     finally{idleWave.close();}
