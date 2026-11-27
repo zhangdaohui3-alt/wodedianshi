@@ -4,6 +4,20 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class SourceUpdateSchedulePolicyTest {
+    @org.junit.Test public void healthyTailAdmitsOnlyOneShortenedFullProbeWithCommitMargin(){
+        long end=90000L;
+        assertEquals(90000L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,75000L,false,false,0,0,0,0));
+        assertEquals(88000L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,true,8,6,16,10000));
+        assertEquals(88000L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,82000L,false,true,4,4,4,1000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,82001L,false,true,4,4,4,1000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,true,true,8,6,16,10000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,false,8,8,16,10000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,true,8,5,16,10000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,true,3,3,3,1000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,true,8,8,384,1000));
+        assertEquals(0L,SourceUpdateSchedulePolicy.qualityRecheckDeadline(end,76000L,false,true,8,8,16,4194304));
+    }
+
     @Test public void expiredRecentCacheEntryDoesNotEvictReusableOlderResult() {
         java.util.LinkedHashMap<String,Long> cache=new java.util.LinkedHashMap<>(8,0.75f,true);
         cache.put("older-success",290000L);
