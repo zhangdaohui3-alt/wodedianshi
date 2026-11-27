@@ -68,8 +68,8 @@ public final class SourceDiscoveryPriorityPolicy {
     // Only scheduling: a committed partial download grants one ordinary turn.
     static final String ACQUISITION_YIELD_KEY="source_initial_acquisition_yield";
 
-    /** After first-watch/core coverage, prepare fresh directory bodies within
-     * the next eligible region before probing more pages of prepared bodies.
+    /** After the bounded first-watch/core phase, prepare fresh directory bodies
+     * across all configured regions, China first, before deeper media probes.
      * Prior failed acquisitions retain ordinary fair rotation; prepared
      * markers are scheduling hints only, never proof of a current cache file. */
     static int nextInitialFeed(int start,boolean[] completed,boolean[] attempted,
@@ -80,11 +80,18 @@ public final class SourceDiscoveryPriorityPolicy {
                 ||prepared.length!=completed.length||failed.length!=completed.length)return ordinary;
         int size=completed.length;
         int china=bound(mainlandEnd,size),regions=Math.max(china,bound(regionEnd,size));
-        int from=ordinary<china?0:ordinary<regions?china:regions;
-        int to=ordinary<china?china:ordinary<regions?regions:size;
-        for(int d=0;d<to-from;d++){
-            int i=from+(ordinary-from+d)%(to-from);
-            if(!completed[i]&&!attempted[i]&&!prepared[i]&&!failed[i])return i;
+        // Acquisition is global, but in the same China/HMT/other order.
+        // Once no fresh directory remains, the ordinary probe rotation takes
+        // over unchanged, including retry of failed and evicted directories.
+        int[] boundaries={0,china,regions,size};
+        for(int stage=0;stage<3;stage++){
+            int from=boundaries[stage],to=boundaries[stage+1];
+            if(from>=to)continue;
+            int first=start>=from&&start<to?start:from;
+            for(int d=0;d<to-from;d++){
+                int i=from+(first-from+d)%(to-from);
+                if(!completed[i]&&!attempted[i]&&!prepared[i]&&!failed[i])return i;
+            }
         }
         return ordinary;
     }
