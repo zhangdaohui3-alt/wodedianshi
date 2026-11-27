@@ -294,6 +294,14 @@ public class PlaylistFeedIndexTest {
             assertEquals(2,PlaylistFeedCache.rangeRetentionPriority(parts[0]));
             assertEquals(1,PlaylistFeedCache.rangeRetentionPriority(parts[1]));
             assertEquals(0,PlaylistFeedCache.rangeRetentionPriority(parts[2]));
+            java.io.IOException localFailure=new java.io.IOException("Local publication failed");
+            org.junit.Assert.assertTrue(PlaylistFeedCache.shouldDeferRangeFallback(localFailure,parts[0]));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.shouldDeferRangeFallback(localFailure,parts[1]));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.shouldDeferRangeFallback(localFailure,parts[2]));
+            org.junit.Assert.assertTrue(PlaylistFeedCache.shouldDeferRangeFallback(
+                new java.net.SocketTimeoutException(),parts[1]));
+            org.junit.Assert.assertFalse(PlaylistFeedCache.shouldDeferRangeFallback(localFailure,
+                new File(dir,"missing.range-part")));
             PlaylistFeedCache.trimOtherRangeParts(dir,new File(dir,"current.range-part"),8L);
             org.junit.Assert.assertTrue(parts[0].exists());
             org.junit.Assert.assertTrue(parts[1].exists());
