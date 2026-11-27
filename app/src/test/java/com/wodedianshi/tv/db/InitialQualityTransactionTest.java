@@ -84,10 +84,10 @@ public class InitialQualityTransactionTest {
             quality.add(new ManualProbeQualityEntity(owner,legacy,456,null));
             db.manualProbeQualityDao().put(quality);
             org.json.JSONObject scores=ManualProbeQualityStore.readManualRankingScores(db,owner,urls,()->false);
-            assertEquals(300,scores.length());
+            assertEquals(299,scores.length());
             assertEquals(299,scores.getInt(com.wodedianshi.tv.StableKey.url(urls.get(299))));
             assertFalse(scores.has(com.wodedianshi.tv.StableKey.url(urls.get(150))));
-            assertEquals(456,scores.getInt(legacy));
+            assertFalse(scores.has(legacy));
             assertFalse(scores.has(historical));
             assertEquals(Integer.valueOf(888),db.manualProbeQualityDao().find(owner,historical).score);
             db.appStateDao().remove(RoomCatalogueBuildStore.MANUAL_READY_KEY);
@@ -296,7 +296,7 @@ public class InitialQualityTransactionTest {
             for(int n=0;n<urls.size();n++){
                 String key=com.wodedianshi.tv.StableKey.url(urls.get(n));
                 assertTrue(loaded.contains(key));
-                assertTrue(loaded.contains(com.wodedianshi.tv.StableKey.legacyUrl(urls.get(n))));
+                assertFalse(loaded.contains(com.wodedianshi.tv.StableKey.legacyUrl(urls.get(n))));
                 if(n%4==0){assertEquals(900,scores.getInt(key));assertEquals(2,streaks.getInt(key));}
                 else if(n%4==1){assertFalse(scores.has(key));assertEquals(5,streaks.getInt(key));}
                 else{assertFalse(scores.has(key));assertFalse(streaks.has(key));}
