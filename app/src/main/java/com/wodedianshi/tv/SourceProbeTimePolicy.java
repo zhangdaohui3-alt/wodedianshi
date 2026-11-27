@@ -36,9 +36,7 @@ public final class SourceProbeTimePolicy {
         return bytes<=LIVE_DIRECTORY_MAX_BYTES;
     }
     public static long liveDirectoryPacingMillis(long copied,long elapsed) {
-        long bounded=Math.max(0L,Math.min(LIVE_DIRECTORY_MAX_BYTES,copied));
-        return Math.max(0L,(bounded*1000L+LIVE_DIRECTORY_BYTES_PER_SECOND-1L)
-                /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
+        return remainingPacingMillis(Math.min(LIVE_DIRECTORY_MAX_BYTES,copied),elapsed,LIVE_DIRECTORY_BYTES_PER_SECOND);
     }
 
     public static final long LIVE_RESUMABLE_MAX_BYTES=8L*1024L*1024L;
@@ -49,9 +47,7 @@ public final class SourceProbeTimePolicy {
         return bytes<=LIVE_RESUMABLE_MAX_BYTES;
     }
     public static long liveFullDirectoryPacingMillis(long copied,long elapsed) {
-        long bounded=Math.max(0L,Math.min(LIVE_RESUMABLE_MAX_BYTES,copied));
-        return Math.max(0L,(bounded*1000L+LIVE_DIRECTORY_BYTES_PER_SECOND-1L)
-                /LIVE_DIRECTORY_BYTES_PER_SECOND-Math.max(0L,elapsed));
+        return remainingPacingMillis(Math.min(LIVE_RESUMABLE_MAX_BYTES,copied),elapsed,LIVE_DIRECTORY_BYTES_PER_SECOND);
     }
 
     /** Full-body requests must not publish partial or non-body HTTP responses. */
@@ -108,9 +104,7 @@ public final class SourceProbeTimePolicy {
     static final long VIEWING_SAMPLE_BYTES_PER_SECOND=32L*1024L;
     static final long VIEWING_SAMPLE_PAUSE_POLL_MS=25L;
     static long viewingSampleDelayMillis(int bytes) {
-        if(bytes<=0)return 0L;
-        return (bytes*1000L+VIEWING_SAMPLE_BYTES_PER_SECOND-1L)
-                /VIEWING_SAMPLE_BYTES_PER_SECOND;
+        return remainingPacingMillis(bytes,0L,VIEWING_SAMPLE_BYTES_PER_SECOND);
     }
 
     /** Count actual read time against this chunk's pacing interval only.
@@ -121,8 +115,14 @@ public final class SourceProbeTimePolicy {
     static long viewingSampleRemainingDelayMillis(int bytes,long readElapsedMs,long bytesPerSecond) {
         long rate=bytesPerSecond==16384L||bytesPerSecond==49152L
                 ?bytesPerSecond:VIEWING_SAMPLE_BYTES_PER_SECOND;
-        long delay=bytes<=0?0L:(bytes*1000L+rate-1L)/rate;
-        return Math.max(0L,delay-Math.max(0L,readElapsedMs));
+        return remainingPacingMillis(bytes,readElapsedMs,rate);
+    }
+
+    // All callers bound bytes to a directory cap or an int sample length;
+    // rates are positive fixed policy values. Keep per-chunk vs cumulative
+    // accounting at the call site, but use the same rounding and clamping.
+    private static long remainingPacingMillis(long bytes,long elapsed,long rate){
+        return Math.max(0L,(Math.max(0L,bytes)*1000L+rate-1L)/rate-Math.max(0L,elapsed));
     }
 
     /** Read at most the retained sample plus one sentinel, never a full extra buffer. */
