@@ -278,4 +278,15 @@ public class HlsMediaPlaylistPolicyTest {
         assertTrue(late.unsupportedEncryption);
         assertTrue(late.unsupportedInitializationMap);
     }
+
+    @Test public void unsupportedRangeOnlyPlaylistDiffersFromEmptyAndMixedPlaylist()throws Exception{
+        String base="https://example.invalid/live.m3u8";
+        String range="#EXTM3U\n#EXTINF:6,\n#EXT-X-BYTERANGE:376@0\nshared.ts\n";
+        HlsMediaPlaylistPolicy.Resources only=HlsMediaPlaylistPolicy.parse(range,base);
+        assertTrue(only.skippedMediaByteRange);
+        assertTrue(only.requiresUnsupportedPreflight());
+        assertFalse(HlsMediaPlaylistPolicy.parse("#EXTM3U\n",base).requiresUnsupportedPreflight());
+        assertFalse(HlsMediaPlaylistPolicy.parse(range+"#EXTINF:6,\nnormal.ts\n",base).requiresUnsupportedPreflight());
+        assertTrue(HlsMediaPlaylistPolicy.parse("#EXTM3U\n#EXT-X-PART:DURATION=0.3,URI=\"shared.m4s\",BYTERANGE=\"100@0\"\n",base).requiresUnsupportedPreflight());
+    }
 }
