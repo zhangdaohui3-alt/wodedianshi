@@ -299,4 +299,32 @@ public class PlaylistFeedIndexTest {
             dir.delete();
         }
     }
+
+    @Test public void acquiredBodyCanRestoreMissingIndexWithoutRemoteDownload() throws Exception {
+        File dir=java.nio.file.Files.createTempDirectory("mytv-index-repair").toFile();
+        try{
+            File body=new File(dir,"initial.m3u");
+            byte[] bytes=("#EXTM3U\n#EXTINF:-1,测试频道\nhttps://example.invalid/live\n").getBytes(StandardCharsets.UTF_8);
+            try(FileOutputStream out=new FileOutputStream(body)){out.write(bytes);}
+            String digest=CatalogueFingerprint.sha256(new String(bytes,StandardCharsets.UTF_8));
+            java.util.Properties props=new java.util.Properties();
+            props.setProperty("bodySha256",digest);
+            props.setProperty("bodyLength",Long.toString(body.length()));
+            props.setProperty("bodyModified",Long.toString(body.lastModified()));
+            try(FileOutputStream out=new FileOutputStream(body.getPath()+".properties")){props.store(out,"");}
+            String version=body.getName()+":"+digest;
+            assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(body));
+            assertEquals(body,PlaylistFeedCache.matchingAcquiredBody(body,version));
+            org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,"different-version"));
+            org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,""));
+            assertEquals(1,PlaylistFeedIndex.readPage(body,0,1,ignored->{}));
+            assertEquals(version,PlaylistFeedCache.contentVersion(body));
+            try(FileOutputStream out=new FileOutputStream(body,true)){out.write(10);}
+            org.junit.Assert.assertNull(PlaylistFeedCache.matchingAcquiredBody(body,version));
+        }finally{
+            File[] children=dir.listFiles();
+            if(children!=null)for(File child:children)child.delete();
+            dir.delete();
+        }
+    }
 }
