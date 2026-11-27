@@ -544,6 +544,41 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
+    @Test public void pauseDuringBlockedResponseRemainsInconclusiveOnException()throws Exception{
+        AtomicBoolean paused=new AtomicBoolean();
+        CountDownLatch release=new CountDownLatch(1);
+        ExecutorService serverThread=Executors.newSingleThreadExecutor();
+        try(ServerSocket server=new ServerSocket()){
+            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.setSoTimeout(10000);
+            Future<?> served=serverThread.submit(()->{
+                try(Socket socket=server.accept()){
+                    socket.setSoTimeout(5000);
+                    BufferedReader reader=new BufferedReader(new InputStreamReader(
+                            socket.getInputStream(),StandardCharsets.US_ASCII));
+                    assertTrue(reader.readLine().startsWith("GET /held.ts "));
+                    for(String header;(header=reader.readLine())!=null&&!header.isEmpty();){}
+                    paused.set(true);
+                    // No headers or media until the client returns by its
+                    // existing inactivity timeout. No extra watchdog thread.
+                    assertTrue(release.await(12,TimeUnit.SECONDS));
+                }
+                return null;
+            });
+            SourceUpdateWorker.ProbeResult result;
+            try{
+                result=SourceUpdateWorker.probe(
+                        "http://127.0.0.1:"+server.getLocalPort()+"/held.ts",
+                        SystemClock.elapsedRealtime()+15000L,false,paused::get);
+            }finally{release.countDown();}
+            served.get(15,TimeUnit.SECONDS);
+            assertFalse(result.valid);assertFalse(result.provisional);
+            assertTrue(result.inconclusive());assertTrue(result.socketTimedOut);
+            assertTrue(result.incompleteSample);
+            assertEquals(1L,result.sampleRequests);assertEquals(0L,result.sampleBytes);
+        }finally{release.countDown();serverThread.shutdownNow();}
+    }
+
     @Test public void expiredOrCancelledProbeIsInconclusiveWithoutNetwork(){
         long now=SystemClock.elapsedRealtime();
         SourceUpdateWorker.ProbeResult expired=SourceUpdateWorker.probe(
