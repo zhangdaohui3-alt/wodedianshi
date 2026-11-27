@@ -421,4 +421,18 @@ public class SourceUpdateSchedulePolicyTest {
         assertEquals(java.util.Arrays.asList("new","next"),new java.util.ArrayList<>(cache.keySet()));
         assertEquals(320000L,hint);
     }
+
+    @Test public void manualEvidenceReuseRequiresSameResumableSessionAndFreshResult(){
+        assertTrue(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,"manual-a","manual-a"));
+        assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(false,"manual-a","manual-a"));
+        assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,"manual-b","manual-a"));
+        assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,"",""));
+        assertFalse(SourceUpdateSchedulePolicy.manualProbeCacheMatches(true,null,null));
+        assertTrue(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301000L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,false,false,1000L,301001L));
+        assertFalse(SourceUpdateSchedulePolicy.reusableInitialObservation(true,false,true,false,1000L,2000L));
+        assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(false,false,2000L,3000L,4000L));
+        assertFalse(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,true,2000L,3000L,4000L));
+        assertTrue(SourceUpdateSchedulePolicy.mayRetainCompletedInitialSuccess(true,false,2000L,3000L,4000L));
+    }
 }
