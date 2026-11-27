@@ -71,6 +71,19 @@ public class SingleChannelRefreshPolicyTest {
             "深圳新闻","广东","news.shenzhen","Shenzhen News"));
     }
 
+    @Test public void preparedStationMatcherCanReuseTargetWithoutCrossStationContamination(){
+        SingleChannelRefreshPolicy.StationMatcher national=new SingleChannelRefreshPolicy.StationMatcher("CCTV-2","央视","","");
+        assertFalse(national.matches("CCTV-3","央视","",""));
+        assertTrue(national.matches("中央二套","央视","",""));
+        assertFalse(national.matches("CCTV-2","央视","","CCTV-3"));
+        assertTrue(national.matches("CCTV-2","央视","",""));
+        SingleChannelRefreshPolicy.StationMatcher local=new SingleChannelRefreshPolicy.StationMatcher("深圳新闻","广东","news.shenzhen","");
+        assertFalse(local.matches("深圳新闻","广东","news.shenzhen","Guangzhou News"));
+        assertTrue(local.matches("深圳新闻","广东","news.shenzhen","Shenzhen News"));
+        assertFalse(local.matches("广州新闻","广东","news.shenzhen",""));
+        assertTrue(local.matches("深圳新闻","广东","news.shenzhen",""));
+    }
+
     @Test public void appendOnlyUsesFreeSlotsInVerifiedQualityOrder(){
         java.util.List<String> old=Arrays.asList("https://a.example/live","https://b.example/live");
         assertEquals(Arrays.asList("https://c.example/live","https://d.example/live"),
