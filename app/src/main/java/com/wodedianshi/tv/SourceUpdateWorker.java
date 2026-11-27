@@ -3092,8 +3092,8 @@ public class SourceUpdateWorker extends Worker {
   static final class ProbeResult {
     boolean valid;
     boolean socketTimedOut;
-    boolean transientNetworkFailure,incompleteManifest;
-    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest;}
+    boolean transientNetworkFailure,incompleteManifest,incompleteSample;
+    boolean inconclusive(){return socketTimedOut||transientNetworkFailure||incompleteManifest||incompleteSample;}
     boolean paced,provisional;
     boolean firstRequestFailed,firstRequestReached,firstOriginPressure;
     int score;
@@ -3322,6 +3322,7 @@ public class SourceUpdateWorker extends Worker {
             result.socketTimedOut=false;
             result.transientNetworkFailure=false;
             result.incompleteManifest=false;
+            result.incompleteSample=false;
             result.valid=true;result.width=candidate.width;result.height=candidate.height;
             result.bitrate=candidate.bandwidth;result.latencyMs=Math.max(1L,candidateSegmentStart-started);
             int resolution=(candidate.width>=1920||candidate.height>=1080)?900:(candidate.width>=1280||candidate.height>=720)?700:(candidate.width>=854||candidate.height>=480)?500:300;
@@ -3462,7 +3463,11 @@ public class SourceUpdateWorker extends Worker {
       if(probeDeadlineReached(deadline,pauseRequested))return null;
       if(SourceProbeTimePolicy.transientProbeHttpStatus(code))throw new TransientProbeHttpException(code,c.getURL().toString());
       if(code<200||code>=400)return null;
-      String contentRange=code==HttpURLConnection.HTTP_PARTIAL?c.getHeaderField("Content-Range"):null;
+      boolean partial=code==HttpURLConnection.HTTP_PARTIAL;
+      long[] prefixRange=partial?HlsProbeValidationPolicy.parsePrefixRange(c.getHeaderField("Content-Range")):null;
+      // A nonzero or malformed Content-Range cannot establish the requested
+      // prefix evidence, even if the payload happens to resemble media.
+      if(partial&&prefixRange==null){result.incompleteSample=true;return null;}
       String type=c.getContentType();
       if(type!=null&&type.toLowerCase(Locale.ROOT).contains("text/html"))return null;
       String finalUrl=c.getURL().toString();
@@ -3481,6 +3486,7 @@ public class SourceUpdateWorker extends Worker {
           if(probeDeadlineReached(deadline,pauseRequested))return null;
           if(n==-1)break;
           out.write(buffer,0,n);total+=n;
+          if(partial&&total>prefixRange[0]){result.incompleteSample=true;return null;}
           if(allowManifestExpansion&&total>=maxBytes){
             allowManifestExpansion=false;
             if(HlsVariantPolicy.hasPlaylistMarker(out.toByteArray()))
@@ -3509,8 +3515,10 @@ public class SourceUpdateWorker extends Worker {
         }
         if(probeDeadlineReached(deadline,pauseRequested))return null;
         byte[] received=out.toByteArray();
-        boolean truncated=(code==HttpURLConnection.HTTP_PARTIAL
-            &&HlsProbeValidationPolicy.isIncompleteContentRange(contentRange,maxBytes))
+        if(partial&&!HlsProbeValidationPolicy.prefixBodyMatches(prefixRange,received.length,maxBytes)){
+          result.incompleteSample=true;return null;
+        }
+        boolean truncated=(partial&&HlsProbeValidationPolicy.incompletePrefixRange(prefixRange,maxBytes))
             ||HlsProbeValidationPolicy.isTruncatedSample(received.length,maxBytes);
         int retained=SourceProbeTimePolicy.sampleRetainedLength(received.length,maxBytes);
         byte[] bounded=retained<received.length?Arrays.copyOf(received,retained):received;
