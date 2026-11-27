@@ -460,7 +460,6 @@ public final class RoomCatalogueBuildStore {
             if(manualOwner!=null){
                 long now=System.currentTimeMillis();
                 db.appStateDao().put(new AppStateEntity(MANUAL_OWNER_KEY,manualOwner,now));
-                ManualProbeQualityStore.captureLegacyManualSeedInTransaction(db,manualOwner,now,paused);
                 db.appStateDao().put(new AppStateEntity(MANUAL_BASE_VERSION_KEY,Long.toString(baseVersion),now));
                 // Seed the structural epoch from the checked live version on upgrade.
                 // Favorite/source mutations keep the general checkpoint advancing,
