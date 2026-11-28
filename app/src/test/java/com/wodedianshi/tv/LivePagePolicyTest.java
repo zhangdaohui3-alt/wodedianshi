@@ -23,10 +23,10 @@ public class LivePagePolicyTest {
     }
 
     @Test public void nextPageRemainsAvailableUntilTheLastRenderedPage() {
-        assertTrue(LivePagePolicy.canAdvance(0, 49, 48));
-        assertTrue(LivePagePolicy.canAdvance(1, 97, 48));
-        assertFalse(LivePagePolicy.canAdvance(1, 96, 48));
-        assertFalse(LivePagePolicy.canAdvance(2, 97, 48));
+        assertTrue(LivePagePolicy.canRequestPage(1,0,49,48,false));
+        assertTrue(LivePagePolicy.canRequestPage(2,1,97,48,false));
+        assertFalse(LivePagePolicy.canRequestPage(2,1,96,48,false));
+        assertFalse(LivePagePolicy.canRequestPage(3,2,97,48,false));
     }
 
     @Test public void pagingRejectsOverlappingClicksAndBoundariesWithoutDisablingControls(){
@@ -41,7 +41,7 @@ public class LivePagePolicyTest {
     @Test public void emptyOrInvalidPageSizeIsSafe() {
         assertEquals(1, LivePagePolicy.pageCount(0, 48));
         assertEquals(1, LivePagePolicy.pageCount(20, 0));
-        assertFalse(LivePagePolicy.canAdvance(0, 0, 48));
+        assertFalse(LivePagePolicy.canRequestPage(1,0,0,48,false));
     }
 
     @Test public void manualPageNavigationIsNotOverriddenBySelectedChannel() {
