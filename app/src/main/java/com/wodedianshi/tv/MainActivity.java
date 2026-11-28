@@ -5901,12 +5901,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void showVodPlaybackActions(){showFullscreenRemoteMenu(true);}
   private void showFullscreenRemoteMenu(boolean vodMode){
     if(!vodMode&&(selected<0||selected>=channels.size())){toast("请先选择频道");return;}
+    final Channel menuChannel=vodMode?null:channels.get(selected);
+    final String menuStation=menuChannel==null?"":identity(menuChannel);
+    final String menuUrl=menuChannel==null?"":currentSourceUrl();
     final FullscreenMenuConfig config=loadFullscreenMenuConfig();
     final Dialog dialog=new Dialog(this);
     LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);
     shell.setPadding(dp(12),dp(10),dp(12),dp(10));shell.setBackgroundColor(Color.argb(208,8,13,24));
     TextView heading=new TextView(this);heading.setText(vodMode?"点播全屏菜单":"直播全屏菜单");heading.setTextColor(Color.WHITE);
     heading.setTextSize(19);heading.setPadding(dp(8),dp(4),dp(8),dp(10));shell.addView(heading);
+    final Button quickBlock;
+    if(!vodMode){
+      quickBlock=new Button(this);quickBlock.setAllCaps(false);
+      quickBlock.setText("屏蔽广告源 · "+displayChannelName(menuChannel)+" · 第 "+(menuChannel.activeSource+1)+" 源");
+      quickBlock.setSingleLine(true);quickBlock.setEllipsize(android.text.TextUtils.TruncateAt.END);
+      styleTvButton(quickBlock,Color.rgb(35,55,78));
+      quickBlock.setEnabled(!SourceSelectionPolicy.channelBlockKey(menuStation,menuUrl).isEmpty());
+      quickBlock.setOnClickListener(v->{dialog.dismiss();blockCapturedLiveSource(menuStation,menuUrl);});
+      shell.addView(quickBlock,new LinearLayout.LayoutParams(-1,dp(48)));
+    }else quickBlock=null;
     LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
     LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
     LinearLayout right=new LinearLayout(this);right.setOrientation(LinearLayout.VERTICAL);
@@ -5914,7 +5927,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ScrollView rightScroll=new ScrollView(this);rightScroll.addView(right);
     // The phone's landscape viewport may be shorter than the TV menu.
     int columnHeight=vodMode?dp(284):Math.min(dp(284),Math.max(dp(80),
-        getResources().getDisplayMetrics().heightPixels-dp(176)));
+        getResources().getDisplayMetrics().heightPixels-dp(224)));
     columns.addView(leftScroll,new LinearLayout.LayoutParams(0,columnHeight,1.0f));
     columns.addView(rightScroll,new LinearLayout.LayoutParams(0,columnHeight,1.45f));
     shell.addView(columns);
@@ -6016,7 +6029,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(520)),
           WindowManager.LayoutParams.WRAP_CONTENT);
     }
-    if(left.getChildCount()>0)left.getChildAt(0).requestFocus();
+    if(quickBlock!=null&&quickBlock.isEnabled())quickBlock.requestFocus();
+    else if(left.getChildCount()>0)left.getChildAt(0).requestFocus();
   }
   private void showFullscreenMenuEditor(){
     final FullscreenMenuConfig config=loadFullscreenMenuConfig();
@@ -6316,14 +6330,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Set<String> blockedSourceUrls(Channel channel){
     return SourceSelectionPolicy.blockedUrls(sourceBlockRecords(),identity(channel),channel.backups);
   }
-  private void setSourceBlocked(Channel channel,String url,boolean blocked){
-    String key=SourceSelectionPolicy.channelBlockKey(identity(channel),url);
+  private void setSourceBlocked(String stationIdentity,String url,boolean blocked){
+    String key=SourceSelectionPolicy.channelBlockKey(stationIdentity,url);
     if(key.isEmpty())return;
     android.content.SharedPreferences p=getSharedPreferences("mytv",0);
     HashSet<String> records=new HashSet<>(sourceBlockRecords());
     if(blocked)records.add(key);
     else{records.remove(key);records.remove(url);}
     p.edit().putStringSet("blocked_ad_sources",records).apply();
+  }
+  // The user acts on the station/route displayed when the menu opened, not
+  // the numeric source index or the next route selected by automatic recovery.
+  private void blockCapturedLiveSource(String stationIdentity,String url){
+    if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
+    String capturedKey=SourceSelectionPolicy.channelBlockKey(stationIdentity,url);
+    if(capturedKey.isEmpty()){toast("没有可屏蔽的播放源");return;}
+    setSourceBlocked(stationIdentity,url,true);
+    saveLiveDiagnostic("SOURCE_USER_BLOCK","station="+StableKey.channelIdentity(stationIdentity).substring(0,19)
+        +" route="+StableKey.url(SourceSelectionPolicy.endpointKey(url)).substring(0,19));
+    Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
+    if(current==null||!capturedKey.equals(SourceSelectionPolicy.channelBlockKey(identity(current),currentSourceUrl()))){
+      toast("已屏蔽刚才的广告源，当前播放不变");
+      return;
+    }
+    clearPendingRemoteZap();
+    int next=findNextUnblockedSource(current,current.activeSource,1);
+    if(next>=0){
+      selectManualSource(current,next);toast("已屏蔽广告源，正在切换备用源");startCurrentSource();
+    }else stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");
   }
   private static final class PendingSingleChannelRefresh {
     final Channel channel;
@@ -6474,8 +6508,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // The sorter preserves the currently playing URL; ordering stays in memory.
     sortSourcesByObservedQuality(c);
     final String displayedActiveUrl=currentSourceUrl();
-    final long displayedTuneSerial=liveTuneRequestSerial;
+    final String displayedStation=identity(c);
     ArrayList<String> labels=new ArrayList<>();
+    labels.add("屏蔽广告源 · 第 "+(c.activeSource+1)+" 源");
     ArrayList<String> displayedUrls=new ArrayList<>();
     Set<String> blockedUrls=blockedSourceUrls(c);
     for(int i=0;i<c.backups.size();i++){
@@ -6484,28 +6519,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       labels.add("播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源")+(blocked?" · 已屏蔽（点此恢复）":""));
       displayedUrls.add(url);
     }
-    labels.add("屏蔽本频道当前源（广告、错台或异常内容）");
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle(displayChannelName(c)+" · 选择播放源")
       .setItems(labels.toArray(new String[0]),(d,which)->{
         if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
+        if(which==0){blockCapturedLiveSource(displayedStation,displayedActiveUrl);return;}
         Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
         if(current!=c){toast("频道已变化，请重新打开换源菜单");return;}
-        if(which==displayedUrls.size()){
-          String bad=currentSourceUrl();
-          if(bad.isEmpty()||!bad.equals(displayedActiveUrl)||displayedTuneSerial!=liveTuneRequestSerial){toast("当前播放源已变化，请重新打开换源菜单");return;}
-          setSourceBlocked(c,bad,true);
-          saveLiveDiagnostic("SOURCE_USER_BLOCK","channel="+c.name+" route="+StableKey.url(SourceSelectionPolicy.endpointKey(bad)).substring(0,19));
-          int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){selectManualSource(c,next);toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
-          else{stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");}
-          return;
-        }
-        if(which<0||which>=displayedUrls.size())return;
-        String url=displayedUrls.get(which);
+        int displayedIndex=which-1;
+        if(displayedIndex<0||displayedIndex>=displayedUrls.size())return;
+        String url=displayedUrls.get(displayedIndex);
         int index=SourceSelectionPolicy.resolveManualSelection(c,current,c.backups,url);
         if(index<0){toast("播放源已变化，请重新打开换源菜单");return;}
         if(isSourceBlocked(c,url)){
-          setSourceBlocked(c,url,false);
+          setSourceBlocked(identity(c),url,false);
           toast("已恢复该播放源");
         }
         selectManualSource(c,index);startCurrentSource();
