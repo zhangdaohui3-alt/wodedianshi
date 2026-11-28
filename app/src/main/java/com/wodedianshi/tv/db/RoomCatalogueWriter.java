@@ -521,6 +521,8 @@ public final class RoomCatalogueWriter {
                         "source_initial_progress_staged_channels", Integer.toString(written[0]), publishedAt));
                 db.appStateDao().remove("source_full_rebuild_active");
             }
+            if(clearBuildRowsOnCommit||manualOwner!=null||(progress!=null&&progress.finishesRoutineMaintenance()))
+                ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,System.currentTimeMillis(),paused);
             // Throwing from this callback rolls back rows, checkpoint and staging together.
             checkPause(paused);
         });
