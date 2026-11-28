@@ -386,18 +386,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String key;
     final ArrayList<Integer> indexes;
     final HashMap<Integer,Integer> positions;
-    // All four collections are worker-owned until publication and read-only thereafter.
+    // Collections are worker-owned until publication and read-only thereafter.
     final ArrayList<Channel> visible;
-    final HashMap<String,Integer> sourceIndexByKey;
-    RemoteChannelOrder(String key,ArrayList<Integer> indexes,ArrayList<Channel> visible,
-        HashMap<String,Integer> sourceIndexByKey) {
-      this.key=key;this.indexes=indexes;this.visible=visible;this.sourceIndexByKey=sourceIndexByKey;
+    RemoteChannelOrder(String key,ArrayList<Integer> indexes,ArrayList<Channel> visible) {
+      this.key=key;this.indexes=indexes;this.visible=visible;
       this.positions=new HashMap<>(Math.max(16,indexes.size()*2));
       for(int i=0;i<indexes.size();i++)positions.put(indexes.get(i),i);
     }
     private RemoteChannelOrder(String key,RemoteChannelOrder previous) {
       this.key=key;this.indexes=previous.indexes;this.positions=previous.positions;
-      this.visible=previous.visible;this.sourceIndexByKey=previous.sourceIndexByKey;
+      this.visible=previous.visible;
     }
     RemoteChannelOrder withKey(String key){return new RemoteChannelOrder(key,this);}
   }
@@ -4824,7 +4822,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(reusePage){
           // Exact prior result; do not rebuild channel arrays or key/position maps.
           ready=pageOrder.withKey(orderKey);
-          categoryMatches=queryMatches=ready.indexes.size();
           android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot
               +" total="+expectedCount+" scanned=0 page_order_reuse=true matches="+ready.indexes.size()
               +" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-filterStartedAt)+" generation="+generation);
@@ -4843,7 +4840,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         // refresh, compounding the already large restored catalogue in memory.
         // Channel edits replace/append under the catalogue lock; playback actions
         // resolve by stable key, so these references are read-only in this pass.
-        HashMap<String,Integer> sourceIndexByKey=new HashMap<>(Math.max(16,Math.min(1024,sources.size())));
         ArrayList<Integer> indexes=new ArrayList<>();
         if(indexEligible&&!geographic&&"地方".equals(categorySnapshot)
             &&!categorySnapshotIndex.hasLocalIndex(membershipEpoch,sources.size())){
@@ -4897,7 +4893,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             cctvOrders[i]=cctvSortOrder(c);
             cctvNames[i]=display==null?displayChannelName(c):display;
           }
-          sourceIndexByKey.putIfAbsent(c.key(),i);
         }
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
@@ -4930,7 +4925,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           categorySnapshotIndex.put(membershipEpoch,sources.size(),scopeKey,indexes);
         ArrayList<Channel> visible=new ArrayList<>(indexes.size());
         for(int index:indexes)visible.add(sources.get(index));
-        ready=new RemoteChannelOrder(orderKey,indexes,visible,sourceIndexByKey);
+        ready=new RemoteChannelOrder(orderKey,indexes,visible);
         long filterElapsed=android.os.SystemClock.elapsedRealtime()-filterStartedAt;
         android.util.Log.i("MyTVDirectory","filter_ready category="+categorySnapshot+" total="+sources.size()+" scanned="+scanned+" scope_index_hit="+(cachedScope!=null)+" page_order_reuse="+reusePage+" category_matches="+categoryMatches+" query_matches="+queryMatches+" matches="+visible.size()+" null_records="+nullRecords+" null_name="+nullNames+" null_group="+nullGroups+" null_tvg_name="+nullTvgNames+" null_tvg_id="+nullTvgIds+" null_url="+nullUrls+" elapsed_ms="+filterElapsed+" generation="+generation);
         }
@@ -4949,8 +4944,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           cachedRemoteChannelOrder=ready;
           String currentSelectedKey=null;
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
-          renderFilteredChannels(ready.visible,currentSelectedKey,renderFavorites,customCategory,requestedPage,
-              pageOnly,ready.sourceIndexByKey);
+          renderFilteredChannels(ready,currentSelectedKey,renderFavorites,customCategory,requestedPage,pageOnly);
           if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+ready.visible.size()+" 个频道"+(ready.visible.isEmpty()?"；可手动更新或导入":""));
           if(menuSelectedFocusGeneration==generation){
             menuSelectedFocusGeneration=-1L;
@@ -4981,9 +4975,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
     });
   }
-  private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
-      boolean customCategory,int requestedPage,
-      boolean pageOnly,HashMap<String,Integer> sourceIndexByKey){
+  private void renderFilteredChannels(RemoteChannelOrder order,String selectedKey,Set<String> favoriteSnapshot,
+      boolean customCategory,int requestedPage,boolean pageOnly){
+    ArrayList<Channel> visible=order.visible;
     // Capture the actual channel focus immediately before replacing the rows,
     // not before the asynchronous filter. Paging/category controls are outside list.
     View focused=pageOnly||!fullScreenPlayback||fullscreenMenuPopup==null
@@ -5007,12 +5001,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     // Keep the catalogue complete, but limit live View inflation per page on low-memory TV boxes.
     final int maxRows=LIVE_PAGE_SIZE;
-    int selectedPosition=-1;
-    RemoteChannelOrder renderedOrder=cachedRemoteChannelOrder;
-    if(renderedOrder!=null&&renderedOrder.indexes.size()==visible.size()){
-      Integer position=renderedOrder.positions.get(selected);
-      if(position!=null)selectedPosition=position;
-    }
+    int selectedPosition=order.positions.getOrDefault(selected,-1);
     livePageIndex=LivePagePolicy.choosePage(
         requestedPage,selectedPosition,maxRows,pageOnly);
     int pageCount=LivePagePolicy.pageCount(visible.size(),maxRows);
@@ -5027,8 +5016,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       final String channelKey=c.key();
       final String title=displayChannelName(c);
       String group=(isCctvChannel(c)||isSatelliteChannel(c))?"":displayLiveChannelGroup(c);
-      Integer mappedIndex=sourceIndexByKey==null?null:sourceIndexByKey.get(channelKey);
-      final int currentIndex=mappedIndex==null?-1:mappedIndex;
+      // The visible row and its catalogue position come from the same ordered result.
+      // Playback still validates the key against the current catalogue before using the hint.
+      final int currentIndex=order.indexes.get(row);
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
       boolean playing=channelKey.equals(selectedKey);
       b.setText((playing?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
