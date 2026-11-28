@@ -32,18 +32,17 @@ public final class SourceSelectionPolicy {
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
-            if (url == null || url.trim().isEmpty()
-                    || endpointKey(url).equals(activeKey)
-                    || containsEquivalent(blocked, url)) continue;
+            if (url == null || url.trim().isEmpty()) continue;
+            String key = endpointKey(url);
+            if (key.equals(activeKey) || containsEquivalentKey(blocked, key)) continue;
             if (fallback < 0) fallback = index;
-            if (!containsEquivalent(coolingDown, url)) return index;
+            if (!containsEquivalentKey(coolingDown, key)) return index;
         }
         return fallback;
     }
 
-    private static boolean containsEquivalent(Set<String> values, String candidate) {
+    private static boolean containsEquivalentKey(Set<String> values, String key) {
         if (values == null || values.isEmpty()) return false;
-        String key = endpointKey(candidate);
         for (String value : values) {
             if (endpointKey(value).equals(key)) return true;
         }
