@@ -293,24 +293,26 @@ public final class ManualProbeQualityStore {
             }
         }catch(JSONException malformed){return;} // Unknown protection set: do not prune.
         ChannelDao channels=db.channelDao();
-        int total=channels.countChannels(),loaded=0;
-        if(total<=0)return;
-        for(int offset=0;offset<total&&!stale.isEmpty();offset+=200){
-            SourceProbeTimePolicy.checkPublicationPaused(paused);
-            List<ChannelDao.RouteMembership> rows=channels.getRouteMembershipPage(200,offset);
-            for(ChannelDao.RouteMembership row:rows){
+        // Scan the actual persisted routes inside this same transaction.
+        // No LIMIT/OFFSET, relation objects, or full membership set is needed.
+        // Exhausting both cursors proves absence; a failed read rolls back.
+        try(android.database.Cursor rows=channels.scanPrimaryRoutes()){
+            if(!rows.moveToFirst())return;
+            do{
                 SourceProbeTimePolicy.checkPublicationPaused(paused);
-                if(row==null)return;
-                loaded++;
-                if(row.primaryUrl!=null)stale.remove(StableKey.url(row.primaryUrl));
-                RoomCatalogueReader.visitRowRoutes(row,url->{
-                    stale.remove(StableKey.url(url));return stale.isEmpty();
-                },paused);
-                if(stale.isEmpty())break;
+                String primary=rows.getString(2);
+                String legacy=RoomCatalogueReader.legacyRoute(rows.getString(0),rows.getString(1),primary);
+                if(primary!=null)stale.remove(StableKey.url(primary));
+                if(!legacy.equals(primary))stale.remove(StableKey.url(legacy));
+            }while(!stale.isEmpty()&&rows.moveToNext());
+        }
+        if(!stale.isEmpty())try(android.database.Cursor rows=channels.scanBackupRoutes()){
+            while(!stale.isEmpty()&&rows.moveToNext()){
+                SourceProbeTimePolicy.checkPublicationPaused(paused);
+                String url=rows.getString(0);
+                if(url!=null)stale.remove(StableKey.url(url));
             }
         }
-        // A partial scan cannot prove that any remaining key is absent.
-        if(!stale.isEmpty()&&loaded!=total)return;
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         if(!stale.isEmpty())quality.removeKeys(PUBLISHED_OWNER,new ArrayList<>(stale));
         if(page.size()<RETENTION_PAGE)state.remove(RETENTION_CURSOR);
