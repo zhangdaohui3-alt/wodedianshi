@@ -128,6 +128,7 @@ public final class PlaylistFeedCache {
         File partial=new File(directory,key+".range-part");
         File checkpoint=new File(directory,key+".range-state");
         File checkpointTemp=new File(directory,key+".range-state.tmp");
+        File replacement=new File(directory,key+".m3u.tmp");
         // Reserve one maximum-sized current range plus two maximum-sized
         // other ranges, but retain more small prefixes within that same budget.
         trimOtherRangeParts(directory,partial,2L*SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES);
@@ -148,7 +149,7 @@ public final class PlaylistFeedCache {
             if(offset>0L&&offset==total){
                 // The bytes and strong validator are complete. Digest in a
                 // separate bounded slice, even during confirmed stable playback.
-                return publishRangeBody(context,directory,cached,partial,checkpoint,oldTag,paused,deadline);
+                return publishRangeBody(context,directory,cached,partial,partial,checkpoint,oldTag,paused,deadline);
             }
             // Select the bounded range after local checkpoint preparation,
             // using the same current headroom signal as directory pacing.
@@ -198,14 +199,17 @@ public final class PlaylistFeedCache {
                 if(expected>transferLimit)
                     throw new IOException("Directory exceeds bounded full transfer size");
                 if(lowRate)checkLiveFullDirectoryAdmission(expected,encoding,deadline);
-                clearRangeCheckpoint(checkpoint,partial);offset=0L;
+                // A full response is a separate candidate, never an append or
+                // a reason to destroy the last validated prefix before publication.
+                offset=0L;
             }else{
                 if(status==416){clearRangeCheckpoint(checkpoint,partial);}
                 throw new IOException("Directory range HTTP "+status);
             }
+            File body=status==200?replacement:partial;
             long copied=0L;
             try(InputStream input=connection.getInputStream();
-                FileOutputStream out=new FileOutputStream(partial,offset>0L)){
+                FileOutputStream out=new FileOutputStream(body,status==206&&offset>0L)){
                 byte[] buffer=new byte[lowRate?4096:32768];
                 while(true){
                     checkDownloadBudget(paused,deadline);
@@ -237,10 +241,11 @@ public final class PlaylistFeedCache {
                 // Give a large completed range its own fresh validation slice.
                 if(!SourceProbeTimePolicy.fitsLiveDirectory(length))return null;
             }
-            return publishRangeBody(context,directory,cached,partial,checkpoint,tag,paused,deadline);
+            return publishRangeBody(context,directory,cached,body,partial,checkpoint,tag,paused,deadline);
         }finally{
             if(connection!=null)connection.disconnect();
             checkpointTemp.delete();
+            replacement.delete();
             // Uncommitted tail is truncated on next attempt, never trusted.
             if(!checkpoint.isFile())partial.delete();
         }
@@ -255,26 +260,32 @@ public final class PlaylistFeedCache {
         return next;
     }
 
-    private static File publishRangeBody(Context context,File directory,File cached,File partial,File checkpoint,
-            String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
-        checkDownloadBudget(paused,deadline);
-        // No partial body is ever parsed or published.
-        if(!isPlaylistFile(partial)){
-            clearRangeCheckpoint(checkpoint,partial);
+    static void validateRangeBody(File body,File partial,File checkpoint)throws IOException {
+        // An invalid full replacement does not invalidate a separately
+        // validated prefix. A corrupt completed range must be discarded.
+        if(!isPlaylistFile(body)){
+            if(body.equals(partial))clearRangeCheckpoint(checkpoint,partial);
             throw new IOException("Downloaded resource is not M3U");
         }
-        String digest=contentDigest(partial,paused);
+    }
+
+    private static File publishRangeBody(Context context,File directory,File cached,File body,File partial,File checkpoint,
+            String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
+        checkDownloadBudget(paused,deadline);
+        validateRangeBody(body,partial,checkpoint);
+        String digest=contentDigest(body,paused);
         checkDownloadBudget(paused,deadline);
         invalidateIndex(cached);
         File metadata=new File(cached.getPath()+".properties");
         if(metadata.exists()&&!metadata.delete())throw new IOException("Cannot invalidate old metadata");
-        atomicReplace(partial,cached);
+        atomicReplace(body,cached);
         Properties fresh=new Properties();
         describeBody(fresh,cached,digest);
         fresh.setProperty("cachedAt",Long.toString(System.currentTimeMillis()));
         if(tag!=null)fresh.setProperty("etag",tag);
         writePropertiesAtomically(metadata,new File(metadata.getPath()+".tmp"),fresh);
         checkpoint.delete();
+        if(!body.equals(partial))partial.delete();
         pruneOldEntries(context,directory,cached,true);
         return cached;
     }
