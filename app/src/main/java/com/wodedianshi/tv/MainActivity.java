@@ -6520,12 +6520,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return -1;
   }
   private int findNextAutomaticSource(Channel c,int from){
-    if(c==null||c.backups==null)return -1;
-    HashSet<String> blocked=new HashSet<>();
+    if(c==null||c.backups==null||c.backups.size()<2)return -1;
+    Set<String> blocked=blockedSourceUrls(c);
     HashSet<String> coolingDown=new HashSet<>();
-    Set<String> userBlocked=blockedSourceUrls(c);
     for(String url:c.backups){
-      if(userBlocked.contains(url)||failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
+      if(blocked.contains(url))continue;
+      if(!failedEndpointsThisPass.isEmpty()&&failedEndpointsThisPass.contains(SourceSelectionPolicy.endpointKey(url)))blocked.add(url);
       else if(SourceMemoryStore.isCoolingDown(this,url))coolingDown.add(url);
     }
     return SourceSelectionPolicy.findNext(c.backups,from,blocked,coolingDown);
