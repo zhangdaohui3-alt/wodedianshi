@@ -843,4 +843,18 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void manualPublicationRestoresExactThenEquivalentSelectedEndpoint() {
+        String active="https://CDN.example:443/live?token=one";
+        String alias="https://cdn.example/live?token=one";
+        BackupSourceEntity first=new BackupSourceEntity("channel","https://cdn.example/live?token=two",0,"[]");
+        BackupSourceEntity equivalent=new BackupSourceEntity("channel",alias,1,"[]");
+        BackupSourceEntity exact=new BackupSourceEntity("channel",active,2,"[]");
+        assertEquals(2,RoomCatalogueWriter.resolveLiveSelection(
+                java.util.Arrays.asList(first,equivalent,exact),active));
+        assertEquals(1,RoomCatalogueWriter.resolveLiveSelection(
+                java.util.Arrays.asList(first,equivalent),active));
+        assertEquals(0,RoomCatalogueWriter.resolveLiveSelection(
+                java.util.Collections.singletonList(first),active));
+    }
+
 }
