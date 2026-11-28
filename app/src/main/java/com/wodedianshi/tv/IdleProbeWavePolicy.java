@@ -15,12 +15,12 @@ final class IdleProbeWavePolicy {
     static boolean permitsParallel(boolean initial,boolean manual,boolean viewing) {
         return !viewing&&(initial||manual);
     }
-    static boolean canStart(boolean initial,long now,long addressDeadline,long batchDeadline) {
-        if(initial)return now>=0L&&now<addressDeadline
+    static boolean canStart(long now,long addressDeadline,long batchDeadline) {
+        // Both idle private builds already allocate a bounded address deadline.
+        // Recheck that exact deadline after preparation, not a synthetic
+        // 17-second window measured from a different clock sample.
+        return now>=0L&&now<addressDeadline
                 &&SourceProbeTimePolicy.hasWaveDrainMargin(batchDeadline,addressDeadline);
-        // Manual idle probes also receive a bounded address budget; retain
-        // the existing 17-second admission margin for a drained wave.
-        return now>=0L&&batchDeadline>=now&&batchDeadline-now>=17000L;
     }
     /** Only rows that provably cannot start a fresh probe may be bridged. */
     static boolean canBridgeKnownRow(boolean http,boolean measured) {
