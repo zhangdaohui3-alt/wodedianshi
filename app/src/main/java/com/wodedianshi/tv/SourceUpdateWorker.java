@@ -2454,7 +2454,7 @@ public class SourceUpdateWorker extends Worker {
       JSONObject metric=observedPlayback.get(scoreKey(url));
       return metric!=null&&SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck(
           metric.optString("lastEvent",""),metric.optLong("updated",0L),evidenceNow);
-    });
+    },InitialOriginCooldownPolicy::origin);
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
     java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=batch->{
       try{publishQualityRecheckCheckpoint(context,pending,batch,catalogueVersion,false);}
