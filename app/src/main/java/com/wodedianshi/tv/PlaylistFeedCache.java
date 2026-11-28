@@ -199,12 +199,12 @@ public final class PlaylistFeedCache {
                 throw new IOException("Directory range HTTP "+status);
             }
             long copied=0L;
-            long started=android.os.SystemClock.elapsedRealtime();
             try(InputStream input=connection.getInputStream();
                 FileOutputStream out=new FileOutputStream(partial,offset>0L)){
                 byte[] buffer=new byte[lowRate?4096:32768];
                 while(true){
                     checkDownloadBudget(paused,deadline);
+                    long chunkStarted=lowRate?android.os.SystemClock.elapsedRealtime():0L;
                     int n=input.read(buffer);
                     // EOF is not new network work. A fully received validated
                     // range may now finish its durable checkpoint on pause.
@@ -214,11 +214,7 @@ public final class PlaylistFeedCache {
                     if(copied>transferLimit||(expected>=0L&&copied>expected))
                         throw new IOException("Directory response exceeded range budget");
                     out.write(buffer,0,n);
-                    long delay=lowRate?SourceProbeTimePolicy.liveFullDirectoryPacingMillis(copied,android.os.SystemClock.elapsedRealtime()-started):0L;
-                    while(delay>0L){
-                        checkDownloadBudget(paused,deadline);
-                        long step=Math.min(50L,delay);android.os.SystemClock.sleep(step);delay-=step;
-                    }
+                    if(lowRate)paceDirectoryChunk(n,chunkStarted,paused,deadline);
                 }
                 if(copied<=0L||(expected>=0L&&copied!=expected))throw new IOException("Incomplete directory range");
                 out.getFD().sync();
@@ -425,14 +421,14 @@ public final class PlaylistFeedCache {
             }
             long copied = 0L;
             MessageDigest digest = newDigest();
-            try (InputStream input = new BufferedInputStream(connection.getInputStream());
+            try (InputStream input = lowRate?connection.getInputStream():new BufferedInputStream(connection.getInputStream());
                  FileOutputStream fileOutput = new FileOutputStream(temporary);
                  OutputStream output = new BufferedOutputStream(fileOutput)) {
                 byte[] buffer = new byte[lowRate?4096:32 * 1024];
-                final long readStarted=android.os.SystemClock.elapsedRealtime();
                 int count;
                 while (true) {
                     checkDownloadBudget(paused, deadline);
+                    long chunkStarted=lowRate?android.os.SystemClock.elapsedRealtime():0L;
                     count = input.read(buffer);
                     checkDownloadBudget(paused, deadline);
                     if (count == -1) break;
@@ -442,16 +438,7 @@ public final class PlaylistFeedCache {
                     }
                     output.write(buffer, 0, count);
                     digest.update(buffer, 0, count);
-                    if(lowRate){
-                        long delay=SourceProbeTimePolicy.liveFullDirectoryPacingMillis(
-                                copied,android.os.SystemClock.elapsedRealtime()-readStarted);
-                        while(delay>0L){
-                            checkDownloadBudget(paused,deadline);
-                            long step=Math.min(50L,delay);
-                            android.os.SystemClock.sleep(step);
-                            delay-=step;
-                        }
-                    }
+                    if(lowRate)paceDirectoryChunk(count,chunkStarted,paused,deadline);
                 }
                 output.flush();
                 fileOutput.getFD().sync();
@@ -563,6 +550,23 @@ public final class PlaylistFeedCache {
                 newest=candidate;
         }
         return newest;
+    }
+
+    /** Share the live media sample pacing contract. A slow chunk earns no
+     * credit for the next read; directory transfers never exceed their
+     * original 32 KiB/s cap even when playback has ample headroom. */
+    private static void paceDirectoryChunk(int bytes,long chunkStarted,
+            java.util.function.BooleanSupplier paused,long deadline)throws IOException{
+        long now=android.os.SystemClock.elapsedRealtime();
+        long delay=SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(bytes,now-chunkStarted,
+                SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(now));
+        long end=now+delay;
+        for(;;){
+            checkDownloadBudget(paused,deadline);
+            long remaining=end-android.os.SystemClock.elapsedRealtime();
+            if(remaining<=0L)return;
+            android.os.SystemClock.sleep(Math.min(25L,remaining));
+        }
     }
 
     private static void checkDownloadBudget(java.util.function.BooleanSupplier paused,
