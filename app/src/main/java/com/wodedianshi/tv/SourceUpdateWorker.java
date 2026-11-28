@@ -3071,7 +3071,7 @@ public class SourceUpdateWorker extends Worker {
           "source_initial_progress_phase",initialSliceExpired.get()
                ?"本批空闲抓源超过安全时限，保留已保存断点，自动续抓":playback
                ?"播放资源占用：本批抓源暂停，已保存进度"
-               :inputYield?"频道操作优先：高并发检测已让出，已保存进度"
+               :inputYield?"频道操作优先：并发检测已让出，已保存进度"
                :"本批任务已让出或取消，已保存进度，等待续抓");
       if(!playback&&!isStopped()&&!Thread.currentThread().isInterrupted()){
         try{
@@ -3470,10 +3470,9 @@ public class SourceUpdateWorker extends Worker {
       now=android.os.SystemClock.elapsedRealtime();
       if(wave.size()<2||!IdleProbeWavePolicy.canStart(now,deadline,batchDeadline)
           ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
-      // Manual refresh and first build share the same high-concurrency
-      // input-pressure gate. A user request to refresh is not permission
-      // to compete with later remote-control or touch interaction.
-      if(wave.size()>2&&idleWavePressureGeneration<0L){
+      // Every parallel wave shares the input-pressure gate, including two
+      // probes during recovery. A later input reduces the ceiling to one.
+      if(idleWavePressureGeneration<0L){
         idleWavePressureGeneration=pressureAtAdmission;
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       }
@@ -3514,7 +3513,6 @@ public class SourceUpdateWorker extends Worker {
       if(rollingEntries==null||rollingRemaining<=0)return;
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       long now=android.os.SystemClock.elapsedRealtime();
-      long pressureAtAdmission=SourceUpdateActivityPolicy.pressureGeneration();
       int ceiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
       IdleProbeWavePolicy active=new IdleProbeWavePolicy(ceiling);
       int running=0;
@@ -3547,7 +3545,7 @@ public class SourceUpdateWorker extends Worker {
         if(deadline==0L||!IdleProbeWavePolicy.canStart(now,deadline,waveBatchDeadline))return;
         int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
         if(running>=currentCeiling||currentCeiling<2)return;
-        if(running>=2&&idleWavePressureGeneration<0L)idleWavePressureGeneration=pressureAtAdmission;
+        // Rolling refills inherit the original wave's pressure generation.
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         active.add(endpoint,host);
         submit(entry,deadline);
