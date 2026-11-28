@@ -542,18 +542,21 @@ public class InitialQualityTransactionTest {
             String owner=ManualProbeQualityStore.PUBLISHED_OWNER;
             long now=100L*24L*60L*60L*1000L;
             String primary="https://example.invalid/primary",backup="https://example.invalid/backup";
+            String legacy="https://example.invalid/legacy";
+            String legacyKey=com.wodedianshi.tv.StableKey.url(legacy);
             String a=com.wodedianshi.tv.StableKey.url(primary),b=com.wodedianshi.tv.StableKey.url(backup);
             db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
             db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
             db.channelDao().insertCategory(new CategoryEntity("cat","test",0));
             db.channelDao().insertChannels(Collections.singletonList(new ChannelEntity(
-                "ch","Test|"+primary,"Test",primary,"test","cat","","","[]",0,0)));
+                "ch","Test|"+legacy,"Test",primary,"test","cat","","","[]",0,0)));
             db.channelDao().insertBackupSources(Collections.singletonList(new BackupSourceEntity("ch",backup,0,"[]")));
             db.appStateDao().put(new AppStateEntity(com.wodedianshi.tv.SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,
                 new org.json.JSONArray(Collections.singletonList("pending")).toString(),now));
             db.manualProbeQualityDao().put(java.util.Arrays.asList(
                 new ManualProbeQualityEntity(owner,a,900,null,1L),
                 new ManualProbeQualityEntity(owner,b,700,null,1L),
+                new ManualProbeQualityEntity(owner,legacyKey,600,null,1L),
                 new ManualProbeQualityEntity(owner,"pending",800,null,1L),
                 new ManualProbeQualityEntity(owner,"expired",-500,2,1L),
                 new ManualProbeQualityEntity(owner,"unknown",600,null,0L),
@@ -570,7 +573,7 @@ public class InitialQualityTransactionTest {
             assertNotNull(db.manualProbeQualityDao().find(owner,"expired"));
             db.runInTransaction(()->ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,now,()->false));
             assertNull(db.manualProbeQualityDao().find(owner,"expired"));
-            for(String key:java.util.Arrays.asList(a,b,"pending","unknown","fresh","future"))
+            for(String key:java.util.Arrays.asList(a,b,legacyKey,"pending","unknown","fresh","future"))
                 assertNotNull(key,db.manualProbeQualityDao().find(owner,key));
             assertNotNull(db.manualProbeQualityDao().find("private","expired"));
             assertEquals(1,db.channelDao().countChannels());
