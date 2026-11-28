@@ -1131,7 +1131,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private String identity(String name,String group,String url,String tvgName,String tvgId){
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(name,tvgName,tvgId,group);
-    return ChannelIdentityPolicy.identity(broadcaster,tvgId,identity(name,group,url));
+    String known=ChannelIdentityPolicy.identity(broadcaster,tvgId,"");
+    return known.isEmpty()?identity(name,group,url):known;
   }
   private String identity(String name,String group,String url){
     String canonical=canonicalChannelName(name);
@@ -1170,15 +1171,15 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     LastChannelState resume=roomLastChannel;
     String savedIdentity=resume.identity;
     if(savedIdentity.isEmpty())return -1;
-    String savedUrl=resume.url;
-    String savedName=canonicalChannelName(resume.name);
-    String savedGroup=normalizeResumeMetadata(resume.group);
-    String savedTvgId=normalizeResumeMetadata(resume.tvgId);
     // A known broadcaster identity cannot be substituted by a different
     // station merely because an old endpoint or display label matches.
     if(savedIdentity.endsWith("|cctv")||savedIdentity.endsWith("|satellite"))
       return RemoteChannelOrderPolicy.uniqueMatch(channels.size(),
           i->identity(channels.get(i)).equals(savedIdentity));
+    String savedUrl=resume.url;
+    String savedName=canonicalChannelName(resume.name);
+    String savedGroup=normalizeResumeMetadata(resume.group);
+    String savedTvgId=normalizeResumeMetadata(resume.tvgId);
     return RemoteChannelOrderPolicy.resolveSavedChannel(channels.size(),
         i->identity(channels.get(i)).equals(savedIdentity),
         i->{
