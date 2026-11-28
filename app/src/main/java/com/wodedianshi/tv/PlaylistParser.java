@@ -1,6 +1,5 @@
 package com.wodedianshi.tv;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
@@ -17,6 +16,46 @@ public final class PlaylistParser {
     private static final Pattern GROUP_TITLE = Pattern.compile("(?i)(?:^|\\s)group-title\\s*=\\s*(?:\"([^\"]*)\"|([^\\s,]+))");
 
     private PlaylistParser() {}
+
+    // Bound input before allocating or interpreting a whole line. Existing
+    // index fields retain their independent UTF-8 byte limit.
+    static final int MAX_LINE_CHARS=1024*1024;
+    static final class BoundedLineReader {
+        private final Reader source;
+        private final char[] buffer=new char[8192];
+        private int position,limit;
+        private boolean skipLf;
+        BoundedLineReader(Reader source){this.source=source;}
+        String readLine(java.util.function.BooleanSupplier paused)throws IOException {
+            StringBuilder joined=null;
+            for(;;){
+                SourceProbeTimePolicy.checkPaused(paused);
+                if(position==limit){
+                    int n=source.read(buffer,0,buffer.length);
+                    if(n<0)return joined==null?null:joined.toString();
+                    if(n==0)continue;
+                    position=0;limit=n;
+                }
+                if(skipLf){
+                    skipLf=false;
+                    if(buffer[position]=='\n'){position++;continue;}
+                }
+                int start=position;
+                while(position<limit&&buffer[position]!='\r'&&buffer[position]!='\n')position++;
+                int count=position-start;
+                if(count>MAX_LINE_CHARS-(joined==null?0:joined.length()))
+                    throw new IOException("Playlist line exceeds size limit");
+                if(position<limit){
+                    skipLf=buffer[position++]=='\r';
+                    if(joined==null)return new String(buffer,start,count);
+                    joined.append(buffer,start,count);
+                    return joined.toString();
+                }
+                if(joined==null)joined=new StringBuilder(count);
+                joined.append(buffer,start,count);
+            }
+        }
+    }
 
     public static final class ChannelSource {
         public final String name;
@@ -57,8 +96,8 @@ public final class PlaylistParser {
         try {
             return parseEach(new StringReader(data), maxEntries, consumer);
         } catch (IOException impossible) {
-            // StringReader never performs I/O; keep the historical no-throws API.
-            throw new IllegalStateException("Unexpected StringReader failure", impossible);
+            // Keep the historical no-throws API; bounded parsing may reject input.
+            throw new IllegalStateException("Playlist parse failed", impossible);
         }
     }
 
@@ -81,9 +120,12 @@ public final class PlaylistParser {
                                 EntryConsumer consumer, java.util.function.BooleanSupplier paused)
             throws IOException {
         if (source == null || skipEntries < 0 || maxEntries <= 0 || consumer == null) return 0;
+        return parseLines(new BoundedLineReader(source),skipEntries,maxEntries,consumer,paused);
+    }
+
+    static int parseLines(BoundedLineReader reader,int skipEntries,int maxEntries,
+            EntryConsumer consumer,java.util.function.BooleanSupplier paused)throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
-        BufferedReader reader = source instanceof BufferedReader
-                ? (BufferedReader) source : new BufferedReader(source, 8192);
         String name = null;
         String group = "";
         String pendingGroup = "";
@@ -94,7 +136,7 @@ public final class PlaylistParser {
         int emitted = 0;
         int skipped = 0;
         String rawLine;
-        while (emitted < maxEntries && (rawLine = reader.readLine()) != null) {
+        while (emitted < maxEntries && (rawLine = reader.readLine(paused)) != null) {
             SourceProbeTimePolicy.checkPaused(paused);
             String line = rawLine.replace("\uFEFF", "").trim();
             if (line.isEmpty()) continue;
