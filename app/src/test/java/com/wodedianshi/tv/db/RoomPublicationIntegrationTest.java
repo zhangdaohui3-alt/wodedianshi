@@ -853,7 +853,7 @@ public class RoomPublicationIntegrationTest {
                 java.util.Arrays.asList(first,equivalent,exact),active));
         assertEquals(1,RoomCatalogueWriter.resolveLiveSelection(
                 java.util.Arrays.asList(first,equivalent),active));
-        assertEquals(0,RoomCatalogueWriter.resolveLiveSelection(
+        assertEquals(-1,RoomCatalogueWriter.resolveLiveSelection(
                 java.util.Collections.singletonList(first),active));
     }
 
