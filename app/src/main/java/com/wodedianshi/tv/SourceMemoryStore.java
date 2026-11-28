@@ -29,7 +29,8 @@ public final class SourceMemoryStore {
             new java.util.concurrent.ConcurrentHashMap<>();
     private static boolean qoeFlushQueued;
     private static final java.util.Set<String> dirtyQoe = new java.util.HashSet<>();
-    private static final java.util.HashSet<String> memoryFlushQueued = new java.util.HashSet<>();
+    private static final java.util.HashSet<String> dirtyMemory = new java.util.HashSet<>();
+    private static boolean memoryFlushQueued;
 
     private SourceMemoryStore() {}
 
@@ -141,24 +142,41 @@ public final class SourceMemoryStore {
     // Called under LOCK. Snapshot selection and queue ordering are serialized;
     // the worker performs encoding and disk I/O after releasing the lock.
     private static void scheduleMemoryFlush(Context context, String key) {
-        if (!memoryFlushQueued.add(key)) return;
+        dirtyMemory.add(key);
+        if (memoryFlushQueued) return;
         Context application = context.getApplicationContext();
+        memoryFlushQueued = true;
         try {
             WRITER.execute(() -> {
-                java.util.HashMap<String, Object> copy = new java.util.HashMap<>();
+                java.util.Map<String,java.util.Map<String,Object>> snapshots = new java.util.HashMap<>();
                 synchronized (LOCK) {
-                    JSONObject source = LAST_GOOD.equals(key) ? lastGood : cooldowns;
-                    Iterator<String> keys = source.keys();
-                    while (keys.hasNext()) {
-                        String item = keys.next();
-                        copy.put(item, source.opt(item));
+                    for (String pending : dirtyMemory) {
+                        JSONObject source = LAST_GOOD.equals(pending) ? lastGood : cooldowns;
+                        java.util.Map<String,Object> copy = new java.util.HashMap<>();
+                        Iterator<String> keys = source.keys();
+                        while (keys.hasNext()) {
+                            String item = keys.next();
+                            copy.put(item, source.opt(item));
+                        }
+                        snapshots.put(pending, copy);
                     }
-                    memoryFlushQueued.remove(key);
+                    dirtyMemory.clear();
+                    memoryFlushQueued = false;
                 }
-                write(application, key, new JSONObject(copy).toString());
+                try {
+                    com.wodedianshi.tv.db.AppStateEditor editor =
+                        new com.wodedianshi.tv.db.AppStateEditor(application);
+                    for (java.util.Map.Entry<String,java.util.Map<String,Object>> entry : snapshots.entrySet())
+                        editor.putString(entry.getKey(), new JSONObject(entry.getValue()).toString());
+                    editor.apply();
+                } catch (RuntimeException failure) {
+                    // Retry the latest values on the next memory update, never spin on disk failure.
+                    synchronized (LOCK) { dirtyMemory.addAll(snapshots.keySet()); }
+                    android.util.Log.e("MyTVSourceMemory", "Room source-memory checkpoint failed", failure);
+                }
             });
         } catch (RuntimeException rejected) {
-            memoryFlushQueued.remove(key);
+            memoryFlushQueued = false;
             android.util.Log.e("MyTVSourceMemory", "source-memory queue rejected", rejected);
         }
     }
@@ -292,13 +310,6 @@ public final class SourceMemoryStore {
             for(int i=0;i<removals.size();i+=256)
                 db.appStateDao().removeAll(removals.subList(i,Math.min(i+256,removals.size())));
         });
-    }
-
-    private static void write(Context context, String key, String value) {
-        try { AppStateStore.put(context, key, value); }
-        catch (Throwable failure) {
-            android.util.Log.e("MyTVSourceMemory", "Room source-memory write failed: " + key, failure);
-        }
     }
 
     private static void trimOldest(JSONObject object) throws Exception {
