@@ -25,8 +25,8 @@ public final class RemoteChannelOrderPolicy {
         return query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
-    public static boolean matchesQuery(String query, String name, String group, String display) {
-        String q = normalizeQuery(query);
+    /** The directory worker normalizes the search term once before scanning. */
+    static boolean matchesNormalizedQuery(String q, String name, String group, String display) {
         return q.isEmpty() || contains(name, q) || contains(group, q) || contains(display, q);
     }
 
