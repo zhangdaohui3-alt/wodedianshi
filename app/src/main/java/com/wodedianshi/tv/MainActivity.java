@@ -1174,9 +1174,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String savedName=canonicalChannelName(resume.name);
     String savedGroup=normalizeResumeMetadata(resume.group);
     String savedTvgId=normalizeResumeMetadata(resume.tvgId);
+    // A known broadcaster identity cannot be substituted by a different
+    // station merely because an old endpoint or display label matches.
+    if(savedIdentity.endsWith("|cctv")||savedIdentity.endsWith("|satellite"))
+      return RemoteChannelOrderPolicy.uniqueMatch(channels.size(),
+          i->identity(channels.get(i)).equals(savedIdentity));
     return RemoteChannelOrderPolicy.resolveSavedChannel(channels.size(),
         i->identity(channels.get(i)).equals(savedIdentity),
-        i->{Channel c=channels.get(i);return identity(c.name,c.group,c.url).equals(savedIdentity);},
         i->{
           Channel c=channels.get(i);
           return !resume.name.isEmpty()
