@@ -525,7 +525,7 @@ public class SourceUpdateSchedulePolicyTest {
             assertFalse(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck(event,at,at));
         java.util.ArrayList<Integer> order=new java.util.ArrayList<>();
         for(int i=0;i<24;i++)order.add(i);
-        SourceUpdateSchedulePolicy.promotePlaybackRechecks(order,i->i>=20);
+        SourceUpdateSchedulePolicy.promotePlaybackRechecks(order,i->i>=20,String::valueOf);
         assertEquals(java.util.Arrays.asList(0,1,2,20,3,4,5,21,6,7,8,22),order.subList(0,12));
         assertEquals(24,new java.util.HashSet<>(order).size());
         java.util.ArrayList<Integer> ordinary=new java.util.ArrayList<>(order);
@@ -534,8 +534,30 @@ public class SourceUpdateSchedulePolicyTest {
         for(int i=0;i<24;i++)if(i<20||i==23)expected.add(i);
         assertEquals(expected,ordinary);
         java.util.ArrayList<Integer> noUrgent=new java.util.ArrayList<>(expected);
-        SourceUpdateSchedulePolicy.promotePlaybackRechecks(noUrgent,i->false);
+        SourceUpdateSchedulePolicy.promotePlaybackRechecks(noUrgent,i->false,String::valueOf);
         assertEquals(expected,noUrgent);
+    }
+
+    @Test public void priorityRechecksUseDifferentOriginsWithoutRemovingSiblings(){
+        java.util.ArrayList<String> order=new java.util.ArrayList<>();
+        for(int i=0;i<20;i++)order.add("https://normal.invalid/"+i);
+        order.add("https://a.invalid/20");
+        order.add("https://a.invalid:443/21");
+        order.add("https://A.invalid/22");
+        order.add("https://b.invalid/23");
+        java.util.ArrayList<String> original=new java.util.ArrayList<>(order);
+        SourceUpdateSchedulePolicy.promotePlaybackRechecks(order,
+                url->!url.contains("normal.invalid"),InitialOriginCooldownPolicy::origin);
+        assertEquals(original.subList(0,3),order.subList(0,3));
+        assertEquals(original.get(20),order.get(3));
+        assertEquals(original.get(23),order.get(7));
+        assertEquals(original.get(9),order.get(11));
+        assertEquals(original.size(),order.size());
+        assertEquals(new java.util.HashSet<>(original),new java.util.HashSet<>(order));
+        for(String promoted:java.util.Arrays.asList(original.get(20),original.get(23))){
+            original.remove(promoted);order.remove(promoted);
+        }
+        assertEquals(original,order);
     }
 
     @Test public void qualityRecheckUsesRemainingIdleBudgetWithoutExceedingPageLimit(){
