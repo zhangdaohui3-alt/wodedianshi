@@ -7999,7 +7999,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         return;
       }
       libVlcStableChecks=Math.min(2,libVlcStableChecks+1);
-      long now=android.os.SystemClock.elapsedRealtime();
       if(TrackHealthPolicy.canGrantVlcDiscovery(libVlcVideoOutputReady,libVlcAudioTrackReady,
           libVlcRebuffering,reportsPlaying,libVlcStableChecks,lastStableDiscoveryInteraction,now)
           &&canGrantStableDiscoveryUi()){
