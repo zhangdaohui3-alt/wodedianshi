@@ -6270,20 +6270,19 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     long generation=catalogueFilterGeneration;
     // Keep accepted steps within the same user-selected filter. A catalogue
     // replacement can rebase them onto a new complete order, not a stale index.
-    if(pendingRemoteZapGeneration!=generation)clearPendingRemoteZap();
+    if(pendingRemoteZapGeneration!=generation)clearPendingRemoteChannel();
     int steps=RemoteChannelOrderPolicy.mergeZapSteps(pendingRemoteZapSteps,delta);
+    // Opposite key presses that cancel out require neither a tune nor an order lookup.
+    if(steps==0){clearPendingRemoteChannel();return;}
+    pendingRemoteZapSteps=steps;
+    pendingRemoteZapGeneration=generation;
     RemoteChannelOrder order=currentRemoteChannelOrder();
     if(order==null){
-      pendingRemoteZapSteps=steps;
-      pendingRemoteZapGeneration=generation;
-      if(steps!=0)prewarmRemoteChannelOrder();
+      prewarmRemoteChannelOrder();
       android.util.Log.i("MyTVZap","channel_order_cache_miss_async total_ms="
           +(android.os.SystemClock.elapsedRealtime()-started));
       return;
     }
-    pendingRemoteZapSteps=steps;
-    pendingRemoteZapGeneration=generation;
-    if(steps==0){clearPendingRemoteZap();return;}
     if(pendingRemoteZapDispatch!=null)return;
     pendingRemoteZapDispatch=()->{
       pendingRemoteZapDispatch=null;
