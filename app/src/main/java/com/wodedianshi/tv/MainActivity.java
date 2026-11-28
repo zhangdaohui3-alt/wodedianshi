@@ -4914,7 +4914,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
           String display=query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
-          if(!RemoteChannelOrderPolicy.matchesQuery(query,c.name,c.group,display))continue;
+          if(!RemoteChannelOrderPolicy.matchesNormalizedQuery(query,c.name,c.group,display))continue;
           queryMatches++;
           indexes.add(i);
           if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
