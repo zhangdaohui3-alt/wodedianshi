@@ -16,7 +16,40 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=28,manifest=Config.NONE,application=Application.class)
+@org.robolectric.annotation.LooperMode(org.robolectric.annotation.LooperMode.Mode.PAUSED)
 public class LibVlcVodBackendLifecycleTest {
+    @Test public void startupFailureIsDeliveredButPendingFailureIsRemovedOnRevoke() throws Exception {
+        List<Runnable> queued=new ArrayList<>();
+        List<String> failures=new ArrayList<>();
+        ThreadPoolExecutor worker=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>()){
+            @Override public void execute(Runnable action){queued.add(action);}
+        };
+        try {
+            LibVlcVodBackend backend=new LibVlcVodBackend(RuntimeEnvironment.getApplication(),null,worker);
+            backend.setListener(new VodPlaybackBackend.Listener(){
+                public void onReady(){fail("Unexpected ready");}
+                public void onVideoOutput(boolean available){fail("Unexpected video");}
+                public void onFailure(String reason){failures.add(reason);}
+                public void onEnded(){fail("Unexpected ended");}
+            });
+            java.lang.reflect.Method submit=LibVlcVodBackend.class.getDeclaredMethod("submit",Runnable.class);
+            submit.setAccessible(true);
+            Runnable failure=()->{throw new IllegalStateException("test startup");};
+            submit.invoke(backend,failure);
+            queued.remove(0).run();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals(java.util.Collections.singletonList("IllegalStateException"),failures);
+            submit.invoke(backend,failure);
+            queued.remove(0).run();
+            backend.revoke();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals(java.util.Collections.singletonList("IllegalStateException"),failures);
+        } finally {
+            worker.shutdownNow();
+        }
+    }
+
     @Test public void revokedBackendRejectsQueuedStartAndListenerReinstallation() throws Exception {
         List<Runnable> queued=new ArrayList<>();
         ThreadPoolExecutor worker=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,
