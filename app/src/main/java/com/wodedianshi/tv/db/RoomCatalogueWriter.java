@@ -113,6 +113,14 @@ public final class RoomCatalogueWriter {
             if(playing!=null&&!playing.isEmpty()&&!existing.contains(playing))
                 throw new StaleCatalogueException();
             java.util.Set<String> eligible=new java.util.HashSet<>(repeatedlyFailed);
+            // A replacement may use any verified candidate. Compute their
+            // common broad scope coverage once, not once for every saved route.
+            boolean coversChina=true,coversGlobal=true;
+            for(java.util.Set<String> incoming:verifiedBestFirst.values()){
+                coversChina=coversChina&&incoming!=null&&incoming.contains("china");
+                coversGlobal=coversGlobal&&incoming!=null&&incoming.contains("global");
+                if(!coversChina&&!coversGlobal)break;
+            }
             // Do not remove explicitly imported or geographic-only membership
             // from a source whose replacement has no equivalent scope evidence.
             for(BackupSourceEntity source:old){
@@ -124,12 +132,8 @@ public final class RoomCatalogueWriter {
                         // Validate every stored tag, but stop comparing replacements
                         // once any scope requires keeping the original route.
                         if(protectedRoute)continue;
-                        protectedRoute=!"china".equals(tag)&&!"global".equals(tag);
-                        if(!protectedRoute)for(java.util.Set<String> incoming:verifiedBestFirst.values()){
-                            if(incoming==null||!incoming.contains(tag)){
-                                protectedRoute=true;break;
-                            }
-                        }
+                        protectedRoute="china".equals(tag)?!coversChina
+                                :"global".equals(tag)?!coversGlobal:true;
                     }
                     if(protectedRoute)
                         eligible.remove(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url));
