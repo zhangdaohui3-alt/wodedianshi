@@ -314,4 +314,14 @@ public class SourceSelectionPolicyTest {
                 new HashSet<>(ranked),key->false));
     }
 
+    @Test public void initialSelectionNeverRevivesBlockedAliasesOrEmptyRoutes() {
+        java.util.List<String> ranked=Arrays.asList("HTTP://BLOCKED.example:80/live",
+                "http://blocked.example/live",null," ");
+        assertEquals(-1,SourceSelectionPolicy.findInitialSource(ranked,
+                "http://blocked.example/live",Collections.singleton("http://blocked.example/live"),
+                key->{fail("blocked or empty routes must not query cooldown");return false;}));
+        assertEquals(-1,SourceSelectionPolicy.findInitialSource(Arrays.asList(null," "),
+                null,Collections.emptySet(),key->{fail("empty route must not query cooldown");return false;}));
+    }
+
 }
