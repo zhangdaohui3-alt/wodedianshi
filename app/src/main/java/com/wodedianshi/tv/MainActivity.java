@@ -4919,8 +4919,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           queryMatches++;
           indexes.add(i);
           if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
-          String key=c.key();
-          if(!sourceIndexByKey.containsKey(key))sourceIndexByKey.put(key,i);
+          sourceIndexByKey.putIfAbsent(c.key(),i);
         }
         // Diagnose empty local directories without mistaking a completed UI filter
         // for a completed network discovery. Count candidates from the saved snapshot.
@@ -6204,8 +6203,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         +(category==null?"全部":category)+"|"+(query==null?"":query);
   }
   private void prewarmRemoteChannelOrder(){
-    if(currentRemoteChannelOrder()!=null)return;
-    if(currentDirectoryOrderKey().equals(directoryFilterInFlightKey))return;
+    String key=currentDirectoryOrderKey();
+    RemoteChannelOrder cached=cachedRemoteChannelOrder;
+    if((cached!=null&&key.equals(cached.key))||key.equals(directoryFilterInFlightKey))return;
     refresh(true);
   }
   private void clearPendingRemoteSource(){
