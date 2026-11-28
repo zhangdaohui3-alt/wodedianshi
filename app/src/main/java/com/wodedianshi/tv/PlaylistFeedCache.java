@@ -144,6 +144,7 @@ public final class PlaylistFeedCache {
             try(java.io.RandomAccessFile out=new java.io.RandomAccessFile(partial,"rw")){out.setLength(offset);}
         }
         HttpURLConnection connection=null;
+        boolean fullResponse=false;
         long deadline=android.os.SystemClock.elapsedRealtime()+(lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_BUDGET_MS:DOWNLOAD_BUDGET_MS);
         try{
             if(offset>0L&&offset==total){
@@ -163,6 +164,7 @@ public final class PlaylistFeedCache {
             connection.setRequestProperty("Range","bytes="+offset+"-"+(offset+chunkLimit-1L));
             if(offset>0L)connection.setRequestProperty("If-Range",oldTag);
             int status=connection.getResponseCode();
+            fullResponse=status==200;
             checkDownloadBudget(paused,deadline);
             String encoding=connection.getHeaderField("Content-Encoding");
             if(encoding!=null&&!encoding.equalsIgnoreCase("identity"))throw new IOException("Encoded range response");
@@ -192,8 +194,8 @@ public final class PlaylistFeedCache {
                 // Range ignored or representation changed. Never append a 200.
                 // Keep the old validated prefix until we admit its replacement.
                 expected=connection.getContentLength();total=expected;
+                transferLimit=fullReplacementLimit(lowRate);
                 if(lowRate){
-                    transferLimit=SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES;
                     deadline=android.os.SystemClock.elapsedRealtime()+SourceProbeTimePolicy.LIVE_FULL_DIRECTORY_BUDGET_MS;
                 }
                 if(expected>transferLimit)
@@ -242,6 +244,13 @@ public final class PlaylistFeedCache {
                 if(!SourceProbeTimePolicy.fitsLiveDirectory(length))return null;
             }
             return publishRangeBody(context,directory,cached,body,partial,checkpoint,tag,paused,deadline);
+        }catch(SourceProbeTimePolicy.PausedException pausedFailure){
+            throw pausedFailure;
+        }catch(IOException failure){
+            // A 200 already supplied the full-body opportunity. Do not start
+            // another full transfer in this idle slice, even on invalid data.
+            if(fullResponse&&!lowRate)throw new FullDirectoryAttemptException(failure);
+            throw failure;
         }finally{
             if(connection!=null)connection.disconnect();
             checkpointTemp.delete();
@@ -335,7 +344,16 @@ public final class PlaylistFeedCache {
     /** A complete retained range needs only local finalization. Do not
      * redownload it on local I/O failure; the normal bounded retry owns it.
      * Invalidated checkpoints still follow the ordinary full-body fallback. */
+    static long fullReplacementLimit(boolean viewing){
+        return viewing?SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES:MAX_BYTES;
+    }
+
+    static final class FullDirectoryAttemptException extends IOException {
+        FullDirectoryAttemptException(IOException cause){super(cause.getMessage(),cause);}
+    }
+
     static boolean shouldDeferRangeFallback(IOException failure,File partial){
+        if(failure instanceof FullDirectoryAttemptException)return true;
         int priority=partial.isFile()?rangeRetentionPriority(partial):0;
         return priority==2||SourceProbeTimePolicy.deferRangeFallback(failure,priority==1);
     }
@@ -357,7 +375,7 @@ public final class PlaylistFeedCache {
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
             boolean lowRate,boolean forceRevalidate) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
-        long maxBytes=lowRate?SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES:MAX_BYTES;
+        long maxBytes=fullReplacementLimit(lowRate);
         if (context == null || feedUrl == null || feedUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("context/feedUrl is empty");
         }
