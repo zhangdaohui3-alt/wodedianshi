@@ -741,43 +741,25 @@ public class SourceUpdateWorker extends Worker {
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
       int initialNextFeedIndex=InitialFeedRotationPolicy.normalizeStart(
           stateInt(initialProbeState,"source_initial_next_feed_index",0),feeds.length);
-      boolean[] inspectedFeeds=new boolean[feeds.length];
-      boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
-      boolean[] visitedForCoverage=new boolean[feeds.length];
-      boolean[] preparedForCoverage=new boolean[feeds.length];
-      boolean[] failedForCoverage=new boolean[feeds.length];
-      boolean acquisitionYield=false;
-      boolean[] availableUnderPressure=null;
-      boolean[] orderedReadyUnderPressure=new boolean[feeds.length];
-      String[] acquiredVersions=new String[feeds.length];
+      final InitialFeedAdmission initialAdmission;
       if(initialDiscoveryChain){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        InitialFeedAdmission admission=readInitialFeedAdmission(feeds,slowPlayback);
+        initialAdmission=readInitialFeedAdmission(feeds,slowPlayback);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        System.arraycopy(admission.completed,0,inspectedFeeds,0,feeds.length);
-        System.arraycopy(admission.deferred,0,attemptedFeedsThisRun,0,feeds.length);
-        System.arraycopy(admission.visited,0,visitedForCoverage,0,feeds.length);
-        System.arraycopy(admission.prepared,0,preparedForCoverage,0,feeds.length);
-        System.arraycopy(admission.failed,0,failedForCoverage,0,feeds.length);
-        acquisitionYield=admission.acquisitionYield;
-        availableUnderPressure=admission.availableUnderPressure;
-        orderedReadyUnderPressure=admission.orderedReadyUnderPressure;
-        acquiredVersions=admission.acquiredVersions;
-        final long[] recheckRemaining=admission.remaining;
-        if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(inspectedFeeds,
+        if(!slowPlayback&&SourceDiscoveryPriorityPolicy.activeStage(initialAdmission.completed,
             SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
             SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT)<3
-            &&SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,inspectedFeeds,
-                attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
+            &&SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,initialAdmission.completed,
+                initialAdmission.deferred,initialAdmission.visited,initialAdmission.prepared,initialAdmission.failed,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure,orderedReadyUnderPressure)<0){
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,initialAdmission.acquisitionYield,initialAdmission.availableUnderPressure,initialAdmission.orderedReadyUnderPressure)<0){
           // All unfinished feeds across the priority stages are cooling.
           // Do not treat this as exhaustion, or retry the same request in a loop.
-          enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(inspectedFeeds,
-              recheckRemaining));
+          enqueueInitialContinuation(DiscoveryBatchPolicy.earliestEligibleCooldownSeconds(initialAdmission.completed,
+              initialAdmission.remaining));
           return Result.success();
         }
-      }
+      }else initialAdmission=null;
       int routineStart=initialDiscoveryChain?0:manualRefresh?
           Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
           InitialFeedRotationPolicy.normalizeStart(roomInt("source_routine_next_feed_index",0),feeds.length);
@@ -789,9 +771,9 @@ public class SourceUpdateWorker extends Worker {
       for(int feedOffset=0;feedOffset<feedLimit;feedOffset++){
         int feedIndex=initialDiscoveryChain
             ?SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
-                inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
+                initialAdmission.completed,initialAdmission.deferred,initialAdmission.visited,initialAdmission.prepared,initialAdmission.failed,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,acquisitionYield,availableUnderPressure,orderedReadyUnderPressure)
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,initialAdmission.acquisitionYield,initialAdmission.availableUnderPressure,initialAdmission.orderedReadyUnderPressure)
             :routineStart+feedOffset;
         if(feedIndex<0)break;
         // Prefer mainland, then HK/Macau/Taiwan, then international feeds.
@@ -851,7 +833,7 @@ public class SourceUpdateWorker extends Worker {
             cachedFeed=PlaylistFeedCache.obtain(getApplicationContext(),feed,false,feedCursor>0,pauseRequested);
           }
           String acquiredVersion=initialDiscoveryChain&&!slowPlayback
-              ?acquiredVersions[feedIndex]:"";
+              ?initialAdmission.acquiredVersions[feedIndex]:"";
           if(initialDiscoveryChain&&!slowPlayback&&(cachedFeed==null||!DiscoveryBatchPolicy.isPreparedInitialFeed(
               acquiredVersion,PlaylistFeedCache.contentVersion(cachedFeed)))){
             // Restore the derived index from the exact committed body first.
@@ -881,19 +863,19 @@ public class SourceUpdateWorker extends Worker {
             else PlaylistFeedIndex.readPage(cachedFeed,0,1,source->{},pauseRequested);
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
             commitInitialAcquisition(feedIndex,cachedFeed);
-            preparedForCoverage[feedIndex]=true;
-            acquiredVersions[feedIndex]=PlaylistFeedCache.contentVersion(cachedFeed);
-            availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,inspectedFeeds,acquiredVersions,preparedForCoverage,orderedReadyUnderPressure);
+            initialAdmission.prepared[feedIndex]=true;
+            initialAdmission.acquiredVersions[feedIndex]=PlaylistFeedCache.contentVersion(cachedFeed);
+            initialAdmission.availableUnderPressure=PlaylistFeedCache.initialCachePressure(getApplicationContext(),feeds,initialAdmission.completed,initialAdmission.acquiredVersions,initialAdmission.prepared,initialAdmission.orderedReadyUnderPressure);
             // Yield to another fresh eligible directory before deep scans; retain
             // immediate first-watch and the ordinary probe budget when none remains.
             int nextPreparation=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(feedIndex,
-                inspectedFeeds,attemptedFeedsThisRun,visitedForCoverage,preparedForCoverage,failedForCoverage,
+                initialAdmission.completed,initialAdmission.deferred,initialAdmission.visited,initialAdmission.prepared,initialAdmission.failed,
                 SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT,
-                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,availableUnderPressure,orderedReadyUnderPressure);
+                SourceDiscoveryFeedCatalog.CHINESE_REGION_FEED_COUNT,preferCoreCoverage,slowPlayback,false,initialAdmission.availableUnderPressure,initialAdmission.orderedReadyUnderPressure);
             if(!DiscoveryBatchPolicy.canProbePreparedDirectory(slowPlayback,
                 PlaylistFeedIndex.indexedEntryCount(cachedFeed),
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt,nextPreparation==feedIndex,
-                restoredLocalBody,availableUnderPressure!=null))
+                restoredLocalBody,initialAdmission.availableUnderPressure!=null))
               return continueAfterAcquisition();
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           }
@@ -1109,7 +1091,7 @@ public class SourceUpdateWorker extends Worker {
               feedReadSucceeded?parsedCount[0]:0,
               feedReadSucceeded?indexedEntries:-1,feedReadSucceeded||feedTerminalUnavailable,
               feedTerminalUnavailable,feedReadSucceeded?feedVersion:""));
-          if(initialDiscoveryChain)attemptedFeedsThisRun[feedIndex]=true;
+          if(initialDiscoveryChain)initialAdmission.deferred[feedIndex]=true;
         }
         if(initialDiscoveryChain){
           if(feedReadSucceeded){
@@ -1163,7 +1145,7 @@ public class SourceUpdateWorker extends Worker {
       // staging transaction. Overlay this slice's feed outcomes on admission's
       // Room snapshot once instead of rereading the same flags up to three times.
       final boolean allFeedsInspectedThisSlice=initialDiscoveryChain
-          &&areAllDiscoveryFeedsComplete(inspectedFeeds,feedBatches);
+          &&areAllDiscoveryFeedsComplete(initialAdmission.completed,feedBatches);
       final boolean initialIndexEligible=initialDiscoveryChain&&FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(
           previousStagedSize,initialCoreMask,allFeedsInspectedThisSlice);
       if(initialIndexEligible&&!slowPlayback&&!com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
