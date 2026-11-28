@@ -130,7 +130,7 @@ public final class SourceMemoryStore {
     public static boolean isCoolingDown(Context context, String url) {
         if (context == null || url == null || url.isEmpty()) return false;
         synchronized (LOCK) {
-            if (!initialized) return false;
+            if (!initialized || cooldowns.length() == 0) return false;
             long until = cooldowns.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
             return until > System.currentTimeMillis();
         }
