@@ -6558,13 +6558,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     };
     uiHandler.postDelayed(pendingRemoteSourceDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
   }
+  /** Reset only per-channel source recovery; automatic channel scans retain their bound. */
+  private void resetChannelSourceRecoveryBudget(){
+    automaticSwitchCount=0;
+    failedEndpointsThisPass.clear();
+    sameSourceRecoveryCount=0;
+  }
+  /** A fresh manual request or confirmed stable output renews the full recovery budget. */
+  private void resetLiveRecoveryBudget(){
+    resetChannelSourceRecoveryBudget();
+    automaticChannelSwitchCount=0;
+  }
   /** Commit an already validated manual source choice before starting playback. */
   private void selectManualSource(Channel c,int next){
     c.activeSource=next;
-    automaticSwitchCount=0;
-    failedEndpointsThisPass.clear();
-    automaticChannelSwitchCount=0;
-    sameSourceRecoveryCount=0;
+    resetLiveRecoveryBudget();
     manualSourceSwitch=true;
     queueActiveSourceMutation(c.key(),c.backups.get(next));
   }
@@ -7029,10 +7037,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(TrackHealthPolicy.canRefreshRecoveryBudget(confirmedOutput,
           Math.max(sourceReadyAt,lastRecoveryBudgetRefreshAt),
           watchdogLastAdvanceAt,lastVideoPipelineActivityAt,now)){
-        automaticSwitchCount=0;
-        failedEndpointsThisPass.clear();
-        automaticChannelSwitchCount=0;
-        sameSourceRecoveryCount=0;
+        resetLiveRecoveryBudget();
         lastRecoveryBudgetRefreshAt=now;
       }
       schedulePlaybackWatchdog();
@@ -7214,9 +7219,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     automaticChannelSwitchCount++;
-    automaticSwitchCount=0;
-    failedEndpointsThisPass.clear();
-    sameSourceRecoveryCount=0;
+    resetChannelSourceRecoveryBudget();
     manualSourceSwitch=false;
     int previouslySelected=selected;
     selected=next;
@@ -7235,10 +7238,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
-    automaticSwitchCount=0;
-    failedEndpointsThisPass.clear();
-    automaticChannelSwitchCount=0;
-    sameSourceRecoveryCount=0;
+    resetLiveRecoveryBudget();
     manualSourceSwitch=false;
     int previouslySelected=selected;
     selected=ix;
@@ -7265,10 +7265,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(isRemotePlaybackLockActive())return;
     Channel target=channels.get(ix);
     if(target.backups==null||target.backups.isEmpty())return;
-    automaticSwitchCount=0;
-    failedEndpointsThisPass.clear();
-    automaticChannelSwitchCount=0;
-    sameSourceRecoveryCount=0;
+    resetLiveRecoveryBudget();
     manualSourceSwitch=true;
     int previouslySelected=selected;
     selected=ix;
