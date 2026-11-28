@@ -802,8 +802,7 @@ public class SourceUpdateWorker extends Worker {
           saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
-        ArrayList<Entry> feedCandidates=new ArrayList<>();
-        boolean feedCandidatesAdded=false;
+        final ArrayList<Entry> rawFeedCandidates=new ArrayList<>();
         try{
           // WorkManager may resume the same large feed over many runs. Reuse a
           // complete local snapshot so each continuation does not redownload
@@ -970,19 +969,19 @@ public class SourceUpdateWorker extends Worker {
             }
             String scope=RegionCategoryPolicy.catalogueScope(
                 source.name,source.group,source.tvgName,source.tvgId,directoryScope);
-            feedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
+            rawFeedCandidates.add(new Entry(source.name,source.url,source.group,false,scope,
                 source.tvgId,source.tvgName));
           };
           parsedCount[0]=slowPlayback?PlaylistFeedIndex.readExistingPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
               coverageOrderForRead?PlaylistFeedIndex.readInitialPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested):
               PlaylistFeedIndex.readPage(cachedFeed,feedCursor,feedPageSize,consume,pauseRequested);
+          ArrayList<Entry> feedCandidates=rawFeedCandidates;
           if(initialDiscoveryChain){
             // Dedupe exact records only within the fixed raw page. Raw index
             // and parsedCount remain untouched; a changed candidate fingerprint
             // restarts that partial page rather than skipping its suffix.
-            ArrayList<Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(feedCandidates,
+            feedCandidates=DiscoveryBatchPolicy.distinctExactPageRecords(feedCandidates,
                 Entry::exactRecordFields);
-            feedCandidates.clear();feedCandidates.addAll(distinct);
           }
           if(manualRefresh&&!initialDiscoveryChain&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT){
             // Manual refresh retains its stable mainland-first sort. Initial
@@ -994,13 +993,12 @@ public class SourceUpdateWorker extends Worker {
                     entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
           }
           if(initialDiscoveryChain){
-            ArrayList<Entry> ordered=IdleProbeWavePolicy.coverageFirst(feedCandidates,
+            feedCandidates=IdleProbeWavePolicy.coverageFirst(feedCandidates,
                 entry->entry.mergeIdentity(),
                 Entry::host,entry->ChinaDiscoveryCandidatePolicy.initialCoveragePriority(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId),
                 entry->ChinaDiscoveryCandidatePolicy.initialCoverageRegion(
                     feedIndex,entry.scope,entry.name,entry.group,entry.tvgName,entry.tvgId));
-            feedCandidates.clear();feedCandidates.addAll(ordered);
           }
           indexedEntries=PlaylistFeedIndex.indexedEntryCount(cachedFeed);
           // Parsing a cached large playlist can overlap a newly started player.
@@ -1042,7 +1040,7 @@ public class SourceUpdateWorker extends Worker {
                   +((initialDiscoveryChain||manualRefresh)&&feedIndex<SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT)
               +" local_metadata="+localMetadataCandidates
               +" province_resolved="+provinceResolvedCandidates
-              +" feed_scope="+scopeForFeed(feed));
+              +" feed_scope="+directoryScope);
           if(!feedCandidates.isEmpty())feedsWithEntries++;
           int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
           if(feedCandidates.size()>remaining){
@@ -1052,7 +1050,6 @@ public class SourceUpdateWorker extends Worker {
             throw new IOException("本轮候选容量已满，保留目录游标并在下轮继续");
           }
           candidates.addAll(feedCandidates);
-          feedCandidatesAdded=true;
           feedReadSucceeded=true;
           feedsOk++;
         }catch(Exception e){
@@ -1355,7 +1352,7 @@ public class SourceUpdateWorker extends Worker {
               entry->!entry.skipReplay&&!entry.alreadyStaged
                   &&(entry.url.startsWith("http://")||entry.url.startsWith("https://")));
       if(manualIndexed){
-        if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
+        if(manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
         for(Entry entry:probeCandidates)if(!entry.savedSource)
           identities.add(entry.mergeIdentity());
