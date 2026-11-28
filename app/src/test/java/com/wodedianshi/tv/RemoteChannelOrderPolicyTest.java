@@ -7,17 +7,17 @@ import static org.junit.Assert.assertTrue;
 public class RemoteChannelOrderPolicyTest {
     @org.junit.Test public void stableStationWinsEvenIfOldEndpointBelongsToAnotherStation() {
         org.junit.Assert.assertEquals(1,RemoteChannelOrderPolicy.resolveSavedChannel(
-            3,i->i==1,i->false,i->i==1,i->i==0));
+            3,i->i==1,i->i==1,i->i==0));
     }
     @org.junit.Test public void sharedEndpointAloneCannotRestoreAnAmbiguousStation() {
         org.junit.Assert.assertEquals(-1,RemoteChannelOrderPolicy.resolveSavedChannel(
-            3,i->false,i->false,i->false,i->i<2));
+            3,i->false,i->false,i->i<2));
     }
     @org.junit.Test public void uniqueStationMetadataWinsOverOldEndpoint() {
         org.junit.Assert.assertEquals(2,RemoteChannelOrderPolicy.resolveSavedChannel(
-            3,i->false,i->false,i->i==2,i->i==0));
+            3,i->false,i->i==2,i->i==0));
         org.junit.Assert.assertEquals(0,RemoteChannelOrderPolicy.resolveSavedChannel(
-            3,i->false,i->false,i->false,i->i==0));
+            3,i->false,i->false,i->i==0));
     }
 
     @Test public void burstDispatchWaitsForFixedWindowAndCurrentFilter() {
@@ -115,4 +115,14 @@ public class RemoteChannelOrderPolicyTest {
         assertFalse(RemoteChannelOrderPolicy.mayPublish(
                 false, 31L, 31L, 4L, 4L, 6861, 6862, false, false, 0, 0));
     }
+    @Test public void ambiguousIdentityNeverFallsBackToAnotherStation() {
+        org.junit.Assert.assertEquals(-1,RemoteChannelOrderPolicy.resolveSavedChannel(
+            3,i->i<2,i->{throw new AssertionError("ambiguous identity");},i->i==2));
+    }
+
+    @Test public void ambiguousMetadataNeverFallsBackToAnEndpoint() {
+        org.junit.Assert.assertEquals(-1,RemoteChannelOrderPolicy.resolveSavedChannel(
+            3,i->false,i->i<2,i->{throw new AssertionError("ambiguous metadata");}));
+    }
+
 }
