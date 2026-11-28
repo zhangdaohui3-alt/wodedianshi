@@ -398,9 +398,11 @@ public class SourceUpdateWorker extends Worker {
       boolean manualQueueOnly=false,manualIndexed=false;
       if(manualRefresh){
         String config=discoveryFeedsFingerprint(feeds);
-        String owner=roomString(manualOwnerKey,"");
-        boolean resume=manualId.equals(owner)&&manualId.equals(roomString("source_manual_active_id",""))
-            &&config.equals(roomString("source_manual_feed_config",""));
+        Map<String,String> manualState=com.wodedianshi.tv.db.AppStateStore.getValues(
+            getApplicationContext(),Arrays.asList(manualOwnerKey,"source_manual_active_id","source_manual_feed_config"));
+        String owner=manualState.getOrDefault(manualOwnerKey,"");
+        boolean resume=manualId.equals(owner)&&manualId.equals(manualState.get("source_manual_active_id"))
+            &&config.equals(manualState.get("source_manual_feed_config"));
         if(!SourceUpdateSchedulePolicy.manualProbeCacheMatches(resume,manualId,manualProbeCacheOwner)){
           clearRecentProbeCache();manualProbeCacheOwner=manualId;
         }
