@@ -83,6 +83,32 @@ public class SourceUpdateActivityPolicyTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void lowBufferRateRecoversWithHysteresisAndNoDirectJumpToHigh(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            long now=11000L;
+            long[] samples={1000L,999L,1000L,1200L,900L,2999L,3000L,12000L,999L,12000L};
+            long[] rates={32768L,16384L,16384L,16384L,16384L,16384L,32768L,32768L,16384L,32768L};
+            for(int i=0;i<samples.length;i++){
+                SourceUpdateActivityPolicy.reportStableLive(now);
+                SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(now,samples[i]);
+                assertEquals("buffer sample "+i,rates[i],SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(now));
+                now+=1000L;
+            }
+            SourceUpdateActivityPolicy.reportStableLive(now+7000L);
+            SourceUpdateActivityPolicy.reportMedia3DiscoveryBuffer(now+7000L,12000L);
+            assertEquals(49152L,SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(now+7000L));
+            SourceUpdateActivityPolicy.notePressure(now+8000L);
+            assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(now+8000L));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+
     @Test public void headroomPacingBoundsAndFallback(){
         assertEquals(250L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,16384L));
         assertEquals(84L,SourceProbeTimePolicy.viewingSampleRemainingDelayMillis(4096,0L,49152L));
