@@ -128,4 +128,35 @@ public class CommittedRouteEvidenceTest {
         assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new","old",2,distinct.size()));
     }
 
+    @Test public void retainedScopeUnionPreservesLastRowAndExactRouteOwnership() throws Exception {
+        String one="https://example.invalid/live?token=a";
+        String two="https://example.invalid/live?token=b";
+        String retired="https://example.invalid/retired";
+        JSONObject first=new JSONObject().put("url",one)
+            .put("scopes",new JSONArray().put("geo:cities:cn-fuzhou"));
+        JSONObject second=new JSONObject().put("url",two)
+            .put("scopes",new JSONArray().put("global").put("geo:countries:us")
+                .put("geo:invalid:us").put("global"));
+        JSONObject last=new JSONObject().put("url",one)
+            .put("scopes",new JSONArray().put("china"));
+        JSONObject removed=new JSONObject().put("url",retired)
+            .put("scopes",new JSONArray().put("custom"));
+        JSONObject row=new JSONObject().put("sourceScopes",new JSONArray().put("custom"))
+            .put("backupSourceScopes",new JSONArray().put(first).put(JSONObject.NULL)
+                .put(second).put(removed).put(last));
+        SourceUpdateWorker.retainBackupSourceScopes(row,new JSONArray().put(one).put(two));
+        assertEquals(new JSONArray().put(first).put(second).put(last).toString(),
+            row.getJSONArray("backupSourceScopes").toString());
+        assertEquals(new JSONArray().put("china").put("geo:countries:us").put("global").toString(),
+            row.getJSONArray("sourceScopes").toString());
+        // An empty last row replaces an earlier duplicate's scope evidence.
+        row.getJSONArray("backupSourceScopes").put(new JSONObject().put("url",one));
+        SourceUpdateWorker.retainBackupSourceScopes(row,new JSONArray().put(one));
+        assertEquals(0,row.getJSONArray("sourceScopes").length());
+        assertEquals(3,row.getJSONArray("backupSourceScopes").length());
+        SourceUpdateWorker.retainBackupSourceScopes(row,new JSONArray());
+        assertEquals(0,row.getJSONArray("sourceScopes").length());
+        assertEquals(0,row.getJSONArray("backupSourceScopes").length());
+    }
+
 }
