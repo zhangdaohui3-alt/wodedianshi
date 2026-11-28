@@ -23,13 +23,6 @@ final class SnapshotCategoryIndex {
         private final List<Integer> allLocal;
         private final java.util.Map<String,List<Integer>> fixedCategories;
         private final java.util.Map<String,java.util.Set<String>> geoKeys;
-        LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince){
-            this(count,local,byProvince,Collections.emptyMap());
-        }
-        LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
-                java.util.Map<String,List<Integer>> fixed){
-            this(count,local,byProvince,fixed,null);
-        }
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
                 java.util.Map<String,List<Integer>> fixed,java.util.Map<String,java.util.Set<String>> geo){
             this.count=count;
@@ -93,11 +86,6 @@ final class SnapshotCategoryIndex {
     boolean hasLocalIndex(long mutation,int count){
         ensureVersion(mutation,count);
         return localMembership!=null;
-    }
-
-    void putLocalIndex(long mutation,int count,List<Integer> local,
-            java.util.Map<String,List<Integer>> byProvince){
-        putLocalMembership(mutation,count,new LocalMembership(count,local,byProvince));
     }
 
     void putLocalMembership(long mutation,int count,LocalMembership membership){
