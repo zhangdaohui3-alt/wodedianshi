@@ -4015,6 +4015,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
+      private final int[] topFocusOrder={3,1,2};
       @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(terminalPanelVisible())return super.dispatchKeyEvent(event);
         if(event.getKeyCode()==KeyEvent.KEYCODE_MENU||event.getKeyCode()==KeyEvent.KEYCODE_SETTINGS){
@@ -4026,19 +4027,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         }
         if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){
           View focused=findFocus();
-          boolean topFocused=false;
-          int topIndex=-1;
-          for(int i:new int[]{3,1,2})if(vodTopControls[i]!=null&&vodTopControls[i]==focused){topFocused=true;topIndex=i;break;}
+          int topPosition=-1;
+          for(int i=0;i<topFocusOrder.length;i++){
+            View top=vodTopControls[topFocusOrder[i]];
+            if(top!=null&&top==focused){topPosition=i;break;}
+          }
           if(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_UP&&focused==vodSeekHolder[0]&&vodTopControls[3]!=null){
             revealVodSeekBar();vodTopControls[3].requestFocus();return true;
           }
-          if(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_DOWN&&topFocused&&vodSeekHolder[0]!=null){
+          if(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_DOWN&&topPosition>=0&&vodSeekHolder[0]!=null){
             revealVodSeekBar();vodSeekHolder[0].requestFocus();return true;
           }
-          if(topFocused&&(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_LEFT||event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT)){
-            int[] order={3,1,2};int pos=0;for(int i=0;i<order.length;i++)if(order[i]==topIndex)pos=i;
-            int next=pos+(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT?1:-1);
-            if(next>=0&&next<order.length&&vodTopControls[order[next]]!=null){revealVodSeekBar();vodTopControls[order[next]].requestFocus();return true;}
+          if(topPosition>=0&&(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_LEFT||event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT)){
+            int next=topPosition+(event.getKeyCode()==KeyEvent.KEYCODE_DPAD_RIGHT?1:-1);
+            if(next>=0&&next<topFocusOrder.length){
+              View target=vodTopControls[topFocusOrder[next]];
+              if(target!=null){revealVodSeekBar();target.requestFocus();return true;}
+            }
           }
         }
         if(event.getAction()==KeyEvent.ACTION_DOWN)revealVodSeekBar();
