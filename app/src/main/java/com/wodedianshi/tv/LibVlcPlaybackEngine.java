@@ -181,7 +181,8 @@ public final class LibVlcPlaybackEngine {
     public void play(String url) {
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://")
                 || url.startsWith("rtsp://"))) {
-            if (listener != null) listener.onFailure("不支持的播放地址");
+            Listener callback = listener;
+            if (callback != null) callback.onFailure("不支持的播放地址");
             return;
         }
         if (!isInitialized()) initialize();
@@ -433,31 +434,15 @@ public final class LibVlcPlaybackEngine {
         return releaseConfirmation.isConfirmed();
     }
 
-    // Persist immediately before JNI/native calls so SIGSEGV or abort still leaves
-    // the last attempted VLC operation available after the app is relaunched.
+    // Best-effort native breadcrumb: apply() avoids blocking playback/UI on
+    // disk writes; abrupt process death can occur before persistence completes.
     private void recordNativeStage(String stage) {
         try {
-            android.content.SharedPreferences.Editor editor =
-                    appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
-                    .putString("last_native_engine_stage_v1",
-                            System.currentTimeMillis() + " | " + stage)
-                    .putLong("last_native_engine_stage_time_v1", System.currentTimeMillis());
-            // Persist immediately before crash-prone JNI boundaries. Completion
-            // markers can be applied asynchronously to avoid repeated fsyncs on
-            // the UI thread during normal playback and teardown.
-            boolean crashCriticalBoundary = "VLC_LIBVLC_CONSTRUCTOR_BEGIN".equals(stage)
-                    || "VLC_MEDIAPLAYER_CONSTRUCTOR_BEGIN".equals(stage)
-                    || "VLC_ATTACH_VIEWS_BEGIN".equals(stage)
-                    || "VLC_NATIVE_PLAY_BEGIN".equals(stage)
-                    || "VLC_MEDIAPLAYER_RELEASE_BEGIN".equals(stage)
-                    || "VLC_LIBVLC_RELEASE_BEGIN".equals(stage);
-            // Only fsync at native boundaries most likely to terminate the process.
-            // UI/layout/stop/diagnostic markers use apply() to avoid repeated main-thread disk stalls.
-            // Native-stage breadcrumbs are diagnostic only. commit() forced a
-            // synchronous disk flush on the playback/UI thread immediately before
-            // JNI calls; on slow TV storage that can trigger input-dispatch ANRs.
-            // apply() publishes the latest value in memory now and persists it off-thread.
-            editor.apply();
+            long recordedAt = System.currentTimeMillis();
+            appContext.getSharedPreferences("mytv", Context.MODE_PRIVATE).edit()
+                    .putString("last_native_engine_stage_v1", recordedAt + " | " + stage)
+                    .putLong("last_native_engine_stage_time_v1", recordedAt)
+                    .apply();
         } catch (Throwable ignored) { }
     }
 }
