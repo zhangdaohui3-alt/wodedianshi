@@ -1890,7 +1890,7 @@ public class SourceUpdateWorker extends Worker {
         ArrayList<String> keys=new ArrayList<>(feeds.length);
         for(int i=0;i<feeds.length;i++)keys.add(initialFeedUnavailableKey(i));
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        recoveryState=readRoomValues(keys);
+        recoveryState=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),keys);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       }
       if(feedBatchComplete){
@@ -1982,7 +1982,7 @@ public class SourceUpdateWorker extends Worker {
           progressKeys.add(initialFeedProgressKey(i));
         }
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        Map<String,String> progressState=readRoomValues(progressKeys);
+        Map<String,String> progressState=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),progressKeys);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         boolean[] finished=new boolean[feeds.length];
         int completedFeeds=0;
@@ -2947,7 +2947,7 @@ public class SourceUpdateWorker extends Worker {
   private boolean areAllDiscoveryFeedsComplete(int feedCount){
     ArrayList<String> keys=new ArrayList<>(feedCount);
     for(int i=0;i<feedCount;i++)keys.add(initialFeedDoneKey(i));
-    Map<String,String> values=readRoomValues(keys);
+    Map<String,String> values=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),keys);
     boolean[] completed=new boolean[feedCount];
     for(int i=0;i<feedCount;i++)completed[i]=Boolean.parseBoolean(values.get(keys.get(i)));
     return areAllDiscoveryFeedsComplete(completed,Collections.emptyList());
@@ -4144,7 +4144,7 @@ public class SourceUpdateWorker extends Worker {
       keys.add(feedCursorKey(i));
       keys.add(DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
     }
-    Map<String,String> state=readRoomValues(keys);
+    Map<String,String> state=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),keys);
     admission.acquisitionYield=Boolean.parseBoolean(state.get(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY));
     long wall=System.currentTimeMillis(),elapsed=android.os.SystemClock.elapsedRealtime();
     for(int i=0;i<count;i++){
@@ -4179,15 +4179,6 @@ public class SourceUpdateWorker extends Worker {
   private static boolean positiveFeedState(Map<String,String> values,String key){
     try{return Long.parseLong(values.get(key))>0L;}
     catch(NumberFormatException invalid){return false;}
-  }
-  private Map<String,String> readRoomValues(List<String> keys){
-    Map<String,String> values=new HashMap<>();
-    if(keys.isEmpty())return values;
-    for(com.wodedianshi.tv.db.AppStateEntity state:
-        com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
-            .appStateDao().getValues(keys))
-      values.put(state.key,state.stateValue);
-    return values;
   }
   private String roomString(String key,String fallback){
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
