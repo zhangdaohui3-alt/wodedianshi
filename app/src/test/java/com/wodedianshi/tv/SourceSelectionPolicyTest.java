@@ -226,6 +226,28 @@ public class SourceSelectionPolicyTest {
         assertEquals(-1, ChannelFailoverPolicy.nextChannelIndex(3, -1, 0));
     }
 
+    @Test public void bulkBlockMatchingPreservesSingleSourceSemantics() {
+        String url="https://example.org/live?token=A";
+        String alias="https://EXAMPLE.org:443/live?token=A";
+        java.util.List<String> sources=Arrays.asList(null,""," ",url,alias,"https://example.org/live?token=B");
+        java.util.Set<String> records=new java.util.HashSet<>();
+        for(String identity:Arrays.asList(null,"","CCTV-1","CCTV-2")){
+            assertEquals(Collections.emptySet(),SourceSelectionPolicy.blockedUrls(records,identity,sources));
+        }
+        records.add(url);
+        records.add(" ");
+        records.add(SourceSelectionPolicy.channelBlockKey("CCTV-1",url));
+        for(String identity:Arrays.asList(null,"","CCTV-1","CCTV-2")){
+            java.util.Set<String> expected=new java.util.HashSet<>();
+            for(String source:sources)if(SourceSelectionPolicy.isUserBlocked(records,identity,source))expected.add(source);
+            assertEquals(expected,SourceSelectionPolicy.blockedUrls(records,identity,sources));
+        }
+        assertEquals(new java.util.HashSet<>(Arrays.asList(" ",url,alias)),
+            SourceSelectionPolicy.blockedUrls(records,"CCTV-1",sources));
+        assertEquals(new java.util.HashSet<>(Arrays.asList(" ",url)),
+            SourceSelectionPolicy.blockedUrls(records,"CCTV-2",sources));
+    }
+
     @org.junit.Test public void explicitBlockIsScopedToStationAndEndpoint(){
         String url="https://example.org/live?token=A";
         String alias="https://EXAMPLE.org:443/live?token=A";
