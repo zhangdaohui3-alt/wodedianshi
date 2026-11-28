@@ -1,0 +1,131 @@
+package com.wodedianshi.tv;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+import static org.junit.Assert.*;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(manifest=Config.NONE,sdk=28)
+public class CommittedRouteEvidenceTest {
+    @Test public void qualityPreparationTraversesEachRetainedRowOnlyOnce() throws Exception {
+        java.util.List<String> visits=new java.util.ArrayList<>();
+        java.util.Set<String> needed=new java.util.LinkedHashSet<String>(){
+            @Override public boolean add(String url){visits.add(url);return super.add(url);}
+        };
+        java.util.Set<JSONObject> collected=java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap<JSONObject,Boolean>());
+        JSONObject first=new JSONObject().put("url","primary")
+            .put("sources",new JSONArray().put("primary").put("backup"));
+        JSONObject second=new JSONObject().put("url","other")
+            .put("sources",new JSONArray().put("backup").put("other"));
+        needed.add("candidate-A");
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,first);
+        needed.add("candidate-B");
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,first);
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,null);
+        SourceUpdateWorker.collectQualityUrlsOnce(needed,collected,second);
+        assertEquals(java.util.Arrays.asList("candidate-A","primary","primary","backup",
+            "candidate-B","other","backup","other"),visits);
+        assertEquals(java.util.Arrays.asList("candidate-A","primary","backup","candidate-B","other"),
+            new java.util.ArrayList<>(needed));
+        assertEquals(2,collected.size());
+    }
+
+    @Test public void candidateReusesUnchangedMergeIdentityAcrossOwnerStages(){
+        SourceUpdateWorker.Entry candidate=new SourceUpdateWorker.Entry(
+            "深圳都市频道","https://example.invalid/live","地方",false,"china","provider.id","");
+        String expected=SourceDiscoveryIdentityPolicy.identity(
+            candidate.name,candidate.group,candidate.url,candidate.tvgId,candidate.tvgName);
+        String first=candidate.mergeIdentity();
+        assertEquals(expected,first);
+        candidate.skipReplay=true;
+        candidate.alreadyStaged=true;
+        assertSame(first,candidate.mergeIdentity());
+        SourceUpdateWorker.Entry other=new SourceUpdateWorker.Entry(
+            "广州都市频道",candidate.url,"地方",false,"china","provider.other","");
+        assertNotEquals(first,other.mergeIdentity());
+    }
+
+    @Test public void onlyExactRetainedAssociationMayReuseCommittedEvidence() throws Exception {
+        String url="https://example.invalid/live?token=A";
+        JSONObject row=new JSONObject().put("name","CCTV-1").put("group","央视")
+            .put("tvgId","CCTV1").put("tvgName","CCTV-1")
+            .put("sources",new JSONArray().put(url))
+            .put("backupSourceScopes",new JSONArray().put(new JSONObject().put("url",url)
+                .put("scopes",new JSONArray().put("china"))));
+        SourceUpdateWorker.Entry same=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","CCTV1","CCTV-1");
+        assertTrue(SourceUpdateWorker.hasCommittedRouteEvidence(row,same,"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,same,"CCTV-10"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,null,"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(null,same,"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"global","CCTV1","CCTV-1"),"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,new SourceUpdateWorker.Entry("CCTV-1","https://EXAMPLE.invalid:443/live?token=A","央视",false,"china","CCTV1","CCTV-1"),"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","new-id","CCTV-1"),"CCTV-1"));
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,new SourceUpdateWorker.Entry("CCTV-1",url,"央视",true,"china","CCTV1","CCTV-1"),"CCTV-1"));
+        row.put("sources",new JSONArray());
+        assertFalse(SourceUpdateWorker.hasCommittedRouteEvidence(row,same,"CCTV-1"));
+    }
+
+    @Test public void coverageRequiresAtLeastOneRetainedPositiveNonProvisionalRoute() throws Exception {
+        String first="https://example.invalid/first",second="https://example.invalid/second";
+        JSONObject row=new JSONObject().put("url",first)
+            .put("sources",new JSONArray().put(first).put(second));
+        JSONObject scores=new JSONObject();
+        java.util.Set<String> provisional=new java.util.HashSet<>();
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(null,scores,provisional));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.legacyUrl(first),200);
+        scores.put(StableKey.url(second),-10);
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.url(first),200);
+        provisional.add(StableKey.url(first));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        scores.put(StableKey.url(second),100);
+        assertTrue(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        row.put("sources",new JSONArray().put(first));
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        provisional.clear();
+        assertTrue(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+        row.put("sources",new JSONArray());
+        assertFalse(SourceUpdateWorker.hasPositiveRetainedCoverage(row,scores,provisional));
+    }
+
+    @Test public void retainedRouteReuseRequiresCurrentPositiveNonProvisionalScore() throws Exception {
+        String url="https://example.invalid/live";
+        String key=StableKey.url(url),legacy=StableKey.legacyUrl(url);
+        JSONObject scores=new JSONObject();
+        java.util.Set<String> provisional=new java.util.HashSet<>();
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(legacy,200);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(key,200);
+        assertTrue(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.add(key);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.clear();provisional.add(legacy);
+        assertTrue(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        provisional.clear();scores.put(key,-500);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+        scores.put(key,0);
+        assertFalse(SourceUpdateWorker.mayReuseRetainedPreflight(scores,provisional,url));
+    }
+    @Test public void crossDirectoryExactDedupRetainsMetadataAndFirstOccurrence() {
+        String url="https://example.invalid/live";
+        SourceUpdateWorker.Entry first=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry duplicate=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"china","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry otherScope=new SourceUpdateWorker.Entry("CCTV-1",url,"央视",false,"global","cctv1","CCTV-1");
+        SourceUpdateWorker.Entry otherStation=new SourceUpdateWorker.Entry("CCTV-2",url,"央视",false,"china","cctv2","CCTV-2");
+        SourceUpdateWorker.Entry otherAddress=new SourceUpdateWorker.Entry("CCTV-1",url+"?token=b","央视",false,"china","cctv1","CCTV-1");
+        java.util.List<SourceUpdateWorker.Entry> raw=java.util.Arrays.asList(first,otherScope,duplicate,otherStation,otherAddress);
+        java.util.List<SourceUpdateWorker.Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(raw,SourceUpdateWorker.Entry::exactRecordFields);
+        assertEquals(java.util.Arrays.asList(first,otherScope,otherStation,otherAddress),distinct);
+        assertEquals(5,raw.size());
+        assertEquals(2,DiscoveryBatchPolicy.scannedForBatch("same","same",2,distinct.size()));
+        assertEquals(0,DiscoveryBatchPolicy.scannedForBatch("new","old",2,distinct.size()));
+    }
+
+}
