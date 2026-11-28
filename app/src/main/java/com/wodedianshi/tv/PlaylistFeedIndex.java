@@ -33,6 +33,10 @@ public final class PlaylistFeedIndex {
 
     // Bridge the parser's non-throwing consumer to the index's checked
     // I/O contract without scanning the remaining body after a write fails.
+    private static final class CorruptIndexException extends IOException {
+        CorruptIndexException(String message){super(message);}
+    }
+
     private static final class IndexWriteFailure extends RuntimeException {
         final IOException failure;
         IndexWriteFailure(IOException failure) { super(failure); this.failure=failure; }
@@ -100,12 +104,13 @@ public final class PlaylistFeedIndex {
         }
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
-        IndexHeader header=inspectHeader(records,offsets);
+        IndexHeader header=inspectHeaderForRepair(records,offsets);
         boolean usable=header!=null;
         boolean repairCoverage=coverage||(usable&&header.magic==COVERAGE_INDEX_MAGIC);
         if (!usable || (coverage && header.magic!=COVERAGE_INDEX_MAGIC)) {
             // Keep a usable raw index until the coverage replacement is fully
             // written. Playback may pause the two-pass build at any point.
+            SourceProbeTimePolicy.checkPaused(paused);
             if (!usable) deleteIndex(records, offsets);
             buildIndex(playlist, records, offsets, paused, repairCoverage);
         }
@@ -117,7 +122,8 @@ public final class PlaylistFeedIndex {
             page = readIndexedPage(records, offsets, startEntry, maxEntries, paused);
         } catch (SourceProbeTimePolicy.PausedException pausedRead) {
             throw pausedRead; // Cancellation is not corruption; retain the valid sidecars.
-        } catch (IOException corruptIndex) {
+        } catch (CorruptIndexException | java.io.EOFException | java.io.UTFDataFormatException corruptIndex) {
+            SourceProbeTimePolicy.checkPaused(paused);
             deleteIndex(records, offsets);
             buildIndex(playlist, records, offsets, paused,repairCoverage);
             // A second failure is a real I/O/source-data problem; preserve the cursor.
@@ -171,7 +177,7 @@ public final class PlaylistFeedIndex {
                 offsetFile.seek(OFFSET_HEADER_BYTES+((long)startEntry-1L)*8L);
                 previousOffset=offsetFile.readLong();
                 if(previousOffset<0L||previousOffset>=recordsLength)
-                    throw new IOException("Previous playlist offset is invalid");
+                    throw new CorruptIndexException("Previous playlist offset is invalid");
             }
             // The offset immediately after one row is the next row's start.
             // Read it once, then carry it forward; no repeated seek/read per row.
@@ -184,16 +190,16 @@ public final class PlaylistFeedIndex {
                 if (recordOffset <= previousOffset || recordOffset < 0L
                         || recordOffset >= recordsLength || (entry==0L&&recordOffset!=0L)
                         || nextOffset<=recordOffset||nextOffset>recordsLength) {
-                    throw new IOException("Playlist index offset is invalid");
+                    throw new CorruptIndexException("Playlist index offset is invalid");
                 }
                 previousOffset = recordOffset;
                 if(i==0)recordFile.seek(recordOffset);
                 // Prior record's verified end must be the current record's start.
                 if(recordFile.getFilePointer()!=recordOffset)
-                    throw new IOException("Playlist record start does not match indexed boundary");
+                    throw new CorruptIndexException("Playlist record start does not match indexed boundary");
                 PlaylistParser.ChannelSource source=readRecord(recordFile,magic,nextOffset);
                 if(recordFile.getFilePointer()!=nextOffset)
-                    throw new IOException("Playlist record does not match indexed boundary");
+                    throw new CorruptIndexException("Playlist record does not match indexed boundary");
                 page.add(source);
                 recordOffset=nextOffset;
             }
@@ -213,15 +219,25 @@ public final class PlaylistFeedIndex {
         if(!supportedMagic(magic)||count<0L||count>Integer.MAX_VALUE
                 ||input.length()!=OFFSET_HEADER_BYTES+count*8L
                 ||(count==0L?recordsLength!=0L:recordsLength<=0L))
-            throw new IOException("Playlist index header/count mismatch");
+            throw new CorruptIndexException("Playlist index header/count mismatch");
         return new IndexHeader(magic,(int)count);
     }
 
     private static IndexHeader inspectHeader(File records,File offsets){
-        if(!records.isFile()||!offsets.isFile())return null;
-        try(RandomAccessFile input=new RandomAccessFile(offsets,"r")){
-            return readCheckedHeader(input,records.length());
-        }catch(IOException invalid){return null;}
+        try{return inspectHeaderForRepair(records,offsets);}
+        catch(IOException unavailable){return null;} // Scheduling hint only.
+    }
+
+    /** Missing or structurally invalid sidecars can be rebuilt. An open/read
+     * failure alone is not evidence that an existing index is corrupt. */
+    private static IndexHeader inspectHeaderForRepair(File records,File offsets)throws IOException {
+        if((records.exists()&&!records.isFile())||(offsets.exists()&&!offsets.isFile()))
+            throw new IOException("Playlist index path is not a regular file");
+        if(!records.exists()||!offsets.exists())return null;
+        try(RandomAccessFile input=new RandomAccessFile(offsets,"r");
+                RandomAccessFile data=new RandomAccessFile(records,"r")){
+            return readCheckedHeader(input,data.length());
+        }catch(CorruptIndexException | java.io.EOFException invalid){return null;}
     }
 
     private static void deleteIndex(File records, File offsets) throws IOException {
@@ -366,10 +382,10 @@ public final class PlaylistFeedIndex {
     }
 
     private static String readField(RandomAccessFile input,long boundary)throws IOException {
-        if(boundary-input.getFilePointer()<4L)throw new IOException("Missing playlist field length");
+        if(boundary-input.getFilePointer()<4L)throw new CorruptIndexException("Missing playlist field length");
         int length=input.readInt();
         if(length<0||length>MAX_FIELD_BYTES||length>boundary-input.getFilePointer())
-            throw new IOException("Invalid playlist field length");
+            throw new CorruptIndexException("Invalid playlist field length");
         byte[] bytes=new byte[length];
         input.readFully(bytes);
         return new String(bytes,StandardCharsets.UTF_8);
