@@ -23,7 +23,6 @@ final class SnapshotCategoryIndex {
         private final List<Integer> allLocal;
         private final java.util.Map<String,List<Integer>> fixedCategories;
         private final java.util.Map<String,java.util.Set<String>> geoKeys;
-        private final boolean geoPrepared;
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince){
             this(count,local,byProvince,Collections.emptyMap());
         }
@@ -34,25 +33,31 @@ final class SnapshotCategoryIndex {
         LocalMembership(int count,List<Integer> local,java.util.Map<String,List<Integer>> byProvince,
                 java.util.Map<String,List<Integer>> fixed,java.util.Map<String,java.util.Set<String>> geo){
             this.count=count;
-            geoPrepared=geo!=null;
-            java.util.Map<String,java.util.Set<String>> geoCopy=new java.util.HashMap<>();
-            if(geo!=null)for(java.util.Map.Entry<String,java.util.Set<String>> entry:geo.entrySet())
-                geoCopy.put(entry.getKey(),Collections.unmodifiableSet(new java.util.HashSet<>(entry.getValue())));
-            geoKeys=Collections.unmodifiableMap(geoCopy);
+            // Null means unprepared; an empty immutable map means prepared with no matches.
+            if(geo==null)geoKeys=null;
+            else if(geo.isEmpty())geoKeys=Collections.emptyMap();
+            else{
+                java.util.Map<String,java.util.Set<String>> geoCopy=new java.util.HashMap<>();
+                for(java.util.Map.Entry<String,java.util.Set<String>> entry:geo.entrySet())
+                    geoCopy.put(entry.getKey(),Collections.unmodifiableSet(new java.util.HashSet<>(entry.getValue())));
+                geoKeys=Collections.unmodifiableMap(geoCopy);
+            }
             if(byProvince.size()>MAX_PROVINCES)throw new IllegalArgumentException("Province index limit");
-            java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
-            for(java.util.Map.Entry<String,List<Integer>> entry:byProvince.entrySet())
-                copy.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
             allLocal=Collections.unmodifiableList(new ArrayList<>(local));
-            provinces=Collections.unmodifiableMap(copy);
-            java.util.Map<String,List<Integer>> categories=new java.util.HashMap<>();
-            for(java.util.Map.Entry<String,List<Integer>> entry:fixed.entrySet())
-                categories.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
-            fixedCategories=Collections.unmodifiableMap(categories);
+            provinces=freezeMembership(byProvince);
+            fixedCategories=freezeMembership(fixed);
+        }
+        private static java.util.Map<String,List<Integer>> freezeMembership(
+                java.util.Map<String,List<Integer>> source){
+            if(source.isEmpty())return Collections.emptyMap();
+            java.util.Map<String,List<Integer>> copy=new java.util.HashMap<>();
+            for(java.util.Map.Entry<String,List<Integer>> entry:source.entrySet())
+                copy.put(entry.getKey(),Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+            return Collections.unmodifiableMap(copy);
         }
         List<Integer> fixedCategory(String category){return fixedCategories.get(category);}
         java.util.Set<String> geoKeys(String scope){
-            if(!geoPrepared)return null;
+            if(geoKeys==null)return null;
             java.util.Set<String> keys=geoKeys.get(scope);
             return keys==null?Collections.emptySet():keys;
         }
