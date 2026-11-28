@@ -7970,6 +7970,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       // TV surface. Never promote a VLC source to last-known-good or QoE "stable"
       // from these signals alone; otherwise a black-screen source can outrank a
       // source whose first frame was actually rendered by Media3.
+      long now=android.os.SystemClock.elapsedRealtime();
+      if(!TrackHealthPolicy.vlcHealthIntervalFresh(libVlcLastHealthAt,now)){
+        // A delayed observation is a new baseline, not a continuation of
+        // old health or stationary-counter evidence.
+        resetLibVlcHealthEvidence();
+        SourceUpdateActivityPolicy.revokeStableLive();
+      }
+      libVlcLastHealthAt=now;
       boolean advancing=TrackHealthPolicy.vlcClockAdvanced(libVlcLastHealthClockMs,playbackClock);
       libVlcLastHealthClockMs=playbackClock;
       boolean videoAdvanced=libVlcVideoProgress.observe(displayed);
