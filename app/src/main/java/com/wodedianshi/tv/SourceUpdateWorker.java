@@ -684,13 +684,17 @@ public class SourceUpdateWorker extends Worker {
           ?com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext())
               .channelDao().countCatalogueBuildRows()
           :saved.length();
-      final int initialCheckedAtStart=initialDiscoveryChain
-          ?roomInt("source_initial_progress_checked_urls",0):0;
+      final Map<String,String> initialProbeState=initialDiscoveryChain
+          ?com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),Arrays.asList(
+              "source_initial_progress_checked_urls","source_initial_progress_china_validated_urls",
+              FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,"source_initial_next_feed_index"))
+          :Collections.emptyMap();
+      final int initialCheckedAtStart=stateInt(initialProbeState,"source_initial_progress_checked_urls",0);
+      final int initialCoreMask=stateInt(initialProbeState,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1);
       final boolean earlyFirstWatch=initialDiscoveryChain&&DiscoveryBatchPolicy.isEarlyFirstWatch(
           previousStagedSize,initialCheckedAtStart);
       final boolean preferCoreCoverage=initialDiscoveryChain&&DiscoveryBatchPolicy.preferCoreCoverage(
-          previousStagedSize,initialCheckedAtStart,
-          roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
+          previousStagedSize,initialCheckedAtStart,initialCoreMask);
       final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
       final ArrayList<Integer> indexedPositions=new ArrayList<>();
       ArrayList<Entry> rawCandidates=new ArrayList<>();
@@ -735,9 +739,8 @@ public class SourceUpdateWorker extends Worker {
       com.wodedianshi.tv.db.AppStateEditor update=
           new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext());
       ArrayList<FeedBatch> feedBatches=new ArrayList<>();
-      int initialFeedStartIndex=InitialFeedRotationPolicy.normalizeStart(
-          roomInt("source_initial_next_feed_index",0),feeds.length);
-      int initialNextFeedIndex=initialFeedStartIndex;
+      int initialNextFeedIndex=InitialFeedRotationPolicy.normalizeStart(
+          stateInt(initialProbeState,"source_initial_next_feed_index",0),feeds.length);
       boolean[] inspectedFeeds=new boolean[feeds.length];
       boolean[] attemptedFeedsThisRun=new boolean[feeds.length];
       boolean[] visitedForCoverage=new boolean[feeds.length];
@@ -775,7 +778,8 @@ public class SourceUpdateWorker extends Worker {
           return Result.success();
         }
       }
-      int routineStart=manualRefresh?Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
+      int routineStart=initialDiscoveryChain?0:manualRefresh?
+          Math.max(0,Math.min(feeds.length,roomInt("source_manual_next_feed",0))):
           InitialFeedRotationPolicy.normalizeStart(roomInt("source_routine_next_feed_index",0),feeds.length);
       final boolean manualSavedOnly=manualRefresh&&routineStart>=feeds.length;
       if(manualQueueOnly&&!manualSavedOnly)throw new IllegalStateException("Queue-only feed cursor changed");
@@ -1161,8 +1165,7 @@ public class SourceUpdateWorker extends Worker {
       final boolean allFeedsInspectedThisSlice=initialDiscoveryChain
           &&areAllDiscoveryFeedsComplete(inspectedFeeds,feedBatches);
       final boolean initialIndexEligible=initialDiscoveryChain&&FullDiscoveryProgressPolicy.mayUseIndexedInitialRows(
-          previousStagedSize,roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1),
-          allFeedsInspectedThisSlice);
+          previousStagedSize,initialCoreMask,allFeedsInspectedThisSlice);
       if(initialIndexEligible&&!slowPlayback&&!com.wodedianshi.tv.db.RoomCatalogueBuildStore.initialIndexReady(
           getApplicationContext(),previousStagedSize,initialRevision))
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.backfillInitialIndex(
@@ -1323,7 +1326,7 @@ public class SourceUpdateWorker extends Worker {
           initialDiscoveryScanned,candidates.size());
       final int runProbeLimit=manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE+savedWindow:
           initialDiscoveryChain?DiscoveryBatchPolicy.firstWatchProbeLimit(
-              slowPlayback,previousStagedSize,roomInt("source_initial_progress_checked_urls",0)):
+              slowPlayback,previousStagedSize,initialCheckedAtStart):
           DiscoveryBatchPolicy.probeLimit(false,slowPlayback,MAX_PROBES_PER_RUN);
       int discoveryWindow=DiscoveryBatchPolicy.discoveryPositionWindow(
           earlyFirstWatch,slowPlayback,DiscoveryBatchPolicy.remaining(
@@ -1435,10 +1438,9 @@ public class SourceUpdateWorker extends Worker {
       long consumedSampleRequests=0L,consumedSampleBytes=0L;
       boolean idleWaveTimedOut=false;
       boolean viewingDeferred=false;
-      final int priorChinaValidated=initialDiscoveryChain
-          ?roomInt("source_initial_progress_china_validated_urls",0):0;
+      final int priorChinaValidated=stateInt(initialProbeState,"source_initial_progress_china_validated_urls",0);
       final int priorCoreMask=initialDiscoveryChain&&!slowPlayback&&previousStagedSize<=512
-          ?roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1):-1;
+          ?initialCoreMask:-1;
       int observedCoreMask=priorCoreMask;
       HashSet<String> visitedUrls=new HashSet<>();
       HashMap<String,Integer> inconclusiveAttempts=new HashMap<>();
