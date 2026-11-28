@@ -313,4 +313,27 @@ public class ChannelNamePolicyTest {
         assertEquals("",ChannelNamePolicy.canonicalBroadcasterName(
                 "城市新闻","EPG Channel","regional.123","卫视"));
     }
+    @Test public void canonicalBroadcasterDisplayPreservesSpecialChannelIdentity() {
+        assertEquals("CCTV-4K 超高清",ChannelNamePolicy.broadcasterDisplayName(
+                ChannelNamePolicy.canonicalBroadcasterName("CCTV-4K","","","")));
+        assertEquals("CCTV-8K 超高清",ChannelNamePolicy.broadcasterDisplayName("CCTV-8K"));
+        assertEquals("CCTV-4 亚洲版",ChannelNamePolicy.broadcasterDisplayName("CCTV-4 Asia"));
+        assertEquals("CCTV-4 中文国际",ChannelNamePolicy.broadcasterDisplayName("CCTV-4"));
+        assertEquals("CCTV-5+ 体育赛事",ChannelNamePolicy.broadcasterDisplayName("CCTV-5+"));
+        assertEquals("CCTV-5 体育",ChannelNamePolicy.broadcasterDisplayName("CCTV-5"));
+        assertEquals("湖南卫视",ChannelNamePolicy.broadcasterDisplayName("湖南卫视"));
+    }
+
+    @Test public void cctvOrderingUsesOnlyRecognizedPrefixAndRetainsVariants() {
+        assertEquals(4,ChannelNamePolicy.cctvSortOrder("CCTV-4 Asia"));
+        assertEquals(5,ChannelNamePolicy.cctvSortOrder("CCTV-5+"));
+        assertEquals(90,ChannelNamePolicy.cctvSortOrder("CCTV-NEWS"));
+        assertEquals(91,ChannelNamePolicy.cctvSortOrder("CCTV-4K"));
+        assertEquals(92,ChannelNamePolicy.cctvSortOrder("CCTV-8K"));
+        assertEquals(999,ChannelNamePolicy.cctvSortOrder("ABCDE5"));
+        assertEquals(999,ChannelNamePolicy.cctvSortOrder("央视"));
+        assertEquals(999,ChannelNamePolicy.cctvSortOrder("CCTV-"));
+        assertEquals(999,ChannelNamePolicy.cctvSortOrder("CCTV-123"));
+    }
+
 }
