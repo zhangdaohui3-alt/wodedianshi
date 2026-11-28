@@ -70,4 +70,16 @@ public class RoomCatalogueRouteScanTest {
                 url->{actual.add(url);return false;}));
         assertEquals(Collections.singletonList("https://example.invalid/partition"),actual);
     }
+    @Test public void recoversOriginalPrimaryUrlWhenScopedPrimaryDiffers(){
+        assertEquals("https://global.example/live.m3u8",RoomCatalogueReader.legacyRoute(
+                "CCTV-1","CCTV-1|https://global.example/live.m3u8","https://china.example/live.m3u8"));
+    }
+    @Test public void preservesNamesContainingIdentitySeparator(){
+        assertEquals("https://example/live.m3u8",RoomCatalogueReader.legacyRoute(
+                "CCTV|新闻","CCTV|新闻|https://example/live.m3u8","https://fallback.example/live.m3u8"));
+    }
+    @Test public void fallsBackToScopedPrimaryForMalformedLegacyKey(){
+        assertEquals("https://china.example/live.m3u8",RoomCatalogueReader.legacyRoute(
+                "CCTV-1","unrelated-key","https://china.example/live.m3u8"));
+    }
 }
