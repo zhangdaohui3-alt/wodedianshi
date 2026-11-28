@@ -46,6 +46,7 @@ public final class RoomCatalogueReader {
                 for (BackupSourceEntity row : sourceRows) {
                     if (row == null || row.url == null || row.url.isEmpty()) continue;
                     sources.add(row.url);
+                    if (hasNoScopes(row.scopesJson)) continue;
                     HashSet<String> scopes = parseScopes(row.scopesJson);
                     if (!scopes.isEmpty()) backupSourceScopes.put(row.url, scopes);
                 }
@@ -56,9 +57,13 @@ public final class RoomCatalogueReader {
             activeSource = Math.max(0, Math.min(channel.activeSource, Math.max(0, sources.size() - 1)));
         }
 
+        private static boolean hasNoScopes(String json) {
+            return json == null || json.isEmpty() || "[]".equals(json);
+        }
+
         private static HashSet<String> parseScopes(String json) {
             HashSet<String> result = new HashSet<>();
-            if (json == null || json.isEmpty()) return result;
+            if (hasNoScopes(json)) return result;
             try {
                 JSONArray values = new JSONArray(json);
                 for (int i = 0; i < values.length(); i++) {
