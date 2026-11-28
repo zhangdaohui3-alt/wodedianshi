@@ -371,4 +371,14 @@ public class SourceProbeTimePolicyTest {
         assertFalse(p.valid);
         assertTrue(p.inconclusive());
     }
+    @Test public void directoryPacingUsesPlaybackHeadroomWithoutExceedingExistingCap(){
+        assertEquals(250L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,0L,16384L));
+        assertEquals(125L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,0L,32768L));
+        assertEquals(125L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,0L,49152L));
+        assertEquals(210L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,40L,16384L));
+        assertEquals(0L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,900L,16384L));
+        // A new fast chunk does not inherit the preceding slow chunk's credit.
+        assertEquals(250L,SourceProbeTimePolicy.liveDirectoryChunkDelayMillis(4096,0L,16384L));
+    }
+
 }
