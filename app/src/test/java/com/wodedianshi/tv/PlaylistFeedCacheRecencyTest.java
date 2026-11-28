@@ -64,4 +64,31 @@ public class PlaylistFeedCacheRecencyTest {
         PlaylistFeedCache.noteIndexedInitialAccess(body,300000L);
         assertEquals(200000L,metadata.lastModified());
     }
+    @Test public void invalidFullReplacementRetainsValidatedRangePrefix() throws Exception {
+        File prefix=folder.newFile("feed.range-part");
+        File state=folder.newFile("feed.range-state");
+        File replacement=folder.newFile("feed.m3u.tmp");
+        byte[] old="#EXTM3U\n#EXTINF:-1,Test\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try(FileOutputStream out=new FileOutputStream(prefix)){out.write(old);}
+        try(FileOutputStream out=new FileOutputStream(state)){out.write(1);}
+        try(FileOutputStream out=new FileOutputStream(replacement)){out.write("invalid".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+        try{
+            PlaylistFeedCache.validateRangeBody(replacement,prefix,state);
+            fail("invalid full replacement");
+        }catch(java.io.IOException expected){}
+        assertTrue(state.isFile());
+        assertArrayEquals(old,java.nio.file.Files.readAllBytes(prefix.toPath()));
+        try(FileOutputStream out=new FileOutputStream(replacement)){out.write(old);}
+        PlaylistFeedCache.validateRangeBody(replacement,prefix,state);
+        assertTrue(state.isFile());
+        assertArrayEquals(old,java.nio.file.Files.readAllBytes(prefix.toPath()));
+        // A corrupt completed range itself must still invalidate its authority.
+        try(FileOutputStream out=new FileOutputStream(prefix)){out.write(0);}
+        try{
+            PlaylistFeedCache.validateRangeBody(prefix,prefix,state);
+            fail("invalid completed range");
+        }catch(java.io.IOException expected){}
+        assertFalse(state.exists());
+        assertFalse(prefix.exists());
+    }
 }
