@@ -857,4 +857,47 @@ public class RoomPublicationIntegrationTest {
                 java.util.Collections.singletonList(first),active));
     }
 
+    @Test public void singleChannelRefreshRequiresCommonScopeCoverageBeforeRetiringRoute()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            String primary="https://example.invalid/0";
+            String retired="https://example.invalid/7";
+            JSONArray sources=new JSONArray(),ownership=new JSONArray();
+            for(int i=0;i<8;i++){
+                String url="https://example.invalid/"+i;
+                sources.put(url);
+                ownership.put(new JSONObject().put("url",url)
+                        .put("scopes",new JSONArray().put("china")));
+            }
+            JSONArray rows=new JSONArray().put(channel("CCTV-1",primary)
+                    .put("sources",sources).put("sourceScopes",new JSONArray().put("china"))
+                    .put("backupSourceScopes",ownership));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,base,false,
+                    ()->false,new AppStateEditor(context));
+            ChannelDao dao=RoomDatabaseProvider.get(context).channelDao();
+            String id=dao.getAllChannelIds().get(0);
+            long version=RoomCatalogueReader.read(context).catalogueVersion;
+            String candidate="https://new.example/live";
+            String other="https://new.example/other";
+            java.util.Map<String,java.util.Set<String>> verified=new java.util.LinkedHashMap<>();
+            verified.put(candidate,java.util.Collections.singleton("china"));
+            verified.put(other,java.util.Collections.singleton("global"));
+            java.util.Set<String> failed=java.util.Collections.singleton(retired);
+            java.util.Comparator<String> bestFirst=(a,b)->Boolean.compare(
+                    a.equals(retired),b.equals(retired));
+            RoomCatalogueWriter.ChannelRefreshResult blocked=RoomCatalogueWriter.refreshVerifiedChannelSources(
+                    context,id,version,verified,primary,failed,bestFirst,()->false);
+            assertEquals(0,blocked.addedSources);
+            assertEquals(version,blocked.catalogueVersion);
+            verified.put(other,java.util.Collections.singleton("china"));
+            RoomCatalogueWriter.ChannelRefreshResult allowed=RoomCatalogueWriter.refreshVerifiedChannelSources(
+                    context,id,version,verified,primary,failed,bestFirst,()->false);
+            assertEquals(1,allowed.addedSources);
+            assertEquals(candidate,allowed.replacedRoutes.get(retired));
+            assertEquals(8,dao.countBackupSources());
+            assertEquals(candidate,dao.getBackupSourcesForChannel(id).get(7).url);
+        });
+    }
+
 }
