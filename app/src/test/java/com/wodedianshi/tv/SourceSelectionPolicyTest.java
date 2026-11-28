@@ -124,6 +124,18 @@ public class SourceSelectionPolicyTest {
                 0, Collections.emptySet(), Collections.singleton("http://slow.example/live")));
     }
 
+    @Test public void multipleBlockedAndCoolingAliasesPreserveSignedUrlAndFallbackOrder() {
+        java.util.List<String> routes = Arrays.asList("http://active/live",
+                "HTTP://Blocked.Example:80/live", "https://SLOW.example:443/Live?token=A",
+                "https://slow.example/Live?token=B", "http://other/live");
+        java.util.Set<String> blocked = new HashSet<>(Arrays.asList("http://blocked.example/live", "http://other/live"));
+        java.util.Set<String> cooling = new HashSet<>(Arrays.asList("https://slow.example/Live?token=A", "https://elsewhere/live"));
+        assertEquals(3, SourceSelectionPolicy.findNext(routes, 0, blocked, cooling));
+        cooling.add("https://slow.example/Live?token=B");
+        assertEquals(2, SourceSelectionPolicy.findNext(routes, 0, blocked, cooling));
+        assertEquals(1, SourceSelectionPolicy.findNext(routes, 0, null, null));
+    }
+
     @Test public void skipsDuplicateActiveUrlAndContinuesToDistinctBackup() {
         assertEquals(3, SourceSelectionPolicy.findNext(
                 Arrays.asList("a", "b", "a", "c"), 0,
