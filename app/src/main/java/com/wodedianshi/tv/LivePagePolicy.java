@@ -18,10 +18,6 @@ public final class LivePagePolicy {
         return !busy&&target!=current&&canSelectPage(target,itemCount,pageSize);
     }
 
-    public static boolean canAdvance(int currentPage, int itemCount, int pageSize) {
-        return currentPage >= 0 && currentPage + 1 < pageCount(itemCount, pageSize);
-    }
-
     /**
      * Normally keep the currently selected channel visible after a refresh.
      * Explicit page-button navigation takes precedence until that page renders.
