@@ -254,8 +254,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private Channel startupResumeChannel;
   // Keep country/state/city playlists scoped to the destination currently selected.
   private String activeGeoScope=null,activeGeoCountry="",activeGeoLabel="";
-  // An isolated country/region worker must not queue behind startup Room restore,
-  // nor publish an obsolete country selection after the user changes categories.
   // Dedicated local-area filter; keep the sidebar category as 地方 so a label
   // such as “全部河北频道” can never fall through to the global category.
   private boolean localRegionFilterActive=false;
@@ -292,12 +290,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private volatile String roomVodFavoritesJson="[]";
   private volatile String roomVodHistoryJson="[]";
-  private volatile long roomSourceUpdateLastSuccessAt=0L;
   private volatile long roomFullRebuildCompletedAt=0L;
-  private volatile long roomChinaSupplementLastSuccess=0L;
-  private volatile int roomChinaCachedCount=0;
-  private volatile boolean roomChinaDirectoryCommitted=false;
-  private volatile long roomGlobalSupplementLastSuccess=0L;
   // Fast indexes prevent quadratic duplicate scans as channel lists grow.
   private final HashMap<String,Channel> channelsByUrl = new HashMap<>();
   private final HashMap<String,Channel> channelsByIdentity = new HashMap<>();
@@ -916,22 +909,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // snapshot supplies authoritative observations when available.
     cachedProbeScoreJson=new org.json.JSONObject();
     indexedPlaybackScoreVersion=-1L;indexedPlaybackQualityRevision="";
-    roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
     roomFullRebuildCompletedAt=parseRoomLong("source_full_rebuild_completed_at",0L);
-    roomChinaSupplementLastSuccess=parseRoomLong("china_supplement_last_success",0L);
-    roomChinaCachedCount=parseRoomInt("china_directory_cached_count",0);
-    roomChinaDirectoryCommitted=Boolean.parseBoolean(com.wodedianshi.tv.db.AppStateStore.get(
-        getApplicationContext(),"china_directory_room_committed","false"));
-    roomGlobalSupplementLastSuccess=parseRoomLong("global_supplement_last_success",0L);
     SourceMemoryStore.initialize(getApplicationContext());
   }
 
   private long parseRoomLong(String key,long fallback){
     try{return Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Long.toString(fallback)));}
-    catch(Exception ignored){return fallback;}
-  }
-  private int parseRoomInt(String key,int fallback){
-    try{return Integer.parseInt(com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,Integer.toString(fallback)));}
     catch(Exception ignored){return fallback;}
   }
 
@@ -8708,11 +8691,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),
         SourceUpdateSchedulePolicy.QUALITY_ONLY_REVISION_KEY,"");
   }
-  private void reloadRoomSourceMetrics(){
-    roomSourceUpdateLastSuccessAt=parseRoomLong("source_update_last_success_at",0L);
-    // Keep the current read-only Room score cache while the next version loads.
-  }
-
 
   // Do not spend a full Room catalogue normalization/deduplication on the UI thread.
   private static final class PreparedRoomCatalogue {
@@ -8844,7 +8822,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       worker.execute(()->{
         try{
           SourceProbeTimePolicy.checkPublicationPaused(cancelled);
-          reloadRoomSourceMetrics();
           if(generation!=backgroundCatalogueReloadGeneration)return;
           // The already trusted directory is keyed by the committed Room checkpoint.
           // Do not page, normalize and republish an identical snapshot on every onStart.
