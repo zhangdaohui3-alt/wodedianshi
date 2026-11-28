@@ -3359,7 +3359,7 @@ public class SourceUpdateWorker extends Worker {
     JSONObject item=new JSONObject();JSONArray scopes=new JSONArray();
     scopes.put(scope);item.put("url",url);item.put("scopes",scopes);ownership.put(item);
   }
-  private void retainBackupSourceScopes(JSONObject channel,JSONArray retainedSources)throws JSONException{
+  static void retainBackupSourceScopes(JSONObject channel,JSONArray retainedSources)throws JSONException{
     JSONArray previous=channel.optJSONArray("backupSourceScopes");
     if(previous==null)return;
     HashSet<String> retainedUrls=new HashSet<>();
