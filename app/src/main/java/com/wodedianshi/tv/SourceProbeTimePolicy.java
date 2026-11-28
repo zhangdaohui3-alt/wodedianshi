@@ -50,6 +50,13 @@ public final class SourceProbeTimePolicy {
         return remainingPacingMillis(Math.min(LIVE_RESUMABLE_MAX_BYTES,copied),elapsed,LIVE_DIRECTORY_BYTES_PER_SECOND);
     }
 
+    /** Preserve the original eight-second body allowance at either viewing
+     * rate. A smaller low-buffer range can commit within the existing
+     * 15-second request budget; never enlarge the ordinary range. */
+    static long liveDirectoryRangeLimit(long playbackRate){
+        return playbackRate==16384L?LIVE_DIRECTORY_MAX_BYTES/2L:LIVE_DIRECTORY_MAX_BYTES;
+    }
+
     // Share sample pacing and headroom reduction, but retain the directory cap.
     static long liveDirectoryChunkDelayMillis(int bytes,long elapsed,long playbackRate){
         return viewingSampleRemainingDelayMillis(bytes,elapsed,
