@@ -300,6 +300,33 @@ public class PlaylistFeedIndexTest {
         assertEquals("甲",page.get(0).name);
     }
 
+    @Test public void largeIndexFieldCanPauseBeforePageEmissionWithoutRebuild()throws Exception {
+        char[] chars=new char[256*1024];
+        java.util.Arrays.fill(chars,'x');
+        String name=new String(chars);
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,"+name+"\nhttps://a.example/live\n");
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,row->{}));
+        File records=new File(feed.getPath()+".index-data");
+        File offsets=new File(feed.getPath()+".index-offsets");
+        byte[] originalRecords=java.nio.file.Files.readAllBytes(records.toPath());
+        byte[] originalOffsets=java.nio.file.Files.readAllBytes(offsets.toPath());
+        for(boolean existing:new boolean[]{false,true}){
+            java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+            List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+            java.util.function.BooleanSupplier pause=()->checks.incrementAndGet()>=5;
+            try{
+                if(existing)PlaylistFeedIndex.readExistingPage(feed,0,1,page::add,pause);
+                else PlaylistFeedIndex.readPage(feed,0,1,page::add,pause);
+                org.junit.Assert.fail("Expected large-field cancellation");
+            }catch(SourceProbeTimePolicy.PausedException expected){}
+            assertEquals(0,page.size());
+            org.junit.Assert.assertArrayEquals(originalRecords,java.nio.file.Files.readAllBytes(records.toPath()));
+            org.junit.Assert.assertArrayEquals(originalOffsets,java.nio.file.Files.readAllBytes(offsets.toPath()));
+            assertEquals(1,PlaylistFeedIndex.readExistingPage(feed,0,1,page::add,()->false));
+            assertEquals(name,page.get(0).name);
+        }
+    }
+
     @Test public void cancelledIndexReadKeepsSidecarsAndEmitsNothing() throws Exception {
         File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
                 +"#EXTINF:-1,乙\nhttps://b.example/live\n");
