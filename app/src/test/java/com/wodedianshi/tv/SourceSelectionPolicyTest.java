@@ -354,4 +354,23 @@ public class SourceSelectionPolicyTest {
                 SourceSelectionPolicy.blockedUrls(records,station,Arrays.asList(ad,next)),key->false));
     }
 
+    @Test public void blockedRememberedRouteSkipsEntireMemoryLookup() {
+        String blocked="https://blocked.invalid/live";
+        String healthy="https://healthy.invalid/live";
+        java.util.List<String> reads=new java.util.ArrayList<>();
+        java.util.List<String> ranked=new java.util.AbstractList<String>(){
+            @Override public int size(){return 3;}
+            @Override public String get(int index){
+                String url=Arrays.asList(healthy,"https://other.invalid/live",blocked).get(index);
+                reads.add(url);
+                return url;
+            }
+        };
+        assertEquals(0,SourceSelectionPolicy.findInitialSource(ranked,
+                "https://BLOCKED.invalid:443/live",Collections.singleton(blocked),key->{
+                    assertEquals(healthy,key);return false;
+                }));
+        assertEquals(Collections.singletonList(healthy),reads);
+    }
+
 }
