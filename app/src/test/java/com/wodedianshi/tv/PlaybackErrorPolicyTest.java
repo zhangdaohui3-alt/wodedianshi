@@ -4,27 +4,40 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class PlaybackErrorPolicyTest {
-    @Test public void skipsSameUrlRetryForConnectionFailuresAndTimeouts() {
-        assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(
-                "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED"));
-        assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(
-                "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT"));
+    private void expect(String name,int status,boolean skip,long cooldown){
+        PlaybackErrorPolicy.Disposition decision=PlaybackErrorPolicy.classify(name,status);
+        assertEquals(name+" / "+status,skip,decision.skipSameUrlVlcRetry);
+        assertEquals(name+" / "+status,cooldown,decision.cooldownMs);
     }
 
-    @Test public void retainsLibVlcFallbackForHttpAndDecoderCompatibilityErrors() {
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_IO_BAD_HTTP_STATUS"));
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_DECODING_FAILED"));
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED"));
+    @Test public void networkErrorsSkipEngineRetryWithShortCooldown(){
+        expect("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",0,true,30000L);
+        expect(" error_code_io_network_connection_timeout ",0,true,30000L);
+        expect("ERROR_CODE_IO_FILE_NOT_FOUND",0,true,120000L);
+        expect("ERROR_CODE_BEHIND_LIVE_WINDOW",0,true,120000L);
     }
 
-    @Test public void definitiveEndpointErrorsSkipBothEngineRetries() {
-        for (int status : new int[]{404,410,429,500,503,599})
-            assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_IO_BAD_HTTP_STATUS",status));
-        for (int status : new int[]{0,401,403})
-            assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_IO_BAD_HTTP_STATUS",status));
-        assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_IO_FILE_NOT_FOUND"));
-        assertTrue(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_BEHIND_LIVE_WINDOW"));
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("ERROR_CODE_DECODER_INIT_FAILED"));
+    @Test public void httpEvidenceTakesPrecedenceOverErrorName(){
+        for(String name:new String[]{null,"ERROR_CODE_IO_BAD_HTTP_STATUS",
+                "ERROR_CODE_DECODING_FAILED","ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT"}){
+            for(int status:new int[]{404,410})expect(name,status,true,600000L);
+            expect(name,429,true,60000L);
+            for(int status:new int[]{500,503,599})expect(name,status,true,30000L);
+        }
+        for(int status:new int[]{0,401,403,499,600})
+            expect("ERROR_CODE_IO_BAD_HTTP_STATUS",status,false,120000L);
+        expect("ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT",403,true,30000L);
+    }
+
+    @Test public void compatibilityErrorsRetainEngineFallback(){
+        for(String name:new String[]{"ERROR_CODE_DECODING_FAILED",
+                "ERROR_CODE_DECODER_INIT_FAILED","ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED"})
+            expect(name,0,false,600000L);
+    }
+
+    @Test public void unknownAndMissingErrorsRemainConservative(){
+        for(String name:new String[]{null,"","UNKNOWN_ERROR"})
+            expect(name,0,false,120000L);
     }
 
     @Test public void endedLiveWithPriorAudioVideoOutputSkipsEngineRetry() {
@@ -32,39 +45,5 @@ public class PlaybackErrorPolicyTest {
         assertTrue(PlaybackErrorPolicy.shouldTryVlcForEndedLive(true,false));
         assertTrue(PlaybackErrorPolicy.shouldTryVlcForEndedLive(false,true));
         assertTrue(PlaybackErrorPolicy.shouldTryVlcForEndedLive(false,false));
-    }
-
-    @Test public void usesShortCooldownForTransientNetworkAndServerErrors() {
-        assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT", 0));
-        assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", 0));
-        assertEquals(30000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_BAD_HTTP_STATUS", 503));
-    }
-
-    @Test public void usesLongCooldownForDeterministicMissingOrIncompatibleSources() {
-        assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_BAD_HTTP_STATUS", 404));
-        assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_BAD_HTTP_STATUS", 410));
-        assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_DECODING_FAILED", 0));
-        assertEquals(600000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED", 0));
-    }
-
-    @Test public void appliesRateLimitAndConservativeFallbackCooldowns() {
-        assertEquals(60000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_BAD_HTTP_STATUS", 429));
-        assertEquals(120000L, PlaybackErrorPolicy.cooldownMs(
-                "ERROR_CODE_IO_BAD_HTTP_STATUS", 403));
-        assertEquals(120000L, PlaybackErrorPolicy.cooldownMs(null, 0));
-    }
-
-    @Test public void unknownAndMissingErrorsRemainConservative() {
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(null));
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(""));
-        assertFalse(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry("UNKNOWN_ERROR"));
     }
 }
