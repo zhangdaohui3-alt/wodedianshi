@@ -6426,10 +6426,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     clearPendingRemoteZap();
-    int next=findNextUnblockedSource(current,current.activeSource,1);
-    if(next>=0){
-      selectManualSource(current,next);toast("已屏蔽广告源，正在切换备用源");startCurrentSource();
-    }else stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");
+    recentDepartedLiveSource=null;
+    resetLiveRecoveryBudget();
+    manualSourceSwitch=false;
+    if(current.backups==null||current.backups.isEmpty()){
+      stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");
+      return;
+    }
+    // Blocking is explicit, but the replacement route is an automatic choice.
+    // Reuse normal ranked admission; do not persist a guessed manual selection.
+    if(!prepareAutomaticChannelSource(current))return;
+    toast("已屏蔽广告源，正在选择优质备用源");
+    startCurrentSource();
   }
   private static final class PendingSingleChannelRefresh {
     final Channel channel;
