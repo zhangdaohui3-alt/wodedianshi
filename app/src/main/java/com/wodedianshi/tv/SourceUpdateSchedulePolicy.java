@@ -27,7 +27,7 @@ public final class SourceUpdateSchedulePolicy {
         return now < last || now - last >= ROUTINE_REFRESH_MS;
     }
 
-    static final String PROVISIONAL_RECHECK_KEY="source_probe_provisional_recheck_v1";
+    public static final String PROVISIONAL_RECHECK_KEY="source_probe_provisional_recheck_v1";
     static final int PROVISIONAL_RECHECK_CAP=2048;
     static final String PROVISIONAL_RECHECK_LAST_KEY="source_probe_provisional_recheck_last_v1";
     static final String QUALITY_ONLY_REVISION_KEY="source_probe_quality_only_revision_v1";
