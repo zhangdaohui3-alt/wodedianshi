@@ -173,9 +173,4 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         revoke();
         return engine.release();
     }
-
-    @Override public void release() {
-        revoke();
-        worker.execute(this::releaseAndConfirm);
-    }
 }
