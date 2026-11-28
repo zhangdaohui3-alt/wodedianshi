@@ -63,6 +63,18 @@ public final class SourceProbeTimePolicy {
                 Math.min(LIVE_DIRECTORY_BYTES_PER_SECOND,playbackRate));
     }
 
+    /** Defer a known unencoded body that cannot fit the remaining viewing
+     * budget at the current pacing rate. Unknown/compressed lengths are not
+     * evidence of decoded size; the normal streaming caps remain mandatory. */
+    static boolean admitsLiveFullDirectory(long declared,String encoding,long remainingMs,long playbackRate){
+        if(remainingMs<=0L)return false;
+        boolean identity=encoding==null||encoding.trim().isEmpty()||"identity".equalsIgnoreCase(encoding.trim());
+        if(!identity||declared<0L)return true;
+        if(!fitsLiveFullDirectory(declared))return false;
+        long rate=playbackRate==16384L?16384L:LIVE_DIRECTORY_BYTES_PER_SECOND;
+        return remainingPacingMillis(declared,0L,rate)<remainingMs;
+    }
+
     /** Full-body requests must not publish partial or non-body HTTP responses. */
     static boolean fullDirectoryResponse(int status,String contentRange){
         return status==200&&(contentRange==null||contentRange.trim().isEmpty());
