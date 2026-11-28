@@ -2765,8 +2765,9 @@ public class SourceUpdateWorker extends Worker {
         // source even when the ranked list is trimmed to the eight-source cap.
         ordered=SourceRankingRetentionPolicy.rankRequiredAndBest(
             ordered,stablePrimaryUrl,previousActiveUrl,MAX_SOURCES_PER_CHANNEL,bestFirst);
-        JSONArray ranked=new JSONArray();int restoredActiveIndex=0;
-        for(int j=0;j<ordered.size();j++){String u=ordered.get(j);ranked.put(u);if(u.equals(previousActiveUrl))restoredActiveIndex=j;}
+        JSONArray ranked=new JSONArray();
+        for(String url:ordered)ranked.put(url);
+        int restoredActiveIndex=SourceRankingRetentionPolicy.restoreSelectedIndex(ordered,previousActiveUrl);
         if(ranked.length()>0){
           // Keep url as the stable channel identity. The ranked source list and
           // activeSource carry playback preference independently.
