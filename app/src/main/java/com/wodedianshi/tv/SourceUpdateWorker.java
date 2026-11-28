@@ -3387,12 +3387,19 @@ public class SourceUpdateWorker extends Worker {
     if(previous==null)return;
     HashSet<String> retainedUrls=new HashSet<>();
     for(int i=0;i<retainedSources.length();i++)retainedUrls.add(retainedSources.optString(i,""));
-    JSONArray filtered=new JSONArray();
+    JSONArray filtered=null;
     for(int i=0;i<previous.length();i++){
       JSONObject item=previous.optJSONObject(i);
-      if(item!=null&&retainedUrls.contains(item.optString("url","")))filtered.put(item);
+      if(item!=null&&retainedUrls.contains(item.optString("url",""))){
+        if(filtered!=null)filtered.put(item);
+      }else if(filtered==null){
+        // Only allocate a replacement when the first ownership row is removed.
+        filtered=new JSONArray();
+        for(int j=0;j<i;j++)filtered.put(previous.getJSONObject(j));
+      }
     }
-    channel.put("backupSourceScopes",filtered);
+    if(filtered==null)filtered=previous;
+    else channel.put("backupSourceScopes",filtered);
     // Derive membership directly, preserving the last ownership row for
     // duplicate URLs, while keeping the filtered rows in original order.
     TreeSet<String> sortedScopes=new TreeSet<>();
