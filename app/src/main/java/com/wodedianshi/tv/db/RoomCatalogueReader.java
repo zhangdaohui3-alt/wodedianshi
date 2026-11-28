@@ -191,6 +191,18 @@ public final class RoomCatalogueReader {
 
     /** Worker reads can yield between bounded pages; never publish an incomplete result. */
     public static Snapshot read(Context context, PageConsumer consumer, java.util.function.BooleanSupplier paused) {
+        return readSnapshot(context,consumer,paused,true);
+    }
+
+    /** Publication reads only channels and their exact version. The writer
+     * reconciles the latest favorites inside its commit transaction. */
+    public static Snapshot readForPublication(Context context,PageConsumer consumer,
+            java.util.function.BooleanSupplier paused) {
+        return readSnapshot(context,consumer,paused,false);
+    }
+
+    private static Snapshot readSnapshot(Context context,PageConsumer consumer,
+            java.util.function.BooleanSupplier paused,boolean includeFavorites) {
         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         if (context == null) throw new IllegalArgumentException("context is null");
         ChannelDao dao = RoomDatabaseProvider.get(context).channelDao();
@@ -198,8 +210,8 @@ public final class RoomCatalogueReader {
                 dao.getValidatedCheckpoint(MasterCatalogueRepository.MIGRATION_KEY);
         if (initialCheckpoint == null) return null;
         final long catalogueVersion = initialCheckpoint.completedAt;
-        ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>() : null;
         int total = initialCheckpoint.channelsCount;
+        ArrayList<ChannelRecord> allRows = consumer == null ? new ArrayList<>(total) : null;
         int loaded = 0;
         for (int offset = 0; offset < total; offset += PAGE_SIZE) {
             if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
@@ -218,7 +230,8 @@ public final class RoomCatalogueReader {
             if (consumer != null) consumer.accept(records);
         }
         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
-        HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
+        Set<String> favorites = includeFavorites
+                ?new HashSet<>(dao.getFavoriteLegacyKeys()):java.util.Collections.emptySet();
         CatalogueMigrationEntity finalCheckpoint =
                 dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY);
         // Check the optimistic checkpoint BEFORE classifying a page-count
