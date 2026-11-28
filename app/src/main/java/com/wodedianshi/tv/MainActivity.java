@@ -4186,7 +4186,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
     hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);stage.requestFocus();};stage.postDelayed(hideVodSeekTask[0],2500);
-    Runnable showVodFallbackFailure=()->{if(vodPlayerDialog!=d||activeVodItem!=item||vodHistoryEnded)return;stopVodTerminalTimers();endedTitle.setText("暂时无法播放");endedSubtitle.setText("备用播放器也无法播放《"+item.title+"》。可以重新尝试，或返回影片列表。");replayEnded.setText("重新尝试");endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();};
+    Runnable showVodTerminalPanel=()->{
+      endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();
+      if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);
+      if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+      if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+      for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+      replayEnded.requestFocus();
+    };
+    Runnable showVodFallbackEnded=()->{markVodHistoryEnded(item,vodDurationMs());showVodTerminalPanel.run();};
+    Runnable showVodFallbackFailure=()->{if(vodPlayerDialog!=d||activeVodItem!=item||vodHistoryEnded)return;stopVodTerminalTimers();endedTitle.setText("暂时无法播放");endedSubtitle.setText("备用播放器也无法播放《"+item.title+"》。可以重新尝试，或返回影片列表。");replayEnded.setText("重新尝试");showVodTerminalPanel.run();};
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
       public void onStopTrackingTouch(SeekBar bar){long duration=vodDurationMs();if(duration>0)vodSeekTo(VodTimelinePolicy.fromProgress(bar.getProgress(),duration));}
@@ -4262,7 +4271,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       pv.setPlayer(vodPlayer);pv.setKeepScreenOn(true);
        MediaItem media=PlaybackPlayerFactory.buildMediaItem(item.url,item.identifier);vodPlayer.setMediaItem(media);vodPlayer.prepare();if(startPosition>0)vodPlayer.seekTo(startPosition);vodPlayer.addListener(new Player.Listener(){
          private boolean isCurrent(){return activityStarted&&!vodHistoryEnded&&vodListenerOwner==MainActivity.this.vodPlayer&&vodPlayerDialog==d&&activeVodItem==item;}
-         private void showEnded(){if(!isCurrent())return;markVodHistoryEnded(item,vodListenerOwner.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}
+         private void showEnded(){if(!isCurrent())return;markVodHistoryEnded(item,vodListenerOwner.getDuration());showVodTerminalPanel.run();}
          @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
          @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;
            if(PlaybackErrorPolicy.classify(error.getErrorCodeName(),extractHttpStatusCode(error.getCause())).skipSameUrlVlcRetry){
@@ -4275,7 +4284,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
              endedSubtitle.setText("影片地址暂时不可用，请重试或返回影片列表。");
              return;
            }
-           long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,()->{markVodHistoryEnded(item,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);}
+           long resume=vodListenerOwner.getCurrentPosition();if(resume<=0L)resume=startPosition;fallbackVodToLibVlc(d,item,pv,vodVlcView,resume,showVodFallbackEnded,showVodFallbackFailure);}
        });vodPlayer.play();if(!vodHistoryEnded&&vodPlayerDialog==d&&endedPanel.getVisibility()!=View.VISIBLE){vodProgressSaver=new Runnable(){@Override public void run(){if(vodProgressSaver==this&&activityStarted&&!vodHistoryEnded&&vodPlayerDialog==d&&activeVodItem==item&&d.isShowing()&&!isAnyPlaybackLockActive()&&(vodPlayer!=null||vodFallbackBackend!=null)){checkpointVodHistory();uiHandler.postDelayed(this,5000);}}};uiHandler.postDelayed(vodProgressSaver,5000);
       vodPlaybackWatchdog=new Runnable(){
         @Override public void run(){
@@ -4289,14 +4298,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             if(vodReadySince[0]==0L){vodReadySince[0]=now;vodLastAdvanceAt[0]=now;vodLastPosition[0]=position;}
             if(vodHasVideoTrack[0]&&!vodRenderedFirstFrame[0]&&now-vodReadySince[0]>=25000L){
               saveLiveDiagnostic("VOD_WATCHDOG_NO_FIRST_FRAME","readyMs="+(now-vodReadySince[0]));
-              fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{markVodHistoryEnded(item,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);
+              fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),showVodFallbackEnded,showVodFallbackFailure);
               return;
             }
             if(vodRenderedFirstFrame[0]){
               if(position!=vodLastPosition[0]){vodLastPosition[0]=position;vodLastAdvanceAt[0]=now;}
               else if(now-vodLastAdvanceAt[0]>=20000L){
                 saveLiveDiagnostic("VOD_WATCHDOG_STALLED","positionMs="+position+" stalledMs="+(now-vodLastAdvanceAt[0]));
-                fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),()->{markVodHistoryEnded(item,vodDurationMs());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();},showVodFallbackFailure);
+                fallbackVodToLibVlc(d,item,pv,vodVlcView,Math.max(position,startPosition),showVodFallbackEnded,showVodFallbackFailure);
                 return;
               }
             }
