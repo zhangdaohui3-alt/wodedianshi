@@ -7233,46 +7233,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     startCurrentSource();
   }
   private void play(int ix){
-    pauseStableDiscovery();
-    clearPendingRemoteZap();
-    if(ix<0||ix>=channels.size())return;
-    if(isChildLockCurrentlyActive()){enforceChildLock();return;}
-    if(isRemotePlaybackLockActive())return;
-    resetLiveRecoveryBudget();
-    manualSourceSwitch=false;
-    int previouslySelected=selected;
-    selected=ix;
-    updateLiveChannelSelection(previouslySelected);
-    if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    Channel target=channels.get(ix);
-    // Backup indices can change when playlists refresh; restore by URL identity instead.
-    target.activeSource=0;
-    applyLastKnownGoodSource(target);
-    sortSourcesByObservedQuality(target);
-    // Close the selector as soon as a valid manual request is accepted,
-    // rather than waiting for asynchronous native decoder release.
-    closeFullscreenChannelMenu();
-    startCurrentSource();
+    play(ix,null);
   }
-  // Explicit backup selection must not be reset to the channel's default/last-good source.
-  // Keep this path separate from normal channel selection, which intentionally applies
-  // the remembered last-good source.
-  private void play(int ix,int requestedSourceIndex){
+  // An explicit source request must not be overwritten by the remembered last-good route.
+  private void play(int ix,Integer requestedSourceIndex){
     pauseStableDiscovery();
     clearPendingRemoteZap();
     if(ix<0||ix>=channels.size())return;
     if(isChildLockCurrentlyActive()){enforceChildLock();return;}
     if(isRemotePlaybackLockActive())return;
+    boolean explicit=requestedSourceIndex!=null;
     Channel target=channels.get(ix);
-    if(target.backups==null||target.backups.isEmpty())return;
+    if(explicit&&(target.backups==null||target.backups.isEmpty()))return;
     resetLiveRecoveryBudget();
-    manualSourceSwitch=true;
+    manualSourceSwitch=explicit;
     int previouslySelected=selected;
     selected=ix;
-    target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
+    if(explicit)target.activeSource=Math.max(0,Math.min(requestedSourceIndex,target.backups.size()-1));
     updateLiveChannelSelection(previouslySelected);
     if(fullscreenFavoriteButton!=null)fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
-    queueActiveSourceMutation(target.key(),target.backups.get(target.activeSource));
+    if(explicit){
+      queueActiveSourceMutation(target.key(),target.backups.get(target.activeSource));
+    }else{
+      // Backup indices can change when playlists refresh; restore by URL identity instead.
+      target.activeSource=0;
+      applyLastKnownGoodSource(target);
+      sortSourcesByObservedQuality(target);
+    }
     // Close the selector as soon as a valid manual request is accepted,
     // rather than waiting for asynchronous native decoder release.
     closeFullscreenChannelMenu();
