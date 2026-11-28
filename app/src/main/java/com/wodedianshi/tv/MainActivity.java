@@ -1143,11 +1143,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(suffix.equals("8K"))return "CCTV-8K 超高清";
     return key;
   }
-  private String identity(String name,String group){
-    String canonical=canonicalChannelName(name);
-    if(canonical.startsWith("CCTV-"))return canonical+"|cctv";
-    return canonical.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
-  }
   // Satellite channels have a stable canonical identity across different source hosts.
   // Generic/local names retain host separation to avoid merging unrelated "News" channels.
   private String identity(Channel channel){
@@ -1197,8 +1192,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(savedIdentity.isEmpty())return -1;
     String savedUrl=resume.url;
     String savedName=canonicalChannelName(resume.name);
-    String savedGroup=normalizeResumeGroup(resume.group);
-    String savedTvgId=normalizeResumeTvgId(resume.tvgId);
+    String savedGroup=normalizeResumeMetadata(resume.group);
+    String savedTvgId=normalizeResumeMetadata(resume.tvgId);
     return RemoteChannelOrderPolicy.resolveSavedChannel(channels.size(),
         i->identity(channels.get(i)).equals(savedIdentity),
         i->{Channel c=channels.get(i);return identity(c.name,c.group,c.url).equals(savedIdentity);},
@@ -1206,21 +1201,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           Channel c=channels.get(i);
           return !resume.name.isEmpty()
               &&canonicalChannelName(c.name).equals(savedName)
-              &&normalizeResumeGroup(c.group).equals(savedGroup)
-              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(savedTvgId));
+              &&normalizeResumeMetadata(c.group).equals(savedGroup)
+              &&(resume.tvgId.isEmpty()||normalizeResumeMetadata(c.tvgId).equals(savedTvgId));
         },
         i->{
           Channel c=channels.get(i);
           // A reused endpoint must not override contradictory station metadata.
           return !savedUrl.isEmpty()&&(c.url.equals(savedUrl)||c.backups.contains(savedUrl))
               &&(resume.name.isEmpty()||canonicalChannelName(c.name).equals(savedName))
-              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(savedTvgId));
+              &&(resume.tvgId.isEmpty()||normalizeResumeMetadata(c.tvgId).equals(savedTvgId));
         });
   }
-  private String normalizeResumeGroup(String value){
-    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
-  }
-  private String normalizeResumeTvgId(String value){
+  private String normalizeResumeMetadata(String value){
     return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
   }
   // Defensive guard for dynamically reparented video/player views. A ViewGroup
@@ -4615,10 +4607,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return hasRegionalToken(metadata,city);
     }
     // Province labels are checked only after the fixed categories below.
-    if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
+    if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||canonicalChannelName(c.name).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("全球频道"))return ChannelCatalogueScopePolicy.matches(c.sourceScopes,"global");
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
-    if(cat.equals("央视"))return identity(c.name,c.group).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
+    if(cat.equals("央视"))return canonicalChannelName(c.name).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("香港")||cat.equals("澳门")||cat.equals("台湾"))return cat.equals(RegionCategoryPolicy.subcategory(c.name,c.group));
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
