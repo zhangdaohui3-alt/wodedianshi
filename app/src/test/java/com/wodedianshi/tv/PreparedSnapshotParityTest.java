@@ -96,6 +96,13 @@ public class PreparedSnapshotParityTest {
             for(int i=0;i<rows.size();i++)if((Boolean)province.invoke(activity,rows.get(i),label))expected.add(i);
             assertEquals(label,expected,index.candidates(label));
         }
+        SnapshotCategoryIndex.LocalMembership localOnly=(SnapshotCategoryIndex.LocalMembership)
+            build.invoke(activity,rows,(BooleanSupplier)()->false,false);
+        assertEquals(index.candidates(null),localOnly.candidates(null));
+        for(String label:new String[]{"广东","福建","江西","湖南","北京","湖北"})
+            assertEquals(label,index.candidates(label),localOnly.candidates(label));
+        assertNull(localOnly.fixedCategory("央视"));
+        assertNull(localOnly.geoKeys("geo:countries:us"));
         // No prepared cache is installed: exercise the production uncached
         // snapshot membership path directly instead of the retired wrapper.
         assertNull(field(MainActivity.class,"preparedLocalSnapshot").get(activity));
