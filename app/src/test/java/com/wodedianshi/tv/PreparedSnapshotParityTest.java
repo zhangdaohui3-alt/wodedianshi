@@ -197,23 +197,31 @@ public class PreparedSnapshotParityTest {
 
     @Test public void pageResultRekeysWithoutRebuildingPublishedCollections() throws Exception {
         Class<?> order=Class.forName("com.wodedianshi.tv.MainActivity$RemoteChannelOrder");
-        Constructor<?> constructor=order.getDeclaredConstructor(String.class,ArrayList.class,
-            ArrayList.class,java.util.HashMap.class);
+        Constructor<?> constructor=order.getDeclaredConstructor(String.class,ArrayList.class,ArrayList.class);
         constructor.setAccessible(true);
+        Class<?> channel=Class.forName("com.wodedianshi.tv.MainActivity$Channel");
+        Constructor<?> rowConstructor=channel.getDeclaredConstructor(String.class,String.class,String.class);
+        rowConstructor.setAccessible(true);
+        Object firstRow=rowConstructor.newInstance("First","https://example.invalid/first","local");
+        Object secondRow=rowConstructor.newInstance("Second","https://example.invalid/second","local");
         ArrayList<Integer> indexes=new ArrayList<>(Arrays.asList(5,2));
-        ArrayList<Object> visible=new ArrayList<>(Arrays.asList(new Object(),new Object()));
-        java.util.HashMap<String,Integer> byKey=new java.util.HashMap<>();
-        byKey.put("first",5);byKey.put("second",2);
-        Object first=constructor.newInstance("old",indexes,visible,byKey);
+        ArrayList<Object> visible=new ArrayList<>(Arrays.asList(firstRow,secondRow));
+        Object first=constructor.newInstance("old",indexes,visible);
         Method withKey=order.getDeclaredMethod("withKey",String.class);
         withKey.setAccessible(true);
         Object second=withKey.invoke(first,"new");
         assertNotSame(first,second);
         assertEquals("old",field(order,"key").get(first));
         assertEquals("new",field(order,"key").get(second));
-        for(String collection:new String[]{"indexes","positions","visible","sourceIndexByKey"})
+        for(String collection:new String[]{"indexes","positions","visible"})
             assertSame(collection,field(order,collection).get(first),field(order,collection).get(second));
-        assertEquals(Integer.valueOf(0),((java.util.Map<?,?>)field(order,"positions").get(second)).get(5));
-        assertEquals(Integer.valueOf(2),((java.util.Map<?,?>)field(order,"sourceIndexByKey").get(second)).get("second"));
+        java.util.Map<?,?> positions=(java.util.Map<?,?>)field(order,"positions").get(second);
+        assertEquals(Integer.valueOf(0),positions.get(5));
+        assertEquals(Integer.valueOf(1),positions.get(2));
+        List<?> publishedIndexes=(List<?>)field(order,"indexes").get(second);
+        List<?> publishedRows=(List<?>)field(order,"visible").get(second);
+        assertEquals(Arrays.asList(5,2),publishedIndexes);
+        assertSame(firstRow,publishedRows.get(0));
+        assertSame(secondRow,publishedRows.get(1));
     }
 }
