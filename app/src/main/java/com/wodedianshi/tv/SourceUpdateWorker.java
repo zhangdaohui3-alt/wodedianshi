@@ -1465,7 +1465,6 @@ public class SourceUpdateWorker extends Worker {
         if(e.alreadyStaged){retainedDuplicates++;continue;}
         if(!e.url.startsWith("http://")&&!e.url.startsWith("https://"))continue;
         String endpoint=e.endpoint();
-        String exactScoreKey=null;
         ProbeResult measured=measuredByEndpoint.get(endpoint);
         if(measured==null){
           if(!visitedUrls.add(endpoint))continue;
@@ -1644,23 +1643,20 @@ public class SourceUpdateWorker extends Worker {
             rememberInitialProbe(cacheKey,measured,measuredAt);
           measuredByEndpoint.put(endpoint,measured);
         }
+        // Persist each exact URL associated with a conclusive observation.
+        final String exactScoreKey=StableKey.url(e.url);
         if(!manualRefresh&&((measured.provisional&&measured.valid)||(!measured.paced&&!measured.provisional))){
-          if(exactScoreKey==null)exactScoreKey=StableKey.url(e.url);
           if(measured.provisional)
             SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,exactScoreKey);
           else provisionalKeys.remove(exactScoreKey);
         }
-        // Persist each exact URL associated with a conclusive observation.
-        if(exactScoreKey==null)exactScoreKey=StableKey.url(e.url);
         storePreflightScore(measuredScores,exactScoreKey,measured);
         manualQualityDirty.add(exactScoreKey);
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
-          String streakKey=exactScoreKey==null?StableKey.url(e.url):exactScoreKey;
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
-              probeFailureStreaks.optInt(streakKey,0),measured.valid);
-          if(streak==0)probeFailureStreaks.remove(streakKey);
-          else probeFailureStreaks.put(streakKey,streak);
-          manualQualityDirty.add(streakKey);
+              probeFailureStreaks.optInt(exactScoreKey,0),measured.valid);
+          if(streak==0)probeFailureStreaks.remove(exactScoreKey);
+          else probeFailureStreaks.put(exactScoreKey,streak);
         }
         // A queued old endpoint may have been retired after enqueue. Health
         // checks update its score/streak but cannot resurrect it as a discovery.
