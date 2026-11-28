@@ -23,15 +23,16 @@ public class SourceUpdateSchedulePolicyTest {
         cache.put("older-success",290000L);
         cache.put("expired-failure",10000L);
         cache.put("new-success",300000L);
-        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,2,
-            at->SourceUpdateSchedulePolicy.canReuseInitialProbe(true,at,320000L));
+        long expiry=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,2,
+            310000L,320000L,at->SourceUpdateSchedulePolicy.initialProbeExpiry(true,false,at));
         assertEquals(java.util.Arrays.asList("older-success","new-success"),new java.util.ArrayList<>(cache.keySet()));
         cache.put("another-success",310000L);
         cache.get("older-success");
-        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,2,
-            at->SourceUpdateSchedulePolicy.canReuseInitialProbe(true,at,320000L));
+        expiry=SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,2,
+            expiry,320000L,at->SourceUpdateSchedulePolicy.initialProbeExpiry(true,false,at));
         assertEquals(java.util.Arrays.asList("another-success","older-success"),new java.util.ArrayList<>(cache.keySet()));
-        SourceUpdateSchedulePolicy.trimInitialProbeCache(cache,0,at->true);
+        SourceUpdateSchedulePolicy.trimInitialProbeCacheByExpiry(cache,0,
+            expiry,320000L,at->SourceUpdateSchedulePolicy.initialProbeExpiry(true,false,at));
         assertTrue(cache.isEmpty());
     }
 
@@ -479,14 +480,14 @@ public class SourceUpdateSchedulePolicyTest {
             pending.add("k"+i);current.put("k"+i,"https://example.invalid/"+i);
         }
         java.util.List<String> original=new java.util.ArrayList<>(pending);
-        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(
-                pending,current,key->Integer.parseInt(key.substring(1))<50);
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(
+                pending,current,key->Integer.parseInt(key.substring(1))<50,SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT);
         assertEquals(48,selected.size());
         assertEquals("https://example.invalid/50",selected.get(0));
         assertEquals("https://example.invalid/97",selected.get(47));
         assertEquals(original,new java.util.ArrayList<>(pending));
         assertEquals("https://example.invalid/0",
-                SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current).get(0));
+                SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->false,SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT).get(0));
     }
 
     @Test public void qualityRecheckSpreadsOriginsWithoutLosingOldestOrReorderingStoredQueue(){
@@ -500,7 +501,7 @@ public class SourceUpdateSchedulePolicyTest {
         pending.add("fast1");current.put("fast1","https://fast.invalid/1");
         pending.add("other");current.put("other","https://other.invalid/0");
         java.util.List<String> original=new java.util.ArrayList<>(pending);
-        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->false,SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT);
         assertEquals(48,selected.size());
         assertEquals(java.util.Arrays.asList("https://slow.invalid/0","https://fast.invalid/0",
                 "https://other.invalid/0","https://slow.invalid/1","https://fast.invalid/1"),
@@ -511,7 +512,7 @@ public class SourceUpdateSchedulePolicyTest {
         // cooled sibling remains eligible for the next bounded slice.
         SourceUpdateSchedulePolicy.rememberProvisional(pending,"slow0");
         assertEquals("https://slow.invalid/1",
-                SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current).get(0));
+                SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->false,SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT).get(0));
     }
 
     @Test public void recentPlaybackProblemsOnlyPromoteBoundedTurns(){
@@ -567,7 +568,7 @@ public class SourceUpdateSchedulePolicyTest {
         for(int i=0;i<100;i++){
             pending.add("k"+i);current.put("k"+i,"https://example.invalid/"+i);
         }
-        java.util.List<String> selected=SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current);
+        java.util.List<String> selected=SourceUpdateSchedulePolicy.provisionalRecheckOrder(pending,current,key->false,SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT);
         assertEquals(48,selected.size());
         assertEquals("https://example.invalid/0",selected.get(0));
         assertEquals("https://example.invalid/47",selected.get(47));
