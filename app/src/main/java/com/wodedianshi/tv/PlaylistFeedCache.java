@@ -150,6 +150,10 @@ public final class PlaylistFeedCache {
                 // separate bounded slice, even during confirmed stable playback.
                 return publishRangeBody(context,directory,cached,partial,checkpoint,oldTag,paused,deadline);
             }
+            // Select the bounded range after local checkpoint preparation,
+            // using the same current headroom signal as directory pacing.
+            final long chunkLimit=lowRate?SourceProbeTimePolicy.liveDirectoryRangeLimit(
+                SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(android.os.SystemClock.elapsedRealtime())):2L*1024L*1024L;
             connection=(HttpURLConnection)new URL(feedUrl).openConnection();
             connection.setConnectTimeout(lowRate?2000:CONNECT_TIMEOUT_MS);connection.setReadTimeout(lowRate?2000:READ_TIMEOUT_MS);
             connection.setUseCaches(false);connection.setInstanceFollowRedirects(true);
