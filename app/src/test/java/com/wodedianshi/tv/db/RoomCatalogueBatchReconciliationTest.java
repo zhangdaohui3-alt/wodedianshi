@@ -125,4 +125,26 @@ public class RoomCatalogueBatchReconciliationTest {
         assertTrue(r.sourceWrites.isEmpty());
         assertTrue(r.deletes.isEmpty());
     }
+    @Test public void manualRetentionReturnsExistingSelectionWithoutQualityLookup() {
+        String active="https://CDN.example:443/live";
+        String alias="https://cdn.example/live";
+        RoomCatalogueWriter.PreparedChannel item=channel("a",
+            source("a","https://other.example/live",0,"[]"),source("a",alias,1,"[]"));
+        Map<String,BackupSourceEntity> old=new HashMap<>();
+        old.put(active,source("a",active,0,"[]"));
+        assertEquals(1,RoomCatalogueWriter.retainLiveSelection(item,old,active,
+            url->{throw new AssertionError("Retained endpoint needs no quality lookup");}));
+        assertEquals(2,item.sources.size());
+        assertEquals(alias,item.sources.get(1).url);
+    }
+
+    @Test public void manualRetentionReturnsRankedFallbackWhenOldRouteIsIneligible() {
+        String active="https://old.example/live";
+        RoomCatalogueWriter.PreparedChannel item=channel("a",source("a","https://new.example/live",0,"[]"));
+        Map<String,BackupSourceEntity> old=new HashMap<>();
+        old.put(active,source("a",active,0,"[]"));
+        assertEquals(0,RoomCatalogueWriter.retainLiveSelection(item,old,active,url->false));
+        assertEquals(1,item.sources.size());
+    }
+
 }
