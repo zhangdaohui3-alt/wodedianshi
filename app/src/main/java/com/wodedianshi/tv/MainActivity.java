@@ -4718,7 +4718,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       java.util.function.BooleanSupplier cancelled,boolean prepareFixed){
     ArrayList<Integer> allLocal=new ArrayList<>();
     java.util.Map<String,java.util.List<Integer>> provinces=new HashMap<>();
-    java.util.Map<String,java.util.List<Integer>> fixed=new HashMap<>();
+    java.util.Map<String,java.util.List<Integer>> fixed=prepareFixed?new HashMap<>():Collections.emptyMap();
     java.util.Map<String,java.util.Set<String>> geo=prepareFixed?new HashMap<>():null;
     if(prepareFixed)for(String category:PREPARED_FIXED_CATEGORIES)fixed.put(category,new ArrayList<>());
     for(int i=0;i<entries.size();i++){
@@ -4737,12 +4737,16 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         for(String category:PREPARED_FIXED_CATEGORIES)
           if("全部".equals(category)||categoryMatch(candidate,category,metadata,lowerGroup))
             fixed.get(category).add(i);
-        String key=candidate.key();
-        if(candidate.sourceScopes!=null)for(String scope:candidate.sourceScopes)
-          if(scope!=null&&scope.startsWith("geo:")&&ChannelCatalogueScopePolicy.isRetainableScope(scope))
+        String key=null;
+        if(candidate.sourceScopes!=null)for(String scope:candidate.sourceScopes){
+          if(scope!=null&&scope.startsWith("geo:")&&ChannelCatalogueScopePolicy.isRetainableScope(scope)){
+            if(key==null)key=candidate.key();
             geo.computeIfAbsent(scope,k->new HashSet<>()).add(key);
+          }
+        }
         String countryScope=GeoPlaylistCachePolicy.countryScopeForTvgId(candidate.tvgId);
-        if(!countryScope.isEmpty())geo.computeIfAbsent(countryScope,k->new HashSet<>()).add(key);
+        if(!countryScope.isEmpty())geo.computeIfAbsent(countryScope,k->new HashSet<>())
+            .add(key==null?candidate.key():key);
       }
     }
     if(prepareFixed){
