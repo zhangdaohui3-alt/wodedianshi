@@ -392,14 +392,19 @@ public final class RoomCatalogueWriter {
                         + snapshot.size() + " valid rows, wrote " + written[0]);
             }
 
-            // A worker refresh preserves the latest favorites from inside this same
-            // transaction. This avoids racing a user favorite toggle between a
-            // pre-transaction read and the catalogue commit.
+            // Remove only rows absent from the complete snapshot. FK cascades then
+            // clean up the removed channel's own sources/favorite, never its peers.
+            previousChannelIds.removeAll(presentChannelIds);
+            for (String staleId : previousChannelIds) {
+                checkPause(paused);
+                dao.deleteChannelById(staleId);
+            }
+
+            // The same transaction and FK cascade leave only surviving favorites.
+            // Reuse this single read for retention and reconciliation.
+            HashSet<String> currentFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
             if (favoriteKeys == null) {
-                // Retain unchanged IDs directly, then remap favorites whose primary
-                // stream changed using a conservative stable TVG/broadcaster identity.
-                desiredFavoriteIds.addAll(dao.getFavoriteChannelIds());
-                desiredFavoriteIds.retainAll(presentChannelIds);
+                desiredFavoriteIds.addAll(currentFavoriteIds);
                 for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
                     checkPause(paused);
                     String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
@@ -409,16 +414,7 @@ public final class RoomCatalogueWriter {
                 }
             }
 
-            // Remove only rows absent from the complete snapshot. FK cascades then
-            // clean up the removed channel's own sources/favorite, never its peers.
-            previousChannelIds.removeAll(presentChannelIds);
-            for (String staleId : previousChannelIds) {
-                checkPause(paused);
-                dao.deleteChannelById(staleId);
-            }
-
             // Preserve existing favorite timestamps; only apply actual additions/removals.
-            HashSet<String> currentFavoriteIds = new HashSet<>(dao.getFavoriteChannelIds());
             for (String favoriteId : currentFavoriteIds) {
                 checkPause(paused);
                 if (!desiredFavoriteIds.contains(favoriteId)) dao.removeFavorite(favoriteId);
