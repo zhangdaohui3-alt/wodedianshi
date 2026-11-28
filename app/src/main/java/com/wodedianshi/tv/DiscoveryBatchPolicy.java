@@ -217,20 +217,18 @@ public final class DiscoveryBatchPolicy {
         if(stage==3)return 30L;
         int from=stage==0?0:stage==1?mainland:regions;
         int to=stage==0?mainland:stage==1?regions:size;
-        long earliest=TRANSIENT_RECHECK_COOLDOWN_MS;
-        for(int i=from;i<to;i++)if(!completed[i]){
-            if(remaining[i]<=0L)return 30L;
-            earliest=Math.min(earliest,remaining[i]);
-        }
-        return (earliest+999L)/1000L;
+        return earliestCooldownSeconds(completed,remaining,from,to);
     }
     /** When no region has eligible work, wake at the first cooling feed
      * anywhere. Selection will still prefer mainland when it is eligible.
      * A missing/inconsistent cooldown retains the conservative retry delay. */
     static long earliestEligibleCooldownSeconds(boolean[] completed,long[] remaining) {
         if(completed==null||remaining==null||completed.length!=remaining.length)return 30L;
+        return earliestCooldownSeconds(completed,remaining,0,completed.length);
+    }
+    private static long earliestCooldownSeconds(boolean[] completed,long[] remaining,int from,int to) {
         long earliest=TRANSIENT_RECHECK_COOLDOWN_MS;
-        for(int i=0;i<completed.length;i++)if(!completed[i]){
+        for(int i=from;i<to;i++)if(!completed[i]){
             if(remaining[i]<=0L)return 30L;
             earliest=Math.min(earliest,remaining[i]);
         }
