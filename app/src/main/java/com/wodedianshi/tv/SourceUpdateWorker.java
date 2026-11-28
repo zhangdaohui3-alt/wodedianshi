@@ -327,17 +327,13 @@ public class SourceUpdateWorker extends Worker {
     final String manualId=getInputData().getString("manual_refresh_id")==null
         ?getId().toString():getInputData().getString("manual_refresh_id");
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
-    // A retry after the final durable commit must terminate even during playback.
-    if(manualRefresh&&manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
     final Map<String,String> initialState=initialDiscoveryChain
         ?com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),
             Arrays.asList("source_full_rebuild_active","source_full_rebuild_completed_at",
                 "source_full_rebuild_feed_fingerprint"))
         :Collections.emptyMap();
     if(initialDiscoveryChain){
-      long completedAt=0L;
-      try{completedAt=Long.parseLong(initialState.get("source_full_rebuild_completed_at"));}
-      catch(NumberFormatException invalid){}
+      long completedAt=stateLong(initialState,"source_full_rebuild_completed_at",0L);
       // A committed build is finished even if WorkManager retries during playback.
       // Do not enqueue another viewing continuation or rewrite completed status.
       if(!"true".equals(initialState.get("source_full_rebuild_active"))&&completedAt>0L)
@@ -348,21 +344,28 @@ public class SourceUpdateWorker extends Worker {
     // worker must neither compete with it nor publish a partial replacement.
     boolean provisionalOnly=false;
     if(!initialDiscoveryChain){
-      long completedAt=0L;
-      try{completedAt=Long.parseLong(roomString("source_full_rebuild_completed_at","0"));}
-      catch(NumberFormatException ignored){}
+      Map<String,String> maintenanceState=com.wodedianshi.tv.db.AppStateStore.getValues(
+          getApplicationContext(),Arrays.asList("source_full_rebuild_completed_at",
+              manualRefresh?"source_manual_completed_id":"source_last_routine_maintenance_at"));
+      // A retry after the final durable commit must terminate even during playback.
+      if(manualRefresh&&manualId.equals(maintenanceState.getOrDefault("source_manual_completed_id","")))
+        return Result.success();
+      long completedAt=stateLong(maintenanceState,"source_full_rebuild_completed_at",0L);
       if(!SourceUpdateSchedulePolicy.shouldScheduleRoutineMaintenance(true,completedAt))
         return manual?Result.retry():Result.success();
-      long lastRoutineAt=0L;
-      try{lastRoutineAt=Long.parseLong(roomString("source_last_routine_maintenance_at","0"));}
-      catch(NumberFormatException ignored){}
-      if(!manual&&!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,System.currentTimeMillis())){
-        String pending=roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,"[]");
-        long last=0L;
-        try{last=Long.parseLong(roomString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,"0"));}
-        catch(NumberFormatException ignored){}
-        provisionalOnly=SourceUpdateSchedulePolicy.provisionalRecheckDue(!"[]".equals(pending)&&!pending.isEmpty(),last,System.currentTimeMillis());
-        if(!provisionalOnly)return Result.success();
+      if(!manual){
+        long lastRoutineAt=stateLong(maintenanceState,"source_last_routine_maintenance_at",0L);
+        long wall=System.currentTimeMillis();
+        if(!SourceUpdateSchedulePolicy.isRoutineMaintenanceDue(completedAt,lastRoutineAt,wall)){
+          Map<String,String> recheckState=com.wodedianshi.tv.db.AppStateStore.getValues(
+              getApplicationContext(),Arrays.asList(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,
+                  SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY));
+          String pending=recheckState.getOrDefault(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,"[]");
+          long last=stateLong(recheckState,SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_LAST_KEY,0L);
+          provisionalOnly=SourceUpdateSchedulePolicy.provisionalRecheckDue(
+              !"[]".equals(pending)&&!pending.isEmpty(),last,wall);
+          if(!provisionalOnly)return Result.success();
+        }
       }
       // A manual chain may be between slices or paused for playback while the
       // Activity is in the background. Do not occupy its next source-work slot
@@ -4182,6 +4185,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private String roomString(String key,String fallback){
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
+  }
+  private static long stateLong(Map<String,String> state,String key,long fallback){
+    try{return Long.parseLong(state.get(key));}
+    catch(NumberFormatException invalid){return fallback;}
   }
   private static int stateInt(Map<String,String> state,String key,int fallback){
     try{return Integer.parseInt(state.get(key));}
