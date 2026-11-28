@@ -24,6 +24,21 @@ public class SnapshotCategoryIndexTest {
         assertFalse(new SnapshotCategoryIndex.PreparedLocal(7,membership).matches(8,10));
     }
 
+    @Test public void preparedEmptyGeoIsDifferentFromUnpreparedGeo(){
+        java.util.Map<String,java.util.Set<String>> geo=new java.util.HashMap<>();
+        SnapshotCategoryIndex.LocalMembership prepared=new SnapshotCategoryIndex.LocalMembership(
+            0,java.util.Collections.emptyList(),java.util.Collections.emptyMap(),
+            java.util.Collections.emptyMap(),geo);
+        geo.put("geo:countries:us",java.util.Collections.singleton("late"));
+        assertNotNull(prepared.geoKeys("geo:countries:us"));
+        assertTrue(prepared.geoKeys("geo:countries:us").isEmpty());
+        assertNull(prepared.fixedCategory("央视"));
+        assertTrue(prepared.candidates("福建").isEmpty());
+        SnapshotCategoryIndex.LocalMembership unprepared=new SnapshotCategoryIndex.LocalMembership(
+            0,java.util.Collections.emptyList(),java.util.Collections.emptyMap());
+        assertNull(unprepared.geoKeys("geo:countries:us"));
+    }
+
     @Test public void countryScopeUsesTheExistingExactTvgSuffixSemantics(){
         assertEquals("geo:countries:us",GeoPlaylistCachePolicy.countryScopeForTvgId(" Example.US "));
         assertEquals("geo:countries:cn",GeoPlaylistCachePolicy.countryScopeForTvgId("Example.cn"));
