@@ -22,6 +22,9 @@ public interface ManualProbeQualityDao {
     ManualProbeQualityEntity find(String owner,String key);
     @Query("SELECT * FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
     List<ManualProbeQualityEntity> page(String owner,String after,int limit);
+    @Query("SELECT sourceKey FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after "
+        + "AND observedAt>0 AND observedAt<=:cutoff ORDER BY sourceKey LIMIT :limit")
+    List<String> expiredKeys(String owner,String after,long cutoff,int limit);
     @Query("SELECT sourceKey FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
     List<String> pageKeys(String owner,String after,int limit);
     @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak,observedAt) "
