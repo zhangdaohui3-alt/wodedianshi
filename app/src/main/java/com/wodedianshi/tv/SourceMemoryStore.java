@@ -132,9 +132,14 @@ public final class SourceMemoryStore {
 
     public static boolean isCoolingDown(Context context, String url) {
         if (context == null || url == null || url.isEmpty()) return false;
+        return isEndpointCoolingDown(SourceSelectionPolicy.endpointKey(url));
+    }
+
+    /** The selection policy already canonicalized this endpoint. */
+    static boolean isEndpointCoolingDown(String endpoint) {
         synchronized (LOCK) {
             if (!initialized || cooldowns.length() == 0) return false;
-            long until = cooldowns.optLong(StableKey.url(SourceSelectionPolicy.endpointKey(url)), 0L);
+            long until = cooldowns.optLong(StableKey.url(endpoint), 0L);
             return until > System.currentTimeMillis();
         }
     }
