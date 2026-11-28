@@ -482,6 +482,11 @@ final class ChannelNamePolicy {
         }
         String value = metadata.toUpperCase(Locale.ROOT)
                 .replaceAll("[\\s_—–·•]", "");
+        return canonicalCctvFromNormalized(value);
+    }
+
+    /** Shared numeric/special CCTV parser for already normalized names. */
+    static String canonicalCctvFromNormalized(String value) {
         // Match special variants before the generic numeric form: otherwise
         // CCTV-4K and CCTV-4 Asia collapse into the ordinary CCTV-4 identity.
         java.util.regex.Matcher ultraHd = CCTV_ULTRA_HD.matcher(value);
