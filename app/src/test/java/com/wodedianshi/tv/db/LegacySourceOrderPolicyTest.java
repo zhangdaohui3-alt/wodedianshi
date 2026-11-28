@@ -48,4 +48,22 @@ public class LegacySourceOrderPolicyTest {
                 "https://primary.example/live.m3u8"), result.urls);
         assertEquals(1, result.activeIndex);
     }
+    @Test public void normalizesReadOnlyInputWithoutChangingOriginalSelection() {
+        String primary="https://primary.example/live";
+        String active="https://active.example/live";
+        java.util.List<String> input=Collections.unmodifiableList(
+                Arrays.asList(null,primary,"",active,primary,active));
+        LegacySourceOrderPolicy.Result result=LegacySourceOrderPolicy.normalize(input,primary,5);
+        assertEquals(Arrays.asList(primary,active),result.urls);
+        assertEquals(1,result.activeIndex);
+        assertEquals(Arrays.asList(null,primary,"",active,primary,active),input);
+    }
+
+    @Test public void missingSourceListUsesSeparatelyStoredPrimary() {
+        String primary="https://primary.example/live";
+        LegacySourceOrderPolicy.Result result=LegacySourceOrderPolicy.normalize(null,primary,0);
+        assertEquals(Collections.singletonList(primary),result.urls);
+        assertEquals(0,result.activeIndex);
+    }
+
 }
