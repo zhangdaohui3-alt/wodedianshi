@@ -25,6 +25,13 @@ public final class SourceSelectionPolicy {
      */
     public static int findNext(List<String> sources, int currentIndex,
                                Set<String> blocked, Set<String> coolingDown) {
+        return findNextByEndpoint(sources,currentIndex,blocked,Collections.emptySet(),
+                endpointKeys(coolingDown)::contains);
+    }
+
+    /** Check cooldown only for an eligible endpoint, stopping at the first healthy route. */
+    static int findNextByEndpoint(List<String> sources,int currentIndex,Set<String> blocked,
+            Set<String> failedEndpoints,java.util.function.Predicate<String> coolingDown) {
         if (sources == null || sources.size() < 2) return -1;
         int fallback = -1;
         int size = sources.size();
@@ -32,15 +39,14 @@ public final class SourceSelectionPolicy {
         String activeUrl = sources.get(start);
         String activeKey = endpointKey(activeUrl);
         Set<String> blockedKeys = endpointKeys(blocked);
-        Set<String> cooldownKeys = endpointKeys(coolingDown);
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()) continue;
             String key = endpointKey(url);
-            if (key.equals(activeKey) || blockedKeys.contains(key)) continue;
+            if (key.equals(activeKey) || blockedKeys.contains(key) || failedEndpoints.contains(key)) continue;
             if (fallback < 0) fallback = index;
-            if (!cooldownKeys.contains(key)) return index;
+            if (!coolingDown.test(key)) return index;
         }
         return fallback;
     }
