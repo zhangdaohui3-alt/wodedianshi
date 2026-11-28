@@ -83,4 +83,25 @@ public class SourceChannelMergePolicyTest {
         assertEquals(Arrays.asList("https://best.example/live.m3u8",
                 "https://mid.example/live.m3u8"), result);
     }
+    @Test public void activeAliasWinsEvenWhenPrimaryAppearsLater() {
+        String active="https://CDN.example/live.m3u8";
+        String primary="https://cdn.example:443/live.m3u8";
+        String candidate="https://other.example/live.m3u8";
+        List<String> expected=Arrays.asList(active,candidate);
+        for(List<String> existing:Arrays.asList(Arrays.asList(active,primary),Arrays.asList(primary,active))) {
+            assertEquals(expected,SourceChannelMergePolicy.attachSharedEndpoint(
+                    existing,candidate,2,BEST_FIRST,primary,active));
+            assertEquals(expected,SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
+                    existing,candidate,2,BEST_FIRST,primary,active,java.util.Collections.emptySet()));
+        }
+    }
+
+    @Test public void primaryAliasWinsWhenActiveIsAnotherEndpoint() {
+        String primary="https://cdn.example:443/live.m3u8";
+        String alias="https://CDN.example/live.m3u8";
+        String active="https://active.example/live.m3u8";
+        assertEquals(Arrays.asList(primary,active),SourceChannelMergePolicy.attachSharedEndpoint(
+                Arrays.asList(primary,alias,active),alias,2,BEST_FIRST,primary,active));
+    }
+
 }
