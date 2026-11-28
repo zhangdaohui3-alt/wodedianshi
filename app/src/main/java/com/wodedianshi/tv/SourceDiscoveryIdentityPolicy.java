@@ -5,12 +5,13 @@ import java.util.Locale;
 /** Shared, unchanged source discovery merge identity for staging lookup and worker merging. */
 public final class SourceDiscoveryIdentityPolicy {
   private SourceDiscoveryIdentityPolicy(){}
+  private static final String[] CCTV_CHINESE_NUMBERS={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
   public static String canonicalName(String name){
     String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
     String cctv=ChannelNamePolicy.canonicalCctvFromNormalized(v);
     if(!cctv.isEmpty())return cctv;
-    String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
-    for(int i=1;i<cn.length;i++)if(v.matches(".*中央(?:电视台)?"+cn[i]+"套.*"))return "CCTV-"+i;
+    if(v.contains("中央"))for(int i=1;i<CCTV_CHINESE_NUMBERS.length;i++)
+      if(v.matches(".*中央(?:电视台)?"+CCTV_CHINESE_NUMBERS[i]+"套.*"))return "CCTV-"+i;
     if(v.contains("中央电视台综合频道"))return "CCTV-1";
     if(v.contains("中央电视台财经频道"))return "CCTV-2";
     if(v.contains("中央电视台综艺频道"))return "CCTV-3";
@@ -33,6 +34,9 @@ public final class SourceDiscoveryIdentityPolicy {
     // parsing for every repeated national or satellite backup.
     String known=ChannelIdentityPolicy.broadcasterIdentity(v);
     if(!known.isEmpty())return known;
+    String localIdentity=ChannelIdentityPolicy.localStationIdentity(name,tvgName);
+    String confirmed=ChannelIdentityPolicy.identity(v,tvgId,"",localIdentity);
+    if(!confirmed.isEmpty())return confirmed;
     String base=v.toLowerCase(Locale.ROOT)+"|"+(group==null?"":group.trim().toLowerCase(Locale.ROOT));
     String fallback=base;
     try{
@@ -40,7 +44,6 @@ public final class SourceDiscoveryIdentityPolicy {
       String host=u.getHost();
       if(host!=null&&!host.isEmpty())fallback=base+"|host:"+host.toLowerCase(Locale.ROOT);
     }catch(Exception ignored){fallback=base+"|url:"+(url==null?"":url.trim());}
-    String localIdentity=ChannelIdentityPolicy.localStationIdentity(name,tvgName);
-    return ChannelIdentityPolicy.identity(v,tvgId,fallback,localIdentity);
+    return fallback;
   }
 }
