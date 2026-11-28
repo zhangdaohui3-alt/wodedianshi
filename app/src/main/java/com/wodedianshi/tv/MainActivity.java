@@ -4914,11 +4914,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           if(cachedScope==null&&!matchesDirectoryScope(c,categorySnapshot,regionOnly,provinceSnapshot,citySnapshot,
               geoKeys,favoriteOnly,favoriteSnapshot))continue;
           categoryMatches++;
-          String display=query.isEmpty()&&cctvOrders==null?"":displayChannelName(c);
-          if(!RemoteChannelOrderPolicy.matchesNormalizedQuery(query,c.name,c.group,display))continue;
+          String display=null;
+          if(!RemoteChannelOrderPolicy.matchesNormalizedQuery(query,c.name,c.group,null)){
+            display=displayChannelName(c);
+            if(!RemoteChannelOrderPolicy.matchesNormalizedQuery(query,null,null,display))continue;
+          }
           queryMatches++;
           indexes.add(i);
-          if(cctvOrders!=null){cctvOrders[i]=cctvSortOrder(c);cctvNames[i]=display;}
+          if(cctvOrders!=null){
+            cctvOrders[i]=cctvSortOrder(c);
+            cctvNames[i]=display==null?displayChannelName(c):display;
+          }
           sourceIndexByKey.putIfAbsent(c.key(),i);
         }
         // Diagnose empty local directories without mistaking a completed UI filter
