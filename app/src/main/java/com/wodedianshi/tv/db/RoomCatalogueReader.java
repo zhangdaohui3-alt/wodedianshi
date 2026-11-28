@@ -102,7 +102,7 @@ public final class RoomCatalogueReader {
         return legacyRoute(channel.name,channel.legacyKey,channel.primaryUrl);
     }
 
-    private static String legacyRoute(String name,String key,String primary){
+    static String legacyRoute(String name,String key,String primary){
         String prefix=(name==null?"":name)+"|";
         return key!=null&&key.startsWith(prefix)?key.substring(prefix.length()):
                 (primary==null?"":primary);
