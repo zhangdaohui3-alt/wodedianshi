@@ -64,6 +64,8 @@ public final class SourceRankingRetentionPolicy {
             }
         }
         if(fits){
+            // A valid single route already represents both required identities.
+            if(urls.size()==1)return urls;
             ArrayList<String> retained=retainRequiredAndBest(urls,primary,active,limit);
             retained.sort(bestFirst);
             return retained;
