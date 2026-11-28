@@ -8698,7 +8698,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static final class PreparedRoomCatalogue {
     final ArrayList<Channel> entries=new ArrayList<>();
     final HashMap<String,Channel> byUrl=new HashMap<>();
-    final HashMap<String,Channel> byIdentity=new HashMap<>();
+    final LinkedHashMap<String,Channel> byIdentity=new LinkedHashMap<>();
     final HashMap<String,Integer> positionByIdentity=new HashMap<>();
     final HashMap<String,Integer> positionByNameGroup=new HashMap<>();
     final HashSet<String> favorites=new HashSet<>();
@@ -8911,9 +8911,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               synchronized(channels){
                 synchronized(cataloguePersistLock){
                   if(catalogueMutationGeneration!=expectedMutationGeneration||cataloguePersistScheduled)return;
-                  for(Channel entry:prepared.entries){
-                    String key=identity(entry);
+                  for(Map.Entry<String,Channel> indexed:prepared.byIdentity.entrySet()){
+                    String key=indexed.getKey();
                     if(channelsByIdentity.containsKey(key))continue;
+                    Channel entry=indexed.getValue();
                     channels.add(entry);
                     channelsByIdentity.put(key,entry);
                     for(String url:entry.backups)channelsByUrl.putIfAbsent(url,entry);
