@@ -4125,7 +4125,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     nextEnded.setOnClickListener(v->{if(vodPlayerDialog!=d||!d.isShowing()||!activityStarted||isAnyPlaybackLockActive())return;VodItem next=findNextVodItem(item);if(next==null){toast("当前列表没有下一部影片");return;}startVodPlayback(next,0);});
     backEnded.setOnClickListener(v->d.dismiss());
     LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.HORIZONTAL);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(10),dp(4),dp(10),dp(4));controls.setBackgroundColor(0xDD101820);
-    TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);playPauseIndicator.setOnClickListener(v->{if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");});
+    TextView playPauseIndicator=new TextView(this);playPauseIndicator.setText("Ⅱ");playPauseIndicator.setTextColor(Color.WHITE);playPauseIndicator.setTextSize(15);playPauseIndicator.setGravity(Gravity.CENTER);playPauseIndicator.setPadding(0,0,0,0);android.graphics.drawable.GradientDrawable playPauseCircle=new android.graphics.drawable.GradientDrawable();playPauseCircle.setShape(android.graphics.drawable.GradientDrawable.OVAL);playPauseCircle.setColor(0xCC263746);playPauseCircle.setStroke(dp(1),0xFF8FA7BA);playPauseIndicator.setBackground(playPauseCircle);playPauseIndicator.setFocusable(false);playPauseIndicator.setClickable(true);Runnable toggleVodPlayback=()->{if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");};
+    playPauseIndicator.setOnClickListener(v->toggleVodPlayback.run());
     vodPositionLabel=new TextView(this);vodPositionLabel.setText("00:00");vodPositionLabel.setTextColor(Color.WHITE);vodPositionLabel.setTextSize(12);vodPositionLabel.setGravity(Gravity.CENTER);vodPositionLabel.setPadding(dp(6),0,dp(6),0);
     vodSeekBar=new SeekBar(this){
       private int remoteDirection=0;
@@ -4134,12 +4135,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         long duration=vodDurationMs();
         if(duration<=0)return;
         long target=VodTimelinePolicy.addAndClamp(vodPositionMs(),delta,duration);
-        vodSeekTo(target);
+        if(!vodSeekTo(target))return;
         setProgress(VodTimelinePolicy.toProgress(target,duration));
         if(vodPositionLabel!=null)vodPositionLabel.setText(formatVodTime(target));
       }
       @Override public boolean onKeyDown(int keyCode,KeyEvent event){
-        if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER||keyCode==KeyEvent.KEYCODE_ENTER||keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0){if(vodIsPlaying())vodPause();else vodResume();playPauseIndicator.setText(vodIsPlaying()?"Ⅱ":"▶");}return true;}
+        if(keyCode==KeyEvent.KEYCODE_DPAD_CENTER||keyCode==KeyEvent.KEYCODE_ENTER||keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0)toggleVodPlayback.run();return true;}
         int direction=keyCode==KeyEvent.KEYCODE_DPAD_LEFT?-1:keyCode==KeyEvent.KEYCODE_DPAD_RIGHT?1:0;
         if(direction==0)return super.onKeyDown(keyCode,event);
         if(event.getRepeatCount()==0){
@@ -4199,7 +4200,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     vodSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
       public void onStartTrackingTouch(SeekBar bar){}
       public void onStopTrackingTouch(SeekBar bar){long duration=vodDurationMs();if(duration>0)vodSeekTo(VodTimelinePolicy.fromProgress(bar.getProgress(),duration));}
-      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){long duration=vodDurationMs();if(fromUser&&duration>0)vodPositionLabel.setText(formatVodTime(VodTimelinePolicy.fromProgress(progress,duration)));}
+      public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(!fromUser)return;long duration=vodDurationMs();if(duration>0)vodPositionLabel.setText(formatVodTime(VodTimelinePolicy.fromProgress(progress,duration)));}
     });
     vodUiUpdater=new Runnable(){public void run(){
       if(vodUiUpdater!=this||!activityStarted||vodHistoryEnded||(vodPlayer==null&&vodFallbackBackend==null)||vodPlayerDialog!=d||!d.isShowing())return;
