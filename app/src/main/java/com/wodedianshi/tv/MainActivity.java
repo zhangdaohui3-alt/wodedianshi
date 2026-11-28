@@ -3994,6 +3994,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Runnable[] hideVodSeekTask=new Runnable[1];
     final View[] vodTopControls=new View[4];
     final View[] vodTerminalPanel={null};
+    final Runnable hideVodControls=()->{
+      if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
+      if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
+      for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+    };
     FrameLayout stage=new FrameLayout(this){
       private boolean terminalPanelVisible(){
         return vodTerminalPanel[0]!=null&&vodTerminalPanel[0].getVisibility()==View.VISIBLE;
@@ -4004,14 +4009,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         if(vodControlsHolder[0]!=null){vodControlsHolder[0].setVisibility(View.VISIBLE);vodControlsHolder[0].bringToFront();}
         if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.VISIBLE);
         for(View top:vodTopControls)if(top!=null)top.setVisibility(View.VISIBLE);
-        if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
-        hideVodSeekTask[0]=()->{
-          if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
-          if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
-          for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
-          this.requestFocus();
-        };
-        postDelayed(hideVodSeekTask[0],3500);
+        if(hideVodSeekTask[0]!=null){
+          removeCallbacks(hideVodSeekTask[0]);
+          postDelayed(hideVodSeekTask[0],3500);
+        }
         if(controlsWereHidden&&vodSeekHolder[0]!=null)vodSeekHolder[0].requestFocus();
       }
       @Override public boolean dispatchKeyEvent(KeyEvent event){
@@ -4047,9 +4048,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       private boolean videoTapCandidate=false,ownsVodVideoGesture=false;
       private void hideVodControlsNow(){
         if(hideVodSeekTask[0]!=null)removeCallbacks(hideVodSeekTask[0]);
-        if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
-        if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
-        for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+        hideVodControls.run();
       }
       private void toggleVodControls(){
         if(terminalPanelVisible())return;
@@ -4186,13 +4185,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     controls.addView(vodDurationLabel,new LinearLayout.LayoutParams(dp(52),-2));
     vodControlsHolder[0]=controls;
     FrameLayout.LayoutParams controlsParams=new FrameLayout.LayoutParams(-1,dp(62),Gravity.BOTTOM);controlsParams.setMargins(dp(12),0,dp(12),dp(12));stage.addView(controls,controlsParams);vodSeekHolder[0]=vodSeekBar;
-    hideVodSeekTask[0]=()->{if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);stage.requestFocus();};stage.postDelayed(hideVodSeekTask[0],2500);
+    hideVodSeekTask[0]=()->{hideVodControls.run();stage.requestFocus();};
+    stage.postDelayed(hideVodSeekTask[0],2500);
     Runnable showVodTerminalPanel=()->{
       endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();
       if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);
-      if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);
-      if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);
-      for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);
+      hideVodControls.run();
       replayEnded.requestFocus();
     };
     Runnable showVodFallbackEnded=()->{markVodHistoryEnded(item,vodDurationMs());showVodTerminalPanel.run();};
