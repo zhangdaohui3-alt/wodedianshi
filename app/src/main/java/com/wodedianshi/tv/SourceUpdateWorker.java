@@ -950,10 +950,12 @@ public class SourceUpdateWorker extends Worker {
                 android.os.SystemClock.elapsedRealtime()-sliceStartedAt))
               return continueAfterAcquisition();
           }
-          feedVersion=PlaylistFeedCache.contentVersion(cachedFeed);
-          final boolean coverageOrderForRead=initialDiscoveryChain&&PlaylistFeedIndex.hasCoverageOrder(cachedFeed);
-          if(initialDiscoveryChain)feedVersion=PlaylistFeedIndex.initialProbeVersion(
-              feedVersion,coverageOrderForRead);
+          // Every mode can reuse a station-first index produced by initial
+          // discovery. Bind its cursor to the actual order, and repair in
+          // that same order if a record is damaged during the read.
+          final boolean coverageOrderForRead=PlaylistFeedIndex.hasCoverageOrder(cachedFeed);
+          feedVersion=PlaylistFeedIndex.initialProbeVersion(
+              PlaylistFeedCache.contentVersion(cachedFeed),coverageOrderForRead);
           feedCursor=DiscoveryBatchPolicy.cursorForVersion(feedCursor,savedProbeVersion,feedVersion);
           int feedPageSize=initialDiscoveryChain
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
