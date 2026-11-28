@@ -354,7 +354,7 @@ public class SourceUpdateWorker extends Worker {
     final long activityStart=SourceUpdateActivityPolicy.activityStartGeneration();
     final long stableGeneration=SourceUpdateActivityPolicy.stableRevocationGeneration();
     slowPlayback=initialDiscoveryChain&&SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime(),stableGeneration);
-    final boolean foregroundAtStart=isActivityActive(prefs);
+    final boolean foregroundAtStart=SourceUpdateActivityPolicy.isActivityActive();
     // Automatic discovery parses the saved catalogue and builds sizeable indexes.
     // Defer that work while the TV app is active so it cannot compete with playback,
     // channel rendering, or remote-control input. Explicit manual updates remain available.
@@ -374,11 +374,11 @@ public class SourceUpdateWorker extends Worker {
         ||SourceUpdateActivityPolicy.idleWavePressureChanged(idleWavePressureGeneration)
         ||SourceUpdateActivityPolicy.playbackStartGeneration()!=playbackStart
         ||(deferForeground&&SourceUpdateActivityPolicy.activityStartGeneration()!=activityStart)
-        ||shouldYieldToViewing(prefs,manual,initialDiscoveryChain,publishedAtStart,stableGeneration));
+        ||shouldYieldToViewing(manual,initialDiscoveryChain,publishedAtStart,stableGeneration));
     if(pauseRequested.getAsBoolean()){
-      saveStatus(prefs,SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
+      saveStatus(SourceUpdateSchedulePolicy.shouldRetryWhenBusy(manual,initialDiscoveryChain)
           ?"节目或频道界面正在使用，首次/手动更新已推迟"
-          :"正在观看或浏览频道，维护仍待执行；下次空闲检查再继续",0);
+          :"正在观看或浏览频道，维护仍待执行；下次空闲检查再继续");
       return deferredViewingResult(manual,initialDiscoveryChain);
     }
     int added=0,feedsOk=0,feedsWithEntries=0,discoveryProbesValid=0,chinaPreflightsValid=0,feedsFailed=0,checked=0;
@@ -460,7 +460,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain||manualRefresh
           ?!com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
           :roomSnapshot==null) {
-        saveStatus(prefs,"Room频道目录尚未完成初始化，后台更新稍后重试",0);
+        saveStatus("Room频道目录尚未完成初始化，后台更新稍后重试");
         return Result.retry();
       }
       JSONArray saved;
@@ -476,7 +476,7 @@ public class SourceUpdateWorker extends Worker {
         // flag atomically. If the process died after commit but before WorkManager
         // recorded success, its retry must not start a second full rebuild.
         if(!"true".equals(buildActive)&&completedRebuildAt>0L){
-          saveStatus(prefs,"全量频道目录已完成发布，无需重复重建",0);
+          saveStatus("全量频道目录已完成发布，无需重复重建");
           return Result.success();
         }
         String configuredFeedFingerprint=discoveryFeedsFingerprint(feeds);
@@ -658,7 +658,7 @@ public class SourceUpdateWorker extends Worker {
         }
         // Last viewing slice may already have committed every feed. Avoid
         // reloading/ranking staging on each retry while only publication waits.
-        if(slowPlayback&&areAllDiscoveryFeedsComplete(prefs,Collections.emptyList(),feeds.length))
+        if(slowPlayback&&areAllDiscoveryFeedsComplete(feeds.length))
           return deferInitialDirectory("线路初筛已完成，等待空闲发布完整快照");
         // Acquisition and viewing deferral need only the durable row count.
         // Read the actual rows after these paths have had a chance to return.
@@ -799,7 +799,7 @@ public class SourceUpdateWorker extends Worker {
         boolean feedTerminalUnavailable=false;
         if(isStopped())return Result.retry();
         if(pauseRequested.getAsBoolean()){
-          saveStatus(prefs,"频道播放或浏览开始，本轮抓源已让路",0);
+          saveStatus("频道播放或浏览开始，本轮抓源已让路");
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
         final ArrayList<Entry> rawFeedCandidates=new ArrayList<>();
@@ -811,7 +811,7 @@ public class SourceUpdateWorker extends Worker {
           // Do not start a potentially large network download in that case.
           if(isStopped())return Result.retry();
           if(pauseRequested.getAsBoolean()){
-            saveStatus(prefs,"节目播放或频道操作优先，已推迟频道源下载",0);
+            saveStatus("节目播放或频道操作优先，已推迟频道源下载");
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
@@ -960,7 +960,7 @@ public class SourceUpdateWorker extends Worker {
               ?MAX_INITIAL_DISCOVERY_PER_FEED:manualRefresh?DiscoveryBatchPolicy.MANUAL_PAGE_SIZE:MAX_DISCOVERY_PER_FEED;
           noteInitialStage("解析目录 "+(feedIndex+1)+"/"+feeds.length+" · 游标 "+feedCursor);
           final int[] conflictingBroadcastRows={0};
-          final String directoryScope=scopeForFeed(feed);
+          final String directoryScope=SourceFeedScopePolicy.scopeForFeed(feed);
           PlaylistParser.EntryConsumer consume=source->{
             // Reject contradictory recognized station labels before spending network budget.
             // Raw parser positions still count toward the same feed cursor.
@@ -1005,7 +1005,7 @@ public class SourceUpdateWorker extends Worker {
           // Do not enqueue its candidates for probing or advance any cursor.
           if(isStopped())return Result.retry();
           if(pauseRequested.getAsBoolean()){
-            saveStatus(prefs,"频道操作开始，本轮目录整理已暂停且未发布部分结果",0);
+            saveStatus("频道操作开始，本轮目录整理已暂停且未发布部分结果");
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           // Idle indexed reads bypass obtain(), which normally refreshes cache
@@ -1055,7 +1055,7 @@ public class SourceUpdateWorker extends Worker {
         }catch(Exception e){
           // A viewing pause is not a source failure or an exhausted feed.
           if(e instanceof SourceProbeTimePolicy.PausedException||pauseRequested.getAsBoolean()){
-            saveStatus(prefs,"频道播放优先，目录读取已暂停，保留原游标",0);
+            saveStatus("频道播放优先，目录读取已暂停，保留原游标");
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           if(slowPlayback){
@@ -1437,7 +1437,7 @@ public class SourceUpdateWorker extends Worker {
       for(int offset=0;offset<probeCandidates.size();offset++){
         if(pauseRequested.getAsBoolean()){
           idleWave.close();
-          saveStatus(prefs,"用户使用频道时暂停后续线路检测",0);
+          saveStatus("用户使用频道时暂停后续线路检测");
           return deferredViewingResult(manual,initialDiscoveryChain);
         }
         // Once the first mainland candidate has been merged, do not start
@@ -1564,7 +1564,7 @@ public class SourceUpdateWorker extends Worker {
             retainCompletedInitialSuccess(cacheKey,measured,measuredAt,addressDeadline,probeDeadline);
           if(pauseRequested.getAsBoolean()||Thread.currentThread().isInterrupted()){
             idleWave.close();
-            saveStatus(prefs,"频道播放优先，线路检测已暂停，不记录失败",0);
+            saveStatus("频道播放优先，线路检测已暂停，不记录失败");
             return deferredViewingResult(manual,initialDiscoveryChain);
           }
           if(parallelOutcome?measuredAt>=probeDeadline:probeDeadlineReached(probeDeadline)){
@@ -1824,7 +1824,7 @@ public class SourceUpdateWorker extends Worker {
       // Re-check immediately before the catalogue commit so a just-started session
       // is not overlapped by the worker's final state write.
       if(pauseRequested.getAsBoolean()){
-        saveStatus(prefs,"观看或频道操作已开始，放弃本轮发布，旧完整目录仍然可用",0);
+        saveStatus("观看或频道操作已开始，放弃本轮发布，旧完整目录仍然可用");
         return deferredViewingResult(manual,initialDiscoveryChain);
       }
       if(isStopped())return Result.retry();
@@ -1871,7 +1871,7 @@ public class SourceUpdateWorker extends Worker {
           .putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
-              :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||isActivityActive(prefs)?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
+              :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||SourceUpdateActivityPolicy.isActivityActive()?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
       if(!manualRefresh){
         update.putString(SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,new JSONArray(provisionalKeys).toString());
       }
@@ -2211,9 +2211,9 @@ public class SourceUpdateWorker extends Worker {
         discardStagingReuse();
         com.wodedianshi.tv.db.RoomCatalogueBuildStore.clear(
             getApplicationContext(),failedBuildReset,pauseRequested);
-        saveStatus(prefs,saved.length()==0
+        saveStatus(saved.length()==0
             ?"全量目录采集已结束，但没有可发布的有效频道；旧目录继续保留，等待下次重新采集"
-            :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集",0);
+            :"全量候选线路均未通过媒体预检；未替换旧目录，后续可重新采集");
         return Result.failure();
       }
       // Commit one unit: either unpublished staging + progress or published
@@ -2367,7 +2367,7 @@ public class SourceUpdateWorker extends Worker {
       // Signal probe cancellation before any Room status write or WorkManager
       // query/enqueue, either of which can block this background owner.
       idleWave.close();
-      saveStatus(prefs,"频道播放优先，已撤销尚未完成的目录事务，原频道继续可用",0);
+      saveStatus("频道播放优先，已撤销尚未完成的目录事务，原频道继续可用");
       // A quality pass that already began may have fresh full evidence in
       // the existing process cache. One WorkManager retry, not a successor
       // task or a polling loop. Busy admission on that retry exits normally.
@@ -2375,7 +2375,7 @@ public class SourceUpdateWorker extends Worker {
           getRunAttemptCount(),isStopped(),Thread.currentThread().isInterrupted()))
         return Result.retry();
       return deferredViewingResult(manual,initialDiscoveryChain);
-    }catch(Exception e){idleWave.close();saveStatus(prefs,"更新异常："+e.getMessage()+"（原频道源保留）",0);return Result.retry();}
+    }catch(Exception e){idleWave.close();saveStatus("更新异常："+e.getMessage()+"（原频道源保留）");return Result.retry();}
     finally{idleWave.close();}
   }
   /** Reuse the existing daily worker/ownership gate, but never download feeds
@@ -2944,14 +2944,13 @@ public class SourceUpdateWorker extends Worker {
     android.util.Log.i("MyTVSourceDiscovery","continuation_enqueued chain="+uniqueName
         +" scheduling_ms="+(android.os.SystemClock.elapsedRealtime()-schedulingStartedAt));
   }
-  private boolean areAllDiscoveryFeedsComplete(SharedPreferences prefs,
-          List<FeedBatch> batches,int feedCount){
+  private boolean areAllDiscoveryFeedsComplete(int feedCount){
     ArrayList<String> keys=new ArrayList<>(feedCount);
     for(int i=0;i<feedCount;i++)keys.add(initialFeedDoneKey(i));
     Map<String,String> values=readRoomValues(keys);
     boolean[] completed=new boolean[feedCount];
     for(int i=0;i<feedCount;i++)completed[i]=Boolean.parseBoolean(values.get(keys.get(i)));
-    return areAllDiscoveryFeedsComplete(completed,batches);
+    return areAllDiscoveryFeedsComplete(completed,Collections.emptyList());
   }
   private boolean areAllDiscoveryFeedsComplete(boolean[] completed,List<FeedBatch> batches){
     for(int i=0;i<completed.length;i++){
@@ -3028,11 +3027,11 @@ public class SourceUpdateWorker extends Worker {
     return true;
   }
 
-  private boolean shouldYieldToViewing(SharedPreferences prefs, boolean manual,
+  private boolean shouldYieldToViewing(boolean manual,
       boolean initialDiscoveryChain, boolean hasPublishedChannels,long stableGeneration){
     return (slowPlayback?!SourceUpdateActivityPolicy.permitsInitialPlaybackWork(android.os.SystemClock.elapsedRealtime(),stableGeneration):SourceUpdateActivityPolicy.isPlaybackActive())
         || SourceUpdateSchedulePolicy.shouldDeferForegroundDiscovery(
-            isActivityActive(prefs),manual,initialDiscoveryChain,hasPublishedChannels);
+            SourceUpdateActivityPolicy.isActivityActive(),manual,initialDiscoveryChain,hasPublishedChannels);
   }
 
   private Result deferInitialDirectory(String reason){
@@ -3080,9 +3079,6 @@ public class SourceUpdateWorker extends Worker {
         ?Result.retry():Result.success();
   }
 
-  private boolean isActivityActive(SharedPreferences prefs){
-    return SourceUpdateActivityPolicy.isActivityActive();
-  }
   static final class Entry{
     final String name,group,tvgId,tvgName;
     String scope;boolean savedSource,skipReplay,alreadyStaged;
@@ -3253,9 +3249,6 @@ public class SourceUpdateWorker extends Worker {
     return old;
   }
 
-  private String scopeForFeed(String feed){
-    return SourceFeedScopePolicy.scopeForFeed(feed);
-  }
   private String feedCursorKey(int index){return "source_feed_cursor_"+index;}
   private String routineFeedCursorKey(int index){return "source_routine_feed_cursor_"+index;}
   private String manualFeedCursorKey(int index){return "source_manual_feed_cursor_"+index;}
@@ -4207,7 +4200,7 @@ public class SourceUpdateWorker extends Worker {
     String value=roomString(key,Boolean.toString(fallback));
     return Boolean.parseBoolean(value);
   }
-  private void saveStatus(SharedPreferences p,String result,int added){
+  private void saveStatus(String result){
     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_time",now());
     com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_result",result);
   }
