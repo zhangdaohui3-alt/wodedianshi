@@ -157,4 +157,14 @@ public class TrackHealthPolicyTest {
     @Test public void healthyTracksDoNotFailover() {
         assertFalse(TrackHealthPolicy.shouldFailoverForTrackHealth(false, false));
     }
+    @Test public void vlcHealthCannotCarryAcrossDelayedOrInvalidObservationIntervals(){
+        assertFalse(TrackHealthPolicy.vlcHealthIntervalFresh(0L,12000L));
+        assertFalse(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,12000L));
+        assertFalse(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,11000L));
+        assertTrue(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,24000L));
+        assertTrue(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,32000L));
+        assertFalse(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,32001L));
+        assertFalse(TrackHealthPolicy.vlcHealthIntervalFresh(12000L,120000L));
+    }
+
 }
