@@ -6499,9 +6499,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final long displayedTuneSerial=liveTuneRequestSerial;
     ArrayList<String> labels=new ArrayList<>();
     ArrayList<String> displayedUrls=new ArrayList<>();
+    Set<String> blockedUrls=blockedSourceUrls(c);
     for(int i=0;i<c.backups.size();i++){
       String url=c.backups.get(i);
-      boolean blocked=isSourceBlocked(c,url);
+      boolean blocked=blockedUrls.contains(url);
       labels.add("播放源 "+(i+1)+(i==c.activeSource?"（当前）":"")+(i==0?" · 主源":" · 备用源")+(blocked?" · 已屏蔽（点此恢复）":""));
       displayedUrls.add(url);
     }
