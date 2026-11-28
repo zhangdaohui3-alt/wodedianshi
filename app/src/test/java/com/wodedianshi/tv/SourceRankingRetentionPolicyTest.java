@@ -173,4 +173,11 @@ public class SourceRankingRetentionPolicyTest {
         org.junit.Assert.assertTrue(cmp.compare("a","b")>0);
         assertEquals(Integer.valueOf(2),calls.get("a"));
     }
+    @Test public void validSingleRouteReturnsDirectlyWithoutRankingOrCopy(){
+        String url="https://example.invalid/live";
+        java.util.ArrayList<String> urls=new java.util.ArrayList<>(Collections.singletonList(url));
+        org.junit.Assert.assertSame(urls,SourceRankingRetentionPolicy.rankRequiredAndBest(
+                urls,url,url,8,(a,b)->{throw new AssertionError("Single route needs no comparison");}));
+    }
+
 }
