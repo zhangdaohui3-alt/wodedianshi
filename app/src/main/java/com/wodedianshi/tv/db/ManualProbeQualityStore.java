@@ -165,9 +165,10 @@ public final class ManualProbeQualityStore {
     public static List<ManualProbeQualityEntity> changes(String owner,Collection<String> keys,
             JSONObject scores,JSONObject streaks){
         List<ManualProbeQualityEntity> result=new ArrayList<>();
+        final long observedAt=System.currentTimeMillis();
         for(String key:keys)result.add(new ManualProbeQualityEntity(owner,key,
             scores.has(key)?Integer.valueOf(scores.optInt(key,0)):null,
-            streaks.has(key)?Integer.valueOf(streaks.optInt(key,0)):null));
+            streaks.has(key)?Integer.valueOf(streaks.optInt(key,0)):null,observedAt));
         return result;
     }
 
