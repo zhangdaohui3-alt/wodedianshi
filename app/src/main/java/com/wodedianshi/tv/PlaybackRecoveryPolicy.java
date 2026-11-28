@@ -11,13 +11,13 @@ public final class PlaybackRecoveryPolicy {
     }
 
     public static boolean isVideoOutputStalled(boolean videoTrackSelected,
-                                                boolean hasReceivedVideoFrame,
-                                                long sourceReadyAtMs,
-                                                long lastVideoFrameAtMs,
+                                                boolean firstFrameRendered,
+                                                long videoTrackSelectedAtMs,
+                                                long lastVideoFrameActivityAtMs,
                                                 long nowMs,
                                                 long timeoutMs) {
-        if (!videoTrackSelected || timeoutMs <= 0L || nowMs < 0L) return false;
-        long reference = hasReceivedVideoFrame ? lastVideoFrameAtMs : sourceReadyAtMs;
-        return reference > 0L && nowMs >= reference && nowMs - reference >= timeoutMs;
+        if (!videoTrackSelected) return false;
+        long reference = firstFrameRendered ? lastVideoFrameActivityAtMs : videoTrackSelectedAtMs;
+        return isTimelineStalled(nowMs, reference, timeoutMs);
     }
 }
