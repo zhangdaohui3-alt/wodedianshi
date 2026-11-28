@@ -261,6 +261,63 @@ public final class ManualProbeQualityStore {
         SourceProbeTimePolicy.checkPublicationPaused(paused);
     }
 
+    private static final long QUALITY_RETENTION_MS=90L*24L*60L*60L*1000L;
+    private static final int RETENTION_PAGE=512;
+    private static final String RETENTION_CURSOR="source_quality_retention_after_v3";
+
+    /** Only after a complete catalogue round, inside its publication transaction.
+     * Age alone is never sufficient: protect the live route association and
+     * pending rechecks, and never touch a private overlay. One bounded page
+     * per completed round avoids turning retention into another worker. */
+    static void pruneExpiredUnretainedInTransaction(AppDatabase db,long now,BooleanSupplier paused){
+        if(!db.inTransaction())throw new IllegalStateException("Quality retention requires catalogue transaction");
+        AppStateDao state=db.appStateDao();
+        if(now<=QUALITY_RETENTION_MS||hasInitial(db)
+                ||state.getValue(RoomCatalogueBuildStore.MANUAL_OWNER_KEY)!=null
+                ||!"true".equals(state.getValue(PUBLISHED_READY_KEY)))return;
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        ManualProbeQualityDao quality=db.manualProbeQualityDao();
+        String after=state.getValue(RETENTION_CURSOR);
+        List<String> page=quality.expiredKeys(PUBLISHED_OWNER,after==null?"":after,now-QUALITY_RETENTION_MS,RETENTION_PAGE);
+        if(page.isEmpty()){
+            if(after!=null)state.remove(RETENTION_CURSOR);
+            return;
+        }
+        Set<String> stale=new HashSet<>(page);
+        String pending=state.getValue(com.wodedianshi.tv.SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY);
+        if(pending!=null)try{
+            org.json.JSONArray keys=new org.json.JSONArray(pending);
+            for(int i=0;i<keys.length();i++){
+                SourceProbeTimePolicy.checkPublicationPaused(paused);
+                stale.remove(keys.getString(i));
+            }
+        }catch(JSONException malformed){return;} // Unknown protection set: do not prune.
+        ChannelDao channels=db.channelDao();
+        int total=channels.countChannels(),loaded=0;
+        if(total<=0)return;
+        for(int offset=0;offset<total&&!stale.isEmpty();offset+=200){
+            SourceProbeTimePolicy.checkPublicationPaused(paused);
+            List<ChannelDao.RouteMembership> rows=channels.getRouteMembershipPage(200,offset);
+            for(ChannelDao.RouteMembership row:rows){
+                SourceProbeTimePolicy.checkPublicationPaused(paused);
+                if(row==null)return;
+                loaded++;
+                if(row.primaryUrl!=null)stale.remove(StableKey.url(row.primaryUrl));
+                RoomCatalogueReader.visitRowRoutes(row,url->{
+                    stale.remove(StableKey.url(url));return stale.isEmpty();
+                },paused);
+                if(stale.isEmpty())break;
+            }
+        }
+        // A partial scan cannot prove that any remaining key is absent.
+        if(!stale.isEmpty()&&loaded!=total)return;
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+        if(!stale.isEmpty())quality.removeKeys(PUBLISHED_OWNER,new ArrayList<>(stale));
+        if(page.size()<RETENTION_PAGE)state.remove(RETENTION_CURSOR);
+        else state.put(new AppStateEntity(RETENTION_CURSOR,page.get(page.size()-1),now));
+        SourceProbeTimePolicy.checkPublicationPaused(paused);
+    }
+
     /** Keep cancellation between bounded key ranges, but let SQLite copy
      * values directly instead of materializing two Java entity lists per page.
      * Existing callers own the transaction and validate build ownership. */
