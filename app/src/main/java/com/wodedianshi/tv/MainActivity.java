@@ -6487,7 +6487,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           setSourceBlocked(c,bad,true);
           saveLiveDiagnostic("SOURCE_USER_BLOCK","channel="+c.name+" route="+StableKey.url(SourceSelectionPolicy.endpointKey(bad)).substring(0,19));
           int next=findNextUnblockedSource(c,c.activeSource,1);
-          if(next>=0){c.activeSource=next;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),c.backups.get(next));toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
+          if(next>=0){selectManualSource(c,next);toast("已屏蔽此源，正在切换到其他源");startCurrentSource();}
           else{stopFailedLiveSession("已屏蔽此源，本频道没有其他未屏蔽源");}
           return;
         }
@@ -6499,7 +6499,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           setSourceBlocked(c,url,false);
           toast("已恢复该播放源");
         }
-        c.activeSource=index;automaticSwitchCount=0;failedEndpointsThisPass.clear();automaticChannelSwitchCount=0;sameSourceRecoveryCount=0;manualSourceSwitch=true;queueActiveSourceMutation(c.key(),url);startCurrentSource();
+        selectManualSource(c,index);startCurrentSource();
       }).setNegativeButton("取消",null).create();
     if(fullScreenPlayback){
       clearPendingRemoteZap();
@@ -6558,7 +6558,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     };
     uiHandler.postDelayed(pendingRemoteSourceDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
   }
-  private void applyRemoteSource(Channel c,int next){
+  /** Commit an already validated manual source choice before starting playback. */
+  private void selectManualSource(Channel c,int next){
     c.activeSource=next;
     automaticSwitchCount=0;
     failedEndpointsThisPass.clear();
@@ -6566,6 +6567,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     sameSourceRecoveryCount=0;
     manualSourceSwitch=true;
     queueActiveSourceMutation(c.key(),c.backups.get(next));
+  }
+  private void applyRemoteSource(Channel c,int next){
+    selectManualSource(c,next);
     startCurrentSource();
     showChannelZapMessage(displayChannelName(c)+"\n正在尝试第 "+(c.activeSource+1)+" / "+c.backups.size()+" 个源");
   }
