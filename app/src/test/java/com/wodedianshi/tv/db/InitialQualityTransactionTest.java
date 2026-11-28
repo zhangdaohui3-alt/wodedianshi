@@ -507,4 +507,32 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+    @Test public void observationTimeSurvivesPreviewFinalAndManualPublication()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String initial=ManualProbeQualityStore.INITIAL_OWNER,published=ManualProbeQualityStore.PUBLISHED_OWNER;
+            String url="https://example.invalid/a",key=com.wodedianshi.tv.StableKey.url(url);
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,
+                Collections.singletonList(new ManualProbeQualityEntity(initial,key,900,1,1234L)),()->false));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialPreviewInTransaction(db,Collections.singletonList(url),()->false));
+            assertEquals(1234L,db.manualProbeQualityDao().find(published,key).observedAt);
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            assertEquals(1234L,db.manualProbeQualityDao().find(published,key).observedAt);
+            String owner="manual-time";
+            db.appStateDao().put(new AppStateEntity(RoomCatalogueBuildStore.MANUAL_OWNER_KEY,owner,1L));
+            db.appStateDao().put(new AppStateEntity(ManualProbeQualityStore.READY_KEY,owner,1L));
+            db.manualProbeQualityDao().put(Collections.singletonList(new ManualProbeQualityEntity(owner,key,700,null,5678L)));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInTransaction(db,owner,()->false));
+            assertEquals(5678L,db.manualProbeQualityDao().find(published,key).observedAt);
+            assertEquals(0L,new ManualProbeQualityEntity(published,"unknown",900,null).observedAt);
+            org.json.JSONObject scores=new org.json.JSONObject().put(key,800);
+            long before=System.currentTimeMillis();
+            ManualProbeQualityEntity row=ManualProbeQualityStore.changes(published,Collections.singleton(key),
+                scores,new org.json.JSONObject()).get(0);
+            assertTrue(row.observedAt>=before);
+            assertTrue(row.observedAt<=System.currentTimeMillis());
+        }finally{db.close();}
+    }
+
 }
