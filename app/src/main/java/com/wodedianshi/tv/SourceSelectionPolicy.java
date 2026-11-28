@@ -61,7 +61,7 @@ public final class SourceSelectionPolicy {
         for(int step=0;step<count;step++){
             int index=(start+step)%size;
             String url = sources.get(index);
-            if (url == null || url.trim().isEmpty()) continue;
+            if (!hasSourceAddress(url)) continue;
             String key = endpointKey(url);
             if (key.equals(activeKey) || blockedKeys.contains(key) || failedEndpoints.contains(key)) continue;
             if (fallback < 0) fallback = index;
@@ -146,11 +146,28 @@ public final class SourceSelectionPolicy {
         return result;
     }
 
+    /** Manual navigation uses exact user blocks, not automatic cooldown or alias exclusion. */
+    static int findNextManualSource(List<String> sources,int from,int direction,Set<String> blocked) {
+        if(sources==null||sources.size()<2)return -1;
+        int size=sources.size(),start=wrapIndex(from,size);
+        int delta=direction<0?-1:1;
+        for(int step=1;step<size;step++){
+            int index=wrapIndex(start+delta*step,size);
+            String url=sources.get(index);
+            if(hasSourceAddress(url)&&(blocked==null||!blocked.contains(url)))return index;
+        }
+        return -1;
+    }
+
+    static boolean hasSourceAddress(String url) {
+        return url!=null&&!url.trim().isEmpty();
+    }
+
     /** A stale menu must not modify another channel or silently select a changed URL. */
     public static int resolveManualSelection(Object menuChannel, Object selectedChannel,
             List<String> currentSources, String requestedUrl) {
         if (menuChannel == null || menuChannel != selectedChannel || currentSources == null
-                || requestedUrl == null || requestedUrl.trim().isEmpty()) return -1;
+                || !hasSourceAddress(requestedUrl)) return -1;
         return currentSources.indexOf(requestedUrl);
     }
 
