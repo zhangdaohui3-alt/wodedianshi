@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase;
     CatalogueBuildRowEntity.class,
     ManualProbeQueueEntity.class,
     ManualProbeQualityEntity.class
-}, version = 10, exportSchema = true)
+}, version = 11, exportSchema = true)
 public abstract class AppDatabase extends RoomDatabase {
     public abstract ChannelDao channelDao();
     public abstract AppStateDao appStateDao();
