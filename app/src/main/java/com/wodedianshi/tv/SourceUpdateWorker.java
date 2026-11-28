@@ -286,6 +286,10 @@ public class SourceUpdateWorker extends Worker {
         if(!inlineInitialRequested)return result;
         android.util.Log.i("MyTVSourceDiscovery","inline_initial_continuation completed_slices="+ownedSlices);
       }
+    }catch(android.database.sqlite.SQLiteException databaseFailure){
+      discardStagingReuse();
+      android.util.Log.e("MyTVSourceDiscovery","Room state unavailable; retry source work",databaseFailure);
+      return Result.retry();
     }finally{
       if(isStopped()||Thread.currentThread().isInterrupted())discardStagingReuse();
       initialLiveStage="";SOURCE_WORK_ACTIVE.set(false);
@@ -4187,16 +4191,21 @@ public class SourceUpdateWorker extends Worker {
   }
   private int roomInt(String key,int fallback){
     try{return Integer.parseInt(roomString(key,Integer.toString(fallback)));}
-    catch(Exception ignored){return fallback;}
+    catch(NumberFormatException invalid){return fallback;}
   }
   private boolean roomBoolean(String key,boolean fallback){
     String value=roomString(key,Boolean.toString(fallback));
     return Boolean.parseBoolean(value);
   }
   private void saveStatus(String result){
-    new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
-        .putString("source_update_time",now())
-        .putString("source_update_result",result)
-        .apply();
+    // Diagnostic status must not determine the outcome of source work.
+    try{
+      new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+          .putString("source_update_time",now())
+          .putString("source_update_result",result)
+          .apply();
+    }catch(RuntimeException statusFailure){
+      android.util.Log.w("MyTVSourceDiscovery","Room status write failed",statusFailure);
+    }
   }
 }
