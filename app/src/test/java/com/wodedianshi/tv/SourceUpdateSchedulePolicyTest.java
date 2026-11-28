@@ -514,6 +514,30 @@ public class SourceUpdateSchedulePolicyTest {
                 SourceUpdateSchedulePolicy.selectProvisionalRechecks(pending,current).get(0));
     }
 
+    @Test public void recentPlaybackProblemsOnlyPromoteBoundedTurns(){
+        long at=100000L,grace=SourceUpdateSchedulePolicy.STABLE_RECHECK_GRACE_MS;
+        assertTrue(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck("failure",at,at+grace-1));
+        assertTrue(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck("buffer",at,at));
+        assertFalse(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck("failure",at,at+grace));
+        assertFalse(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck("failure",at,at-1));
+        assertFalse(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck("buffer",0L,at));
+        for(String event:java.util.Arrays.asList("stable","ready","attempt","audioCodecError","videoCodecError","audioSinkError"))
+            assertFalse(SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck(event,at,at));
+        java.util.ArrayList<Integer> order=new java.util.ArrayList<>();
+        for(int i=0;i<24;i++)order.add(i);
+        SourceUpdateSchedulePolicy.promotePlaybackRechecks(order,i->i>=20);
+        assertEquals(java.util.Arrays.asList(0,1,2,20,3,4,5,21,6,7,8,22),order.subList(0,12));
+        assertEquals(24,new java.util.HashSet<>(order).size());
+        java.util.ArrayList<Integer> ordinary=new java.util.ArrayList<>(order);
+        ordinary.removeAll(java.util.Arrays.asList(20,21,22));
+        java.util.ArrayList<Integer> expected=new java.util.ArrayList<>();
+        for(int i=0;i<24;i++)if(i<20||i==23)expected.add(i);
+        assertEquals(expected,ordinary);
+        java.util.ArrayList<Integer> noUrgent=new java.util.ArrayList<>(expected);
+        SourceUpdateSchedulePolicy.promotePlaybackRechecks(noUrgent,i->false);
+        assertEquals(expected,noUrgent);
+    }
+
     @Test public void qualityRecheckUsesRemainingIdleBudgetWithoutExceedingPageLimit(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>();
         java.util.HashMap<String,String> current=new java.util.HashMap<>();
