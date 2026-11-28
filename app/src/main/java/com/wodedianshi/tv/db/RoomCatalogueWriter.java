@@ -201,7 +201,7 @@ public final class RoomCatalogueWriter {
         }
         final long[] committedAt = {-1L};
         int written = writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
-                false, false, committedAt);
+                false, false, committedAt,null,null,null,null);
         if (committedAt[0] < 0L) throw new IllegalStateException("Room commit lacked catalogue checkpoint");
         return new CommitResult(written, committedAt[0]);
     }
@@ -211,13 +211,6 @@ public final class RoomCatalogueWriter {
     // in-memory list can never silently replace the SourceUpdateWorker snapshot.
     // Only first-install initialization uses the unguarded private path.
 
-    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
-            boolean clearBuildRowsOnCommit) {
-        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit, false);
-    }
-
     /**
      * Establishes a valid zero-row Room checkpoint for a brand-new installation.
      * This is not a published channel catalogue: it only allows the first full
@@ -226,38 +219,7 @@ public final class RoomCatalogueWriter {
     public static void initializeEmptyCatalogue(Context context) {
         if (context == null) throw new IllegalArgumentException("context is null");
         writeRecords(context, java.util.Collections.emptyList(),
-                java.util.Collections.emptySet(), -1L, false, true);
-    }
-
-    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
-            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization) {
-        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit, allowEmptyInitialization, null);
-    }
-
-    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
-            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
-            long[] committedAt) {
-        return writeRecords(context, snapshot, favoriteKeys, expectedCatalogueVersion,
-                clearBuildRowsOnCommit, allowEmptyInitialization, committedAt, null);
-    }
-
-    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
-            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
-            long[] committedAt, BooleanSupplier paused) {
-        return writeRecords(context,snapshot,favoriteKeys,expectedCatalogueVersion,
-                clearBuildRowsOnCommit,allowEmptyInitialization,committedAt,paused,null);
-    }
-
-    private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
-            java.util.Set<String> favoriteKeys, long expectedCatalogueVersion,
-            boolean clearBuildRowsOnCommit, boolean allowEmptyInitialization,
-            long[] committedAt, BooleanSupplier paused, AppStateEditor progress) {
-        return writeRecords(context,snapshot,favoriteKeys,expectedCatalogueVersion,
-                clearBuildRowsOnCommit,allowEmptyInitialization,committedAt,paused,progress,null,null);
+                java.util.Collections.emptySet(), -1L, false, true,null,null,null,null,null);
     }
 
     private static int writeRecords(Context context, List<ChannelSnapshot> snapshot,
@@ -323,7 +285,8 @@ public final class RoomCatalogueWriter {
             // Capture favorites before stale channel rows are deleted. A full rebuild
             // may change the primary URL, but verified TVG ids, national broadcaster
             // names, or a local channel's same host/category preserve its identity.
-            List<ChannelWithSources> previousFavorites = dao.getFavoriteChannels();
+            List<ChannelWithSources> previousFavorites = favoriteKeys==null
+                    ?dao.getFavoriteChannels():java.util.Collections.emptyList();
             HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
             HashSet<String> ambiguousPreviousFavorites = new HashSet<>();
             for (ChannelWithSources favorite : previousFavorites) {
@@ -378,7 +341,8 @@ public final class RoomCatalogueWriter {
                         ? occurrences.get(stableIdentity) : 0;
                 occurrences.put(stableIdentity, occurrence + 1);
                 String id = LegacyChannelIdPolicy.idForStableIdentity(stableIdentity, occurrence);
-                if (!ambiguousStableIdentities.contains(stableIdentity)) {
+                if (previousFavoriteTimes.containsKey(stableIdentity)
+                        && !ambiguousStableIdentities.contains(stableIdentity)) {
                     if (newIdsByStableIdentity.containsKey(stableIdentity)) {
                         newIdsByStableIdentity.remove(stableIdentity);
                         ambiguousStableIdentities.add(stableIdentity);
@@ -441,7 +405,6 @@ public final class RoomCatalogueWriter {
                 desiredFavoriteIds.retainAll(presentChannelIds);
                 for (Map.Entry<String, Long> oldFavorite : previousFavoriteTimes.entrySet()) {
                     checkPause(paused);
-                    if (ambiguousPreviousFavorites.contains(oldFavorite.getKey())) continue;
                     String newId = newIdsByStableIdentity.get(oldFavorite.getKey());
                     if (newId == null || !presentChannelIds.contains(newId)) continue;
                     desiredFavoriteIds.add(newId);
@@ -757,12 +720,10 @@ public final class RoomCatalogueWriter {
             BooleanSupplier paused, AppStateEditor progress,String manualOwner,String reconciledStructure) throws Exception {
         checkPause(paused);
         if (context == null || snapshot == null) throw new IllegalArgumentException("catalogue snapshot is null");
-        HashSet<String> favoriteKeys = null; // Preserve favorites atomically inside writeRecords().
         // Channel count is deliberately not compared with the previous catalogue:
         // a fully collected and normalized refresh may correctly remove dead,
         // duplicate or invalid channels. Completeness is validated structurally
         // below and again inside the Room transaction, not inferred from row count.
-        AppDatabase database = RoomDatabaseProvider.get(context);
         if (snapshot.length() == 0) {
             throw new IllegalStateException("Refusing an empty background catalogue snapshot");
         }
@@ -803,7 +764,8 @@ public final class RoomCatalogueWriter {
         if (rows.size() != snapshot.length()) {
             throw new IllegalStateException("Background catalogue snapshot was truncated while decoding");
         }
-        return writeRecords(context, rows, favoriteKeys, expectedCatalogueVersion,
+        // A worker snapshot preserves favorites inside the publication transaction.
+        return writeRecords(context, rows, null, expectedCatalogueVersion,
                 clearBuildRowsOnCommit, false, null, paused, progress,manualOwner,reconciledStructure);
     }
 
