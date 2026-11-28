@@ -1196,22 +1196,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String savedIdentity=resume.identity;
     if(savedIdentity.isEmpty())return -1;
     String savedUrl=resume.url;
+    String savedName=canonicalChannelName(resume.name);
+    String savedGroup=normalizeResumeGroup(resume.group);
+    String savedTvgId=normalizeResumeTvgId(resume.tvgId);
     return RemoteChannelOrderPolicy.resolveSavedChannel(channels.size(),
         i->identity(channels.get(i)).equals(savedIdentity),
         i->{Channel c=channels.get(i);return identity(c.name,c.group,c.url).equals(savedIdentity);},
         i->{
           Channel c=channels.get(i);
           return !resume.name.isEmpty()
-              &&canonicalChannelName(c.name).equals(canonicalChannelName(resume.name))
-              &&normalizeResumeGroup(c.group).equals(normalizeResumeGroup(resume.group))
-              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)));
+              &&canonicalChannelName(c.name).equals(savedName)
+              &&normalizeResumeGroup(c.group).equals(savedGroup)
+              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(savedTvgId));
         },
         i->{
           Channel c=channels.get(i);
           // A reused endpoint must not override contradictory station metadata.
           return !savedUrl.isEmpty()&&(c.url.equals(savedUrl)||c.backups.contains(savedUrl))
-              &&(resume.name.isEmpty()||canonicalChannelName(c.name).equals(canonicalChannelName(resume.name)))
-              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(normalizeResumeTvgId(resume.tvgId)));
+              &&(resume.name.isEmpty()||canonicalChannelName(c.name).equals(savedName))
+              &&(resume.tvgId.isEmpty()||normalizeResumeTvgId(c.tvgId).equals(savedTvgId));
         });
   }
   private String normalizeResumeGroup(String value){
