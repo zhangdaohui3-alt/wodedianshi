@@ -1347,11 +1347,13 @@ public class SourceUpdateWorker extends Worker {
           probeCandidates.add(e);savedIndex++;
         }
       }
-      // Fix admission for the entire slice before any executor submission.
-      // Reserve raw positions, not distinct endpoints, because aliases have
-      // separate persistent quality keys. Full detection still runs when full.
+      // Fix admission before any executor submission. Reserve every position
+      // that can actually consume evidence, including endpoint aliases.
+      // Immutable skip/reuse flags are honored by both serial and wave paths.
       allowProvisionalScreen=initialDiscoveryChain&&!slowPlayback
-          &&SourceUpdateSchedulePolicy.permitsProvisionalScreen(provisionalKeys.size(),probeCandidates.size());
+          &&SourceUpdateSchedulePolicy.permitsProvisionalScreen(provisionalKeys.size(),probeCandidates,
+              entry->!entry.skipReplay&&!entry.alreadyStaged
+                  &&(entry.url.startsWith("http://")||entry.url.startsWith("https://")));
       if(manualIndexed){
         if(manualIndexed&&manualSavedOnly)throw new IllegalStateException("Indexed discovery cursor changed");
         LinkedHashSet<String> identities=new LinkedHashSet<>();
