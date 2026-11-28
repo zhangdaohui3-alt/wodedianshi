@@ -36,7 +36,7 @@ public final class SourceRankingRetentionPolicy {
      * even when they fall below the cap; remaining slots are filled in ranked order.
      * The caller may sort the returned URLs again by its own score comparator.
      */
-    public static List<String> retainRequiredAndBest(List<String> ranked,
+    public static ArrayList<String> retainRequiredAndBest(List<String> ranked,
             String primaryUrl, String activeUrl, int limit) {
         if (limit <= 0) return new ArrayList<>();
         LinkedHashSet<String> retained = new LinkedHashSet<>();
@@ -64,16 +64,15 @@ public final class SourceRankingRetentionPolicy {
             }
         }
         if(fits){
-            ArrayList<String> retained=new ArrayList<>(retainRequiredAndBest(urls,primary,active,limit));
+            ArrayList<String> retained=retainRequiredAndBest(urls,primary,active,limit);
             retained.sort(bestFirst);
             return retained;
         }
         urls.sort(bestFirst);
-        List<String> retained=retainRequiredAndBest(urls,primary,active,limit);
+        ArrayList<String> retained=retainRequiredAndBest(urls,primary,active,limit);
         if(urls.equals(retained))return urls;
-        ArrayList<String> result=new ArrayList<>(retained);
-        result.sort(bestFirst);
-        return result;
+        retained.sort(bestFirst);
+        return retained;
     }
 
     /** Select only surplus keys after the caller chooses its protected/recent
