@@ -4265,7 +4265,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
          private void showEnded(){if(!isCurrent())return;markVodHistoryEnded(item,vodListenerOwner.getDuration());endedPanel.setVisibility(View.VISIBLE);endedPanel.bringToFront();if(hideVodSeekTask[0]!=null)stage.removeCallbacks(hideVodSeekTask[0]);if(vodSeekHolder[0]!=null)vodSeekHolder[0].setVisibility(View.GONE);if(vodControlsHolder[0]!=null)vodControlsHolder[0].setVisibility(View.GONE);for(View top:vodTopControls)if(top!=null)top.setVisibility(View.GONE);replayEnded.requestFocus();}
          @Override public void onPlaybackStateChanged(int state){if(isCurrent()&&state==Player.STATE_ENDED)showEnded();}
          @Override public void onPlayerError(PlaybackException error){if(!isCurrent()||vodFallbackAttempted)return;
-           if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(error.getErrorCodeName(),extractHttpStatusCode(error.getCause()))){
+           if(PlaybackErrorPolicy.classify(error.getErrorCodeName(),extractHttpStatusCode(error.getCause())).skipSameUrlVlcRetry){
              vodFallbackAttempted=true;
              if(vodPlaybackWatchdog!=null){uiHandler.removeCallbacks(vodPlaybackWatchdog);vodPlaybackWatchdog=null;}
              checkpointVodHistory();
@@ -7552,8 +7552,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           }
           String errorName=e.getErrorCodeName();
           int httpStatus=extractHttpStatusCode(e.getCause());
-          sourceFailureCooldownMs=PlaybackErrorPolicy.cooldownMs(errorName,httpStatus);
-          if(PlaybackErrorPolicy.shouldSkipSameUrlVlcRetry(errorName,httpStatus)){
+          PlaybackErrorPolicy.Disposition disposition=PlaybackErrorPolicy.classify(errorName,httpStatus);
+          sourceFailureCooldownMs=disposition.cooldownMs;
+          if(disposition.skipSameUrlVlcRetry){
             // A failed connection/timeout is endpoint availability, not a codec
             // compatibility problem. Trying the same URL through a second engine
             // can add another full connection timeout before we reach a backup.
