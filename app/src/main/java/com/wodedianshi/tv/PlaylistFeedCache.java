@@ -116,7 +116,6 @@ public final class PlaylistFeedCache {
             boolean preserveExistingSnapshot,java.util.function.BooleanSupplier paused,
             boolean lowRate) throws IOException {
         SourceProbeTimePolicy.checkPaused(paused);
-        final long chunkLimit=lowRate?SourceProbeTimePolicy.LIVE_DIRECTORY_MAX_BYTES:2L*1024L*1024L;
         File directory=new File(context.getFilesDir(),"playlist-feed-cache");
         if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Cache directory unavailable");
         String key=sha256("initial|"+feedUrl);
