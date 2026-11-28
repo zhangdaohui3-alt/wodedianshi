@@ -39,8 +39,10 @@ public final class SourceMemoryStore {
         if (initialized) return;
         Context application = context.getApplicationContext();
         java.util.Map<String,JSONObject> savedQoe = readPlaybackHistory(RoomDatabaseProvider.get(application));
-        String savedGood = AppStateStore.get(application, LAST_GOOD, "{}");
-        String savedCooldowns = AppStateStore.get(application, COOLDOWNS, "{}");
+        java.util.Map<String,String> savedMemory = AppStateStore.getValues(application,
+                java.util.Arrays.asList(LAST_GOOD, COOLDOWNS));
+        String savedGood = savedMemory.getOrDefault(LAST_GOOD, "{}");
+        String savedCooldowns = savedMemory.getOrDefault(COOLDOWNS, "{}");
         synchronized (LOCK) {
             // Activity recreation must not overwrite unflushed process-owned memory.
             if (initialized) return;
