@@ -42,9 +42,14 @@ public class PlaybackRecoveryPolicyTest {
         assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, false, 30000L, 0L, 50000L, 20000L));
     }
 
-    @Test public void renderedFirstFrameThenUsesVideoPipelineActivityTime() {
-        assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 44999L, 20000L));
-        assertTrue(PlaybackRecoveryPolicy.isVideoOutputStalled(true, true, 10000L, 25000L, 45000L, 20000L));
+    @Test public void timelineAndSelectedVideoShareDeadlineBoundaries() {
+        long[] times={Long.MIN_VALUE,-1L,0L,1L,100L,101L,200L,Long.MAX_VALUE};
+        for(long now:times)for(long reference:times)for(long timeout:times){
+            boolean expected=PlaybackRecoveryPolicy.isTimelineStalled(now,reference,timeout);
+            assertEquals(expected,PlaybackRecoveryPolicy.isVideoOutputStalled(true,false,reference,0L,now,timeout));
+            assertEquals(expected,PlaybackRecoveryPolicy.isVideoOutputStalled(true,true,0L,reference,now,timeout));
+            assertFalse(PlaybackRecoveryPolicy.isVideoOutputStalled(false,true,0L,reference,now,timeout));
+        }
     }
 
     @Test public void audioOnlyOrUnselectedVideoDoesNotTriggerVideoStall() {
