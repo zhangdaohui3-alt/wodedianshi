@@ -788,4 +788,33 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void publicationReadSkipsFavoritesButCommitPreservesThem()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            String url="https://example.invalid/favorite";
+            JSONArray rows=new JSONArray().put(channel("CCTV-1",url));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,base,false,
+                    ()->false,new AppStateEditor(context));
+            ChannelDao dao=RoomDatabaseProvider.get(context).channelDao();
+            String id=dao.getAllChannelIds().get(0);
+            long stamp=12345L;
+            long version=dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY).completedAt+1L;
+            dao.addFavorite(new FavoriteEntity(id,stamp));
+            dao.refreshFavoriteCheckpointCount(MasterCatalogueRepository.MIGRATION_KEY,version);
+            RoomCatalogueReader.Snapshot full=RoomCatalogueReader.read(context);
+            List<RoomCatalogueReader.ChannelRecord> streamed=new ArrayList<>();
+            RoomCatalogueReader.Snapshot publication=RoomCatalogueReader.readForPublication(
+                    context,streamed::addAll,()->false);
+            assertEquals(full.catalogueVersion,publication.catalogueVersion);
+            assertEquals(full.channelCount,streamed.size());
+            assertEquals(1,full.favorites.size());
+            assertTrue(publication.favorites.isEmpty());
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,rows,publication.catalogueVersion,false,
+                    ()->false,new AppStateEditor(context));
+            assertEquals(full.favorites,RoomCatalogueReader.read(context).favorites);
+            assertEquals(Long.valueOf(stamp),dao.getFavoriteAddedAt(id));
+        });
+    }
+
 }
