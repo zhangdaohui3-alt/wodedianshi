@@ -205,15 +205,17 @@ public final class RoomCatalogueReader {
             if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
             List<ChannelWithSources> page = dao.getAllChannelsPage(PAGE_SIZE, offset);
             if (page == null || page.isEmpty()) break;
-            ArrayList<ChannelRecord> records = new ArrayList<>(page.size());
+            // Full reads append directly to their private result. Only streaming
+            // consumers need a separate page list.
+            ArrayList<ChannelRecord> records = consumer == null ? allRows : new ArrayList<>(page.size());
+            int before = records.size();
             for (ChannelWithSources item : page) {
                 if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
                 if (item == null || item.channel == null) continue;
                 records.add(new ChannelRecord(item.channel, item.getSourcesInPriorityOrder()));
             }
-            loaded += records.size();
-            if (consumer == null) allRows.addAll(records);
-            else consumer.accept(records);
+            loaded += records.size() - before;
+            if (consumer != null) consumer.accept(records);
         }
         if (paused != null) com.wodedianshi.tv.SourceProbeTimePolicy.checkPublicationPaused(paused);
         HashSet<String> favorites = new HashSet<>(dao.getFavoriteLegacyKeys());
