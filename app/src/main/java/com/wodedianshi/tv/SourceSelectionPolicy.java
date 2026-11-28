@@ -33,14 +33,33 @@ public final class SourceSelectionPolicy {
     static int findNextByEndpoint(List<String> sources,int currentIndex,Set<String> blocked,
             Set<String> failedEndpoints,java.util.function.Predicate<String> coolingDown) {
         if (sources == null || sources.size() < 2) return -1;
-        int fallback = -1;
         int size = sources.size();
         int start = wrapIndex(currentIndex, size);
-        String activeUrl = sources.get(start);
-        String activeKey = endpointKey(activeUrl);
-        Set<String> blockedKeys = endpointKeys(blocked);
-        for (int step = 1; step < size; step++) {
-            int index = (start + step) % size;
+        return findEligible(sources,(start+1)%size,size-1,endpointKey(sources.get(start)),
+                endpointKeys(blocked),failedEndpoints,coolingDown);
+    }
+
+    /** Prefer proven playback memory; otherwise start at the best ranked healthy route. */
+    static int findInitialSource(List<String> ranked,String remembered,Set<String> blocked,
+            java.util.function.Predicate<String> coolingDown) {
+        if(ranked==null||ranked.isEmpty())return -1;
+        Set<String> blockedKeys=endpointKeys(blocked);
+        int preferred=findEquivalentSource(ranked,remembered);
+        if(preferred>=0){
+            String key=endpointKey(ranked.get(preferred));
+            if(!blockedKeys.contains(key)&&!coolingDown.test(key))return preferred;
+        }
+        return findEligible(ranked,0,ranked.size(),null,blockedKeys,
+                Collections.emptySet(),coolingDown);
+    }
+
+    private static int findEligible(List<String> sources,int start,int count,String activeKey,
+            Set<String> blockedKeys,Set<String> failedEndpoints,
+            java.util.function.Predicate<String> coolingDown) {
+        int fallback=-1;
+        int size=sources.size();
+        for(int step=0;step<count;step++){
+            int index=(start+step)%size;
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()) continue;
             String key = endpointKey(url);
