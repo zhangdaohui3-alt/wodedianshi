@@ -4455,11 +4455,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       else showCityDialog(provinces[which]);
     });
   }
-  private String[] citiesForProvince(String p){
-    return ChannelNamePolicy.localitiesForProvince(p);
-  }
   private void showCityDialog(String province){
-    String[] cities=citiesForProvince(province);
+    String[] cities=ChannelNamePolicy.localitiesForProvince(province);
     String[] choices=new String[cities.length+1];choices[0]="全部"+province+"频道";
     System.arraycopy(cities,0,choices,1,cities.length);
     showHoverChoiceDialog(province+" · 选择城市",choices,"返回",w->{
@@ -4479,9 +4476,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean hasRegionalToken(String metadata,String token){
     return token!=null&&!token.isEmpty()&&metadata.contains(token.toLowerCase(Locale.ROOT));
-  }
-  private String explicitProvinceIn(String metadata){
-    return ChannelNamePolicy.provinceForLocalChannel(metadata);
   }
   private boolean isSatelliteChannel(Channel c){
     if(c==null)return false;
@@ -4521,7 +4515,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String metadata=regionalMetadata(c);
     boolean excluded=isSatelliteChannel(c,metadata)||isCctvChannel(c)
         ||RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
-    String province=excluded?"":explicitProvinceIn(metadata);
+    String province=excluded?"":ChannelNamePolicy.provinceForLocalChannel(metadata);
     boolean local=!excluded&&(!province.isEmpty()
         ||(china&&(metadata.contains("地方")||metadata.contains("local"))));
     if(!excluded&&!local){
@@ -4552,7 +4546,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         HashSet<String> tokens=new HashSet<>();
         for(String province:MAINLAND_PROVINCES){
           tokens.add(province.toLowerCase(Locale.ROOT));
-          for(String city:citiesForProvince(province)){
+          for(String city:ChannelNamePolicy.localitiesForProvince(province)){
             if(city!=null&&!city.isEmpty())tokens.add(city.toLowerCase(Locale.ROOT));
           }
         }
@@ -4569,13 +4563,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(c==null||province==null||city==null)return false;
     LocalDirectoryFacts facts=localDirectoryFacts(c);
     if(facts.excluded||!province.equals(facts.province))return false;
-    String metadata=facts.metadata,explicit=facts.province;
     if(!ChannelNamePolicy.isKnownLocality(province,city))return false;
-    if(ChannelNamePolicy.matchesLocalCityWithProvince(metadata,province,city,explicit))return true;
-    // Retain Chinese-only coverage for cities not yet in the alias table, but
-    // only with a resolved province, never with ambiguous city-only labels.
-    return province.equals(explicit)&&(hasRegionalToken(metadata,city)
-        ||(province.equals(city)&&ChannelNamePolicy.isKnownLocality(province,city)));
+    return ChannelNamePolicy.matchesLocalCityWithProvince(facts.metadata,province,city,facts.province)
+        ||hasRegionalToken(facts.metadata,city)||province.equals(city);
   }
   private boolean categoryMatch(Channel c,String cat){
     if(c==null||cat==null)return false;
@@ -4600,8 +4590,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.startsWith("城市:")){
       String city=cat.substring(3);
       String metadata=regionalMetadata(c);
-      if(isSatelliteChannel(c))return false;
-      String explicit=explicitProvinceIn(metadata);
+      if(isSatelliteChannel(c,metadata))return false;
+      String explicit=ChannelNamePolicy.provinceForLocalChannel(metadata);
       if(!explicit.isEmpty()){
         for(String province:MAINLAND_PROVINCES){
           if(explicit.equals(province)&&!ChannelNamePolicy.isKnownLocality(province,city))return false;
@@ -4610,10 +4600,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return hasRegionalToken(metadata,city);
     }
     // Province labels are checked only after the fixed categories below.
-    if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||canonicalChannelName(c.name).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
+    if(cat.equals("中国"))return (ChannelCatalogueScopePolicy.matches(c.sourceScopes,"china")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||canonicalChannelName(c.name).startsWith("CCTV-")||isSatelliteChannel(c)||isLocalChannel(c))&&!RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("全球频道"))return ChannelCatalogueScopePolicy.matches(c.sourceScopes,"global");
     if(cat.equals("娱乐频道"))return g.contains("entertainment")||g.contains("comedy")||g.contains("music")||g.contains("lifestyle")||g.contains("movies")||g.contains("animation")||g.contains("series")||g.contains("culture")||g.contains("family")||g.contains("kids")||g.contains("children")||g.contains("documentary")||g.contains("cartoon")||g.contains("娱乐")||g.contains("综艺")||g.contains("音乐")||g.contains("电影")||g.contains("喜剧")||g.contains("生活")||g.contains("少儿")||g.contains("动画")||g.contains("纪录");
-    if(cat.equals("央视"))return canonicalChannelName(c.name).startsWith("CCTV-")||x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||g.equals("cctv");
+    if(cat.equals("央视"))return x.contains("cctv")||x.contains("央视")||x.contains("中央电视台")||canonicalChannelName(c.name).startsWith("CCTV-")||g.equals("cctv");
     if(cat.equals("港澳台"))return RegionCategoryPolicy.isHongKongMacauTaiwan(c.name,c.group);
     if(cat.equals("香港")||cat.equals("澳门")||cat.equals("台湾"))return cat.equals(RegionCategoryPolicy.subcategory(c.name,c.group));
     if(cat.equals("国际新闻"))return g.contains("international news")||g.contains("国际新闻")||x.contains("al jazeera")||x.contains("france 24")||x.contains("dw ")||x.contains("abc news");
