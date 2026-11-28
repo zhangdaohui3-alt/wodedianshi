@@ -125,12 +125,13 @@ public final class DiscoveryBatchPolicy {
 
     /** Remove only exact duplicate records within one immutable raw page.
      * Keep different station metadata, URL spellings and scopes separate.
-     * The caller retains the original raw parsed count for its feed cursor. */
+     * The caller retains the original raw parsed count for its feed cursor.
+     * Fields must return a stable key for the duration of this synchronous pass. */
     static <T> java.util.ArrayList<T> distinctExactPageRecords(java.util.List<T> rows,
             java.util.function.Function<T,java.util.List<String>> fields) {
         java.util.HashSet<java.util.List<String>> seen=new java.util.HashSet<>();
         java.util.ArrayList<T> result=new java.util.ArrayList<>(rows.size());
-        for(T row:rows)if(seen.add(new java.util.ArrayList<>(fields.apply(row))))result.add(row);
+        for(T row:rows)if(seen.add(fields.apply(row)))result.add(row);
         return result;
     }
 
