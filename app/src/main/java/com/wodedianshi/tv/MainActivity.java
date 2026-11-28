@@ -7241,9 +7241,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     updateLiveChannelSelection(previouslySelected);
     Channel target=channels.get(selected);
     // Playlist refreshes may reorder backups; never trust a persisted numeric index.
-    target.activeSource=0;
-    applyLastKnownGoodSource(target);
-    sortSourcesByObservedQuality(target);
+    prepareAutomaticChannelSource(target);
     info.setText(reason+"，自动切换到下一频道："+displayChannelName(target));
     startCurrentSource();
   }
@@ -7271,9 +7269,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       queueActiveSourceMutation(target.key(),target.backups.get(target.activeSource));
     }else{
       // Backup indices can change when playlists refresh; restore by URL identity instead.
-      target.activeSource=0;
-      applyLastKnownGoodSource(target);
-      sortSourcesByObservedQuality(target);
+      prepareAutomaticChannelSource(target);
     }
     // Close the selector as soon as a valid manual request is accepted,
     // rather than waiting for asynchronous native decoder release.
@@ -8134,12 +8130,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Temporarily cool down a failed endpoint to prevent repeated dead-source loops.
     SourceMemoryStore.coolDown(this,failedUrl,sourceFailureCooldownMs);
   }
-  private void applyLastKnownGoodSource(Channel c){
+  private void prepareAutomaticChannelSource(Channel c){
     if(c==null||c.backups==null||c.backups.isEmpty())return;
+    sortSourcesByObservedQuality(c);
     String remembered=SourceMemoryStore.getLastGood(this,SourceMemoryStore.channelIdentityKey(identity(c)));
-    int index=SourceSelectionPolicy.findEquivalentSource(c.backups,remembered);
-    if(index>=0&&!isSourceBlocked(c,c.backups.get(index))
-        &&!SourceMemoryStore.isCoolingDown(this,c.backups.get(index)))c.activeSource=index;
+    int index=SourceSelectionPolicy.findInitialSource(c.backups,remembered,blockedSourceUrls(c),
+        SourceMemoryStore::isEndpointCoolingDown);
+    c.activeSource=index>=0?index:0;
   }
   private void recordSourceMetric(String url,String event,long readyMs){
     SourceMemoryStore.recordMetric(getApplicationContext(),url,event,readyMs);
