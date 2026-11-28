@@ -4793,12 +4793,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String provinceSnapshot=activeLocalProvince;
     final String citySnapshot=activeLocalCity;
     final String geoScopeSnapshot=activeGeoScope,geoCountrySnapshot=activeGeoCountry,geoLabelSnapshot=activeGeoLabel;
-    // Collections.synchronizedSet synchronizes individual methods, not
-    // iteration by HashSet(Collection). Take the entire favorites snapshot
-    // under the same lock used by remote order/persistence; this prevents
-    // ConcurrentModificationException during a quick favorite toggle.
-    final Set<String> favoriteSnapshot;
-    favoriteSnapshot=FavoriteMembershipPolicy.snapshot(favorites);
+    // Only the favorites directory depends on favorite membership during filtering.
+    final Set<String> favoriteSnapshot=favoriteOnly?
+        FavoriteMembershipPolicy.snapshot(favorites):Collections.emptySet();
     final int expectedCount; synchronized(channels){expectedCount=channels.size();}
     final int favoriteHash=favoriteOnly?favoriteSnapshot.hashCode():0;
     final String orderKey=remoteChannelOrderKey(categorySnapshot,query,favoriteOnly,
@@ -4941,8 +4938,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         runOnUiThread(()->publishFilteredDirectory(generation,()->{
           if(isFinishing()||isDestroyed()||generation!=catalogueFilterGeneration||list==null)return;
           directoryFilterInFlightKey=null;
+          final Set<String> renderFavorites=FavoriteMembershipPolicy.snapshot(favorites);
           if(!orderKey.equals(currentDirectoryOrderKey())
-              ||!favoriteSnapshot.equals(FavoriteMembershipPolicy.snapshot(favorites))){
+              ||(favoriteOnly&&!favoriteSnapshot.equals(renderFavorites))){
             // Never publish positions from a replaced directory. Recompute with
             // the newest metadata; pending keys belong to this same filter only.
             refresh(true);
@@ -4951,7 +4949,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           cachedRemoteChannelOrder=ready;
           String currentSelectedKey=null;
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
-          renderFilteredChannels(ready.visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
+          renderFilteredChannels(ready.visible,currentSelectedKey,renderFavorites,customCategory,requestedPage,
               pageOnly,ready.sourceIndexByKey);
           if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+ready.visible.size()+" 个频道"+(ready.visible.isEmpty()?"；可手动更新或导入":""));
           if(menuSelectedFocusGeneration==generation){
