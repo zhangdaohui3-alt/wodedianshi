@@ -252,7 +252,8 @@ public final class PlaylistFeedIndex {
                      new java.io.BufferedOutputStream(offsetRaw,32768))) {
             offsetFile.writeInt(coverage?COVERAGE_INDEX_MAGIC:OFFSET_INDEX_MAGIC);
             offsetFile.writeLong(0L); // Filled after the complete index is written.
-            String header = reader.readLine();
+            PlaylistParser.BoundedLineReader lines=new PlaylistParser.BoundedLineReader(reader);
+            String header = lines.readLine(paused);
             if (header == null || !header.replace("\uFEFF", "").trim().startsWith("#EXTM3U")) {
                 throw new IOException("Cached resource is not a valid M3U playlist");
             }
@@ -265,14 +266,14 @@ public final class PlaylistFeedIndex {
                     throw new IndexWriteFailure(error);
                 }
             };
-            if(!coverage)PlaylistParser.parseEach(reader,0,Integer.MAX_VALUE,write,paused);
+            if(!coverage)PlaylistParser.parseLines(lines,0,Integer.MAX_VALUE,write,paused);
             else {
                 // First occurrences are scheduling candidates, not validated
                 // stations. Keep every backup, even ambiguous or repeated rows.
                 java.util.HashSet<String> seen=new java.util.HashSet<>();
                 java.util.BitSet firstPositions=new java.util.BitSet();
                 int[] position={0};
-                int total=PlaylistParser.parseEach(reader,0,Integer.MAX_VALUE,source->{
+                int total=PlaylistParser.parseLines(lines,0,Integer.MAX_VALUE,source->{
                     int ordinal=position[0]++;
                     if(seen.size()>=COVERAGE_IDENTITY_LIMIT)return;
                     // Conflicting station labels cannot claim the first slot.
@@ -290,8 +291,9 @@ public final class PlaylistFeedIndex {
                 // The bitset avoids re-normalizing identities on the second pass.
                 try(BufferedReader backupReader=new BufferedReader(new InputStreamReader(
                         new FileInputStream(playlist),StandardCharsets.UTF_8),8192)){
-                    backupReader.readLine();
-                    int repeated=PlaylistParser.parseEach(backupReader,0,Integer.MAX_VALUE,source->{
+                    PlaylistParser.BoundedLineReader backupLines=new PlaylistParser.BoundedLineReader(backupReader);
+                    backupLines.readLine(paused);
+                    int repeated=PlaylistParser.parseLines(backupLines,0,Integer.MAX_VALUE,source->{
                         if(!firstPositions.get(position[0]++))write.accept(source);
                     },paused);
                     if(repeated!=total||written[0]!=total)
