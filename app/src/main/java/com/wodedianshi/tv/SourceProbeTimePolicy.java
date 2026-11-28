@@ -68,8 +68,7 @@ public final class SourceProbeTimePolicy {
      * evidence of decoded size; the normal streaming caps remain mandatory. */
     static boolean admitsLiveFullDirectory(long declared,String encoding,long remainingMs,long playbackRate){
         if(remainingMs<=0L)return false;
-        boolean identity=encoding==null||encoding.trim().isEmpty()||"identity".equalsIgnoreCase(encoding.trim());
-        if(!identity||declared<0L)return true;
+        if(!isIdentityEncoding(encoding)||declared<0L)return true;
         if(!fitsLiveFullDirectory(declared))return false;
         long rate=playbackRate==16384L?16384L:LIVE_DIRECTORY_BYTES_PER_SECOND;
         return remainingPacingMillis(declared,0L,rate)<remainingMs;
@@ -83,8 +82,12 @@ public final class SourceProbeTimePolicy {
      * transparently decompress gzip and remove the length/encoding headers. */
     static boolean completeFullDirectoryBody(long copied,long declared,String encoding){
         if(copied<=0L)return false;
-        boolean identity=encoding==null||encoding.trim().isEmpty()||"identity".equalsIgnoreCase(encoding.trim());
-        return !identity||declared<0L||copied==declared;
+        return !isIdentityEncoding(encoding)||declared<0L||copied==declared;
+    }
+
+    private static boolean isIdentityEncoding(String encoding){
+        String normalized=encoding==null?"":encoding.trim();
+        return normalized.isEmpty()||"identity".equalsIgnoreCase(normalized);
     }
 
     /** A fully downloaded range is also a valid durable checkpoint, pending local finalization. */
