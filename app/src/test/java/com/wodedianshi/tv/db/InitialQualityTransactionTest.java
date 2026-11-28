@@ -535,4 +535,70 @@ public class InitialQualityTransactionTest {
         }finally{db.close();}
     }
 
+    @Test public void expiredQualityRetentionProtectsLiveRoutesPendingAndUnknownAge()throws Exception{
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String owner=ManualProbeQualityStore.PUBLISHED_OWNER;
+            long now=100L*24L*60L*60L*1000L;
+            String primary="https://example.invalid/primary",backup="https://example.invalid/backup";
+            String a=com.wodedianshi.tv.StableKey.url(primary),b=com.wodedianshi.tv.StableKey.url(backup);
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            db.channelDao().insertCategory(new CategoryEntity("cat","test",0));
+            db.channelDao().insertChannels(Collections.singletonList(new ChannelEntity(
+                "ch","Test|"+primary,"Test",primary,"test","cat","","","[]",0,0)));
+            db.channelDao().insertBackupSources(Collections.singletonList(new BackupSourceEntity("ch",backup,0,"[]")));
+            db.appStateDao().put(new AppStateEntity(com.wodedianshi.tv.SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_KEY,
+                new org.json.JSONArray(Collections.singletonList("pending")).toString(),now));
+            db.manualProbeQualityDao().put(java.util.Arrays.asList(
+                new ManualProbeQualityEntity(owner,a,900,null,1L),
+                new ManualProbeQualityEntity(owner,b,700,null,1L),
+                new ManualProbeQualityEntity(owner,"pending",800,null,1L),
+                new ManualProbeQualityEntity(owner,"expired",-500,2,1L),
+                new ManualProbeQualityEntity(owner,"unknown",600,null,0L),
+                new ManualProbeQualityEntity(owner,"fresh",900,null,now-100L),
+                new ManualProbeQualityEntity(owner,"future",900,null,now+100L),
+                new ManualProbeQualityEntity("private","expired",700,null,1L)));
+            try{
+                db.runInTransaction(()->{
+                    ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,now,()->false);
+                    throw new IllegalStateException("rollback");
+                });
+                fail("Expected rollback");
+            }catch(IllegalStateException expected){assertEquals("rollback",expected.getMessage());}
+            assertNotNull(db.manualProbeQualityDao().find(owner,"expired"));
+            db.runInTransaction(()->ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,now,()->false));
+            assertNull(db.manualProbeQualityDao().find(owner,"expired"));
+            for(String key:java.util.Arrays.asList(a,b,"pending","unknown","fresh","future"))
+                assertNotNull(key,db.manualProbeQualityDao().find(owner,key));
+            assertNotNull(db.manualProbeQualityDao().find("private","expired"));
+            assertEquals(1,db.channelDao().countChannels());
+            assertEquals(1,db.channelDao().countBackupSources());
+        }finally{db.close();}
+    }
+
+    @Test public void expiredQualityRetentionUsesBoundedPagesAndResumes(){
+        android.content.Context context=RuntimeEnvironment.getApplication();
+        AppDatabase db=Room.inMemoryDatabaseBuilder(context,AppDatabase.class).allowMainThreadQueries().build();
+        try{
+            String owner=ManualProbeQualityStore.PUBLISHED_OWNER;
+            long now=100L*24L*60L*60L*1000L;
+            db.runInTransaction(()->ManualProbeQualityStore.seedInitialInTransaction(db,Collections.emptyList(),()->false));
+            db.runInTransaction(()->ManualProbeQualityStore.publishInitialInTransaction(db,()->false));
+            db.channelDao().insertCategory(new CategoryEntity("cat","test",0));
+            String primary="https://example.invalid/live";
+            db.channelDao().insertChannels(Collections.singletonList(new ChannelEntity(
+                "ch","Test|"+primary,"Test",primary,"test","cat","","","[]",0,0)));
+            java.util.List<ManualProbeQualityEntity> rows=new java.util.ArrayList<>();
+            for(int j=0;j<513;j++)rows.add(new ManualProbeQualityEntity(owner,
+                String.format(java.util.Locale.ROOT,"old-%04d",j),-500,1,1L));
+            db.manualProbeQualityDao().put(rows);
+            db.runInTransaction(()->ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,now,()->false));
+            assertEquals(1,db.manualProbeQualityDao().page(owner,"",600).size());
+            db.runInTransaction(()->ManualProbeQualityStore.pruneExpiredUnretainedInTransaction(db,now,()->false));
+            assertTrue(db.manualProbeQualityDao().page(owner,"",600).isEmpty());
+        }finally{db.close();}
+    }
+
 }
