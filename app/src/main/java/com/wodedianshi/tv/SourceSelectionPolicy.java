@@ -85,21 +85,36 @@ public final class SourceSelectionPolicy {
     /** Explicit user feedback concerns this station/endpoint association, not
      * the endpoint's transport quality or another station's use of the URL. */
     static String channelBlockKey(String identity,String url) {
-        if(identity==null||identity.isEmpty()||url==null||url.trim().isEmpty())return "";
-        return "station:"+StableKey.channelIdentity(identity)+":"+StableKey.url(endpointKey(url));
+        return blockKeyForPrefix(channelBlockPrefix(identity),url);
+    }
+
+    private static String channelBlockPrefix(String identity) {
+        return identity==null||identity.isEmpty()?"":"station:"+StableKey.channelIdentity(identity)+":";
+    }
+
+    private static String blockKeyForPrefix(String prefix,String url) {
+        if(prefix.isEmpty()||url==null||url.trim().isEmpty())return "";
+        return prefix+StableKey.url(endpointKey(url));
     }
 
     static boolean isUserBlocked(Set<String> records,String identity,String url) {
-        if(records==null||url==null||url.isEmpty())return false;
-        String key=channelBlockKey(identity,url);
+        if(records==null||records.isEmpty()||url==null||url.isEmpty())return false;
+        return matchesBlock(records,channelBlockPrefix(identity),url);
+    }
+
+    private static boolean matchesBlock(Set<String> records,String prefix,String url) {
+        if(url==null||url.isEmpty())return false;
         // Preserve old explicit URL blocks without expanding them to other aliases.
-        return records.contains(url)||(!key.isEmpty()&&records.contains(key));
+        if(records.contains(url))return true;
+        String key=blockKeyForPrefix(prefix,url);
+        return !key.isEmpty()&&records.contains(key);
     }
 
     static Set<String> blockedUrls(Set<String> records,String identity,List<String> sources) {
         Set<String> result=new java.util.HashSet<>();
-        if(sources!=null)for(String url:sources)
-            if(isUserBlocked(records,identity,url))result.add(url);
+        if(records==null||records.isEmpty()||sources==null||sources.isEmpty())return result;
+        String prefix=channelBlockPrefix(identity);
+        for(String url:sources)if(matchesBlock(records,prefix,url))result.add(url);
         return result;
     }
 
