@@ -33,6 +33,21 @@ public class RoomCatalogueRouteScanTest {
         assertEquals(expected,new HashSet<>(actual));
         assertEquals(expected.size(),actual.size());
     }
+    @Test public void emptyScopeMetadataDoesNotDiscardRoutesOrShareChannelScopeState(){
+        ChannelWithSources row=row("Station|first","first",
+            new BackupSourceEntity("id","first",0,"[]"),
+            new BackupSourceEntity("id","second",1,""),
+            new BackupSourceEntity("id","third",2,"[]"));
+        row.channel.activeSource=2;
+        RoomCatalogueReader.ChannelRecord first=new RoomCatalogueReader.ChannelRecord(row.channel,row.getSourcesInPriorityOrder());
+        RoomCatalogueReader.ChannelRecord second=new RoomCatalogueReader.ChannelRecord(row.channel,row.getSourcesInPriorityOrder());
+        assertEquals(Arrays.asList("first","second","third"),first.sources);
+        assertEquals(2,first.activeSource);
+        assertTrue(first.backupSourceScopes.isEmpty());
+        assertTrue(first.sourceScopes.isEmpty());
+        first.sourceScopes.add("china");
+        assertTrue(second.sourceScopes.isEmpty());
+    }
     @Test public void viewingPauseStopsInsideChannelBeforeVisitingBackupRoutes(){
         ChannelWithSources row=row("Station|https://example.invalid/original","https://example.invalid/first",
                 new BackupSourceEntity("id","https://example.invalid/first",0,"[]"),
