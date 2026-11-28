@@ -12,6 +12,27 @@ public class SourceQualityScorerTest {
         assertEquals(0, SourceQualityScorer.labelScore("https://cdn.example/live.m3u8"));
     }
 
+    @Test public void directLabelMatchingPreservesEveryHintAndPriority() {
+        String[][] hints={
+            {"1200","1080p","1080i","fullhd","full-hd"},
+            {"1150","master_5000","5000k","5000kbps"},
+            {"1000","720p","720i","hd720"},
+            {"950","master_4000","4000k","4000kbps"},
+            {"900","master_3000","3000k","3000kbps"},
+            {"850","master_2300","2300k","2300kbps"},
+            {"600","576p","576i","480p","480i"},
+            {"300","360p","240p"}
+        };
+        for(String[] group:hints)
+            for(int i=1;i<group.length;i++)
+                assertEquals(group[i],Integer.parseInt(group[0]),
+                    SourceQualityScorer.labelScore("https://example.invalid/"+group[i].toUpperCase(java.util.Locale.ROOT)));
+        assertEquals(1200,SourceQualityScorer.labelScore("https://example.invalid/240p/5000kbps/1080i"));
+        assertEquals(1150,SourceQualityScorer.labelScore("https://example.invalid/720p/5000kbps"));
+        assertEquals(0,SourceQualityScorer.labelScore("https://example.invalid/1080/5000"));
+        assertEquals(0,SourceQualityScorer.labelScore(null));
+    }
+
     @Test public void pacedValidationDoesNotPretendToMeasureNetworkSpeed() {
         assertEquals(150,SourceQualityScorer.preflightSpeedBonus(true,32768,20L));
         assertEquals(150,SourceQualityScorer.preflightSpeedBonus(true,32768,5000L));
