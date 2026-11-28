@@ -521,8 +521,7 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedFailureReasonKey(feed))
                 .remove(initialFeedDisplayLabelKey(feed));
           }
-          resetBuildState.remove("source_scan_after_key").remove("source_scan_cursor")
-              .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
+          resetBuildState.remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
               .remove("source_initial_has_validated_source")
               .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
               .remove(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY)
@@ -1865,10 +1864,8 @@ public class SourceUpdateWorker extends Worker {
         throw new IllegalStateException("Full rebuild has no validated channels");
       if(pauseRequested.getAsBoolean())
         return deferredViewingResult(manual,initialDiscoveryChain);
-      update.putInt("source_scan_cursor",candidates.isEmpty()?0:(discoveryScanStart+discoveryScanned)%candidates.size())
-          .putInt("source_saved_scan_cursor",!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()
+      update.putInt("source_saved_scan_cursor",!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()
               ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
-          .putString("source_scan_after_key",discoveryScanned>0?SourceSelectionPolicy.lastScannedKey(candidates.size(),position->candidates.get(position).url,discoveryScanStart,discoveryScanned):roomString("source_scan_after_key",""))
           .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedPool.size(),position->savedPool.get(position).url,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
           // The exact catalogue snapshot is represented by a compact fingerprint.
           .putString("source_update_time",now())
