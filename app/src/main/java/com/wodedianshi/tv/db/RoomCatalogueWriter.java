@@ -118,16 +118,21 @@ public final class RoomCatalogueWriter {
             for(BackupSourceEntity source:old){
                 try{
                     JSONArray tags=new JSONArray(source.scopesJson);
+                    boolean protectedRoute=false;
                     for(int i=0;i<tags.length();i++){
                         String tag=tags.getString(i);
-                        // Conservative: every potential replacement must carry
-                        // the original scope, otherwise keep the saved route.
-                        boolean protectedScope=!"china".equals(tag)&&!"global".equals(tag);
-                        for(java.util.Set<String> incoming:verifiedBestFirst.values())
-                            if(incoming==null||!incoming.contains(tag))protectedScope=true;
-                        if(protectedScope)
-                            eligible.remove(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url));
+                        // Validate every stored tag, but stop comparing replacements
+                        // once any scope requires keeping the original route.
+                        if(protectedRoute)continue;
+                        protectedRoute=!"china".equals(tag)&&!"global".equals(tag);
+                        if(!protectedRoute)for(java.util.Set<String> incoming:verifiedBestFirst.values()){
+                            if(incoming==null||!incoming.contains(tag)){
+                                protectedRoute=true;break;
+                            }
+                        }
                     }
+                    if(protectedRoute)
+                        eligible.remove(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url));
                 }catch(org.json.JSONException malformed){
                     throw new IllegalStateException("Invalid source scope",malformed);
                 }
