@@ -172,8 +172,16 @@ public final class SourceMemoryStore {
                 try {
                     String key = StableKey.url(url);
                     JSONObject old = qoe.get(key);
-                    // Only copy one endpoint, never the entire history on a tune.
-                    JSONObject m = old == null ? new JSONObject() : new JSONObject(old.toString());
+                    // Copy fields into a private record without encoding and parsing JSON.
+                    // Published values are immutable; only top-level metrics are updated.
+                    JSONObject m = new JSONObject();
+                    if (old != null) {
+                        Iterator<String> fields = old.keys();
+                        while (fields.hasNext()) {
+                            String field = fields.next();
+                            m.put(field, old.get(field));
+                        }
+                    }
                     if ("attempt".equals(event)) m.put("attempts", m.optInt("attempts",0)+1);
                     else if ("failure".equals(event)) m.put("failures",m.optInt("failures",0)+1);
                     else if ("buffer".equals(event)) m.put("buffers",m.optInt("buffers",0)+1);
