@@ -5054,7 +5054,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     int pageCount=LivePagePolicy.pageCount(visible.size(),maxRows);
     if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
     int pageStart=livePageIndex*maxRows;
-    for(int row=pageStart;row<Math.min(visible.size(),pageStart+maxRows);row++){
+    int pageEnd=pageStart+Math.min(maxRows,visible.size()-pageStart);
+    for(int row=pageStart;row<pageEnd;row++){
       Channel c=visible.get(row);
       if(c==null)continue;
       // Filtering runs on a worker over the same Channel references. UI rendering
@@ -5065,8 +5066,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       Integer mappedIndex=sourceIndexByKey==null?null:sourceIndexByKey.get(channelKey);
       final int currentIndex=mappedIndex==null?-1:mappedIndex;
       Button b=new Button(this);b.setTag(currentIndex);b.setTag(R.id.tag_channel_key,channelKey);
-      b.setText((channelKey.equals(selectedKey)?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
-      b.setContentDescription(channelKey.equals(selectedKey)?"当前正在播放："+title:title);
+      boolean playing=channelKey.equals(selectedKey);
+      b.setText((playing?"▶ ":"")+(favoriteSnapshot.contains(channelKey)?"★ ":"")+title+group);
+      b.setContentDescription(playing?"当前正在播放："+title:title);
       b.setTextSize(16);b.setMinHeight(dp(52));styleLiveChannelButton(b,Color.rgb(35,45,62));
       b.setOnClickListener(v->playChannelByKey(channelKey,currentIndex));
       b.setOnLongClickListener(v->{
@@ -5121,8 +5123,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       empty.setTextColor(Color.LTGRAY);empty.setTextSize(15);empty.setGravity(Gravity.CENTER);
       empty.setPadding(dp(18),dp(22),dp(18),dp(22));list.addView(empty,new LinearLayout.LayoutParams(-1,dp(180)));
     }
-    if(visible.size()>maxRows){TextView more=new TextView(this);more.setText("共匹配 "+visible.size()+" 个频道，当前先显示 "+maxRows+" 个。请使用搜索缩小范围。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
-    android.util.Log.i("MyTVDirectory","render_ready category="+activeCategory+" total_matches="+visible.size()+" rendered_buttons="+Math.min(maxRows,Math.max(0,visible.size()-pageStart))+" child_views="+list.getChildCount()+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-renderStartedAt));
+    if(pageCount>1){TextView more=new TextView(this);more.setText("共 "+visible.size()+" 个频道，当前第 "+(pageStart+1)+"–"+pageEnd+" 个。可翻页或选择页码。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
+    android.util.Log.i("MyTVDirectory","render_ready category="+activeCategory+" total_matches="+visible.size()+" rendered_buttons="+(pageEnd-pageStart)+" child_views="+list.getChildCount()+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-renderStartedAt));
     final int restoreIndex=previousFocusedIndex;
     final long focusGeneration=catalogueFilterGeneration;
     final PopupWindow focusPopup=fullscreenMenuPopup;
@@ -5130,13 +5132,21 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         &&(previousFocusedKey!=null||previousFocusedIndex>=0))list.post(()->{
       if(!activityStarted||!fullScreenPlayback||focusPopup!=fullscreenMenuPopup
           ||focusPopup==null||!focusPopup.isShowing()||focusGeneration!=catalogueFilterGeneration)return;
-      View target=null;
-      // Channel indices can shift after a directory merge. Restore focus by stable
-      // channel identity first, and use the old integer index only as a fallback.
-      if(previousFocusedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(previousFocusedKey.equals(keyTag)){target=child;break;}}}
-      if(target==null&&previousFocusedKey==null&&restoreIndex>=0){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);if(child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){target=child;break;}}}
-      if(target==null&&selectedKey!=null){for(int i=0;i<list.getChildCount();i++){View child=list.getChildAt(i);Object keyTag=child.getTag(R.id.tag_channel_key);if(selectedKey.equals(keyTag)){target=child;break;}}}
-      if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
+      View target=null,selectedRow=null;
+      // Resolve previous focus and selected-channel fallback in one pass.
+      // An old integer index is valid only when no stable focus key was saved.
+      int childCount=list.getChildCount();
+      for(int i=0;i<childCount;i++){
+        View child=list.getChildAt(i);
+        Object keyTag=child.getTag(R.id.tag_channel_key);
+        if(previousFocusedKey!=null?previousFocusedKey.equals(keyTag)
+            :restoreIndex>=0&&child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){
+          target=child;break;
+        }
+        if(selectedRow==null&&selectedKey!=null&&selectedKey.equals(keyTag))selectedRow=child;
+      }
+      if(target==null)target=selectedRow;
+      if(target==null&&childCount>0)target=list.getChildAt(0);
       if(target!=null)target.requestFocus();
     });
   }
