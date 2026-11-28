@@ -402,20 +402,27 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private static class Channel {
     String name, url, group, tvgId="", tvgName="";
     volatile LocalDirectoryFacts localDirectoryFacts;
-    // Catalogue filter snapshots never use playback/source ownership. Keep these
-    // collections lazy for those short-lived copies to avoid three extra objects
-    // per channel while filtering a large directory.
     ArrayList<String> backups;
     // Channel-level scopes support category routing; URL-level scopes prevent a
     // refresh from deleting or misclassifying another catalogue's backup.
     HashSet<String> sourceScopes;
     HashMap<String,HashSet<String>> backupSourceScopes;
     int activeSource = 0;
-    Channel(String n,String u,String g){this(n,u,g,false);}
-    Channel(String n,String u,String g,boolean filterSnapshot){
+    Channel(String n,String u,String g){
       name=n==null?"":n;url=u==null?"":u;group=g==null?"":g;
-      if(filterSnapshot){backups=null;sourceScopes=null;backupSourceScopes=null;}
-      else{backups=new ArrayList<>();if(!url.isEmpty())backups.add(url);sourceScopes=new HashSet<>();backupSourceScopes=new HashMap<>();}
+      backups=new ArrayList<>();if(!url.isEmpty())backups.add(url);
+      sourceScopes=new HashSet<>();backupSourceScopes=new HashMap<>();
+    }
+    /** Room already provides the final ordered routes; copy once into independent ownership. */
+    Channel(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row){
+      name=row.name;url=row.url;group=row.group;tvgId=row.tvgId;tvgName=row.tvgName;
+      backups=new ArrayList<>(row.sources);
+      sourceScopes=new HashSet<>(row.sourceScopes);
+      backupSourceScopes=new HashMap<>();
+      for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+        backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+      }
+      activeSource=Math.max(0,Math.min(row.activeSource,backups.size()-1));
     }
     void addBackupSource(String source,String scope){
       if(source==null||source.isEmpty())return;
@@ -861,28 +868,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     throw new IllegalStateException("Room startup retry exhausted");
   }
 
-  /** Shared conversion for startup and background reload; retain independent source ownership. */
-  private static Channel channelFromRoomRecord(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row){
-    Channel channel=new Channel(row.name,row.url,row.group);
-    channel.tvgId=row.tvgId;
-    channel.tvgName=row.tvgName;
-    channel.backups.clear();
-    channel.backups.addAll(row.sources);
-    channel.sourceScopes.addAll(row.sourceScopes);
-    for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-      channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-    }
-    channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-    return channel;
-  }
-
   /** Read all Room pages and publish them to the in-memory UI model only on success. */
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueIntoMemory(){
     final ArrayList<Channel> prepared=new ArrayList<>();
     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
       for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-        prepared.add(channelFromRoomRecord(row));
+        prepared.add(new Channel(row));
       }
     });
     // The consumer above is private staging. A failed or stale read discards
@@ -8861,7 +8853,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
                 for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-                  refreshed.add(channelFromRoomRecord(row));
+                  refreshed.add(new Channel(row));
                 }
               },cancelled);
           if(roomSnapshot==null){
