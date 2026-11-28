@@ -7,8 +7,8 @@ public final class SourceDiscoveryIdentityPolicy {
   private SourceDiscoveryIdentityPolicy(){}
   public static String canonicalName(String name){
     String v=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
-    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)-?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(v);
-    if(m.find())return "CCTV-"+m.group(1);
+    String cctv=ChannelNamePolicy.canonicalCctvFromNormalized(v);
+    if(!cctv.isEmpty())return cctv;
     String[] cn={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
     for(int i=1;i<cn.length;i++)if(v.matches(".*中央(?:电视台)?"+cn[i]+"套.*"))return "CCTV-"+i;
     if(v.contains("中央电视台综合频道"))return "CCTV-1";
