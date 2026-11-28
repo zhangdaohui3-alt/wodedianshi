@@ -50,6 +50,12 @@ public final class SourceProbeTimePolicy {
         return remainingPacingMillis(Math.min(LIVE_RESUMABLE_MAX_BYTES,copied),elapsed,LIVE_DIRECTORY_BYTES_PER_SECOND);
     }
 
+    // Share sample pacing and headroom reduction, but retain the directory cap.
+    static long liveDirectoryChunkDelayMillis(int bytes,long elapsed,long playbackRate){
+        return viewingSampleRemainingDelayMillis(bytes,elapsed,
+                Math.min(LIVE_DIRECTORY_BYTES_PER_SECOND,playbackRate));
+    }
+
     /** Full-body requests must not publish partial or non-body HTTP responses. */
     static boolean fullDirectoryResponse(int status,String contentRange){
         return status==200&&(contentRange==null||contentRange.trim().isEmpty());
