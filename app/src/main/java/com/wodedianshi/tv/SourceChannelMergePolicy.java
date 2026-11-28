@@ -31,9 +31,10 @@ public final class SourceChannelMergePolicy {
                 if (existingIndex == null) {
                     endpointIndexes.put(key, result.size());
                     result.add(url);
-                } else if (url.equals(primaryUrl) || url.equals(activeUrl)) {
-                    // If two equivalent URL spellings exist, keep the exact signed/
-                    // selected URL that the user or channel has already chosen.
+                } else if (url.equals(activeUrl)
+                        || (url.equals(primaryUrl) && !result.get(existingIndex).equals(activeUrl))) {
+                    // Active spelling wins regardless of input order; otherwise
+                    // retain the exact primary spelling for this endpoint.
                     result.set(existingIndex, url);
                 }
             }
