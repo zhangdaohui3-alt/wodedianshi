@@ -8721,7 +8721,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       Set<String> savedFavorites,java.util.function.BooleanSupplier cancelled){
     PreparedRoomCatalogue prepared=new PreparedRoomCatalogue();
     if(savedFavorites!=null)prepared.favorites.addAll(savedFavorites);
-    HashMap<String,Channel> firstByIdentity=new HashMap<>(Math.max(16,restored.size()*2));
     HashMap<String,HashSet<String>> sourcesByIdentity=new HashMap<>();
     for(Channel channel:restored){
       SourceProbeTimePolicy.checkPublicationPaused(cancelled);
@@ -8731,9 +8730,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(channel.backups.isEmpty()&&channel.url!=null&&!channel.url.isEmpty())
         channel.backups.add(channel.url);
       String identityKey=identity(channel);
-      Channel keep=firstByIdentity.get(identityKey);
+      Channel keep=prepared.byIdentity.get(identityKey);
       if(keep==null){
-        firstByIdentity.put(identityKey,channel);
+        prepared.byIdentity.put(identityKey,channel);
+        prepared.positionByIdentity.put(identityKey,prepared.entries.size());
         prepared.entries.add(channel);
       }else{
         HashSet<String> seen=sourcesByIdentity.get(identityKey);
@@ -8753,10 +8753,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       SourceProbeTimePolicy.checkPublicationPaused(cancelled);
       Channel channel=prepared.entries.get(i);
       for(String url:channel.backups)prepared.byUrl.put(url,channel);
-      String identityKey=identity(channel);
-      prepared.byIdentity.put(identityKey,channel);
-      if(!prepared.positionByIdentity.containsKey(identityKey))
-        prepared.positionByIdentity.put(identityKey,i);
       String nameGroup=roomChannelNameGroupKey(channel.name,channel.group);
       if(!prepared.positionByNameGroup.containsKey(nameGroup))
         prepared.positionByNameGroup.put(nameGroup,i);
