@@ -44,10 +44,13 @@ public final class SourceSelectionPolicy {
             java.util.function.Predicate<String> coolingDown) {
         if(ranked==null||ranked.isEmpty())return -1;
         Set<String> blockedKeys=endpointKeys(blocked);
-        int preferred=findEquivalentSource(ranked,remembered);
-        if(preferred>=0){
-            String key=endpointKey(ranked.get(preferred));
-            if(!blockedKeys.contains(key)&&!coolingDown.test(key))return preferred;
+        if(hasSourceAddress(remembered)){
+            String key=endpointKey(remembered);
+            // A blocked remembered endpoint cannot win; skip its list lookup.
+            if(!blockedKeys.contains(key)){
+                int preferred=findEndpoint(ranked,key);
+                if(preferred>=0&&!coolingDown.test(key))return preferred;
+            }
         }
         return findEligible(ranked,0,ranked.size(),null,blockedKeys,
                 Collections.emptySet(),coolingDown);
@@ -185,9 +188,12 @@ public final class SourceSelectionPolicy {
     /** Finds a remembered URL in the current list without rewriting its signed path/query. */
     public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
         if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
-        String rememberedKey = endpointKey(rememberedUrl);
+        return findEndpoint(sources,endpointKey(rememberedUrl));
+    }
+
+    private static int findEndpoint(List<String> sources,String key) {
         for (int i = 0; i < sources.size(); i++) {
-            if (rememberedKey.equals(endpointKey(sources.get(i)))) return i;
+            if (key.equals(endpointKey(sources.get(i)))) return i;
         }
         return -1;
     }
