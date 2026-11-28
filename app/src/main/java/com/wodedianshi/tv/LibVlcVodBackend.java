@@ -31,7 +31,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     // Main-handler-owned; at most two inspections per backend lifetime.
     private int audioTrackChecks;
 
-    private void scheduleAudioTrackInspection() {
+    private synchronized void scheduleAudioTrackInspection() {
         if (state != State.ACTIVE || audioTrackChecks >= 2) return;
         ++audioTrackChecks;
         mainHandler.postDelayed(() -> {
@@ -55,36 +55,41 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         listener = value;
         engine.setListener(new LibVlcPlaybackEngine.Listener() {
             @Override public void onPlaying() {
-                Listener current = listener;
-                if (state == State.ACTIVE && current != null) mainHandler.post(() -> {
-                    if (state == State.ACTIVE && listener == current) {
-                        current.onReady();
-                        if (audioTrackChecks == 0) scheduleAudioTrackInspection();
-                    }
+                postCallback(true,current -> {
+                    current.onReady();
+                    if (audioTrackChecks == 0) scheduleAudioTrackInspection();
                 });
             }
             @Override public void onVideoOutput(int count) {
-                Listener current = listener;
-                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onVideoOutput(count > 0); });
+                postCallback(true,current -> current.onVideoOutput(count > 0));
             }
             @Override public void onAudioTrackState(int count, int selected) {
-                Listener current = listener;
-                if (state == State.ACTIVE && current != null) mainHandler.post(() -> {
-                    if (state != State.ACTIVE || listener != current) return;
+                postCallback(true,current -> {
                     current.onAudioTrackState(count, selected);
                     if (count <= 0 || selected < 0) scheduleAudioTrackInspection();
                 });
             }
             @Override public void onBuffering(float percent) { }
             @Override public void onFailure(String reason) {
-                Listener current = listener;
-                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onFailure(reason); });
+                postCallback(true,current -> current.onFailure(reason));
             }
             @Override public void onStopped() { }
             @Override public void onEndReached() {
-                Listener current = listener;
-                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onEnded(); });
+                postCallback(true,Listener::onEnded);
             }
+        });
+    }
+
+    // Posting shares the revocation monitor: a retired backend cannot enqueue
+    // a new callback after revoke() has removed pending messages.
+    private synchronized void postCallback(boolean requireActive,
+            java.util.function.Consumer<Listener> action) {
+        Listener current = listener;
+        if (current == null || state == State.REVOKED
+                || (requireActive && state != State.ACTIVE)) return;
+        mainHandler.post(() -> {
+            if (state != State.REVOKED && (!requireActive || state == State.ACTIVE)
+                    && listener == current) action.accept(current);
         });
     }
 
@@ -96,11 +101,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
             if (state == State.REVOKED) return;
             try { action.run(); }
             catch (RuntimeException | LinkageError error) {
-                Listener current = listener;
-                if (current != null) mainHandler.post(() -> {
-                    if (state != State.REVOKED && listener == current)
-                        current.onFailure(error.getClass().getSimpleName());
-                });
+                postCallback(false,current -> current.onFailure(error.getClass().getSimpleName()));
             }
         });
     }
