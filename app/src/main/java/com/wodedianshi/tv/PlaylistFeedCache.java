@@ -270,9 +270,14 @@ public final class PlaylistFeedCache {
     }
 
     static void validateRangeBody(File body,File partial,File checkpoint)throws IOException {
+        validateRangeBody(body,partial,checkpoint,()->false);
+    }
+
+    private static void validateRangeBody(File body,File partial,File checkpoint,
+            java.util.function.BooleanSupplier paused)throws IOException {
         // An invalid full replacement does not invalidate a separately
         // validated prefix. A corrupt completed range must be discarded.
-        if(!isPlaylistFile(body)){
+        if(!isPlaylistFile(body,paused)){
             if(body.equals(partial))clearRangeCheckpoint(checkpoint,partial);
             throw new IOException("Downloaded resource is not M3U");
         }
@@ -281,7 +286,7 @@ public final class PlaylistFeedCache {
     private static File publishRangeBody(Context context,File directory,File cached,File body,File partial,File checkpoint,
             String tag,java.util.function.BooleanSupplier paused,long deadline) throws IOException {
         checkDownloadBudget(paused,deadline);
-        validateRangeBody(body,partial,checkpoint);
+        validateRangeBody(body,partial,checkpoint,paused);
         String digest=contentDigest(body,paused);
         checkDownloadBudget(paused,deadline);
         invalidateIndex(cached);
@@ -390,7 +395,7 @@ public final class PlaylistFeedCache {
         if(lowRate&&cached.isFile()&&!SourceProbeTimePolicy.fitsLiveFullDirectory(cached.length()))
             throw new IOException("Directory exceeds stable-viewing size limit");
         boolean hasValidCache = cached.isFile() && cached.length() > 0L
-                && isPlaylistFile(cached);
+                && isPlaylistFile(cached,paused);
         // Do not trust validators or index files after a body replacement crash,
         // eviction, or migration from an older cache format.
         if (hasValidCache && !matchesBody(old, cached)) {
@@ -481,7 +486,7 @@ public final class PlaylistFeedCache {
             if (!SourceProbeTimePolicy.completeFullDirectoryBody(copied,declaredLength,responseEncoding)) {
                 throw new IOException("Playlist body length mismatch");
             }
-            if (!isPlaylistFile(temporary)) {
+            if (!isPlaylistFile(temporary,paused)) {
                 throw new IOException("Downloaded resource is not a valid M3U playlist");
             }
 
@@ -539,7 +544,7 @@ public final class PlaylistFeedCache {
         // not force a download of the exact committed acquisition again.
         if(!canAttemptInitialIdentityRepair(body,acquiredVersion))return null;
         File metadata=new File(body.getPath()+".properties");
-        if(matchesBody(readProperties(metadata),body)||!isPlaylistFile(body))return null;
+        if(matchesBody(readProperties(metadata),body)||!isPlaylistFile(body,paused))return null;
         Properties recovered=recoveredBodyMetadata(body,paused,true);
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         invalidateIndex(body);
@@ -831,11 +836,14 @@ public final class PlaylistFeedCache {
         if (sidecar.exists()) sidecar.delete();
     }
 
-    private static boolean isPlaylistFile(File file) {
+    private static boolean isPlaylistFile(File file,java.util.function.BooleanSupplier paused)
+            throws SourceProbeTimePolicy.PausedException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 new FileInputStream(file), StandardCharsets.UTF_8))) {
-            String first = reader.readLine();
+            String first = new PlaylistParser.BoundedLineReader(reader).readLine(paused);
             return first != null && first.replace("\uFEFF", "").trim().startsWith("#EXTM3U");
+        } catch (SourceProbeTimePolicy.PausedException cancelled) {
+            throw cancelled;
         } catch (IOException ignored) {
             return false;
         }
