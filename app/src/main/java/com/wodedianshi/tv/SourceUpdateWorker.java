@@ -3365,23 +3365,23 @@ public class SourceUpdateWorker extends Worker {
     HashSet<String> retainedUrls=new HashSet<>();
     for(int i=0;i<retainedSources.length();i++)retainedUrls.add(retainedSources.optString(i,""));
     JSONArray filtered=new JSONArray();
-    HashMap<String,Set<String>> ownershipByUrl=new HashMap<>();
     for(int i=0;i<previous.length();i++){
       JSONObject item=previous.optJSONObject(i);
-      if(item==null)continue;
-      String url=item.optString("url","");
-      if(!retainedUrls.contains(url))continue;
-      filtered.put(item);
-      JSONArray scopes=item.optJSONArray("scopes");
-      HashSet<String> owned=new HashSet<>();
-      if(scopes!=null)for(int j=0;j<scopes.length();j++)owned.add(scopes.optString(j,""));
-      ownershipByUrl.put(url,owned);
+      if(item!=null&&retainedUrls.contains(item.optString("url","")))filtered.put(item);
     }
     channel.put("backupSourceScopes",filtered);
-    // Channel-level tags are a derived union of the URLs that survived the
-    // eight-source retention cap. Do not leave stale China/global membership.
-    java.util.TreeSet<String> sortedScopes=new java.util.TreeSet<>(
-        ChannelCatalogueScopePolicy.retainedScopes(ownershipByUrl,retainedUrls));
+    // Derive membership directly, preserving the last ownership row for
+    // duplicate URLs, while keeping the filtered rows in original order.
+    TreeSet<String> sortedScopes=new TreeSet<>();
+    for(int i=filtered.length()-1;i>=0;i--){
+      JSONObject item=filtered.getJSONObject(i);
+      if(!retainedUrls.remove(item.optString("url","")))continue;
+      JSONArray scopes=item.optJSONArray("scopes");
+      if(scopes!=null)for(int j=0;j<scopes.length();j++){
+        String scope=scopes.optString(j,"");
+        if(ChannelCatalogueScopePolicy.isRetainableScope(scope))sortedScopes.add(scope);
+      }
+    }
     JSONArray channelScopes=new JSONArray();
     for(String scope:sortedScopes)channelScopes.put(scope);
     channel.put("sourceScopes",channelScopes);
