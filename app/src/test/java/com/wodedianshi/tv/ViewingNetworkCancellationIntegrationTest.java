@@ -140,4 +140,68 @@ public class ViewingNetworkCancellationIntegrationTest {
             SourceUpdateActivityPolicy.setActivityActive(false);
         }
     }
+    @Test public void waveClosePreservesOnlyCompletedTimelyPositiveEvidence()throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        SourceUpdateWorker worker=androidx.work.testing.TestWorkerBuilder.from(context,
+                SourceUpdateWorker.class,Runnable::run).build();
+        Class<?> owner=SourceUpdateWorker.class;
+        Class<?> waveType=Class.forName(owner.getName()+"$IdleProbeWave");
+        Class<?> timedType=Class.forName(owner.getName()+"$TimedProbe");
+        java.lang.reflect.Constructor<?> waveConstructor=waveType.getDeclaredConstructor(owner);
+        waveConstructor.setAccessible(true);
+        Object wave=waveConstructor.newInstance(worker);
+        java.lang.reflect.Constructor<?> timed=timedType.getDeclaredConstructor(
+                SourceUpdateWorker.ProbeResult.class,long.class,long.class);
+        timed.setAccessible(true);
+        java.lang.reflect.Field executorField=waveType.getDeclaredField("executor");
+        java.lang.reflect.Field pendingField=waveType.getDeclaredField("pending");
+        java.lang.reflect.Field retainField=waveType.getDeclaredField("retainWaveEvidence");
+        java.lang.reflect.Field deadlineField=waveType.getDeclaredField("waveBatchDeadline");
+        java.lang.reflect.Field cacheField=owner.getDeclaredField("INITIAL_PROBES");
+        java.lang.reflect.Field expiryField=owner.getDeclaredField("initialProbeEarliestExpiry");
+        java.lang.reflect.Field retiringField=owner.getDeclaredField("retiringProbeExecutor");
+        for(java.lang.reflect.Field field:new java.lang.reflect.Field[]{executorField,pendingField,
+                retainField,deadlineField,cacheField,expiryField,retiringField})field.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Map<String,Future<Object>> pending=(java.util.Map<String,Future<Object>>)pendingField.get(wave);
+        @SuppressWarnings("unchecked")
+        java.util.Map<String,Object> cache=(java.util.Map<String,Object>)cacheField.get(null);
+        java.util.Map<String,Object> prior=new java.util.LinkedHashMap<>(cache);
+        long previousExpiry=expiryField.getLong(null);
+        Object previousRetiring=retiringField.get(null);
+        ExecutorService executor=Executors.newSingleThreadExecutor();
+        long now=android.os.SystemClock.elapsedRealtime(),deadline=now+10000L;
+        SourceUpdateWorker.ProbeResult positive=new SourceUpdateWorker.ProbeResult();
+        positive.valid=true;
+        SourceUpdateWorker.ProbeResult negative=new SourceUpdateWorker.ProbeResult();
+        FutureTask<Object> good=new FutureTask<>(()->timed.newInstance(positive,deadline,now));
+        FutureTask<Object> expired=new FutureTask<>(()->timed.newInstance(positive,deadline,deadline));
+        FutureTask<Object> failed=new FutureTask<>(()->timed.newInstance(negative,deadline,now));
+        FutureTask<Object> unfinished=new FutureTask<>(()->timed.newInstance(positive,deadline,now));
+        good.run();expired.run();failed.run();
+        java.lang.reflect.Method close=waveType.getDeclaredMethod("close");
+        close.setAccessible(true);
+        try{
+            cache.clear();expiryField.setLong(null,Long.MAX_VALUE);
+            executorField.set(wave,executor);retainField.setBoolean(wave,true);
+            deadlineField.setLong(wave,deadline+1000L);
+            pending.put("good",good);pending.put("expired",expired);
+            pending.put("failed",failed);pending.put("unfinished",unfinished);
+            close.invoke(wave);
+            assertTrue(unfinished.isCancelled());
+            assertFalse(good.isCancelled());
+            assertEquals(java.util.Collections.singleton("good"),cache.keySet());
+            assertTrue(pending.isEmpty());
+            assertTrue(executor.isShutdown());
+            assertSame(executor,retiringField.get(null));
+            close.invoke(wave); // repeated cleanup must not replace the retiring owner
+            assertSame(executor,retiringField.get(null));
+        }finally{
+            executor.shutdownNow();
+            cache.clear();cache.putAll(prior);
+            expiryField.setLong(null,previousExpiry);
+            retiringField.set(null,previousRetiring);
+        }
+    }
+
 }
