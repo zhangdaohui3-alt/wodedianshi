@@ -704,4 +704,56 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    private static com.wodedianshi.tv.SourceUpdateWorker manualWorker(Context context,String id) {
+        return androidx.work.testing.TestWorkerBuilder.from(context,
+                com.wodedianshi.tv.SourceUpdateWorker.class,Runnable::run)
+            .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+                .putString("manual_refresh_id",id).build()).build();
+    }
+
+    @Test public void workerRetriesReadAndDiagnosticFailuresWithoutChangingCatalogue()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            String url="https://example.invalid/confirmed";
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,
+                new JSONArray().put(channel("CCTV-1",url)),base,false,()->false,
+                new AppStateEditor(context).putInt(PERCENT,47)
+                    .putLong("source_full_rebuild_completed_at",System.currentTimeMillis())
+                    .putString("source_manual_completed_id","completed"));
+            long version=RoomCatalogueReader.read(context).catalogueVersion;
+            AppDatabase db=RoomDatabaseProvider.get(context);
+            androidx.sqlite.db.SupportSQLiteDatabase sql=db.getOpenHelper().getWritableDatabase();
+            sql.execSQL("ALTER TABLE app_state RENAME TO unavailable_app_state");
+            try {
+                assertEquals(androidx.work.ListenableWorker.Result.retry(),
+                    manualWorker(context,"completed").doWork());
+            } finally {
+                sql.execSQL("ALTER TABLE unavailable_app_state RENAME TO app_state");
+            }
+            // The same completed request must now succeed, proving ownership was released.
+            assertEquals(androidx.work.ListenableWorker.Result.success(),
+                manualWorker(context,"completed").doWork());
+            sql.execSQL("CREATE TRIGGER fail_source_status BEFORE INSERT ON app_state "
+                +"WHEN NEW.`key` = 'source_update_result' "
+                +"BEGIN SELECT RAISE(ABORT, 'injected status failure'); END");
+            com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(true);
+            try {
+                assertEquals(androidx.work.ListenableWorker.Result.retry(),
+                    manualWorker(context,"pending").doWork());
+            } finally {
+                com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(false);
+                sql.execSQL("DROP TRIGGER fail_source_status");
+            }
+            assertEquals(androidx.work.ListenableWorker.Result.success(),
+                manualWorker(context,"completed").doWork());
+            assertEquals("47",db.appStateDao().getValue(PERCENT));
+            assertNull(db.appStateDao().getValue("source_update_time"));
+            RoomCatalogueReader.Snapshot snapshot=RoomCatalogueReader.read(context);
+            assertEquals(version,snapshot.catalogueVersion);
+            assertEquals(1,snapshot.channelCount);
+            assertEquals(url,snapshot.channels.get(0).url);
+        });
+    }
+
 }
