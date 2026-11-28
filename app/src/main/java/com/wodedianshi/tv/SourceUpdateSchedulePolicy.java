@@ -158,6 +158,15 @@ public final class SourceUpdateSchedulePolicy {
                 &&positions<=PROVISIONAL_RECHECK_CAP-pending;
     }
 
+    /** Reserve all eligible raw positions, not distinct endpoints. Positions
+     * that are guaranteed to bypass probing cannot add pending evidence. */
+    static <T> boolean permitsProvisionalScreen(int pending,java.util.List<T> positions,
+            java.util.function.Predicate<T> eligible){
+        int reserved=0;
+        for(T position:positions)if(eligible.test(position))reserved++;
+        return permitsProvisionalScreen(pending,reserved);
+    }
+
     /** Bounded insertion-order evidence list; retry attempts can move a key to
      * the tail without extending the normal saved-source rotation. */
     static void rememberProvisional(java.util.LinkedHashSet<String> keys,String key){
