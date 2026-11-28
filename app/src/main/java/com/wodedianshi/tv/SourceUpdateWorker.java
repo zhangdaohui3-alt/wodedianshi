@@ -1713,37 +1713,37 @@ public class SourceUpdateWorker extends Worker {
           String activeUrl=activeIndex<currentUrls.size()
               ?currentUrls.get(activeIndex):target.optString("url","");
           String primaryUrl=target.optString("url","");
-          java.util.Comparator<String> bestFirst=rankingComparator(measuredScores,observedQoe);
-          ArrayList<String> retainedUrls;
+          // Below capacity no existing route can be replaced. Do not create a
+          // ranking cache or scan failure history for a simple append.
+          boolean atCapacity=currentUrls.size()>=MAX_SOURCES_PER_CHANNEL;
+          java.util.Comparator<String> bestFirst=atCapacity?rankingComparator(measuredScores,observedQoe):null;
+          List<String> retainedUrls;
           if(initialDiscoveryChain){
-            retainedUrls=new ArrayList<>(SourceChannelMergePolicy.attachSharedEndpoint(
-                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,primaryUrl,activeUrl));
+            retainedUrls=SourceChannelMergePolicy.attachSharedEndpoint(
+                currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,primaryUrl,activeUrl);
           }else{
-            HashSet<String> eligibleRetirement=new HashSet<>();
-            for(String oldUrl:currentUrls){
-              if(probeFailureStreaks.optInt(StableKey.url(oldUrl),0)
-                  >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
-                eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
+            Set<String> eligibleRetirement=Collections.emptySet();
+            if(atCapacity){
+              eligibleRetirement=new HashSet<>();
+              for(String oldUrl:currentUrls){
+                if(probeFailureStreaks.optInt(StableKey.url(oldUrl),0)
+                    >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
+                  eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
+              }
             }
-            retainedUrls=new ArrayList<>(SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
+            retainedUrls=SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(
                 currentUrls,e.url,MAX_SOURCES_PER_CHANNEL,bestFirst,
-                primaryUrl,activeUrl,eligibleRetirement));
+                primaryUrl,activeUrl,eligibleRetirement);
           }
-          boolean changed=currentUrls.size()!=retainedUrls.size();
-          if(!changed){
-            for(int i=0;i<currentUrls.size();i++){
-              if(!currentUrls.get(i).equals(retainedUrls.get(i))){changed=true;break;}
-            }
-          }
-          if(changed){
+          if(!currentUrls.equals(retainedUrls)){
             JSONArray updatedSources=new JSONArray();
             for(String retainedUrl:retainedUrls)updatedSources.put(retainedUrl);
             target.put("sources",updatedSources);
             target.put("activeSource",SourceRankingRetentionPolicy.restoreSelectedIndex(retainedUrls,activeUrl));
             added++;
           }
-          String retainedEndpointUrl="";
-          for(String retainedUrl:retainedUrls){
+          String retainedEndpointUrl=retainedUrls.contains(e.url)?e.url:"";
+          if(retainedEndpointUrl.isEmpty())for(String retainedUrl:retainedUrls){
             if(endpoint.equals(SourceSelectionPolicy.endpointKey(retainedUrl))){
               retainedEndpointUrl=retainedUrl;break;
             }
