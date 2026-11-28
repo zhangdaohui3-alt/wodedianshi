@@ -6610,7 +6610,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(!canApplyRemoteZap()||selected<0||selected>=channels.size())return;
       int resolved=SourceSelectionPolicy.resolveQueuedManualSelection(c,channels.get(selected),
           expectedSerial,liveTuneRequestSerial,c.backups,expectedActive,currentSourceUrl(),target,
-          blockedSourceUrls(c));
+          url->isSourceBlocked(c,url));
       if(resolved>=0)applyRemoteSource(c,resolved);
     };
     uiHandler.postDelayed(pendingRemoteSourceDispatch,RemoteChannelOrderPolicy.ZAP_BURST_WINDOW_MS);
