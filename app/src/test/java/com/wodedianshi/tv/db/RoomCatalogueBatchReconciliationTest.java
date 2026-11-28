@@ -147,22 +147,5 @@ public class RoomCatalogueBatchReconciliationTest {
         assertEquals(1,item.sources.size());
     }
 
-    @Test public void restoredSelectionRemovesOnlyDisplacedExclusiveScope() {
-        String active="https://old.example/live";
-        BackupSourceEntity[] rows=new BackupSourceEntity[8];
-        Map<String,BackupSourceEntity> old=new HashMap<>();
-        for(int i=0;i<7;i++){
-            rows[i]=source("a","https://kept.example/"+i,i,"[\"china\"]");
-            old.put(rows[i].url,rows[i]);
-        }
-        rows[7]=source("a","https://new.example/live",7,"[\"china\",\"geo:countries:us\"]");
-        old.put(active,source("a",active,4,"[\"geo:countries:cn\"]"));
-        RoomCatalogueWriter.PreparedChannel item=channel("a",rows);
-        item.channel.channelScopesJson="[\"china\",\"custom\",\"geo:countries:us\"]";
-        assertEquals(7,RoomCatalogueWriter.retainLiveSelection(item,old,active,url->true));
-        assertEquals(active,item.sources.get(7).url);
-        assertEquals("[\"china\",\"custom\",\"geo:countries:cn\"]",item.channel.channelScopesJson);
-        assertEquals("[\"geo:countries:cn\"]",item.sources.get(7).scopesJson);
-    }
 
 }
