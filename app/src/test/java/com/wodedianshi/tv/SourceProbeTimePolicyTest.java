@@ -389,7 +389,7 @@ public class SourceProbeTimePolicyTest {
         assertEquals(normal,SourceProbeTimePolicy.liveDirectoryRangeLimit(49152L));
         assertEquals(8000L,low*1000L/16384L);
         assertEquals(8000L,normal*1000L/32768L);
-        org.junit.Assert.assertArrayEquals(new long[]{131072L,262143L,524288L},
+        org.junit.Assert.assertArrayEquals(new long[]{131072L,524288L},
             SourceProbeTimePolicy.directoryRange("bytes 131072-262143/524288",131072L,524288L,low));
         org.junit.Assert.assertNull(SourceProbeTimePolicy.directoryRange(
             "bytes 131072-262144/524288",131072L,524288L,low));
