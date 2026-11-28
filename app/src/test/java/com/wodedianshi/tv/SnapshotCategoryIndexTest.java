@@ -20,7 +20,7 @@ public class SnapshotCategoryIndexTest {
         assertEquals(java.util.Collections.singleton("two"),membership.geoKeys("geo:cities:us-phoenix"));
         assertTrue(membership.geoKeys("geo:subdivisions:us-az").isEmpty());
         assertNull(new SnapshotCategoryIndex.LocalMembership(10,java.util.Collections.emptyList(),
-            java.util.Collections.emptyMap()).geoKeys("geo:countries:us"));
+            java.util.Collections.emptyMap(),java.util.Collections.emptyMap(),null).geoKeys("geo:countries:us"));
         assertFalse(new SnapshotCategoryIndex.PreparedLocal(7,membership).matches(8,10));
     }
 
@@ -35,7 +35,7 @@ public class SnapshotCategoryIndexTest {
         assertNull(prepared.fixedCategory("央视"));
         assertTrue(prepared.candidates("福建").isEmpty());
         SnapshotCategoryIndex.LocalMembership unprepared=new SnapshotCategoryIndex.LocalMembership(
-            0,java.util.Collections.emptyList(),java.util.Collections.emptyMap());
+            0,java.util.Collections.emptyList(),java.util.Collections.emptyMap(),java.util.Collections.emptyMap(),null);
         assertNull(unprepared.geoKeys("geo:countries:us"));
     }
 
@@ -53,7 +53,7 @@ public class SnapshotCategoryIndexTest {
         fixed.put("央视",cctv);
         fixed.put("港澳台",java.util.Collections.emptyList());
         SnapshotCategoryIndex.LocalMembership membership=new SnapshotCategoryIndex.LocalMembership(
-            10,Arrays.asList(3,7),java.util.Collections.emptyMap(),fixed);
+            10,Arrays.asList(3,7),java.util.Collections.emptyMap(),fixed,null);
         cctv.clear();fixed.clear();
         assertEquals(Arrays.asList(6,2,4),membership.fixedCategory("央视"));
         assertTrue(membership.fixedCategory("港澳台").isEmpty());
@@ -67,7 +67,7 @@ public class SnapshotCategoryIndexTest {
         java.util.Map<String,List<Integer>> provinces=new java.util.HashMap<>();
         provinces.put("福建",Arrays.asList(3,6));
         SnapshotCategoryIndex.LocalMembership membership=new SnapshotCategoryIndex.LocalMembership(
-            10,Arrays.asList(3,6,9),provinces);
+            10,Arrays.asList(3,6,9),provinces,java.util.Collections.emptyMap(),null);
         SnapshotCategoryIndex.PreparedLocal prepared=new SnapshotCategoryIndex.PreparedLocal(7,membership);
         provinces.clear();
         assertTrue(prepared.matches(7,10));
@@ -86,7 +86,8 @@ public class SnapshotCategoryIndexTest {
         ArrayList<Integer> fujian=new ArrayList<>(Arrays.asList(2,8));
         provinces.put("福建",fujian);
         provinces.put("广东",Arrays.asList(5));
-        cache.putLocalIndex(10,20,Arrays.asList(2,5,7,8),provinces);
+        cache.putLocalMembership(10,20,new SnapshotCategoryIndex.LocalMembership(
+            20,Arrays.asList(2,5,7,8),provinces,java.util.Collections.emptyMap(),null));
         fujian.clear();provinces.clear();
         assertTrue(cache.hasLocalIndex(10,20));
         assertEquals(Arrays.asList(2,5,7,8),cache.localCandidates(10,20,null));
