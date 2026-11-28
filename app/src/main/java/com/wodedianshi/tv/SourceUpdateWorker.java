@@ -689,7 +689,8 @@ public class SourceUpdateWorker extends Worker {
       final Map<String,String> initialProbeState=initialDiscoveryChain
           ?com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),Arrays.asList(
               "source_initial_progress_checked_urls","source_initial_progress_china_validated_urls",
-              FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,"source_initial_next_feed_index"))
+              FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,"source_initial_next_feed_index",
+              "source_initial_has_validated_source"))
           :Collections.emptyMap();
       final int initialCheckedAtStart=stateInt(initialProbeState,"source_initial_progress_checked_urls",0);
       final int initialCoreMask=stateInt(initialProbeState,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1);
@@ -788,7 +789,9 @@ public class SourceUpdateWorker extends Worker {
         String versionKey=cursorKey+"_version";
         String scannedKey=initialDiscoveryChain?DiscoveryBatchPolicy.initialBatchPrefix(feedIndex)+"scanned":null;
         Map<String,String> cursorState=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),
-            initialDiscoveryChain?Arrays.asList(cursorKey,versionKey,scannedKey):Arrays.asList(cursorKey,versionKey));
+            initialDiscoveryChain?Arrays.asList(cursorKey,versionKey,scannedKey):
+                manualRefresh?Arrays.asList(cursorKey,versionKey,"source_manual_feed_batch_fingerprint",
+                    "source_manual_prepared_feed_version"):Arrays.asList(cursorKey,versionKey));
         int feedCursor=stateInt(cursorState,cursorKey,0);
         final String savedProbeVersion=cursorState.getOrDefault(versionKey,"");
         final int savedPartialScanned=initialDiscoveryChain?stateInt(cursorState,scannedKey,0):0;
@@ -817,13 +820,13 @@ public class SourceUpdateWorker extends Worker {
           if(slowPlayback&&android.os.SystemClock.elapsedRealtime()<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(feedIndex,0L))continue;
           noteInitialStage("读取目录 "+(feedIndex+1)+"/"+feeds.length+"（下载或缓存）");
           boolean manualNewPage=manualRefresh&&DiscoveryBatchPolicy.manualRevalidateDirectory(
-              feedCursor,roomString("source_manual_feed_batch_fingerprint",""));
+              feedCursor,cursorState.getOrDefault("source_manual_feed_batch_fingerprint",""));
           File cachedFeed;
           if(initialDiscoveryChain){
             cachedFeed=PlaylistFeedCache.findIndexedInitial(getApplicationContext(),feed);
           }else if(manualRefresh){
             cachedFeed=manualNewPage?PlaylistFeedCache.findPreparedManual(getApplicationContext(),feed,
-                roomString("source_manual_prepared_feed_version","")):null;
+                cursorState.getOrDefault("source_manual_prepared_feed_version","")):null;
             if(cachedFeed==null){
               cachedFeed=PlaylistFeedCache.obtainManual(getApplicationContext(),feed,manualNewPage,pauseRequested);
               if(manualNewPage){
@@ -1843,8 +1846,9 @@ public class SourceUpdateWorker extends Worker {
       }
       boolean initialFeedsExhausted=initialDiscoveryChain&&feedBatchComplete
           &&allFeedsInspectedThisSlice;
+      // The exclusive source owner has not committed another slice in between.
       boolean initialHasValidatedSource=initialDiscoveryChain
-          &&(roomBoolean("source_initial_has_validated_source",false)||discoveryProbesValid>0);
+          &&(discoveryProbesValid>0||Boolean.parseBoolean(initialProbeState.get("source_initial_has_validated_source")));
       boolean awaitingIdleFinalization=FullDiscoveryProgressPolicy.awaitingIdleFinalization(initialFeedsExhausted,slowPlayback);
       boolean initialDiscoveryComplete=FullDiscoveryProgressPolicy.canPublishInitialSnapshot(
           initialFeedsExhausted,initialHasValidatedSource,slowPlayback);
