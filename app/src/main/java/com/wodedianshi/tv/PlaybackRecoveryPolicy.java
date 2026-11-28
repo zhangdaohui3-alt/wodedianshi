@@ -16,8 +16,8 @@ public final class PlaybackRecoveryPolicy {
                                                 long lastVideoFrameActivityAtMs,
                                                 long nowMs,
                                                 long timeoutMs) {
-        if (!videoTrackSelected || timeoutMs <= 0L || nowMs < 0L) return false;
+        if (!videoTrackSelected) return false;
         long reference = firstFrameRendered ? lastVideoFrameActivityAtMs : videoTrackSelectedAtMs;
-        return reference > 0L && nowMs >= reference && nowMs - reference >= timeoutMs;
+        return isTimelineStalled(nowMs, reference, timeoutMs);
     }
 }
