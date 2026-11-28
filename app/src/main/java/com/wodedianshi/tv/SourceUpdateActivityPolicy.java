@@ -34,6 +34,11 @@ public final class SourceUpdateActivityPolicy {
         if (active && !playbackActive) playbackStarts.incrementAndGet();
         playbackActive = active;
     }
+    /** Playback handoff revokes discovery and records pressure in one locked transition. */
+    static synchronized void setPlaybackActive(boolean active,long now) {
+        recordPressure(now);
+        setPlaybackActive(active);
+    }
     /** A healthy watchdog observation is not permission until another
      * independent observation arrives after a recovery interval. Expired
      * leases cannot silently revive an already admitted worker generation. */
@@ -107,9 +112,13 @@ public final class SourceUpdateActivityPolicy {
     /** Called on playback transitions and user input, never from a network thread.
      * This does not wait for an in-flight connection to close. */
     public static synchronized void notePressure(long now){
+        recordPressure(now);
+        revokeStableLive();
+    }
+    // Caller owns the policy monitor; the transition revokes the lease once.
+    private static void recordPressure(long now){
         if(now>0L)lastPressureAt=now;
         pressureGeneration.incrementAndGet();
-        revokeStableLive();
     }
     /** Called only after release continuations have run. Keep the worker
      * gated if any playback owner or queued native teardown remains. */
