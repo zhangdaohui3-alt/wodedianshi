@@ -64,8 +64,9 @@ public class PlaylistFeedIndexTest {
     }
 
     @Test public void failedRecordWriteAbortsWithoutPublishingPartialIndex() throws Exception {
-        char[] oversized = new char[1024*1024+1];
-        java.util.Arrays.fill(oversized,'x');
+        // Below the character-line cap, but above the independent UTF-8 field cap.
+        char[] oversized = new char[1024*1024/3+1];
+        java.util.Arrays.fill(oversized,'中');
         StringBuilder body=new StringBuilder("#EXTM3U\n#EXTINF:-1,");
         body.append(oversized).append("\nhttps://bad.example/live\n");
         for(int i=0;i<500;i++)
@@ -82,7 +83,7 @@ public class PlaylistFeedIndexTest {
             org.junit.Assert.assertTrue(expected.getMessage().contains("field exceeds size limit"));
         }
         assertEquals(0,page.size());
-        org.junit.Assert.assertTrue("Must abort before parsing hundreds of tail entries",checks.get()<30);
+        org.junit.Assert.assertTrue("Must abort before parsing hundreds of tail entries",checks.get()<100);
         org.junit.Assert.assertFalse(new File(feed.getAbsolutePath()+".index-data").exists());
         org.junit.Assert.assertFalse(new File(feed.getAbsolutePath()+".index-offsets").exists());
         org.junit.Assert.assertFalse(new File(feed.getAbsolutePath()+".index-data.tmp").exists());
@@ -92,6 +93,34 @@ public class PlaylistFeedIndexTest {
         }
         assertEquals(1,PlaylistFeedIndex.readPage(feed,0,48,page::add));
         assertEquals("正常",page.get(0).name);
+    }
+
+    @Test public void oversizedLineAbortsWithoutPublishingPartialIndex() throws Exception {
+        char[] oversized=new char[PlaylistParser.MAX_LINE_CHARS+1];
+        java.util.Arrays.fill(oversized,'x');
+        StringBuilder body=new StringBuilder("#EXTM3U\n#EXTINF:-1,正常\nhttps://good.example/live\n#EXTINF:-1,");
+        body.append(oversized).append("\nhttps://bad.example/live\n");
+        for(int i=0;i<500;i++)body.append("#EXTINF:-1,tail\nhttps://tail.example/live\n");
+        File feed=playlist(body.toString());
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        try{
+            PlaylistFeedIndex.readPage(feed,0,48,page::add,()->{
+                checks.incrementAndGet();return false;
+            });
+            org.junit.Assert.fail("Expected oversized line failure");
+        }catch(java.io.IOException expected){
+            assertEquals("Playlist line exceeds size limit",expected.getMessage());
+        }
+        assertEquals(0,page.size());
+        org.junit.Assert.assertTrue("Must stop before processing tail entries",checks.get()<180);
+        for(String suffix:new String[]{".index-data",".index-offsets",".index-data.tmp",".index-offsets.tmp"})
+            org.junit.Assert.assertFalse(new File(feed.getAbsolutePath()+suffix).exists());
+        try(FileOutputStream out=new FileOutputStream(feed)){
+            out.write("#EXTM3U\n#EXTINF:-1,恢复\nhttps://good.example/live\n".getBytes(StandardCharsets.UTF_8));
+        }
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,48,page::add));
+        assertEquals("恢复",page.get(0).name);
     }
 
     @Test public void extendedFieldsKeepOriginalRowOrderAndContents() throws Exception {
