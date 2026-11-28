@@ -1081,7 +1081,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     return group.isEmpty()?"":" · "+group;
   }
   private static final java.util.regex.Pattern CANONICAL_CHANNEL_SEPARATORS=java.util.regex.Pattern.compile("[\\s_—–·•]");
-  private static final java.util.regex.Pattern CANONICAL_CCTV_NUMBER=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)");
   private static final java.util.regex.Pattern RESUME_METADATA_WHITESPACE=java.util.regex.Pattern.compile("\\s+");
   private static final String[] CCTV_CHINESE_NUMBERS={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
   private static final String[] MAINLAND_PROVINCES={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
@@ -1089,8 +1088,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
     if(!satellite.isEmpty())return satellite;
     String value=name==null?"":CANONICAL_CHANNEL_SEPARATORS.matcher(name.trim().toUpperCase(Locale.ROOT)).replaceAll("");
-    java.util.regex.Matcher m=CANONICAL_CCTV_NUMBER.matcher(value);
-    if(m.find())return "CCTV-"+m.group(1);
+    String cctv=ChannelNamePolicy.canonicalCctvFromNormalized(value);
+    if(!cctv.isEmpty())return cctv;
     // All these patterns require the literal 中央; avoid compiling seventeen
     // regexes for every unrelated local or international station.
     if(value.contains("中央"))for(int i=1;i<CCTV_CHINESE_NUMBERS.length;i++)if(value.matches(".*中央(?:电视台)?"+CCTV_CHINESE_NUMBERS[i]+"套.*"))return "CCTV-"+i;
