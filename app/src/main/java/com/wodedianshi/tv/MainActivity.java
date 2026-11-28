@@ -7890,6 +7890,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ++libVlcHealthEpoch;
     libVlcStableChecks=0;
     libVlcLastHealthClockMs=0L;
+    libVlcLastHealthAt=0L;
     libVlcVideoProgress.reset();
     libVlcAudioProgress.reset();
   }
