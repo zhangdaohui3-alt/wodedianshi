@@ -817,4 +817,30 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void publicationPreservesSurvivingFavoriteAndRemovesStaleFavorite()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            String retained="https://example.invalid/retained";
+            String removed="https://example.invalid/removed";
+            JSONArray initial=new JSONArray().put(channel("CCTV-1",retained))
+                    .put(channel("CCTV-2",removed));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,initial,base,false,
+                    ()->false,new AppStateEditor(context));
+            ChannelDao dao=RoomDatabaseProvider.get(context).channelDao();
+            for(String id:dao.getAllChannelIds())dao.addFavorite(new FavoriteEntity(id,12345L));
+            long version=dao.getMigration(MasterCatalogueRepository.MIGRATION_KEY).completedAt+1L;
+            dao.refreshFavoriteCheckpointCount(MasterCatalogueRepository.MIGRATION_KEY,version);
+            JSONArray updated=new JSONArray().put(channel("CCTV-1",retained));
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,updated,version,false,
+                    ()->false,new AppStateEditor(context));
+            assertEquals(1,dao.countChannels());
+            assertEquals(1,dao.countFavorites());
+            assertEquals(1,dao.getAllChannelIds().size());
+            String id=dao.getAllChannelIds().get(0);
+            assertEquals(Long.valueOf(12345L),dao.getFavoriteAddedAt(id));
+            assertEquals(1,RoomCatalogueReader.read(context).favorites.size());
+        });
+    }
+
 }
