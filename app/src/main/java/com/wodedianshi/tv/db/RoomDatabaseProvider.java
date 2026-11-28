@@ -79,19 +79,4 @@ public final class RoomDatabaseProvider {
         }
         return local;
     }
-
-    /**
-     * Compatibility alias: regional catalogues are scope-filtered views of the
-     * one authoritative catalogue database. Never create a second SQLite store.
-     */
-    @Deprecated
-    public static AppDatabase getChina(Context context) {
-        return get(context);
-    }
-
-    /** Compatibility alias for the single authoritative catalogue database. */
-    @Deprecated
-    public static AppDatabase getInternational(Context context) {
-        return get(context);
-    }
 }
