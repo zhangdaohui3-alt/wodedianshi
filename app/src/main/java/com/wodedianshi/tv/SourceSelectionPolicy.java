@@ -1,6 +1,8 @@
 package com.wodedianshi.tv;
 
 import java.net.URI;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -29,24 +31,25 @@ public final class SourceSelectionPolicy {
         int start = wrapIndex(currentIndex, size);
         String activeUrl = sources.get(start);
         String activeKey = endpointKey(activeUrl);
+        Set<String> blockedKeys = endpointKeys(blocked);
+        Set<String> cooldownKeys = endpointKeys(coolingDown);
         for (int step = 1; step < size; step++) {
             int index = (start + step) % size;
             String url = sources.get(index);
             if (url == null || url.trim().isEmpty()) continue;
             String key = endpointKey(url);
-            if (key.equals(activeKey) || containsEquivalentKey(blocked, key)) continue;
+            if (key.equals(activeKey) || blockedKeys.contains(key)) continue;
             if (fallback < 0) fallback = index;
-            if (!containsEquivalentKey(coolingDown, key)) return index;
+            if (!cooldownKeys.contains(key)) return index;
         }
         return fallback;
     }
 
-    private static boolean containsEquivalentKey(Set<String> values, String key) {
-        if (values == null || values.isEmpty()) return false;
-        for (String value : values) {
-            if (endpointKey(value).equals(key)) return true;
-        }
-        return false;
+    private static Set<String> endpointKeys(Set<String> values) {
+        if (values == null || values.isEmpty()) return Collections.emptySet();
+        Set<String> keys = new HashSet<>();
+        for (String value : values) keys.add(endpointKey(value));
+        return keys;
     }
 
     /**
