@@ -2551,7 +2551,7 @@ public class SourceUpdateWorker extends Worker {
     HashSet<String> unresolvedEndpoints=new HashSet<>();
     int checked=0,conclusive=0,originDeferred=0,reused=0,positive=0;
     int limit=SourceUpdateSchedulePolicy.PROVISIONAL_DAILY_LIMIT;
-    boolean extended=false,lastProbeHealthy=false,tailUsed=false;
+    boolean extended=false,lastProbeHealthy=false,tailUsed=false,networkStopped=false;
     String retryPrefix=catalogueVersion==null?null:"quality-recheck\n"+catalogueVersion+"\n";
     Boolean retryEvidenceAvailable=null;
     long startedAt=android.os.SystemClock.elapsedRealtime();
@@ -2562,7 +2562,7 @@ public class SourceUpdateWorker extends Worker {
     for(String url:selected){
       SourceProbeTimePolicy.checkPublicationPaused(paused);
       long now=android.os.SystemClock.elapsedRealtime();
-      if(now>=stageDeadline)break;
+      if(now>=stageDeadline||(networkStopped&&stageDeadline-now<2000L))break;
       // The default quota remains unchanged for slow, inconclusive or
       // cache-heavy batches. Only measured healthy fresh probes can extend.
       if(!extended&&lastProbeHealthy&&checked>=limit&&SourceUpdateSchedulePolicy.permitsFastRecheckExtension(
@@ -2584,7 +2584,7 @@ public class SourceUpdateWorker extends Worker {
         continue;
       }
       if(unresolvedEndpoints.contains(endpoint))continue;
-      long deadline=checked>=limit
+      long deadline=networkStopped||checked>=limit
           ||(extended&&!SourceUpdateSchedulePolicy.permitsExtendedRecheckProbe(sampleRequests,sampleBytes))
           ?0L:SourceUpdateSchedulePolicy.qualityRecheckDeadline(stageDeadline,now,tailUsed,
               lastProbeHealthy,checked,positive,sampleRequests,sampleBytes);
@@ -2630,10 +2630,13 @@ public class SourceUpdateWorker extends Worker {
           ||measured.transientNetworkFailure||finishedAt>=deadline
           ||finishedAt-now>=SourceProbeTimePolicy.sampleReadTimeoutCap(false);
       lastProbeHealthy=fullPositive&&!pressure;
+      // Once an extended pass encounters pressure, permanently close fresh
+      // network admission for this slice. The existing bounded cache-only
+      // tail can still consume valid evidence without another request.
+      if(extended&&pressure)networkStopped=true;
       if(inconclusive||finishedAt>=deadline){
         unresolvedEndpoints.add(endpoint);
         SourceUpdateSchedulePolicy.rememberProvisional(pending,key);
-        if(extended&&pressure)break;
         continue;
       }
       if(fullPositive){
@@ -2642,7 +2645,6 @@ public class SourceUpdateWorker extends Worker {
       completed.put(url,measured);
       pending.remove(key);conclusive++;
       flushQualityCheckpoint(completed,checkpoint,paused);
-      if(extended&&pressure)break;
     }
     SourceProbeTimePolicy.checkPublicationPaused(paused);
     return new QualityRecheckSlice(completed,checked,originDeferred,reused,sampleRequests,sampleBytes,extended,conclusive);
