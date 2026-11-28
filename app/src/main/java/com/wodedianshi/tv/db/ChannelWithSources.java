@@ -17,20 +17,19 @@ public class ChannelWithSources {
     @Relation(parentColumn = "id", entityColumn = "channelId")
     public List<BackupSourceEntity> sources;
 
-    /** Returns a copy ordered exactly as the legacy source list was stored. */
+    private static final Comparator<BackupSourceEntity> SOURCE_ORDER = (left, right) -> {
+        int byPriority = Integer.compare(left.priority, right.priority);
+        if (byPriority != 0) return byPriority;
+        String leftUrl = left.url == null ? "" : left.url;
+        String rightUrl = right.url == null ? "" : right.url;
+        return leftUrl.compareTo(rightUrl);
+    };
+
+    /** Returns an independent copy in persisted priority order. */
     public List<BackupSourceEntity> getSourcesInPriorityOrder() {
-        ArrayList<BackupSourceEntity> ordered = new ArrayList<>();
-        if (sources != null) ordered.addAll(sources);
-        Collections.sort(ordered, new Comparator<BackupSourceEntity>() {
-            @Override
-            public int compare(BackupSourceEntity left, BackupSourceEntity right) {
-                int byPriority = Integer.compare(left.priority, right.priority);
-                if (byPriority != 0) return byPriority;
-                String leftUrl = left.url == null ? "" : left.url;
-                String rightUrl = right.url == null ? "" : right.url;
-                return leftUrl.compareTo(rightUrl);
-            }
-        });
+        ArrayList<BackupSourceEntity> ordered = sources == null
+                ? new ArrayList<>() : new ArrayList<>(sources);
+        if (ordered.size() > 1) Collections.sort(ordered, SOURCE_ORDER);
         return ordered;
     }
 
