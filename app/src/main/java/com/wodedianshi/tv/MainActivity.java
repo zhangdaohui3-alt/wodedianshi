@@ -180,6 +180,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView fullscreenActionsButton;
   private TextView fullscreenBlockSourceButton;
   private DepartedLiveSource recentDepartedLiveSource;
+  // Accepted picture output belongs to this tune, not a decoder's teardown flags.
+  private String lastOutputMediaId="";
   private LinearLayout categoryMenuItems;
   private Button fullscreenAspectMenuItem;
   private final Runnable hideFullscreenControls=()->{if(!this.fullscreenControlGesture)hideFullscreenControlsNow();};
@@ -2178,6 +2180,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // callbacks must not recover the live edge, play(), or start another source.
     currentMediaId="";
     recentDepartedLiveSource=null;
+    lastOutputMediaId="";
     cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     clearPendingRemoteZap();
@@ -5750,6 +5753,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.removeCallbacks(hideChannelZapOverlay);
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
     recentDepartedLiveSource=null;
+    lastOutputMediaId="";
     if(fullscreenBlockSourceButton!=null)fullscreenBlockSourceButton.setOnClickListener(null);
     for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton,fullscreenBlockSourceButton}){
       if(control==null)continue;
@@ -5945,7 +5949,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Button quickBlock;
     if(!vodMode){
       quickBlock=new Button(this);quickBlock.setAllCaps(false);
-      quickBlock.setText("屏蔽广告源 · "+displayChannelName(menuChannel)+" · 第 "+(menuChannel.activeSource+1)+" 源");
+      quickBlock.setText("屏蔽当前广告源 · "+displayChannelName(menuChannel)+" · 第 "+(menuChannel.activeSource+1)+" 源");
       quickBlock.setSingleLine(true);quickBlock.setEllipsize(android.text.TextUtils.TruncateAt.END);
       styleTvButton(quickBlock,Color.rgb(35,55,78));
       quickBlock.setEnabled(!SourceSelectionPolicy.channelBlockKey(menuStation,menuUrl).isEmpty());
@@ -6389,7 +6393,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void rememberDepartedLiveSource(Channel c){
-    if(!sourceFirstFrameRecorded&&!libVlcVideoOutputReady)return;
+    if(currentMediaId.isEmpty()||!currentMediaId.equals(lastOutputMediaId))return;
     String url=currentSourceUrl(),station=identity(c);
     if(SourceSelectionPolicy.channelBlockKey(station,url).isEmpty())return;
     recentDepartedLiveSource=new DepartedLiveSource(station,url,
@@ -6578,7 +6582,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String displayedActiveUrl=currentSourceUrl();
     final String displayedStation=identity(c);
     ArrayList<String> labels=new ArrayList<>();
-    labels.add("屏蔽广告源 · 第 "+(c.activeSource+1)+" 源");
+    labels.add("屏蔽当前广告源 · 第 "+(c.activeSource+1)+" 源");
     final DepartedLiveSource departed=recentDepartedForBlock();
     if(departed!=null)labels.add("屏蔽刚跳过的源 · "+departed.label);
     final int sourceOffset=labels.size();
@@ -7159,6 +7163,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private boolean revealLivePicture(Object owner,String mediaId,long renderedAt){
     if(!livePictureGate.reveal(owner,mediaId,renderedAt))return false;
+    lastOutputMediaId=mediaId;
     if(livePictureCover!=null)livePictureCover.setVisibility(View.GONE);
     return true;
   }
@@ -7374,6 +7379,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(selected<0||selected>=channels.size())return;
     cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
+    lastOutputMediaId="";
     Channel requested=channels.get(selected);
     saveCriticalEngineStage("TUNE_REQUEST","channel="+requested.name+" index="+selected+" backups="+(requested.backups==null?0:requested.backups.size()));
     try{
@@ -8395,6 +8401,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ++liveTuneRequestSerial;
     ++playbackGeneration;
     currentMediaId="";
+    recentDepartedLiveSource=null;
+    lastOutputMediaId="";
     ++vodSessionGeneration;
     resumeLiveAfterVod=false;
     resumePlaybackOnStart=false;
