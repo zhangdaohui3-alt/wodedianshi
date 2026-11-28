@@ -83,7 +83,7 @@ public class SourceUpdateWorker extends Worker {
   private final java.util.concurrent.atomic.AtomicBoolean initialSliceExpired=new java.util.concurrent.atomic.AtomicBoolean();
   private int ownedSlices;
   private long ownedStartedAt;
-  // Set only when this initial idle slice admits a high-concurrency wave.
+  // Set at the first parallel wave of this slice (initial or manual).
   // Keep it until the slice exits so a late input cannot authorize a stale commit.
   private volatile long idleWavePressureGeneration=-1L;
   private java.util.function.BooleanSupplier pauseRequested = () -> false;
@@ -3569,9 +3569,9 @@ public class SourceUpdateWorker extends Worker {
         catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new SourceProbeTimePolicy.PublicationPausedException();}
       }
     }
-    // Owner-only: harvest already completed positive observations before
-    // cancelling unfinished work. No cursor, quality score or channel is
-    // committed here; the next owner must consume the exact candidate again.
+    // Owner-only: harvest completed positive observations, never cancelled
+    // futures. No cursor, quality score or channel is committed here; the
+    // next owner must consume the exact candidate again.
     private void retainCompletedSuccesses(){
       if(!retainWaveEvidence)return;
       for(Map.Entry<String,java.util.concurrent.Future<TimedProbe>> entry:pending.entrySet()){
@@ -3605,9 +3605,11 @@ public class SourceUpdateWorker extends Worker {
       if(pending.isEmpty())owned.shutdown();
       else{
         int outstanding=pending.size();
-        retainCompletedSuccesses();
+        // Signal unfinished network work first. Future.cancel cannot change
+        // an already completed result; harvest those results after signalling.
         for(java.util.concurrent.Future<TimedProbe> task:pending.values())task.cancel(true);
         owned.shutdownNow();
+        retainCompletedSuccesses();
         android.util.Log.i("MyTVSourceDiscovery","probe_cancel_signalled pending="+outstanding
             +" terminated="+owned.isTerminated());
       }
