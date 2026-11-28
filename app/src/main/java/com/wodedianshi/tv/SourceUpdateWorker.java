@@ -329,6 +329,21 @@ public class SourceUpdateWorker extends Worker {
     if(!manual&&!prefs.getBoolean("auto_source_update",true))return Result.success();
     // A retry after the final durable commit must terminate even during playback.
     if(manualRefresh&&manualId.equals(roomString("source_manual_completed_id","")))return Result.success();
+    final Map<String,String> initialState=initialDiscoveryChain
+        ?com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),
+            Arrays.asList("source_full_rebuild_active","source_full_rebuild_completed_at",
+                "source_full_rebuild_feed_fingerprint"))
+        :Collections.emptyMap();
+    if(initialDiscoveryChain){
+      long completedAt=0L;
+      try{completedAt=Long.parseLong(initialState.get("source_full_rebuild_completed_at"));}
+      catch(NumberFormatException invalid){}
+      // A committed build is finished even if WorkManager retries during playback.
+      // Do not enqueue another viewing continuation or rewrite completed status.
+      if(!"true".equals(initialState.get("source_full_rebuild_active"))&&completedAt>0L)
+        return com.wodedianshi.tv.db.RoomCatalogueReader.hasValidatedCatalogue(getApplicationContext())
+            ?Result.success():Result.retry();
+    }
     // No full catalogue yet: the one-time chain owns discovery; a periodic
     // worker must neither compete with it nor publish a partial replacement.
     boolean provisionalOnly=false;
@@ -471,22 +486,9 @@ public class SourceUpdateWorker extends Worker {
       }
       JSONArray saved;
       if(initialDiscoveryChain){
-        String buildActive=com.wodedianshi.tv.db.AppStateStore.get(
-            getApplicationContext(),"source_full_rebuild_active","false");
-        long completedRebuildAt=0L;
-        try{
-          completedRebuildAt=Long.parseLong(com.wodedianshi.tv.db.AppStateStore.get(
-              getApplicationContext(),"source_full_rebuild_completed_at","0"));
-        }catch(NumberFormatException ignored){}
-        // The Room publish transaction records completion and clears the active
-        // flag atomically. If the process died after commit but before WorkManager
-        // recorded success, its retry must not start a second full rebuild.
-        if(!"true".equals(buildActive)&&completedRebuildAt>0L){
-          saveStatus("全量频道目录已完成发布，无需重复重建");
-          return Result.success();
-        }
+        String buildActive=initialState.get("source_full_rebuild_active");
         String configuredFeedFingerprint=discoveryFeedsFingerprint(feeds);
-        String savedFeedFingerprint=roomString("source_full_rebuild_feed_fingerprint","");
+        String savedFeedFingerprint=initialState.getOrDefault("source_full_rebuild_feed_fingerprint","");
         boolean rebuildProgressMustReset=!"true".equals(buildActive)
             ||!configuredFeedFingerprint.equals(savedFeedFingerprint);
         if(rebuildProgressMustReset){
