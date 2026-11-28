@@ -178,11 +178,13 @@ public final class SourceSelectionPolicy {
      * generation. Resolve by exact URL, never reuse a stale list position. */
     static int resolveQueuedManualSelection(Object expectedChannel,Object currentChannel,
             long expectedSerial,long currentSerial,List<String> sources,
-            String expectedActive,String currentActive,String target,Set<String> blocked) {
+            String expectedActive,String currentActive,String target,
+            java.util.function.Predicate<String> isBlocked) {
         if(expectedSerial!=currentSerial||expectedActive==null
-                ||!expectedActive.equals(currentActive)||expectedActive.equals(target)
-                ||(blocked!=null&&blocked.contains(target)))return -1;
-        return resolveManualSelection(expectedChannel,currentChannel,sources,target);
+                ||!expectedActive.equals(currentActive)||expectedActive.equals(target))return -1;
+        int index=resolveManualSelection(expectedChannel,currentChannel,sources,target);
+        // Only a still-valid target needs a fresh user-block check.
+        return index<0||isBlocked.test(target)?-1:index;
     }
 
     /** Finds a remembered URL in the current list without rewriting its signed path/query. */
