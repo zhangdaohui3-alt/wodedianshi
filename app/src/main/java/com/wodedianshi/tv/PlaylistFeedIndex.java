@@ -197,7 +197,7 @@ public final class PlaylistFeedIndex {
                 // Prior record's verified end must be the current record's start.
                 if(recordFile.getFilePointer()!=recordOffset)
                     throw new CorruptIndexException("Playlist record start does not match indexed boundary");
-                PlaylistParser.ChannelSource source=readRecord(recordFile,magic,nextOffset);
+                PlaylistParser.ChannelSource source=readRecord(recordFile,magic,nextOffset,paused);
                 if(recordFile.getFilePointer()!=nextOffset)
                     throw new CorruptIndexException("Playlist record does not match indexed boundary");
                 page.add(source);
@@ -381,22 +381,38 @@ public final class PlaylistFeedIndex {
         return 4L+bytes.length;
     }
 
-    private static String readField(RandomAccessFile input,long boundary)throws IOException {
+    private static String readField(RandomAccessFile input,long boundary,
+            java.util.function.BooleanSupplier paused)throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
         if(boundary-input.getFilePointer()<4L)throw new CorruptIndexException("Missing playlist field length");
         int length=input.readInt();
         if(length<0||length>MAX_FIELD_BYTES||length>boundary-input.getFilePointer())
             throw new CorruptIndexException("Invalid playlist field length");
         byte[] bytes=new byte[length];
-        input.readFully(bytes);
+        // Keep ordinary small fields on a single read. Large fields yield
+        // between bounded reads rather than delaying pause until a whole row.
+        for(int pos=0;pos<length;){
+            int chunk=Math.min(32768,length-pos);
+            input.readFully(bytes,pos,chunk);
+            pos+=chunk;
+            if(pos<length)SourceProbeTimePolicy.checkPaused(paused);
+        }
+        SourceProbeTimePolicy.checkPaused(paused);
         return new String(bytes,StandardCharsets.UTF_8);
     }
 
-    private static PlaylistParser.ChannelSource readRecord(RandomAccessFile input,int magic,long boundary)
-            throws IOException {
+    private static String readLegacyField(RandomAccessFile input,
+            java.util.function.BooleanSupplier paused)throws IOException {
+        SourceProbeTimePolicy.checkPaused(paused);
+        return input.readUTF();
+    }
+
+    private static PlaylistParser.ChannelSource readRecord(RandomAccessFile input,int magic,long boundary,
+            java.util.function.BooleanSupplier paused)throws IOException {
         if(magic==LEGACY_OFFSET_INDEX_MAGIC)
-            return PlaylistParser.indexedSource(input.readUTF(), input.readUTF(),
-                    input.readUTF(), input.readUTF(), input.readUTF());
-        return PlaylistParser.indexedSource(readField(input,boundary),readField(input,boundary),
-                readField(input,boundary),readField(input,boundary),readField(input,boundary));
+            return PlaylistParser.indexedSource(readLegacyField(input,paused),readLegacyField(input,paused),
+                    readLegacyField(input,paused),readLegacyField(input,paused),readLegacyField(input,paused));
+        return PlaylistParser.indexedSource(readField(input,boundary,paused),readField(input,boundary,paused),
+                readField(input,boundary,paused),readField(input,boundary,paused),readField(input,boundary,paused));
     }
 }
