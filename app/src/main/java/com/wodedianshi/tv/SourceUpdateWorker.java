@@ -4201,7 +4201,9 @@ public class SourceUpdateWorker extends Worker {
     return Boolean.parseBoolean(value);
   }
   private void saveStatus(String result){
-    com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_time",now());
-    com.wodedianshi.tv.db.AppStateStore.put(getApplicationContext(),"source_update_result",result);
+    new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
+        .putString("source_update_time",now())
+        .putString("source_update_result",result)
+        .apply();
   }
 }
