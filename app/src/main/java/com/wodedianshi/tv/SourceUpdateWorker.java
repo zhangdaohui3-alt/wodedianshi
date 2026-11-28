@@ -566,15 +566,18 @@ public class SourceUpdateWorker extends Worker {
         // Acquisition phase: build disk indexes independently of media probes.
         // Keep the existing cache/index as the candidate store; Room records
         // only the acquisition cursor and counts, not duplicate unverified URLs.
-        int nextIndex=Math.max(0,roomInt("source_initial_index_attempted",0));
+        boolean bootstrapBypassed=roomBoolean("source_initial_index_bypassed",false);
+        Map<String,String> bootstrapState=bootstrapBypassed?Collections.emptyMap():
+            com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),Arrays.asList(
+                "source_initial_index_attempted","source_initial_index_entries",
+                "source_initial_index_ready","source_initial_progress_checked_urls"));
+        int nextIndex=Math.max(0,stateInt(bootstrapState,"source_initial_index_attempted",0));
         int mainlandCount=Math.min(feeds.length,SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
         int mainlandLimit=FullDiscoveryProgressPolicy.bootstrapIndexLimit(mainlandCount);
-        long indexedEntriesSoFar=0L;
-        try{indexedEntriesSoFar=Math.max(0L,Long.parseLong(roomString("source_initial_index_entries","0")));}
-        catch(NumberFormatException ignored){}
-        boolean bootstrapBypassed=roomBoolean("source_initial_index_bypassed",false);
+        long indexedEntriesSoFar=Math.max(0L,stateLong(bootstrapState,"source_initial_index_entries",0L));
+        int bootstrapChecked=stateInt(bootstrapState,"source_initial_progress_checked_urls",0);
         if(!bootstrapBypassed&&FullDiscoveryProgressPolicy.shouldRunIdleBootstrap(slowPlayback,nextIndex,mainlandCount,
-            roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
+            bootstrapChecked,indexedEntriesSoFar,false)){
           int count=-1;
           int bootstrapFeed=SourceDiscoveryPriorityPolicy.firstWatchBootstrapFeed(nextIndex);
           String preparedVersion="";
@@ -606,13 +609,12 @@ public class SourceUpdateWorker extends Worker {
             android.util.Log.w("MyTVSourceDiscovery","initial_index_deferred feed="+bootstrapFeed);
           }
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          int ready=Math.max(0,roomInt("source_initial_index_ready",0))+(count>=0?1:0);
-          long entries=indexedEntriesSoFar;
+          int ready=Math.max(0,stateInt(bootstrapState,"source_initial_index_ready",0))+(count>=0?1:0);
           com.wodedianshi.tv.db.AppStateEditor acquisition=
               new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
               .putInt("source_initial_index_attempted",nextIndex+1)
               .putInt("source_initial_index_ready",ready)
-              .putLong("source_initial_index_entries",Math.min(Long.MAX_VALUE-Math.max(0,count),entries)+Math.max(0,count))
+              .putLong("source_initial_index_entries",Math.min(Long.MAX_VALUE-Math.max(0,count),indexedEntriesSoFar)+Math.max(0,count))
               .putString("source_initial_progress_phase",count>0||nextIndex+1>=mainlandLimit
                   ?"首批目录准备已结束，开始线路初筛"
                   :"首批目录准备："+(nextIndex+1)+"/"+mainlandLimit);
@@ -631,7 +633,7 @@ public class SourceUpdateWorker extends Worker {
           }
         }
         if(slowPlayback&&!bootstrapBypassed&&FullDiscoveryProgressPolicy.isMainlandIndexPhase(nextIndex,mainlandCount,
-            roomInt("source_initial_progress_checked_urls",0),indexedEntriesSoFar,false)){
+            bootstrapChecked,indexedEntriesSoFar,false)){
           // Mark only the optional bootstrap as bypassed, not any feed done.
           // The regular bounded feed path still reads and checks every feed.
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
