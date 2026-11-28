@@ -3454,7 +3454,7 @@ public class SourceUpdateWorker extends Worker {
       }
       // Candidate preparation may consume the remaining time budget.
       now=android.os.SystemClock.elapsedRealtime();
-      if(wave.size()<2||!IdleProbeWavePolicy.canStart(initial,now,deadline,batchDeadline)
+      if(wave.size()<2||!IdleProbeWavePolicy.canStart(now,deadline,batchDeadline)
           ||wave.size()>SourceUpdateActivityPolicy.idleProbeConcurrency(android.os.SystemClock.elapsedRealtime(),initial))return false;
       // Manual refresh and first build share the same high-concurrency
       // input-pressure gate. A user request to refresh is not permission
@@ -3530,7 +3530,7 @@ public class SourceUpdateWorker extends Worker {
         if(INITIAL_ORIGINS.requiresSerialProbe(entry.origin(),now))return;
         if(reusableInitialProbe(endpoint,slowPlayback,now,false)!=null)return;
         long deadline=SourceProbeTimePolicy.initialAddressDeadline(waveBatchDeadline,now);
-        if(deadline==0L||!IdleProbeWavePolicy.canStart(true,now,deadline,waveBatchDeadline))return;
+        if(deadline==0L||!IdleProbeWavePolicy.canStart(now,deadline,waveBatchDeadline))return;
         int currentCeiling=INITIAL_NETWORK.limit(SourceUpdateActivityPolicy.idleProbeConcurrency(now,true),now);
         if(running>=currentCeiling||currentCeiling<2)return;
         if(running>=2&&idleWavePressureGeneration<0L)idleWavePressureGeneration=pressureAtAdmission;
