@@ -369,7 +369,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private int selected = -1;
   // Local parental controls: elapsed-time accounting is monotonic and only runs while the app is foregrounded.
   private long childLockLastElapsed=0L;
-  private long childLockLastWall=0L;
   private Runnable childLockTicker;
   private AlertDialog childLockDialog;
   private ParentRemoteLockManager remoteParentLockManager;
@@ -2921,7 +2920,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         &&currentVodResults==results&&request==vodRequestId
         &&grid.getAdapter()==adapter&&grid.isAttachedToWindow();
   }
-  private static final String VOD_FAVORITES_KEY="vod_favorites_v1";
   private ArrayList<VodItem> readVodFavorites(){
     ArrayList<VodItem> items=new ArrayList<>();
     try{
@@ -2960,7 +2958,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ArrayList<VodItem> items=readVodFavorites();renderVodItems("我的收藏",items,status,results,false);
     status.setText(items.isEmpty()?"还没有收藏影片。点播列表中长按影片即可收藏。":"我的收藏 · "+items.size()+" 部（长按可取消收藏）");
   }
-  private static final String VOD_HISTORY_KEY="vod_history_v1";
   private ArrayList<org.json.JSONObject> readVodHistory(){
     ArrayList<org.json.JSONObject> list=new ArrayList<>();
     try{org.json.JSONArray a=new org.json.JSONArray(roomVodHistoryJson);for(int i=0;i<a.length();i++){org.json.JSONObject o=a.optJSONObject(i);if(o!=null&&!o.optString("url","").isEmpty())list.add(o);}}catch(Exception ignored){}
@@ -8250,10 +8247,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void updateChildUsage(){
     long now=android.os.SystemClock.elapsedRealtime();
     long wall=System.currentTimeMillis();
-    if(childLockLastElapsed<=0L){childLockLastElapsed=now;childLockLastWall=wall;return;}
+    if(childLockLastElapsed<=0L){childLockLastElapsed=now;return;}
     long delta=Math.max(0L,Math.min(43200000L,now-childLockLastElapsed));
     childLockLastElapsed=now;
-    childLockLastWall=wall;
     if(delta==0L)return;
     android.content.SharedPreferences p=childPrefs();
     String day=childTodayKey();
@@ -8604,7 +8600,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     remoteLockUiActive=true;
     if(remoteParentLockManager!=null){remoteParentLockManager.start();if(remoteParentLockManager.isLocked())enforceRemoteParentLock(remoteParentLockManager.getLockReason());}
     childLockLastElapsed=android.os.SystemClock.elapsedRealtime();
-    childLockLastWall=System.currentTimeMillis();
     if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);
     childLockTicker=()->{if(isFinishing())return;updateChildUsage();refreshChildLockState();uiHandler.postDelayed(childLockTicker,30000L);};
     uiHandler.postDelayed(childLockTicker,30000L);
@@ -9079,6 +9074,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     SourceUpdateActivityPolicy.notePressure(android.os.SystemClock.elapsedRealtime());
     SourceUpdateActivityPolicy.setPlaybackActive(active||!sourceUpdatePlaybackMayClear());
   }
-  protected void onStop(){cancelSingleChannelRefresh();revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;childLockLastWall=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=FullDiscoveryProgressPolicy.shouldResumeAfterBackground(roomFullRebuildCompletedAt,currentVodPanel==null&&selected>=0&&selected<channels.size(),!decoderReleaseUnconfirmed&&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null));++liveTuneRequestSerial;revokePendingLiveTune();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
+  protected void onStop(){cancelSingleChannelRefresh();revokePendingVodStart();clearPendingRemoteZap();stopInitialDiscoveryProgressTicker();stopLiveUiStallProbe();backgroundCatalogueReloadGeneration++;activityStarted=false;closeFullscreenChannelMenu();clearLiveOverlayCallbacks();if(startupAutoResumeTask!=null){uiHandler.removeCallbacks(startupAutoResumeTask);startupAutoResumeTask=null;}remoteLockUiActive=false;if(remoteParentLockManager!=null)remoteParentLockManager.stop();updateChildUsage();childLockLastElapsed=0L;if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(video!=null)video.setKeepScreenOn(false);cancelActiveVodCatalogue();if(networkSpeedUpdater!=null){uiHandler.removeCallbacks(networkSpeedUpdater);networkSpeedUpdater=null;}if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing()){checkpointVodHistory();vodPlayerDialog.dismiss();}super.onStop();saveLastChannel();resumePlaybackOnStart=FullDiscoveryProgressPolicy.shouldResumeAfterBackground(roomFullRebuildCompletedAt,currentVodPanel==null&&selected>=0&&selected<channels.size(),!decoderReleaseUnconfirmed&&(player!=null||libVlcEngine!=null||liveVlcReleaseContinuation!=null));++liveTuneRequestSerial;revokePendingLiveTune();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();releaseVodPlayerSafely(null);setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
   protected void onDestroy(){cancelSingleChannelRefresh();activityStarted=false;++liveTuneRequestSerial;revokePendingLiveTune();clearPendingRemoteZap();closeFullscreenChannelMenu();clearLiveOverlayCallbacks();invalidateVodPosterSession();vodPosterCache.evictAll();revokePendingVodStart();stopLiveUiStallProbe();cancelActiveVodCatalogue();cataloguePersistWorker.shutdown();cancelBufferingFallback();cancelPlaybackWatchdog();cancelAudioTrackCheck();if(remoteLockTaskActive){try{stopLockTask();}catch(Exception ignored){}remoteLockTaskActive=false;}if(remoteParentLockManager!=null)remoteParentLockManager.shutdown();if(remoteParentLockDialog!=null&&remoteParentLockDialog.isShowing())remoteParentLockDialog.dismiss();if(childLockTicker!=null)uiHandler.removeCallbacks(childLockTicker);if(childLockDialog!=null&&childLockDialog.isShowing())childLockDialog.dismiss();if(video!=null)video.setKeepScreenOn(false);if(vodPlayerDialog!=null&&vodPlayerDialog.isShowing())vodPlayerDialog.dismiss();releaseVodPlayerSafely(null);releaseLivePlayerSafely();releaseLibVlcEngine();releaseVodFallback();if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);super.onDestroy();catalogueFilterGeneration++;catalogueFilterWorker.shutdownNow();worker.shutdownNow();posterWorker.shutdownNow();vodWorker.shutdownNow();vodMetadataWorker.shutdownNow();vodSourceWorker.shutdownNow();setSourceUpdatePlaybackActive(false);setSourceUpdateActivityActive(false);stopMainThreadAnrSampler();}
 }
