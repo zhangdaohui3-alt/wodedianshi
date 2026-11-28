@@ -756,4 +756,36 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void committedInitialWorkerFinishesDuringPlaybackWithoutRescheduling()throws Exception {
+        isolated(context->{
+            RoomCatalogueWriter.initializeEmptyCatalogue(context);
+            long base=RoomCatalogueReader.read(context).catalogueVersion;
+            String url="https://example.invalid/confirmed-initial";
+            RoomCatalogueWriter.writeSnapshotWithProgress(context,
+                new JSONArray().put(channel("CCTV-1",url)),base,false,()->false,
+                new AppStateEditor(context).putInt(PERCENT,100)
+                    .putLong("source_full_rebuild_completed_at",System.currentTimeMillis())
+                    .remove("source_full_rebuild_active")
+                    .putString("source_update_result","complete"));
+            long version=RoomCatalogueReader.read(context).catalogueVersion;
+            com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(true);
+            try {
+                com.wodedianshi.tv.SourceUpdateWorker worker=androidx.work.testing.TestWorkerBuilder.from(
+                    context,com.wodedianshi.tv.SourceUpdateWorker.class,Runnable::run)
+                    .setInputData(new androidx.work.Data.Builder().putBoolean("manual",true)
+                        .putBoolean("initial_discovery_chain",true).build()).build();
+                assertEquals(androidx.work.ListenableWorker.Result.success(),worker.doWork());
+            } finally {
+                com.wodedianshi.tv.SourceUpdateActivityPolicy.setPlaybackActive(false);
+            }
+            AppDatabase db=RoomDatabaseProvider.get(context);
+            assertEquals("100",db.appStateDao().getValue(PERCENT));
+            assertEquals("complete",db.appStateDao().getValue("source_update_result"));
+            RoomCatalogueReader.Snapshot snapshot=RoomCatalogueReader.read(context);
+            assertEquals(version,snapshot.catalogueVersion);
+            assertEquals(1,snapshot.channelCount);
+            assertEquals(url,snapshot.channels.get(0).url);
+        });
+    }
+
 }
