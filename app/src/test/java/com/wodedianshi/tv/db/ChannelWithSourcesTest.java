@@ -31,6 +31,34 @@ public class ChannelWithSourcesTest {
     }
 
     @Test
+    public void equalPriorityUsesUrlOrderWithoutMutatingRelationRows() {
+        ChannelWithSources item = new ChannelWithSources();
+        BackupSourceEntity last = new BackupSourceEntity("channel", "https://z.example/live", 1, "[]");
+        BackupSourceEntity first = new BackupSourceEntity("channel", "https://a.example/live", 1, "[]");
+        item.sources = Arrays.asList(last, first);
+        List<BackupSourceEntity> ordered = item.getSourcesInPriorityOrder();
+        assertEquals(Arrays.asList(first, last), ordered);
+        ordered.clear();
+        assertEquals(Arrays.asList(last, first), item.sources);
+    }
+
+    @Test
+    public void singleAndMissingRelationRowsStillReturnIndependentMutableLists() {
+        ChannelWithSources item = new ChannelWithSources();
+        BackupSourceEntity source = new BackupSourceEntity("channel", "https://a.example/live", 0, "[]");
+        item.sources = Collections.singletonList(source);
+        List<BackupSourceEntity> ordered = item.getSourcesInPriorityOrder();
+        assertEquals(item.sources, ordered);
+        ordered.clear();
+        assertEquals(1, item.sources.size());
+        item.sources = null;
+        ordered = item.getSourcesInPriorityOrder();
+        assertEquals(0, ordered.size());
+        ordered.add(source);
+        assertEquals(0, item.getSourcesInPriorityOrder().size());
+    }
+
+    @Test
     public void primaryUrlIsFallbackWhenNoRelationRowsExist() {
         ChannelWithSources item = new ChannelWithSources();
         item.channel = new ChannelEntity(
