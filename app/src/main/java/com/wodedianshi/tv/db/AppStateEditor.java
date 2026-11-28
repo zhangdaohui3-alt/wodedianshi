@@ -83,6 +83,10 @@ public final class AppStateEditor {
         });
     }
 
+    boolean finishesRoutineMaintenance(){
+        return updates.containsKey("source_last_routine_maintenance_at");
+    }
+
     /** The catalogue writer owns the outer transaction and its rollback. */
     void applyInTransaction(AppDatabase db) {
         if (!db.inTransaction()) throw new IllegalStateException("App state requires Room transaction");
