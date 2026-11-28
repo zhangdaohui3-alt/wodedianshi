@@ -1076,16 +1076,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     return group.isEmpty()?"":" · "+group;
   }
+  private static final java.util.regex.Pattern CANONICAL_CHANNEL_SEPARATORS=java.util.regex.Pattern.compile("[\\s_—–·•]");
+  private static final java.util.regex.Pattern CANONICAL_CCTV_NUMBER=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)");
+  private static final java.util.regex.Pattern RESUME_METADATA_WHITESPACE=java.util.regex.Pattern.compile("\\s+");
+  private static final String[] CCTV_CHINESE_NUMBERS={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
+  private static final String[] MAINLAND_PROVINCES={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
   private String canonicalChannelName(String name){
     String satellite=ChannelNamePolicy.canonicalSatelliteName(name);
     if(!satellite.isEmpty())return satellite;
-    String value=name==null?"":name.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_—–·•]","");
-    java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?:CCTV|中央电视台|央视)[-]?(\\d{1,2}\\+?|NEWS|4K|8K)").matcher(value);
+    String value=name==null?"":CANONICAL_CHANNEL_SEPARATORS.matcher(name.trim().toUpperCase(Locale.ROOT)).replaceAll("");
+    java.util.regex.Matcher m=CANONICAL_CCTV_NUMBER.matcher(value);
     if(m.find())return "CCTV-"+m.group(1);
-    String[] chinese={"","一","二","三","四","五","六","七","八","九","十","十一","十二","十三","十四","十五","十六","十七"};
     // All these patterns require the literal 中央; avoid compiling seventeen
     // regexes for every unrelated local or international station.
-    if(value.contains("中央"))for(int i=1;i<chinese.length;i++)if(value.matches(".*中央(?:电视台)?"+chinese[i]+"套.*"))return "CCTV-"+i;
+    if(value.contains("中央"))for(int i=1;i<CCTV_CHINESE_NUMBERS.length;i++)if(value.matches(".*中央(?:电视台)?"+CCTV_CHINESE_NUMBERS[i]+"套.*"))return "CCTV-"+i;
     if(value.contains("中央电视台综合频道"))return "CCTV-1";
     if(value.contains("中央电视台财经频道"))return "CCTV-2";
     if(value.contains("中央电视台综艺频道"))return "CCTV-3";
@@ -1213,7 +1217,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         });
   }
   private String normalizeResumeMetadata(String value){
-    return value==null?"":value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+","");
+    return value==null?"":RESUME_METADATA_WHITESPACE.matcher(value.trim().toLowerCase(Locale.ROOT)).replaceAll("");
   }
   // Defensive guard for dynamically reparented video/player views. A ViewGroup
   // can only measure children with its own LayoutParams subtype; a stale
@@ -4546,8 +4550,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       cached=localRegionTokenIndex;
       if(cached==null){
         HashSet<String> tokens=new HashSet<>();
-        String[] provinces={"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"};
-        for(String province:provinces){
+        for(String province:MAINLAND_PROVINCES){
           tokens.add(province.toLowerCase(Locale.ROOT));
           for(String city:citiesForProvince(province)){
             if(city!=null&&!city.isEmpty())tokens.add(city.toLowerCase(Locale.ROOT));
@@ -4600,7 +4603,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(isSatelliteChannel(c))return false;
       String explicit=explicitProvinceIn(metadata);
       if(!explicit.isEmpty()){
-        for(String province:new String[]{"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"}){
+        for(String province:MAINLAND_PROVINCES){
           if(explicit.equals(province)&&!ChannelNamePolicy.isKnownLocality(province,city))return false;
         }
       }
@@ -4617,7 +4620,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(cat.equals("体育"))return g.contains("sports")||g.contains("体育");
     if(cat.equals("天气"))return g.contains("weather")||g.contains("天气")||x.contains("气象");
     if(cat.equals("教育"))return g.contains("education")||g.contains("教育");
-    for(String province:new String[]{"北京","天津","河北","山西","内蒙古","辽宁","吉林","黑龙江","上海","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","广西","海南","重庆","四川","贵州","云南","西藏","陕西","甘肃","青海","宁夏","新疆"})
+    for(String province:MAINLAND_PROVINCES)
       if(cat.equals(province))return matchesProvinceLocal(c,province);
     return false;
   }
