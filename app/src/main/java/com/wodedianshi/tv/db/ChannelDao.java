@@ -166,6 +166,14 @@ public interface ChannelDao {
         public List<String> urls;
     }
 
+    // Only retention needs an exhaustive scan; Cursor keeps projections
+    // windowed and avoids constructing a second set of channel relations.
+    @Query("SELECT name, legacyKey, primaryUrl FROM channels")
+    android.database.Cursor scanPrimaryRoutes();
+
+    @Query("SELECT url FROM backup_sources")
+    android.database.Cursor scanBackupRoutes();
+
     @Transaction
     @Query("SELECT id, name, legacyKey, primaryUrl FROM channels "
             + "ORDER BY sortOrder, name, id LIMIT :limit OFFSET :offset")
