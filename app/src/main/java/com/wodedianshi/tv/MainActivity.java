@@ -861,23 +861,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     throw new IllegalStateException("Room startup retry exhausted");
   }
 
+  /** Shared conversion for startup and background reload; retain independent source ownership. */
+  private static Channel channelFromRoomRecord(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row){
+    Channel channel=new Channel(row.name,row.url,row.group);
+    channel.tvgId=row.tvgId;
+    channel.tvgName=row.tvgName;
+    channel.backups.clear();
+    channel.backups.addAll(row.sources);
+    channel.sourceScopes.addAll(row.sourceScopes);
+    for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
+      channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
+    }
+    channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
+    return channel;
+  }
+
   /** Read all Room pages and publish them to the in-memory UI model only on success. */
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readRoomCatalogueIntoMemory(){
     final ArrayList<Channel> prepared=new ArrayList<>();
     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
         com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
       for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-        Channel channel=new Channel(row.name,row.url,row.group);
-        channel.tvgId=row.tvgId;
-        channel.tvgName=row.tvgName;
-        channel.backups.clear();
-        channel.backups.addAll(row.sources);
-        channel.sourceScopes.addAll(row.sourceScopes);
-        for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-          channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-        }
-        channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-        prepared.add(channel);
+        prepared.add(channelFromRoomRecord(row));
       }
     });
     // The consumer above is private staging. A failed or stale read discards
@@ -8856,17 +8861,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot roomSnapshot=
               com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
                 for(com.wodedianshi.tv.db.RoomCatalogueReader.ChannelRecord row:page){
-                  Channel channel=new Channel(row.name,row.url,row.group);
-                  channel.tvgId=row.tvgId;
-                  channel.tvgName=row.tvgName;
-                  channel.backups.clear();
-                  channel.backups.addAll(row.sources);
-                  channel.sourceScopes.addAll(row.sourceScopes);
-                  for(Map.Entry<String,HashSet<String>> entry:row.backupSourceScopes.entrySet()){
-                    channel.backupSourceScopes.put(entry.getKey(),new HashSet<>(entry.getValue()));
-                  }
-                  channel.activeSource=Math.max(0,Math.min(row.activeSource,channel.backups.size()-1));
-                  refreshed.add(channel);
+                  refreshed.add(channelFromRoomRecord(row));
                 }
               },cancelled);
           if(roomSnapshot==null){
