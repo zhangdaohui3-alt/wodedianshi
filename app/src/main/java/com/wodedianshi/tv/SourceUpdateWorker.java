@@ -2388,34 +2388,39 @@ public class SourceUpdateWorker extends Worker {
     }catch(Exception e){idleWave.close();saveStatus("更新异常："+e.getMessage()+"（原频道源保留）");return Result.retry();}
     finally{idleWave.close();}
   }
-  /** Reuse the existing daily worker/ownership gate, but never download feeds
-   * or rewrite the catalogue just to upgrade provisional quality evidence. */
-  private static void collectPendingRoute(Set<String> pending,Map<String,String> found,String url){
-    if(url==null||(!url.startsWith("http://")&&!url.startsWith("https://")))return;
+  private static String pendingRouteKey(Set<String> pending,String url){
+    if(url==null||(!url.startsWith("http://")&&!url.startsWith("https://")))return null;
     String key=StableKey.url(url);
-    if(pending.contains(key))found.putIfAbsent(key,url);
+    return pending.contains(key)?key:null;
   }
   static int prunePendingForCompletePublication(Set<String> pending,JSONArray rows,
       java.util.function.BooleanSupplier paused){
     if(pending.isEmpty())return 0;
-    HashMap<String,String> found=new HashMap<>();
+    // Publication pruning only needs membership, not the original URL values.
+    HashSet<String> found=new HashSet<>();
     for(int i=0;i<rows.length()&&found.size()<pending.size();i++){
       SourceProbeTimePolicy.checkPublicationPaused(paused);
       JSONObject row=rows.optJSONObject(i);
       if(row==null)continue;
       String primary=row.optString("url","");
-      collectPendingRoute(pending,found,primary);
+      String primaryKey=pendingRouteKey(pending,primary);
+      if(primaryKey!=null)found.add(primaryKey);
       JSONArray sources=row.optJSONArray("sources");
       if(sources!=null)for(int j=0;j<sources.length()&&found.size()<pending.size();j++){
         SourceProbeTimePolicy.checkPublicationPaused(paused);
         String url=sources.optString(j,"");
-        if(!url.equals(primary))collectPendingRoute(pending,found,url);
+        if(!url.equals(primary)){
+          String key=pendingRouteKey(pending,url);
+          if(key!=null)found.add(key);
+        }
       }
     }
     // A partial membership scan must never remove unvisited keys.
     SourceProbeTimePolicy.checkPublicationPaused(paused);
-    return SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,found.keySet(),true);
+    return SourceUpdateSchedulePolicy.pruneUnretainedProvisional(pending,found,true);
   }
+  /** Reuse the existing daily worker/ownership gate, but never download feeds
+   * or rewrite the catalogue just to upgrade provisional quality evidence. */
   private Result runProvisionalQualityRecheck()throws Exception{
     final Context context=getApplicationContext();
     LinkedHashSet<String> pending=new LinkedHashSet<>();
@@ -2426,7 +2431,8 @@ public class SourceUpdateWorker extends Worker {
     HashMap<String,String> current=new HashMap<>();
     long membershipStart=android.os.SystemClock.elapsedRealtime();
     Long catalogueVersion=com.wodedianshi.tv.db.RoomCatalogueReader.visitRouteUrls(context,url->{
-      collectPendingRoute(pending,current,url);
+      String key=pendingRouteKey(pending,url);
+      if(key!=null)current.putIfAbsent(key,url);
       return current.size()==pending.size();
     },pauseRequested);
     if(catalogueVersion==null)return Result.retry();
