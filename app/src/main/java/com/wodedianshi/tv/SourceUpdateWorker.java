@@ -2449,6 +2449,12 @@ public class SourceUpdateWorker extends Worker {
       if(defer)stableDeferred[0]++;
       return defer;
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
+    SourceUpdateSchedulePolicy.promotePlaybackRechecks(selected,url->{
+      SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+      JSONObject metric=observedPlayback.get(scoreKey(url));
+      return metric!=null&&SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck(
+          metric.optString("lastEvent",""),metric.optLong("updated",0L),evidenceNow);
+    });
     long stageDeadline=android.os.SystemClock.elapsedRealtime()+PROBE_STAGE_DEADLINE_MS;
     java.util.function.Consumer<Map<String,ProbeResult>> checkpoint=batch->{
       try{publishQualityRecheckCheckpoint(context,pending,batch,catalogueVersion,false);}
