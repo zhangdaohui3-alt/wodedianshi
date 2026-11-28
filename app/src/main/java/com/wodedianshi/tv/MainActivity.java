@@ -219,8 +219,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView info;
   private EditText search;
   private int livePageIndex=0;
-  // A deliberate page-button action must not be overridden by the selected channel's page.
-  private boolean preserveRequestedLivePageOnce=false;
   private Button livePreviousPageButton,liveNextPageButton;
   private Button livePageStatus;
   // Compact, nonblocking first-install progress. No network access from UI.
@@ -4768,10 +4766,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void refresh(){refresh(false);}
-  private void refreshPage(){refresh(false,true);}
-  private void refresh(boolean preserveQueuedZap){refresh(preserveQueuedZap,false);}
-  private void refresh(boolean preserveQueuedZap,boolean pageOnly){
+  private void refresh(boolean preserveQueuedZap){refresh(preserveQueuedZap,-1);}
+  private void refresh(boolean preserveQueuedZap,int explicitPage){
     if(list==null||search==null||isFinishing()||isDestroyed())return;
+    final boolean pageOnly=explicitPage>=0;
     // Only explicit paging can reuse the already published filtered order.
     // Favorite membership can change independently; keep its full filter path.
     final RemoteChannelOrder pageOrder=pageOnly&&!favoriteMode&&directoryFilterInFlightKey==null
@@ -4806,7 +4804,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String orderKey=remoteChannelOrderKey(categorySnapshot,query,favoriteOnly,
         generation,mutation,expectedCount,favoriteHash);
     directoryFilterInFlightKey=orderKey;
-    final int requestedPage=livePageIndex;
+    final int requestedPage=pageOnly?explicitPage:livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
     final boolean customCategory="自建频道".equals(categorySnapshot);
@@ -4954,7 +4952,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String currentSelectedKey=null;
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
           renderFilteredChannels(ready.visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
-              preserveRequestedLivePageOnce,pageOnly,ready.sourceIndexByKey);
+              pageOnly,ready.sourceIndexByKey);
           if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+ready.visible.size()+" 个频道"+(ready.visible.isEmpty()?"；可手动更新或导入":""));
           if(menuSelectedFocusGeneration==generation){
             menuSelectedFocusGeneration=-1L;
@@ -4986,7 +4984,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     });
   }
   private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
-      boolean customCategory,int requestedPage,boolean preserveRequestedPage,
+      boolean customCategory,int requestedPage,
       boolean pageOnly,HashMap<String,Integer> sourceIndexByKey){
     // Capture the actual channel focus immediately before replacing the rows,
     // not before the asynchronous filter. Paging/category controls are outside list.
@@ -5018,8 +5016,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(position!=null)selectedPosition=position;
     }
     livePageIndex=LivePagePolicy.choosePage(
-        requestedPage,selectedPosition,maxRows,preserveRequestedPage);
-    if(preserveRequestedPage)preserveRequestedLivePageOnce=false;
+        requestedPage,selectedPosition,maxRows,pageOnly);
     int pageCount=LivePagePolicy.pageCount(visible.size(),maxRows);
     if(livePageIndex>=pageCount)livePageIndex=pageCount-1;
     int pageStart=livePageIndex*maxRows;
@@ -5070,7 +5067,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     lastFilteredMatchCount=visible.size();
     updateLivePaging(visible.size());
-    if(preserveRequestedPage&&channelScroll!=null)channelScroll.scrollTo(0,0);
+    if(pageOnly&&channelScroll!=null)channelScroll.scrollTo(0,0);
     // Newly constructed rows already have their title, favorite/playing marker,
     // accessibility text and initial style. Avoid immediately processing all 48 again.
     // Replace the dialog's transient "正在显示/正在筛选" text only after the
@@ -5113,9 +5110,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(!LivePagePolicy.canRequestPage(target,livePageIndex,getCurrentLiveMatchCount(),
         LIVE_PAGE_SIZE,directoryFilterInFlightKey!=null))return;
     if(control!=null)control.requestFocus();
-    livePageIndex=target;
-    preserveRequestedLivePageOnce=true;
-    refreshPage();
+    refresh(false,target);
   }
 
   private void showLivePagePicker(){
@@ -5533,7 +5528,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // page before focusing using the existing filter worker.
     RemoteChannelOrder order=currentRemoteChannelOrder();
     if(findChannelRow(selected)==null&&order!=null&&order.positions.containsKey(selected)){
-      preserveRequestedLivePageOnce=false;
       refresh(true);
       menuSelectedFocusGeneration=catalogueFilterGeneration;
     }else focusSelectedChannelInMenu();
