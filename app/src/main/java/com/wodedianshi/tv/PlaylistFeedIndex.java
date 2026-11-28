@@ -86,10 +86,8 @@ public final class PlaylistFeedIndex {
         if(playlist==null)return false;
         File records=new File(playlist.getAbsolutePath()+".index-data");
         File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
-        if(!isUsableIndex(records,offsets))return false;
-        try(RandomAccessFile input=new RandomAccessFile(offsets,"r")){
-            return input.readInt()==COVERAGE_INDEX_MAGIC;
-        }catch(IOException invalid){return false;}
+        IndexHeader header=inspectHeader(records,offsets);
+        return header!=null&&header.magic==COVERAGE_INDEX_MAGIC;
     }
 
     private static int readPage(File playlist,int startEntry,int maxEntries,
@@ -102,12 +100,14 @@ public final class PlaylistFeedIndex {
         }
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
-        boolean usable = isUsableIndex(records, offsets);
-        if (!usable || (coverage && !hasCoverageOrder(playlist))) {
+        IndexHeader header=inspectHeader(records,offsets);
+        boolean usable=header!=null;
+        boolean repairCoverage=coverage||(usable&&header.magic==COVERAGE_INDEX_MAGIC);
+        if (!usable || (coverage && header.magic!=COVERAGE_INDEX_MAGIC)) {
             // Keep a usable raw index until the coverage replacement is fully
             // written. Playback may pause the two-pass build at any point.
             if (!usable) deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets, paused, coverage);
+            buildIndex(playlist, records, offsets, paused, repairCoverage);
         }
 
         // Decode the whole page before invoking the consumer. If a sidecar is
@@ -119,7 +119,7 @@ public final class PlaylistFeedIndex {
             throw pausedRead; // Cancellation is not corruption; retain the valid sidecars.
         } catch (IOException corruptIndex) {
             deleteIndex(records, offsets);
-            buildIndex(playlist, records, offsets, paused,coverage);
+            buildIndex(playlist, records, offsets, paused,repairCoverage);
             // A second failure is a real I/O/source-data problem; preserve the cursor.
             page = readIndexedPage(records, offsets, startEntry, maxEntries, paused);
         }
@@ -134,7 +134,6 @@ public final class PlaylistFeedIndex {
         SourceProbeTimePolicy.checkPaused(paused);
         File records=new File(playlist.getAbsolutePath()+".index-data");
         File offsets=new File(playlist.getAbsolutePath()+".index-offsets");
-        if(!isUsableIndex(records,offsets))throw new IOException("Cached index unavailable");
         List<PlaylistParser.ChannelSource> page=readIndexedPage(records,offsets,startEntry,maxEntries,paused);
         for(PlaylistParser.ChannelSource source:page){
             SourceProbeTimePolicy.checkPaused(paused);
@@ -151,14 +150,8 @@ public final class PlaylistFeedIndex {
         if (playlist == null) return -1;
         File records = new File(playlist.getAbsolutePath() + ".index-data");
         File offsets = new File(playlist.getAbsolutePath() + ".index-offsets");
-        if (!isUsableIndex(records, offsets)) return -1;
-        try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
-            if (!supportedMagic(input.readInt())) return -1;
-            long count = input.readLong();
-            return count >= 0L && count <= Integer.MAX_VALUE ? (int)count : -1;
-        } catch (IOException ignored) {
-            return -1;
-        }
+        IndexHeader header=inspectHeader(records,offsets);
+        return header==null?-1:header.count;
     }
 
     private static List<PlaylistParser.ChannelSource> readIndexedPage(
@@ -167,18 +160,12 @@ public final class PlaylistFeedIndex {
         List<PlaylistParser.ChannelSource> page = new ArrayList<>();
         try (RandomAccessFile offsetFile = new RandomAccessFile(offsets, "r");
              RandomAccessFile recordFile = new RandomAccessFile(records, "r")) {
-            int magic = offsetFile.readInt();
-            if (!supportedMagic(magic)) {
-                throw new IOException("Playlist index header is invalid");
-            }
-            long count = offsetFile.readLong();
-            if (count < 0L || count > Integer.MAX_VALUE
-                    || offsetFile.length() != OFFSET_HEADER_BYTES + count * 8L) {
-                throw new IOException("Playlist index count does not match offset table");
-            }
+            long recordsLength=recordFile.length();
+            IndexHeader header=readCheckedHeader(offsetFile,recordsLength);
+            int magic=header.magic;
+            long count=header.count;
             if (startEntry >= count) return page;
             int emitted = (int) Math.min((long) maxEntries, count - startEntry);
-            long recordsLength = recordFile.length();
             long previousOffset = -1L;
             if(startEntry>0){
                 offsetFile.seek(OFFSET_HEADER_BYTES+((long)startEntry-1L)*8L);
@@ -214,21 +201,27 @@ public final class PlaylistFeedIndex {
         return page;
     }
 
-    private static boolean isUsableIndex(File records, File offsets) {
-        if (!records.isFile() || !offsets.isFile()
-                || offsets.length() < OFFSET_HEADER_BYTES
-                || (offsets.length() - OFFSET_HEADER_BYTES) % 8L != 0L) {
-            return false;
-        }
-        try (RandomAccessFile input = new RandomAccessFile(offsets, "r")) {
-            if (!supportedMagic(input.readInt())) return false;
-            long count = input.readLong();
-            return count >= 0L && count <= Integer.MAX_VALUE
-                    && offsets.length() == OFFSET_HEADER_BYTES + count * 8L
-                    && (count==0L?records.length()==0L:records.length()>0L);
-        } catch (IOException ignored) {
-            return false;
-        }
+    private static final class IndexHeader {
+        final int magic,count;
+        IndexHeader(int magic,int count){this.magic=magic;this.count=count;}
+    }
+
+    /** One validated header supplies both record count and ordering. */
+    private static IndexHeader readCheckedHeader(RandomAccessFile input,long recordsLength)throws IOException{
+        int magic=input.readInt();
+        long count=input.readLong();
+        if(!supportedMagic(magic)||count<0L||count>Integer.MAX_VALUE
+                ||input.length()!=OFFSET_HEADER_BYTES+count*8L
+                ||(count==0L?recordsLength!=0L:recordsLength<=0L))
+            throw new IOException("Playlist index header/count mismatch");
+        return new IndexHeader(magic,(int)count);
+    }
+
+    private static IndexHeader inspectHeader(File records,File offsets){
+        if(!records.isFile()||!offsets.isFile())return null;
+        try(RandomAccessFile input=new RandomAccessFile(offsets,"r")){
+            return readCheckedHeader(input,records.length());
+        }catch(IOException invalid){return null;}
     }
 
     private static void deleteIndex(File records, File offsets) throws IOException {
