@@ -2684,13 +2684,13 @@ public class SourceUpdateWorker extends Worker {
         getApplicationContext(),manualId,needed,pauseRequested);
     rankCatalogueRows(rows,allRowIndices(rows),finalScores,SourceMemoryStore.playbackSnapshot(getApplicationContext()));
     String reconciledStructure=null;
-    long reconciledVersion=-1L;
+    long publicationVersion;
     if(!com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStructureStillCurrent(getApplicationContext(),manualId)){
       reconciledStructure=com.wodedianshi.tv.db.RoomCatalogueBuildStore.currentStructureVersion(getApplicationContext());
       JSONArray live=new JSONArray();
       com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot liveSnapshot=readPublishedRows(live);
       if(liveSnapshot==null)throw new IllegalStateException("Live directory unavailable for rebase");
-      reconciledVersion=liveSnapshot.catalogueVersion;
+      publicationVersion=liveSnapshot.catalogueVersion;
       try{
         int baseCount=roomInt(com.wodedianshi.tv.db.RoomCatalogueBuildStore.MANUAL_BASE_COUNT_KEY,-1);
         List<JSONObject> merged=ManualSnapshotRebase.merge(manualRebaseRows(rows,true),manualRebaseRows(live,false),baseCount,pauseRequested);
@@ -2698,11 +2698,14 @@ public class SourceUpdateWorker extends Worker {
         if(publication.length()==0)throw new IllegalArgumentException("Empty reconciled directory");
         rows=publication;
       }catch(IllegalArgumentException ambiguous){return abortManualStructuralConflict(manualId);}
+    }else{
+      // Reconciled rows already carry their exact validated live version.
+      com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=com.wodedianshi.tv.db.RoomDatabaseProvider
+          .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
+              com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
+      if(checkpoint==null)throw new IllegalStateException("Live catalogue checkpoint unavailable");
+      publicationVersion=checkpoint.completedAt;
     }
-    com.wodedianshi.tv.db.CatalogueMigrationEntity checkpoint=com.wodedianshi.tv.db.RoomDatabaseProvider
-        .get(getApplicationContext()).channelDao().getValidatedCheckpoint(
-            com.wodedianshi.tv.db.MasterCatalogueRepository.MIGRATION_KEY);
-    if(checkpoint==null)throw new IllegalStateException("Live catalogue checkpoint unavailable");
     // Publish the sparse private quality overlay in the snapshot transaction.
     // No legacy quality mirror is generated.
     com.wodedianshi.tv.db.AppStateEditor finish=new com.wodedianshi.tv.db.AppStateEditor(getApplicationContext())
@@ -2713,9 +2716,9 @@ public class SourceUpdateWorker extends Worker {
         .putString("source_update_result",roomString("source_update_result","")+" 已原子发布完整手动目录。");
     for(String key:ManualSavedCoverage.keys())finish.remove(key);
     int written=reconciledStructure==null?com.wodedianshi.tv.db.RoomCatalogueWriter.publishManualSnapshot(
-        getApplicationContext(),rows,checkpoint.completedAt,manualId,pauseRequested,finish):
+        getApplicationContext(),rows,publicationVersion,manualId,pauseRequested,finish):
         com.wodedianshi.tv.db.RoomCatalogueWriter.publishReconciledManualSnapshot(
-            getApplicationContext(),rows,reconciledVersion,manualId,reconciledStructure,pauseRequested,finish);
+            getApplicationContext(),rows,publicationVersion,manualId,reconciledStructure,pauseRequested,finish);
     if(written!=rows.length())throw new IllegalStateException("Manual publication count mismatch");
     clearRecentProbeCache();
     return Result.success();
