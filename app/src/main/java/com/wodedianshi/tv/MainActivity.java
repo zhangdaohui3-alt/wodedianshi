@@ -178,6 +178,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView fullscreenSourceButton;
   private TextView fullscreenFavoriteButton;
   private TextView fullscreenActionsButton;
+  private TextView fullscreenBlockSourceButton;
   private LinearLayout categoryMenuItems;
   private Button fullscreenAspectMenuItem;
   private final Runnable hideFullscreenControls=()->{if(!this.fullscreenControlGesture)hideFullscreenControlsNow();};
@@ -1515,7 +1516,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           fullscreenControlGesture=false;
           boolean hitsButton=fullscreenControlsVisible&&(hitsControl(fullscreenMenuButton,event)
               ||hitsControl(fullscreenSourceButton,event)||hitsControl(fullscreenFavoriteButton,event)
-              ||hitsControl(fullscreenActionsButton,event));
+              ||hitsControl(fullscreenActionsButton,event)||hitsControl(fullscreenBlockSourceButton,event));
           if(fullScreenPlayback&&activityStarted&&currentVodPanel==null
               &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
               &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())&&hitsButton){
@@ -1578,6 +1579,17 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     FrameLayout.LayoutParams actionsParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.LEFT);
     actionsParams.leftMargin=dp(8);actionsParams.bottomMargin=dp(8);
     liveStage.addView(fullscreenActionsButton,actionsParams);fullscreenActionsButton.setVisibility(View.GONE);
+    fullscreenBlockSourceButton=new TextView(this);
+    fullscreenBlockSourceButton.setTextColor(Color.WHITE);fullscreenBlockSourceButton.setTextSize(13);
+    fullscreenBlockSourceButton.setGravity(Gravity.CENTER);fullscreenBlockSourceButton.setPadding(dp(8),0,dp(8),0);
+    fullscreenBlockSourceButton.setMaxLines(2);fullscreenBlockSourceButton.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    fullscreenBlockSourceButton.setMaxWidth(dp(148));fullscreenBlockSourceButton.setMinWidth(dp(112));
+    fullscreenBlockSourceButton.setBackground(makeButtonBg(Color.rgb(35,55,78),false));
+    fullscreenBlockSourceButton.setElevation(dp(12));fullscreenBlockSourceButton.setFocusable(false);
+    fullscreenBlockSourceButton.setClickable(true);
+    FrameLayout.LayoutParams blockParams=new FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+    blockParams.bottomMargin=dp(8);
+    liveStage.addView(fullscreenBlockSourceButton,blockParams);fullscreenBlockSourceButton.setVisibility(View.GONE);
     networkSpeedOverlay=new TextView(this);networkSpeedOverlay.setElevation(dp(2));networkSpeedOverlay.setTextColor(Color.WHITE);networkSpeedOverlay.setTextSize(13);networkSpeedOverlay.setTypeface(null,android.graphics.Typeface.BOLD);networkSpeedOverlay.setPadding(dp(10),dp(6),dp(10),dp(6));GradientDrawable speedBg=new GradientDrawable();speedBg.setColor(0x99000000);speedBg.setCornerRadius(dp(7));networkSpeedOverlay.setBackground(speedBg);networkSpeedOverlay.setText("接收 0 KB/s");networkSpeedOverlay.setVisibility(getSharedPreferences("mytv",0).getBoolean("show_network_speed",false)?View.VISIBLE:View.GONE);FrameLayout.LayoutParams speedParams=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT);speedParams.rightMargin=dp(12);speedParams.bottomMargin=dp(12);liveStage.addView(networkSpeedOverlay,speedParams);main.addView(liveStage,new LinearLayout.LayoutParams(-1,0,1));
     root.addView(cats,new LinearLayout.LayoutParams(dp(88),-1));root.addView(channelPane,new LinearLayout.LayoutParams(dp(220),-1));root.addView(main,new LinearLayout.LayoutParams(0,-1,1));setContentView(root);normalizeFrameLayoutChildren(root);
     search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int after){}public void onTextChanged(CharSequence s,int st,int before,int count){clearPendingRemoteZap();livePageIndex=0;if(pendingSearchRefresh!=null)uiHandler.removeCallbacks(pendingSearchRefresh);pendingSearchRefresh=()->refresh();uiHandler.postDelayed(pendingSearchRefresh,220);}public void afterTextChanged(android.text.Editable e){}});
@@ -5680,6 +5692,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     fullscreenFavoriteButton.setText(isCurrentLiveFavorite()?"★ 已收藏":"☆ 收藏");
     fullscreenFavoriteButton.setVisibility(View.GONE);
     fullscreenActionsButton.setVisibility(View.GONE);
+    fullscreenBlockSourceButton.setVisibility(View.GONE);
     fullscreenControlsVisible=false;
     updateLiveChannelPresentation();
     prewarmRemoteChannelOrder();
@@ -5734,7 +5747,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.removeCallbacks(hideFullscreenControls);
     uiHandler.removeCallbacks(hideChannelZapOverlay);
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
-    for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton}){
+    if(fullscreenBlockSourceButton!=null)fullscreenBlockSourceButton.setOnClickListener(null);
+    for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton,fullscreenBlockSourceButton}){
       if(control==null)continue;
       control.animate().cancel();control.setAlpha(1f);control.setVisibility(View.GONE);
     }
@@ -5742,8 +5756,22 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void showFullscreenControls(){
     if(!activityStarted||isFinishing()||isDestroyed()||!fullScreenPlayback)return;
+    if(!fullscreenControlsVisible){
+      final Channel shown=selected>=0&&selected<channels.size()?channels.get(selected):null;
+      final String station=shown==null?"":identity(shown);
+      final String route=shown==null?"":currentSourceUrl();
+      fullscreenBlockSourceButton.setEnabled(!SourceSelectionPolicy.channelBlockKey(station,route).isEmpty());
+      fullscreenBlockSourceButton.setText(shown==null?"屏蔽广告源":
+          "屏蔽广告源\n"+displayChannelName(shown)+" · 第 "+(shown.activeSource+1)+" 源");
+      fullscreenBlockSourceButton.setOnClickListener(v->{
+        if(!fullscreenControlsVisible||!fullScreenPlayback||fullscreenRemoteDialogOpen
+            ||(fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()))return;
+        hideFullscreenControlsNow();
+        blockCapturedLiveSource(station,route);
+      });
+    }
     fullscreenControlsVisible=true;
-    TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton};
+    TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton,fullscreenBlockSourceButton};
     // Make visible controls hit-testable immediately rather than losing a fast
     // second tap during the fade-in. Keep a complete button gesture together.
     for(TextView control:controls){control.animate().cancel();control.setVisibility(View.VISIBLE);control.setAlpha(1f);}
@@ -5757,7 +5785,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private void hideFullscreenControlsNow(){
     if(!fullScreenPlayback)return;
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
-    TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton};
+    TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton,fullscreenBlockSourceButton};
     for(TextView control:controls){control.animate().cancel();control.animate().alpha(0f).setDuration(220).withEndAction(()->{if(!fullscreenControlsVisible&&fullScreenPlayback)control.setVisibility(View.GONE);}).start();}
     uiHandler.removeCallbacks(hideFullscreenControls);
   }
