@@ -610,7 +610,25 @@ public class RoomPublicationIntegrationTest {
             assertEquals(version,complete.catalogueVersion);
             assertEquals(401,complete.channelCount);
             assertEquals(401,replacement.size());
-            assertEquals(401,RoomCatalogueReader.read(context).channelCount);
+            assertTrue(complete.channels.isEmpty());
+            RoomCatalogueReader.Snapshot full=RoomCatalogueReader.read(context);
+            assertEquals(401,full.channelCount);
+            assertEquals(401,full.channels.size());
+            assertEquals(complete.catalogueVersion,full.catalogueVersion);
+            assertEquals(complete.favorites,full.favorites);
+            for(int i=0;i<replacement.size();i++){
+                RoomCatalogueReader.ChannelRecord streamed=replacement.get(i);
+                RoomCatalogueReader.ChannelRecord direct=full.channels.get(i);
+                assertEquals(streamed.name,direct.name);
+                assertEquals(streamed.url,direct.url);
+                assertEquals(streamed.group,direct.group);
+                assertEquals(streamed.tvgId,direct.tvgId);
+                assertEquals(streamed.tvgName,direct.tvgName);
+                assertEquals(streamed.sources,direct.sources);
+                assertEquals(streamed.sourceScopes,direct.sourceScopes);
+                assertEquals(streamed.backupSourceScopes,direct.backupSourceScopes);
+                assertEquals(streamed.activeSource,direct.activeSource);
+            }
         });
     }
 
