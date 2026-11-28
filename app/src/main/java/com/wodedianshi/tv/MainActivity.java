@@ -1752,7 +1752,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               "china_total_feeds","china_validated_urls","staged_channels","checked_urls",
               "validated_urls","timeout_urls","unavailable_feeds","feed_index","feed_cursor","feed_entries",
               "percent","basis_points","phase"})keys.add(prefix+suffix);
-          final Map<String,String> snapshot=readRoomStateValues(context,keys);
+          final Map<String,String> snapshot=com.wodedianshi.tv.db.AppStateStore.getValues(context,keys);
           final long completed=readStateLong(snapshot,"source_full_rebuild_completed_at",0L);
           final boolean buildActive="true".equals(snapshot.get("source_full_rebuild_active"));
           final com.wodedianshi.tv.db.CatalogueMigrationEntity finalCheckpoint=completed>0L
@@ -1937,13 +1937,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }catch(RuntimeException ignored){initialDiscoveryProgressReadPending.set(false);}
   }
 
-  private static Map<String,String> readRoomStateValues(Context context,List<String> keys){
-    Map<String,String> values=new HashMap<>();
-    for(com.wodedianshi.tv.db.AppStateEntity row:
-        com.wodedianshi.tv.db.RoomDatabaseProvider.get(context).appStateDao().getValues(keys))
-      values.put(row.key,row.stateValue);
-    return values;
-  }
   private static long readStateLong(Map<String,String> state,String key,long fallback){
     try{return Long.parseLong(state.getOrDefault(key,Long.toString(fallback)));}
     catch(NumberFormatException invalid){return fallback;}
@@ -2053,7 +2046,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           keys.add("source_initial_feed_failure_reason_"+i);
           keys.add("source_initial_feed_failure_count_"+i);
         }
-        Map<String,String> snapshot=readRoomStateValues(getApplicationContext(),keys);
+        Map<String,String> snapshot=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),keys);
         String time=snapshot.getOrDefault("source_update_time","尚未更新");
         String result=snapshot.getOrDefault("source_update_result","尚无更新记录");
         int unavailable=(int)readStateLong(snapshot,prefix+"unavailable_feeds",0L);
