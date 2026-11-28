@@ -18,6 +18,8 @@ public final class SourceUpdateActivityPolicy {
     }
     private static final long LEASE_MS=15000L;
     private static final long MIN_HEALTHY_INTERVAL_MS=8000L;
+    private static final long LOW_BUFFER_MS=1000L;
+    private static final long RECOVERED_BUFFER_MS=3000L;
     private static final java.util.concurrent.atomic.AtomicLong stableRevocations=new java.util.concurrent.atomic.AtomicLong();
     private SourceUpdateActivityPolicy() {}
     private static final java.util.concurrent.atomic.AtomicLong activityStarts = new java.util.concurrent.atomic.AtomicLong();
@@ -77,7 +79,10 @@ public final class SourceUpdateActivityPolicy {
         }
         if(bufferSampleAt!=0L&&(now<bufferSampleAt||now-bufferSampleAt>=LEASE_MS))
             clearDiscoveryBuffer();
-        if(bufferedMs<1000L){
+        if(bufferedMs<LOW_BUFFER_MS
+                ||(viewingSampleRate==16384L&&bufferedMs<RECOVERED_BUFFER_MS)){
+            // Reduce immediately, but require actual buffer recovery before
+            // leaving the low rate. Avoid oscillation around the low threshold.
             ampleBufferSince=0L;viewingSampleRate=16384L;
         }else if(bufferedMs>=10000L){
             // Measure sustained ample headroom from its first observation, not
