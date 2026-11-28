@@ -1976,7 +1976,16 @@ public class SourceUpdateWorker extends Worker {
         // end-of-feed was observed. A successful HTTP response alone is not done.
         // Read the persisted baseline for all progress counters together.
         // The current uncommitted feed outcomes are still overlaid below.
-        ArrayList<String> progressKeys=new ArrayList<>(feeds.length*3);
+        ArrayList<String> progressKeys=new ArrayList<>(feeds.length*3+8);
+        Collections.addAll(progressKeys,
+            "source_initial_progress_checked_urls",
+            "source_initial_progress_validated_urls",
+            "source_initial_progress_china_validated_urls",
+            FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,
+            FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,
+            FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,
+            FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,
+            "source_initial_progress_timeout_urls");
         for(int i=0;i<feeds.length;i++){
           progressKeys.add(initialFeedDoneKey(i));
           progressKeys.add(initialFeedUnavailableKey(i));
@@ -2018,8 +2027,7 @@ public class SourceUpdateWorker extends Worker {
         }
         int[] partial=new int[feeds.length];
         for(int i=0;i<feeds.length;i++){
-          try{partial[i]=Integer.parseInt(progressState.get(initialFeedProgressKey(i)));}
-          catch(NumberFormatException ignored){partial[i]=0;}
+          partial[i]=stateInt(progressState,initialFeedProgressKey(i),0);
         }
         for(FeedBatch batch:feedBatches){
           if(batch.index<0||batch.index>=feeds.length||!batch.success)continue;
@@ -2041,20 +2049,20 @@ public class SourceUpdateWorker extends Worker {
         String stageDescription=SourceDiscoveryPriorityPolicy.stageLabel(activeStage);
         // A changed feed version can legitimately reduce the measured work.
         // Do not preserve an inflated high-water mark after a cursor reset.
-        int checkedSoFar=Math.max(0,roomInt("source_initial_progress_checked_urls",0));
-        int validatedSoFar=Math.max(0,roomInt("source_initial_progress_validated_urls",0));
+        int checkedSoFar=Math.max(0,stateInt(progressState,"source_initial_progress_checked_urls",0));
+        int validatedSoFar=Math.max(0,stateInt(progressState,"source_initial_progress_validated_urls",0));
         int chinaValidatedSoFar=Math.max(0,
-            roomInt("source_initial_progress_china_validated_urls",0));
-        previousPreviewLevel=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
+            stateInt(progressState,"source_initial_progress_china_validated_urls",0));
+        previousPreviewLevel=stateInt(progressState,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
         previewLevel=FullDiscoveryProgressPolicy.nextPreviewLevel(previousPreviewLevel,stagedSizeAfterProbe,
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid),activeStage>0);
-        previousPreviewMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
+        previousPreviewMilestone=stateInt(progressState,FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
         previewMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(previousPreviewMilestone,stagedSizeAfterProbe,
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
         // At most three independent category triggers over the entire build.
         // Once all categories were observed, do not scan the staging rows again.
         // On upgrade without this key, reconstruct once from committed+new rows.
-        int stagedCoreMask=roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1);
+        int stagedCoreMask=stateInt(progressState,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1);
         Iterable<Integer> coverageRows=stagedCoreMask<0?allRowIndices(saved):touchedStagedRows;
         stagedCoreMask=Math.max(0,stagedCoreMask)&FullDiscoveryProgressPolicy.ALL_CORE;
         for(int rowIndex:coverageRows){
@@ -2065,11 +2073,11 @@ public class SourceUpdateWorker extends Worker {
               row.optString("name"),row.optString("group"),row.optString("tvgName"),row.optString("tvgId"),
               hasChinaScope(row));
         }
-        previousPreviewCoreMask=roomInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
+        previousPreviewCoreMask=stateInt(progressState,FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
         previewCoreMask=FullDiscoveryProgressPolicy.nextPreviewCoreMask(previousPreviewCoreMask,stagedCoreMask,
             (int)Math.min(Integer.MAX_VALUE,(long)chinaValidatedSoFar+chinaPreflightsValid));
         update.putInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,stagedCoreMask);
-        int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,roomInt("source_initial_progress_timeout_urls",0))+initialTimeouts);
+        int timeoutTotal=(int)Math.min(Integer.MAX_VALUE,(long)Math.max(0,stateInt(progressState,"source_initial_progress_timeout_urls",0))+initialTimeouts);
         update.putInt("source_initial_progress_timeout_urls",timeoutTotal)
             .putInt("source_initial_progress_percent",progressPercent)
             .putInt("source_initial_progress_basis_points",progressBasisPoints)
