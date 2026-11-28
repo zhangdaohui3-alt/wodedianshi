@@ -2,7 +2,6 @@ package com.wodedianshi.tv;
 
 import org.junit.Test;
 import java.io.IOException;
-import java.io.BufferedReader;
 import java.io.StringReader;
 import java.io.Reader;
 import java.util.ArrayList;
@@ -105,13 +104,17 @@ public class PlaylistParserTest {
     }
 
     @Test public void readerParserKeepsEntriesBeforeTransientReadFailure() throws IOException {
-        BufferedReader failingReader = new BufferedReader(new StringReader("")) {
+        Reader failingReader = new Reader() {
             private int line;
-            @Override public String readLine() throws IOException {
-                if (line++ == 0) return "#EXTINF:-1,已解析频道";
-                if (line == 2) return "https://a.example/live";
-                throw new IOException("simulated network interruption");
+            @Override public int read(char[] dst,int off,int len)throws IOException {
+                String value;
+                if(line++==0)value="#EXTINF:-1,已解析频道\n";
+                else if(line==2)value="https://a.example/live\n";
+                else throw new IOException("simulated network interruption");
+                value.getChars(0,value.length(),dst,off);
+                return value.length();
             }
+            @Override public void close(){}
         };
         ArrayList<PlaylistParser.ChannelSource> items = new ArrayList<>();
         try {
@@ -240,5 +243,33 @@ public class PlaylistParserTest {
         assertEquals(1, PlaylistParser.parse(m3u, 1).size());
         assertTrue(PlaylistParser.parse(m3u, 0).isEmpty());
         assertTrue(PlaylistParser.parse(null, 10).isEmpty());
+    }
+    @Test public void boundedLineReaderPreservesCrLfAcrossBufferBoundary()throws IOException {
+        char[] chars=new char[8191];
+        java.util.Arrays.fill(chars,'x');
+        String first=new String(chars);
+        PlaylistParser.BoundedLineReader lines=new PlaylistParser.BoundedLineReader(
+                new StringReader(first+"\r\nA\rB\n\nC"));
+        assertEquals(first,lines.readLine(()->false));
+        assertEquals("A",lines.readLine(()->false));
+        assertEquals("B",lines.readLine(()->false));
+        assertEquals("",lines.readLine(()->false));
+        assertEquals("C",lines.readLine(()->false));
+        assertNull(lines.readLine(()->false));
+    }
+
+    @Test public void boundedLineReaderRejectsOverlongInputBeforeEof()throws IOException {
+        char[] chars=new char[PlaylistParser.MAX_LINE_CHARS];
+        java.util.Arrays.fill(chars,'x');
+        String exact=new String(chars);
+        PlaylistParser.BoundedLineReader allowed=new PlaylistParser.BoundedLineReader(new StringReader(exact+"\n"));
+        assertEquals(exact,allowed.readLine(()->false));
+        PlaylistParser.BoundedLineReader bad=new PlaylistParser.BoundedLineReader(new StringReader(exact+"x\n"));
+        try{bad.readLine(()->false);fail("Expected line limit");}
+        catch(IOException expected){assertEquals("Playlist line exceeds size limit",expected.getMessage());}
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        PlaylistParser.BoundedLineReader cancelled=new PlaylistParser.BoundedLineReader(new StringReader(exact));
+        try{cancelled.readLine(()->checks.incrementAndGet()>4);fail("Expected pause");}
+        catch(SourceProbeTimePolicy.PausedException expected){}
     }
 }
