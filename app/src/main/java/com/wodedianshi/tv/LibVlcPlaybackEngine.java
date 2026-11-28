@@ -353,25 +353,6 @@ public final class LibVlcPlaybackEngine {
         if (isInitialized()) mediaPlayer.stop();
     }
 
-    /** Detach native video surfaces before hiding/removing the VLC view. */
-    public void detachViews() {
-        if (isInitialized() && mediaPlayer.getVLCVout().areViewsAttached()) {
-            mediaPlayer.detachViews();
-        }
-        runViewOperationOnMain(() -> videoLayout.setVisibility(View.GONE));
-    }
-
-    /** Reattach only after the VLC layout is attached to the visible window. */
-    public void attachViews() {
-        if (!isInitialized()) return;
-        runViewOperationOnMain(() -> {
-            videoLayout.setVisibility(View.VISIBLE);
-            if (!mediaPlayer.getVLCVout().areViewsAttached()) {
-                mediaPlayer.attachViews(videoLayout, null, false, false);
-            }
-        });
-    }
-
     public boolean release() {
         // Only the first caller owns teardown. In-flight and failed releases
         // are never reported as success by a second, empty release.
