@@ -2840,7 +2840,7 @@ public class SourceUpdateWorker extends Worker {
   private com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot readPublishedRows(JSONArray rows){
     SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
     com.wodedianshi.tv.db.RoomCatalogueReader.Snapshot snapshot=
-        com.wodedianshi.tv.db.RoomCatalogueReader.read(getApplicationContext(),page->{
+        com.wodedianshi.tv.db.RoomCatalogueReader.readForPublication(getApplicationContext(),page->{
           try{appendRoomRows(rows,page);}
           catch(JSONException invalid){throw new IllegalStateException("Cannot convert Room catalogue page",invalid);}
         },pauseRequested);
