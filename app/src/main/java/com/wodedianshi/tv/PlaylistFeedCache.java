@@ -273,11 +273,12 @@ public final class PlaylistFeedCache {
         validateRangeBody(body,partial,checkpoint,()->false);
     }
 
-    private static void validateRangeBody(File body,File partial,File checkpoint,
+    static void validateRangeBody(File body,File partial,File checkpoint,
             java.util.function.BooleanSupplier paused)throws IOException {
         // An invalid full replacement does not invalidate a separately
         // validated prefix. A corrupt completed range must be discarded.
         if(!isPlaylistFile(body,paused)){
+            SourceProbeTimePolicy.checkPaused(paused);
             if(body.equals(partial))clearRangeCheckpoint(checkpoint,partial);
             throw new IOException("Downloaded resource is not M3U");
         }
@@ -837,16 +838,17 @@ public final class PlaylistFeedCache {
     }
 
     private static boolean isPlaylistFile(File file,java.util.function.BooleanSupplier paused)
-            throws SourceProbeTimePolicy.PausedException {
+            throws IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 new FileInputStream(file), StandardCharsets.UTF_8))) {
             String first = new PlaylistParser.BoundedLineReader(reader).readLine(paused);
+            SourceProbeTimePolicy.checkPaused(paused);
             return first != null && first.replace("\uFEFF", "").trim().startsWith("#EXTM3U");
-        } catch (SourceProbeTimePolicy.PausedException cancelled) {
-            throw cancelled;
-        } catch (IOException ignored) {
+        } catch (PlaylistParser.LineLimitException oversized) {
+            SourceProbeTimePolicy.checkPaused(paused);
             return false;
         }
+        // Other I/O errors and cancellation are not evidence of a corrupt body.
     }
 
     private static Properties readProperties(File file) {
