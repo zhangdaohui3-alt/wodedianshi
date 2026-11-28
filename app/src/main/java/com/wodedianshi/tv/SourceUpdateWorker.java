@@ -1263,14 +1263,25 @@ public class SourceUpdateWorker extends Worker {
         appendFingerprintPart(batchIdentity,Integer.toString(batch.cursor));
       }
       String discoveryFingerprint=CatalogueFingerprint.sha256(batchIdentity.toString());
-      String previousDiscoveryFingerprint=roomString(batchPrefix+"fingerprint","");
-      int previousScanned=roomInt(batchPrefix+"scanned",0);
+      ArrayList<String> batchStateKeys=new ArrayList<>(7);
+      batchStateKeys.add(batchPrefix+"fingerprint");
+      batchStateKeys.add(batchPrefix+"scanned");
+      if(initialDiscoveryChain&&pageFeed>=0){
+        Collections.addAll(batchStateKeys,batchPrefix+"coverage_order",
+            DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),
+            DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),
+            "source_initial_feed_batch_fingerprint","source_initial_feed_batch_scanned");
+      }
+      Map<String,String> batchState=com.wodedianshi.tv.db.AppStateStore.getValues(
+          getApplicationContext(),batchStateKeys);
+      String previousDiscoveryFingerprint=batchState.getOrDefault(batchPrefix+"fingerprint","");
+      int previousScanned=stateInt(batchState,batchPrefix+"scanned",0);
       // An upgrade may have one committed legacy page. Migrate only if the
       // full page fingerprint matches (including feed, version and cursor).
       if(initialDiscoveryChain&&pageFeed>=0&&previousDiscoveryFingerprint.isEmpty()
-          &&discoveryFingerprint.equals(roomString("source_initial_feed_batch_fingerprint",""))){
+          &&discoveryFingerprint.equals(batchState.getOrDefault("source_initial_feed_batch_fingerprint",""))){
         previousDiscoveryFingerprint=discoveryFingerprint;
-        previousScanned=roomInt("source_initial_feed_batch_scanned",0);
+        previousScanned=stateInt(batchState,"source_initial_feed_batch_scanned",0);
         update.remove("source_initial_feed_batch_fingerprint").remove("source_initial_feed_batch_scanned");
       }
       // Coverage ordering uses only the committed staging at the start of a
@@ -1280,7 +1291,7 @@ public class SourceUpdateWorker extends Worker {
       if(initialDiscoveryChain&&pageFeed>=0&&!candidates.isEmpty()){
         String rawFingerprint=discoveryFingerprint;
         long covered=DiscoveryBatchPolicy.readCoverageMask(
-            roomString(batchPrefix+"coverage_order",""),rawFingerprint,candidates.size());
+            batchState.getOrDefault(batchPrefix+"coverage_order",""),rawFingerprint,candidates.size());
         if(covered<0L&&!rawFingerprint.equals(previousDiscoveryFingerprint)){
           // A staged row alone is not evidence of a usable route.
           IdentityHashMap<JSONObject,Boolean> coverageEvidence=new IdentityHashMap<>();
@@ -1304,11 +1315,11 @@ public class SourceUpdateWorker extends Worker {
           discoveryFingerprint,previousDiscoveryFingerprint,previousScanned,candidates.size());
       int transientRecheck=initialDiscoveryChain&&pageFeed>=0
           ?DiscoveryBatchPolicy.resumeTransientRecheck(discoveryFingerprint.equals(previousDiscoveryFingerprint),
-              roomInt(DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK),
+              stateInt(batchState,DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK),
               initialDiscoveryScanned)
           :DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
       long replayMask=initialDiscoveryChain&&pageFeed>=0
-          ?DiscoveryBatchPolicy.resumeReplayMask(roomString(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),""),
+          ?DiscoveryBatchPolicy.resumeReplayMask(batchState.getOrDefault(DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),""),
               transientRecheck,candidates.size()):0L;
       // Resume by exact position inside an unchanged batch. URL-based cursors are
       // unsafe because distinct channel identities can share one endpoint; choosing
