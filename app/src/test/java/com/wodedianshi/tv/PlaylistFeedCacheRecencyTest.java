@@ -104,4 +104,44 @@ public class PlaylistFeedCacheRecencyTest {
         assertTrue(PlaylistFeedCache.shouldDeferRangeFallback(attempted,absent));
         assertFalse(PlaylistFeedCache.shouldDeferRangeFallback(failure,absent));
     }
+    @Test public void unreadableRangeDoesNotInvalidateItsCheckpoint()throws Exception {
+        File prefix=folder.newFolder("unreadable.range-part");
+        File state=folder.newFile("unreadable.range-state");
+        try(FileOutputStream out=new FileOutputStream(state)){out.write(1);}
+        try{
+            PlaylistFeedCache.validateRangeBody(prefix,prefix,state);
+            fail("Expected local read failure");
+        }catch(java.io.IOException expected){}
+        assertTrue(prefix.isDirectory());
+        assertTrue(state.isFile());
+    }
+
+    @Test public void cancellationDuringHeaderValidationKeepsRange()throws Exception {
+        File prefix=folder.newFile("paused.range-part");
+        File state=folder.newFile("paused.range-state");
+        try(FileOutputStream out=new FileOutputStream(prefix)){out.write("invalid\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+        java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+        try{
+            PlaylistFeedCache.validateRangeBody(prefix,prefix,state,()->checks.incrementAndGet()>=2);
+            fail("Expected pause");
+        }catch(SourceProbeTimePolicy.PausedException expected){}
+        assertTrue(prefix.isFile());
+        assertTrue(state.isFile());
+    }
+
+    @Test public void confirmedOversizedHeaderStillInvalidatesCorruptRange()throws Exception {
+        File prefix=folder.newFile("oversize.range-part");
+        File state=folder.newFile("oversize.range-state");
+        byte[] bytes=new byte[PlaylistParser.MAX_LINE_CHARS+1];
+        java.util.Arrays.fill(bytes,(byte)'x');
+        try(FileOutputStream out=new FileOutputStream(prefix)){out.write(bytes);}
+        try{
+            PlaylistFeedCache.validateRangeBody(prefix,prefix,state);
+            fail("Expected oversized header rejection");
+        }catch(java.io.IOException expected){
+            assertEquals("Downloaded resource is not M3U",expected.getMessage());
+        }
+        assertFalse(prefix.exists());
+        assertFalse(state.exists());
+    }
 }
