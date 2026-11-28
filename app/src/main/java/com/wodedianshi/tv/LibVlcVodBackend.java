@@ -15,8 +15,8 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     // VLC callbacks can race dialog dismissal; publish listener changes across threads.
     private volatile Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private volatile boolean released = true;
-    private volatile boolean revoked;
+    private enum State { NEW, ACTIVE, REVOKED }
+    private volatile State state = State.NEW;
     private volatile boolean playing;
     private volatile long positionMs, durationMs;
     private final java.util.concurrent.ExecutorService worker;
@@ -24,7 +24,7 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     // Serialize posting the next tick with revocation, so a native poll that
     // finishes after dismissal cannot reinsert a removed callback.
     private synchronized void schedulePoll(long delayMs) {
-        if (revoked || released) return;
+        if (state != State.ACTIVE) return;
         mainHandler.removeCallbacks(poll);
         mainHandler.postDelayed(poll, delayMs);
     }
@@ -32,14 +32,14 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     private int audioTrackChecks;
 
     private void scheduleAudioTrackInspection() {
-        if (revoked || released || audioTrackChecks >= 2) return;
+        if (state != State.ACTIVE || audioTrackChecks >= 2) return;
         ++audioTrackChecks;
         mainHandler.postDelayed(() -> {
-            if (revoked || released) return;
+            if (state != State.ACTIVE) return;
             try { submit(engine::inspectAudioTrack); }
             catch (RuntimeException error) {
                 Listener current = listener;
-                if (!revoked && current != null) current.onAudioTrackState(-1, -1);
+                if (state != State.REVOKED && current != null) current.onAudioTrackState(-1, -1);
             }
         }, 3000L);
     }
@@ -50,13 +50,14 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         this.worker = worker;
     }
 
-    @Override public void setListener(Listener value) {
+    @Override public synchronized void setListener(Listener value) {
+        if (state == State.REVOKED) return;
         listener = value;
         engine.setListener(new LibVlcPlaybackEngine.Listener() {
             @Override public void onPlaying() {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> {
-                    if (!revoked && !released && listener == current) {
+                if (state == State.ACTIVE && current != null) mainHandler.post(() -> {
+                    if (state == State.ACTIVE && listener == current) {
                         current.onReady();
                         if (audioTrackChecks == 0) scheduleAudioTrackInspection();
                     }
@@ -64,12 +65,12 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
             }
             @Override public void onVideoOutput(int count) {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onVideoOutput(count > 0); });
+                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onVideoOutput(count > 0); });
             }
             @Override public void onAudioTrackState(int count, int selected) {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> {
-                    if (revoked || released || listener != current) return;
+                if (state == State.ACTIVE && current != null) mainHandler.post(() -> {
+                    if (state != State.ACTIVE || listener != current) return;
                     current.onAudioTrackState(count, selected);
                     if (count <= 0 || selected < 0) scheduleAudioTrackInspection();
                 });
@@ -77,12 +78,12 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
             @Override public void onBuffering(float percent) { }
             @Override public void onFailure(String reason) {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onFailure(reason); });
+                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onFailure(reason); });
             }
             @Override public void onStopped() { }
             @Override public void onEndReached() {
                 Listener current = listener;
-                if (!revoked && !released && current != null) mainHandler.post(() -> { if (!revoked && !released && listener == current) current.onEnded(); });
+                if (state == State.ACTIVE && current != null) mainHandler.post(() -> { if (state == State.ACTIVE && listener == current) current.onEnded(); });
             }
         });
     }
@@ -90,14 +91,14 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     // All JNI calls use the same serial worker as live VLC. The main thread
     // only consumes the latest timeline snapshot and enqueues user commands.
     private void submit(Runnable action) {
-        if (revoked) return;
+        if (state == State.REVOKED) return;
         worker.execute(() -> {
-            if (revoked) return;
+            if (state == State.REVOKED) return;
             try { action.run(); }
             catch (RuntimeException | LinkageError error) {
                 Listener current = listener;
                 if (current != null) mainHandler.post(() -> {
-                    if (!revoked && listener == current)
+                    if (state != State.REVOKED && listener == current)
                         current.onFailure(error.getClass().getSimpleName());
                 });
             }
@@ -106,21 +107,21 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
 
     @Override public void play(String url) {
         submit(() -> {
-            if (released) {
+            if (state == State.NEW) {
                 engine.initialize();
                 synchronized (this) {
-                    if (revoked) return;
-                    released = false;
+                    if (state == State.REVOKED) return;
+                    state = State.ACTIVE;
                 }
             }
-            if (revoked) return;
+            if (state == State.REVOKED) return;
             engine.play(url);
             schedulePoll(0L);
         });
     }
 
     private void pollTimeline() {
-        if (revoked || released) return;
+        if (state != State.ACTIVE) return;
         try {
             submit(() -> {
                 playing = engine.isPlaying();
@@ -134,34 +135,33 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
     }
 
     @Override public void pause() {
-        submit(() -> { if (!released) engine.pause(); });
+        submit(() -> { if (state == State.ACTIVE) engine.pause(); });
     }
 
     @Override public void resume() {
-        submit(() -> { if (!released) engine.resume(); });
+        submit(() -> { if (state == State.ACTIVE) engine.resume(); });
     }
 
     @Override public boolean isPlaying() {
-        return !revoked && !released && playing;
+        return state == State.ACTIVE && playing;
     }
 
     @Override public long getPositionMs() { return positionMs; }
     @Override public long getDurationMs() { return durationMs; }
 
     @Override public boolean seekToMs(long target) {
-        if (revoked || released || durationMs <= 0L) return false;
-        submit(() -> { if (!released) engine.seekToMs(target); });
+        if (state != State.ACTIVE || durationMs <= 0L) return false;
+        submit(() -> { if (state == State.ACTIVE) engine.seekToMs(target); });
         return true; // request accepted, not a synchronous native seek result
     }
 
     public void setVideoScaleMode(int mode) {
-        submit(() -> { if (!released) engine.setVideoScaleMode(mode); });
+        submit(() -> { if (state == State.ACTIVE) engine.setVideoScaleMode(mode); });
     }
 
     /** Main-thread revocation precedes posting teardown to the shared worker. */
     synchronized void revoke() {
-        revoked = true;
-        released = true;
+        state = State.REVOKED;
         listener = null;
         mainHandler.removeCallbacksAndMessages(null);
         engine.setListener(null);
