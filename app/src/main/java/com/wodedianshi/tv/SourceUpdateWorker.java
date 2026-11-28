@@ -1186,7 +1186,7 @@ public class SourceUpdateWorker extends Worker {
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         JSONObject c=saved.getJSONObject(i);
         if(initialDiscoveryChain||manualRefresh)stagedPositions.put(c,i);
-        byIdentity.put(identity(c.optString("name"),c.optString("group"),
+        byIdentity.put(SourceDiscoveryIdentityPolicy.identity(c.optString("name"),c.optString("group"),
             c.optString("url"),c.optString("tvgId"),c.optString("tvgName")),c);
       }
       if(initialDiscoveryChain)android.util.Log.i("MyTVSourceDiscovery",
@@ -1200,7 +1200,7 @@ public class SourceUpdateWorker extends Worker {
             com.wodedianshi.tv.db.RoomCatalogueBuildStore.readInitialByIdentity(getApplicationContext(),previousStagedSize,initialRevision,identities,pauseRequested)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=new JSONObject(entity.recordJson);
-          String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
+          String key=SourceDiscoveryIdentityPolicy.identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
           if(!entity.mergeIdentity.equals(key)||!identities.contains(key))
             throw new IllegalStateException("Stale staging identity index");
           stagedPositions.put(row,saved.length());indexedPositions.add(entity.sortOrder);
@@ -1316,7 +1316,7 @@ public class SourceUpdateWorker extends Worker {
       if(!initialDiscoveryChain&&!manualRefresh&&!foregroundAtStart&&!provisionalKeys.isEmpty()){
         for(int position:SourceUpdateSchedulePolicy.provisionalRecheckPositions(savedPool.size(),positionIndex->{
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-          return scoreKey(savedPool.get(positionIndex).url);
+          return StableKey.url(savedPool.get(positionIndex).url);
         },savedScanStart,savedWindow,provisionalKeys)){
           Entry entry=savedPool.get(position);
           priorityRechecks.add(entry);priorityOrder.add(entry);
@@ -1360,7 +1360,7 @@ public class SourceUpdateWorker extends Worker {
             com.wodedianshi.tv.db.RoomCatalogueBuildStore.readManualByIdentity(getApplicationContext(),manualId,identities,pauseRequested)){
           SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
           JSONObject row=new JSONObject(entity.recordJson);
-          String key=identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
+          String key=SourceDiscoveryIdentityPolicy.identity(row.optString("name"),row.optString("group"),row.optString("url"),row.optString("tvgId"),row.optString("tvgName"));
           if(!entity.mergeIdentity.equals(key)||!identities.contains(key))
             throw new IllegalStateException("Stale staging identity index");
           stagedPositions.put(row,saved.length());indexedPositions.add(entity.sortOrder);
@@ -1394,7 +1394,7 @@ public class SourceUpdateWorker extends Worker {
           // Never skip saved health checks or new metadata/scope associations.
           for(Entry entry:probeCandidates){
             SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-            if(!entry.savedSource&&ownPositive.contains(scoreKey(entry.url)))
+            if(!entry.savedSource&&ownPositive.contains(StableKey.url(entry.url)))
               entry.alreadyStaged=hasCommittedRouteEvidence(byIdentity.get(entry.mergeIdentity()),
                   entry,canonicalDisplayName(entry));
           }
@@ -1624,7 +1624,7 @@ public class SourceUpdateWorker extends Worker {
             // An unpaced candidate had its probe opportunity; later maintenance may retry.
             int attempts=inconclusiveAttempts.getOrDefault(endpoint,0)+1;
             inconclusiveAttempts.put(endpoint,attempts);
-            if(priorityRecheck)SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,scoreKey(e.url));
+            if(priorityRecheck)SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,StableKey.url(e.url));
             // Ordinary idle first-pass duplicates do not immediately repeat a
             // socket timeout. Keep the extra retry for core coverage, transient
             // transport failures, paced viewing, and the designated idle replay.
@@ -1645,17 +1645,17 @@ public class SourceUpdateWorker extends Worker {
           measuredByEndpoint.put(endpoint,measured);
         }
         if(!manualRefresh&&((measured.provisional&&measured.valid)||(!measured.paced&&!measured.provisional))){
-          if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
+          if(exactScoreKey==null)exactScoreKey=StableKey.url(e.url);
           if(measured.provisional)
             SourceUpdateSchedulePolicy.rememberProvisional(provisionalKeys,exactScoreKey);
           else provisionalKeys.remove(exactScoreKey);
         }
         // Persist each exact URL associated with a conclusive observation.
-        if(exactScoreKey==null)exactScoreKey=scoreKey(e.url);
+        if(exactScoreKey==null)exactScoreKey=StableKey.url(e.url);
         storePreflightScore(measuredScores,exactScoreKey,measured);
         manualQualityDirty.add(exactScoreKey);
         if(e.savedSource&&savedStreakUpdatedThisRun.add(endpoint)){
-          String streakKey=exactScoreKey==null?scoreKey(e.url):exactScoreKey;
+          String streakKey=exactScoreKey==null?StableKey.url(e.url):exactScoreKey;
           int streak=SourceMaintenanceRetentionPolicy.nextFailureStreak(
               probeFailureStreaks.optInt(streakKey,0),measured.valid);
           if(streak==0)probeFailureStreaks.remove(streakKey);
@@ -1716,7 +1716,7 @@ public class SourceUpdateWorker extends Worker {
           }else{
             HashSet<String> eligibleRetirement=new HashSet<>();
             for(String oldUrl:currentUrls){
-              if(probeFailureStreaks.optInt(scoreKey(oldUrl),0)
+              if(probeFailureStreaks.optInt(StableKey.url(oldUrl),0)
                   >=SourceMaintenanceRetentionPolicy.FAILURES_BEFORE_RETIREMENT)
                 eligibleRetirement.add(SourceSelectionPolicy.endpointKey(oldUrl));
             }
@@ -2448,7 +2448,7 @@ public class SourceUpdateWorker extends Worker {
     },SourceUpdateSchedulePolicy.PROVISIONAL_RECHECK_CAP);
     SourceUpdateSchedulePolicy.promotePlaybackRechecks(selected,url->{
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      JSONObject metric=observedPlayback.get(scoreKey(url));
+      JSONObject metric=observedPlayback.get(StableKey.url(url));
       return metric!=null&&SourceUpdateSchedulePolicy.recentPlaybackProblemForRecheck(
           metric.optString("lastEvent",""),metric.optLong("updated",0L),evidenceNow);
     },InitialOriginCooldownPolicy::origin);
@@ -2482,7 +2482,7 @@ public class SourceUpdateWorker extends Worker {
       for(Map.Entry<String,ProbeResult> entry:completed.entrySet()){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
         String url=entry.getKey();
-        String key=scoreKey(url);
+        String key=StableKey.url(url);
         storePreflightScore(scores,key,entry.getValue());
         // Keep the existing failure streak for ordinary health rotation.
         dirty.add(key);
@@ -3148,7 +3148,7 @@ public class SourceUpdateWorker extends Worker {
     for(int i=0;i<original.length();i++){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject old=original.getJSONObject(i);
-      String key=identity(old.optString("name"),old.optString("group"),
+      String key=SourceDiscoveryIdentityPolicy.identity(old.optString("name"),old.optString("group"),
           old.optString("url"),old.optString("tvgId"),old.optString("tvgName"));
       originalsByIdentity.computeIfAbsent(key,k->new ArrayDeque<>()).add(old);
     }
@@ -3157,7 +3157,7 @@ public class SourceUpdateWorker extends Worker {
     for(int i=0;i<discovered.length();i++){
       SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
       JSONObject fresh=discovered.getJSONObject(i);
-      String key=identity(fresh.optString("name"),fresh.optString("group"),
+      String key=SourceDiscoveryIdentityPolicy.identity(fresh.optString("name"),fresh.optString("group"),
           fresh.optString("url"),fresh.optString("tvgId"),fresh.optString("tvgName"));
       ArrayDeque<JSONObject> matches=originalsByIdentity.get(key);
       if(matches==null||matches.isEmpty()){
@@ -3285,7 +3285,7 @@ public class SourceUpdateWorker extends Worker {
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         entry.name,entry.tvgName,entry.tvgId,entry.group);
     if(!broadcaster.isEmpty())return broadcaster;
-    String canonical=canonicalName(entry.name);
+    String canonical=SourceDiscoveryIdentityPolicy.canonicalName(entry.name);
     return canonical.startsWith("CCTV-")||canonical.endsWith("卫视")?canonical:entry.name;
   }
   /** Only reuse an already accepted route association from THIS build's
@@ -3658,7 +3658,6 @@ public class SourceUpdateWorker extends Worker {
     double prior=scores.optDouble(key,0.0);
     scores.put(key,result.valid?SourceQualityScorer.successfulPreflightScore(result.paced,result.provisional,prior,result.score):-500.0);
   }
-  private String scoreKey(String url){return StableKey.url(url);}
   private java.util.Comparator<String> rankingComparator(JSONObject probes,Map<String,JSONObject> qoe){
     // Scores can change between probe merges, so never share this cache across
     // operations. Freeze recency time within a comparison to keep it consistent.
@@ -4102,16 +4101,6 @@ public class SourceUpdateWorker extends Worker {
         return new SampleResponse(bounded,finalUrl,truncated);
       }
     }finally{if(c!=null)c.disconnect();}
-  }
-  private String read(InputStream in,int max)throws Exception{
-    ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n,total=0;
-    while((n=in.read(b))!=-1){total+=n;if(total>max)throw new IOException("频道目录过大");out.write(b,0,n);}return out.toString("UTF-8");
-  }
-  private String canonicalName(String name){
-    return SourceDiscoveryIdentityPolicy.canonicalName(name);
-  }
-  private String identity(String name,String group,String url,String tvgId,String tvgName){
-    return SourceDiscoveryIdentityPolicy.identity(name,group,url,tvgId,tvgName);
   }
   private String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date());}
   private static final class InitialFeedAdmission {
