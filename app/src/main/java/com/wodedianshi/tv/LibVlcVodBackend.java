@@ -108,8 +108,10 @@ public final class LibVlcVodBackend implements VodPlaybackBackend {
         submit(() -> {
             if (released) {
                 engine.initialize();
-                if (revoked) return;
-                released = false;
+                synchronized (this) {
+                    if (revoked) return;
+                    released = false;
+                }
             }
             if (revoked) return;
             engine.play(url);
