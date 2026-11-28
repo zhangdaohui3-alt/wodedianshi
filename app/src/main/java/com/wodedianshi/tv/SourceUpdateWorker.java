@@ -684,7 +684,7 @@ public class SourceUpdateWorker extends Worker {
           roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
       final int indexedBaseCount=manualIndexed?com.wodedianshi.tv.db.RoomCatalogueBuildStore.manualStagingCount(getApplicationContext(),manualId):0;
       final ArrayList<Integer> indexedPositions=new ArrayList<>();
-      ArrayList<Entry> candidates=new ArrayList<>();
+      ArrayList<Entry> rawCandidates=new ArrayList<>();
       // Include the user's already-saved backup URLs in the rotating health-check
       // pool. Previously only URLs rediscovered in public playlists were probed,
       // so a saved backup could silently die without ever losing its old score.
@@ -1042,14 +1042,14 @@ public class SourceUpdateWorker extends Worker {
               +" province_resolved="+provinceResolvedCandidates
               +" feed_scope="+directoryScope);
           if(!feedCandidates.isEmpty())feedsWithEntries++;
-          int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-candidates.size();
+          int remaining=MAX_DISCOVERY_CANDIDATES_PER_RUN-rawCandidates.size();
           if(feedCandidates.size()>remaining){
             // Never advance a feed cursor after silently truncating its parsed page.
             // The next worker run starts with a fresh per-run budget and retries it.
             feedCandidates.clear();
             throw new IOException("本轮候选容量已满，保留目录游标并在下轮继续");
           }
-          candidates.addAll(feedCandidates);
+          rawCandidates.addAll(feedCandidates);
           feedReadSucceeded=true;
           feedsOk++;
         }catch(Exception e){
@@ -1119,12 +1119,12 @@ public class SourceUpdateWorker extends Worker {
       // including records from separate directory pages in the same batch.
       // Dedupe before fingerprinting, Room lookups and probe admission.
       // FeedBatch.parsed still owns raw cursor advancement on completion.
-      if(!initialDiscoveryChain&&candidates.size()>1){
+      final ArrayList<Entry> candidates;
+      if(!initialDiscoveryChain&&rawCandidates.size()>1){
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        ArrayList<Entry> distinct=DiscoveryBatchPolicy.distinctExactPageRecords(candidates,Entry::exactRecordFields);
-        candidates.clear();candidates.addAll(distinct);
+        candidates=DiscoveryBatchPolicy.distinctExactPageRecords(rawCandidates,Entry::exactRecordFields);
         SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-      }
+      }else candidates=rawCandidates;
       if(slowPlayback&&feedsOk==0)return deferInitialDirectory("稳定直播中：本阶段剩余目录待空闲补查，已保存断点");
       ArrayList<String> manualSavedKeys=new ArrayList<>();
       if(manualRefresh){
