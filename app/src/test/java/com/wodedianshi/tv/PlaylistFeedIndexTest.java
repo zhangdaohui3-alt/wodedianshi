@@ -275,6 +275,31 @@ public class PlaylistFeedIndexTest {
         assertEquals("乙",page.get(0).name);
     }
 
+    @Test public void unavailableIndexPathDoesNotDestroyOtherSidecar()throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n");
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,row->{}));
+        File records=new File(feed.getPath()+".index-data");
+        File offsets=new File(feed.getPath()+".index-offsets");
+        byte[] savedRecords=java.nio.file.Files.readAllBytes(records.toPath());
+        byte[] savedOffsets=java.nio.file.Files.readAllBytes(offsets.toPath());
+        org.junit.Assert.assertTrue(offsets.delete());
+        org.junit.Assert.assertTrue(offsets.mkdir());
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        try{
+            PlaylistFeedIndex.readPage(feed,0,1,page::add);
+            org.junit.Assert.fail("Expected unavailable index path");
+        }catch(java.io.IOException expected){
+            assertEquals("Playlist index path is not a regular file",expected.getMessage());
+        }
+        assertEquals(0,page.size());
+        org.junit.Assert.assertTrue(offsets.isDirectory());
+        org.junit.Assert.assertArrayEquals(savedRecords,java.nio.file.Files.readAllBytes(records.toPath()));
+        org.junit.Assert.assertTrue(offsets.delete());
+        java.nio.file.Files.write(offsets.toPath(),savedOffsets);
+        assertEquals(1,PlaylistFeedIndex.readExistingPage(feed,0,1,page::add,()->false));
+        assertEquals("甲",page.get(0).name);
+    }
+
     @Test public void cancelledIndexReadKeepsSidecarsAndEmitsNothing() throws Exception {
         File feed=playlist("#EXTM3U\n#EXTINF:-1,甲\nhttps://a.example/live\n"
                 +"#EXTINF:-1,乙\nhttps://b.example/live\n");
