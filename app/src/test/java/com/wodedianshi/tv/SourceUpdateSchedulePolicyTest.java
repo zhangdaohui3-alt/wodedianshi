@@ -605,6 +605,17 @@ public class SourceUpdateSchedulePolicyTest {
         assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(pending.size(),1));
     }
 
+    @Test public void provisionalAdmissionExcludesOnlyGuaranteedSkippedPositions(){
+        java.util.List<String> positions=java.util.Arrays.asList("skip","reuse","alias","alias","new");
+        java.util.function.Predicate<String> eligible=row->!row.equals("skip")&&!row.equals("reuse");
+        assertTrue(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2045,positions,eligible));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2046,positions,eligible));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2048,positions,eligible));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(0,positions,row->false));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(-1,positions,eligible));
+        assertFalse(SourceUpdateSchedulePolicy.permitsProvisionalScreen(2045,positions,row->true));
+    }
+
     @Test public void completePublicationPrunesOnlyUnretainedPendingKeysAndPreservesOrder(){
         java.util.LinkedHashSet<String> pending=new java.util.LinkedHashSet<>(
                 java.util.Arrays.asList("old-fallback","removed","shared","new-source","removed-again"));
