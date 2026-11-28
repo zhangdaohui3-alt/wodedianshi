@@ -275,4 +275,26 @@ public class SourceSelectionPolicyTest {
         records.add(url);
         org.junit.Assert.assertTrue(SourceSelectionPolicy.isUserBlocked(records,"CCTV-10|cctv",url));
     }
+    @Test public void automaticSelectionChecksOnlyEligibleEndpointsUntilHealthyRoute() {
+        java.util.List<String> routes=Arrays.asList("https://active.example/live",
+                "HTTPS://ACTIVE.example:443/live","http://blocked.example/live",
+                "HTTP://FAILED.example:80/live","https://slow.example/Live?token=A",
+                "https://slow.example/Live?token=B","https://later.example/live");
+        java.util.Set<String> blocked=Collections.singleton("HTTP://BLOCKED.example:80/live");
+        java.util.Set<String> failed=Collections.singleton("http://failed.example/live");
+        java.util.List<String> checked=new java.util.ArrayList<>();
+        assertEquals(5,SourceSelectionPolicy.findNextByEndpoint(routes,0,blocked,failed,key->{
+            checked.add(key);
+            return key.endsWith("token=A");
+        }));
+        assertEquals(Arrays.asList("https://slow.example/Live?token=A",
+                "https://slow.example/Live?token=B"),checked);
+        checked.clear();
+        assertEquals(4,SourceSelectionPolicy.findNextByEndpoint(routes,0,blocked,failed,key->{
+            checked.add(key);return true;
+        }));
+        assertEquals(Arrays.asList("https://slow.example/Live?token=A",
+                "https://slow.example/Live?token=B","https://later.example/live"),checked);
+    }
+
 }
