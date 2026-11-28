@@ -386,10 +386,10 @@ public class HlsWorkerProbeIntegrationTest {
         }finally{serverThread.shutdownNow();}
     }
 
-    @Test public void productionRecheckExtendsHealthyBatchThenStopsAtNewPressure()throws Exception{
+    @Test public void productionRecheckExtendsHealthyBatchThenUsesOnlyCacheAtNewPressure()throws Exception{
         ExecutorService serverThread=Executors.newSingleThreadExecutor();
         try(ServerSocket server=new ServerSocket()){
-            server.bind(new InetSocketAddress("127.0.0.1",0));
+            server.bind(new InetSocketAddress(InetAddress.getByName("localhost"),0));
             server.setSoTimeout(10000);
             Future<?> served=serverThread.submit(()->{
                 for(int i=0;i<48;i++)replyRecheck(server,"/live"+i+".ts",200,transportSample());
@@ -399,15 +399,21 @@ public class HlsWorkerProbeIntegrationTest {
             List<String> order=new ArrayList<>();
             LinkedHashSet<String> pending=new LinkedHashSet<>();
             for(int i=0;i<96;i++){
-                String url="http://127.0.0.1:"+server.getLocalPort()+"/live"+i+".ts";
+                String url="http://localhost:"+server.getLocalPort()+"/live"+i+".ts";
                 order.add(url);pending.add(StableKey.url(url));
             }
+            String alias=order.get(0).replace("localhost","LOCALHOST");
+            order.add(alias);pending.add(StableKey.url(alias));
             SourceUpdateWorker.QualityRecheckSlice result=SourceUpdateWorker.probeQualityRecheckSlice(
                     order,pending,SystemClock.elapsedRealtime()+90000L,()->false);
             served.get(12,TimeUnit.SECONDS);
             assertTrue(result.extended);
             assertEquals(49,result.checked);
-            assertEquals(48,result.completed.size());
+            assertEquals(49,result.completed.size());
+            assertEquals(49,result.conclusive);
+            assertEquals(1,result.reused);
+            assertSame(result.completed.get(order.get(0)),result.completed.get(alias));
+            assertFalse(pending.contains(StableKey.url(alias)));
             assertEquals(49L,result.sampleRequests);
             assertEquals(48L*transportSample().length,result.sampleBytes);
             assertEquals(48,pending.size());
