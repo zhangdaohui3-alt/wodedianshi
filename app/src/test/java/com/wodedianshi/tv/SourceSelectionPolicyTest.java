@@ -324,4 +324,16 @@ public class SourceSelectionPolicyTest {
                 null,Collections.emptySet(),key->{fail("empty route must not query cooldown");return false;}));
     }
 
+    @Test public void manualNavigationSkipsEmptyAndExactlyBlockedRoutesInBothDirections() {
+        java.util.List<String> routes=Arrays.asList("active",null," ","HTTP://EXAMPLE.invalid:80/live",
+                "http://example.invalid/live","last");
+        java.util.Set<String> blocked=Collections.singleton("HTTP://EXAMPLE.invalid:80/live");
+        assertEquals(4,SourceSelectionPolicy.findNextManualSource(routes,0,1,blocked));
+        assertEquals(5,SourceSelectionPolicy.findNextManualSource(routes,0,-1,blocked));
+        assertEquals(4,SourceSelectionPolicy.findNextManualSource(routes,5,-1,blocked));
+        assertEquals(-1,SourceSelectionPolicy.findNextManualSource(
+                Arrays.asList("active",null," ","blocked"),0,1,Collections.singleton("blocked")));
+        assertEquals(-1,SourceSelectionPolicy.findNextManualSource(Collections.singletonList("active"),0,1,blocked));
+    }
+
 }
