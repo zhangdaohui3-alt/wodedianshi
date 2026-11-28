@@ -650,4 +650,28 @@ public class PlaylistFeedIndexTest {
         assertEquals(48,DiscoveryBatchPolicy.cursorForVersion(48,ordered,ordered));
         assertEquals(0,DiscoveryBatchPolicy.cursorForVersion(48,ordered,raw));
     }
+    @Test public void reusedCoverageIndexRepairsInSameOrderAndRawReplacementResetsCursor()throws Exception {
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
+                +"#EXTINF:-1,CCTV-1\nhttps://example.invalid/backup\n"
+                +"#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n");
+        PlaylistFeedIndex.readInitialPage(feed,0,1,row->{},()->false);
+        String body="body-digest";
+        String saved=PlaylistFeedIndex.initialProbeVersion(body,PlaylistFeedIndex.hasCoverageOrder(feed));
+        File records=new File(feed.getPath()+".index-data");
+        try(RandomAccessFile broken=new RandomAccessFile(records,"rw")){broken.setLength(1);}
+        boolean coverage=PlaylistFeedIndex.hasCoverageOrder(feed);
+        org.junit.Assert.assertTrue(coverage);
+        int cursor=DiscoveryBatchPolicy.cursorForVersion(1,saved,
+            PlaylistFeedIndex.initialProbeVersion(body,coverage));
+        assertEquals(1,cursor);
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readInitialPage(feed,cursor,1,page::add,()->false));
+        assertEquals("CCTV-2",page.get(0).name);
+        org.junit.Assert.assertTrue(new File(feed.getPath()+".index-offsets").delete());
+        org.junit.Assert.assertTrue(records.delete());
+        PlaylistFeedIndex.readPage(feed,0,1,row->{});
+        assertEquals(0,DiscoveryBatchPolicy.cursorForVersion(1,saved,
+            PlaylistFeedIndex.initialProbeVersion(body,PlaylistFeedIndex.hasCoverageOrder(feed))));
+    }
+
 }
