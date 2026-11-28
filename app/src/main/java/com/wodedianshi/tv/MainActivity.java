@@ -179,6 +179,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView fullscreenFavoriteButton;
   private TextView fullscreenActionsButton;
   private TextView fullscreenBlockSourceButton;
+  private DepartedLiveSource recentDepartedLiveSource;
   private LinearLayout categoryMenuItems;
   private Button fullscreenAspectMenuItem;
   private final Runnable hideFullscreenControls=()->{if(!this.fullscreenControlGesture)hideFullscreenControlsNow();};
@@ -2176,6 +2177,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     // Revoke the live item BEFORE pause: synchronous or queued old Media3
     // callbacks must not recover the live edge, play(), or start another source.
     currentMediaId="";
+    recentDepartedLiveSource=null;
     cancelSingleChannelRefresh();
     ++liveTuneRequestSerial;
     clearPendingRemoteZap();
@@ -5747,6 +5749,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     uiHandler.removeCallbacks(hideFullscreenControls);
     uiHandler.removeCallbacks(hideChannelZapOverlay);
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
+    recentDepartedLiveSource=null;
     if(fullscreenBlockSourceButton!=null)fullscreenBlockSourceButton.setOnClickListener(null);
     for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton,fullscreenBlockSourceButton}){
       if(control==null)continue;
@@ -5932,6 +5935,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final Channel menuChannel=vodMode?null:channels.get(selected);
     final String menuStation=menuChannel==null?"":identity(menuChannel);
     final String menuUrl=menuChannel==null?"":currentSourceUrl();
+    final DepartedLiveSource departed=vodMode?null:recentDepartedForBlock();
     final FullscreenMenuConfig config=loadFullscreenMenuConfig();
     final Dialog dialog=new Dialog(this);
     LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);
@@ -5948,6 +5952,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       quickBlock.setOnClickListener(v->{dialog.dismiss();blockCapturedLiveSource(menuStation,menuUrl);});
       shell.addView(quickBlock,new LinearLayout.LayoutParams(-1,dp(48)));
     }else quickBlock=null;
+    if(departed!=null){
+      Button previousBlock=new Button(this);previousBlock.setAllCaps(false);
+      previousBlock.setText("屏蔽刚跳过的源 · "+departed.label);
+      previousBlock.setSingleLine(true);previousBlock.setEllipsize(android.text.TextUtils.TruncateAt.END);
+      styleTvButton(previousBlock,Color.rgb(35,55,78));
+      previousBlock.setOnClickListener(v->{dialog.dismiss();blockCapturedLiveSource(departed.station,departed.url);});
+      shell.addView(previousBlock,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
     LinearLayout columns=new LinearLayout(this);columns.setOrientation(LinearLayout.HORIZONTAL);
     LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
     LinearLayout right=new LinearLayout(this);right.setOrientation(LinearLayout.VERTICAL);
@@ -5955,7 +5967,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     ScrollView rightScroll=new ScrollView(this);rightScroll.addView(right);
     // The phone's landscape viewport may be shorter than the TV menu.
     int columnHeight=vodMode?dp(284):Math.min(dp(284),Math.max(dp(80),
-        getResources().getDisplayMetrics().heightPixels-dp(224)));
+        getResources().getDisplayMetrics().heightPixels-dp(departed==null?224:272)));
     columns.addView(leftScroll,new LinearLayout.LayoutParams(0,columnHeight,1.0f));
     columns.addView(rightScroll,new LinearLayout.LayoutParams(0,columnHeight,1.45f));
     shell.addView(columns);
@@ -6367,6 +6379,34 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     else{records.remove(key);records.remove(url);}
     p.edit().putStringSet("blocked_ad_sources",records).apply();
   }
+  // Only one previously output-capable, automatically departed route is retained.
+  // No guess from the current source index, and no history of failed blank attempts.
+  private static final class DepartedLiveSource {
+    final String station,url,label;
+    final long departedAt;
+    DepartedLiveSource(String station,String url,String label,long departedAt){
+      this.station=station;this.url=url;this.label=label;this.departedAt=departedAt;
+    }
+  }
+  private void rememberDepartedLiveSource(Channel c){
+    if(!sourceFirstFrameRecorded&&!libVlcVideoOutputReady)return;
+    String url=currentSourceUrl(),station=identity(c);
+    if(SourceSelectionPolicy.channelBlockKey(station,url).isEmpty())return;
+    recentDepartedLiveSource=new DepartedLiveSource(station,url,
+        displayChannelName(c)+" · 第 "+(c.activeSource+1)+" 源",
+        android.os.SystemClock.elapsedRealtime());
+  }
+  private DepartedLiveSource recentDepartedForBlock(){
+    DepartedLiveSource previous=recentDepartedLiveSource;
+    if(previous==null)return null;
+    long age=android.os.SystemClock.elapsedRealtime()-previous.departedAt;
+    if(age<0L||age>30000L){recentDepartedLiveSource=null;return null;}
+    if(SourceSelectionPolicy.isUserBlocked(sourceBlockRecords(),previous.station,previous.url))return null;
+    Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
+    if(current!=null&&SourceSelectionPolicy.channelBlockKey(previous.station,previous.url).equals(
+        SourceSelectionPolicy.channelBlockKey(identity(current),currentSourceUrl())))return null;
+    return previous;
+  }
   // The user acts on the station/route displayed when the menu opened, not
   // the numeric source index or the next route selected by automatic recovery.
   private void blockCapturedLiveSource(String stationIdentity,String url){
@@ -6539,6 +6579,9 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final String displayedStation=identity(c);
     ArrayList<String> labels=new ArrayList<>();
     labels.add("屏蔽广告源 · 第 "+(c.activeSource+1)+" 源");
+    final DepartedLiveSource departed=recentDepartedForBlock();
+    if(departed!=null)labels.add("屏蔽刚跳过的源 · "+departed.label);
+    final int sourceOffset=labels.size();
     ArrayList<String> displayedUrls=new ArrayList<>();
     Set<String> blockedUrls=blockedSourceUrls(c);
     for(int i=0;i<c.backups.size();i++){
@@ -6551,9 +6594,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       .setItems(labels.toArray(new String[0]),(d,which)->{
         if(!activityStarted||isFinishing()||isDestroyed()||isAnyPlaybackLockActive()||currentVodPanel!=null)return;
         if(which==0){blockCapturedLiveSource(displayedStation,displayedActiveUrl);return;}
+        if(which==1&&departed!=null){blockCapturedLiveSource(departed.station,departed.url);return;}
         Channel current=selected>=0&&selected<channels.size()?channels.get(selected):null;
         if(current!=c){toast("频道已变化，请重新打开换源菜单");return;}
-        int displayedIndex=which-1;
+        int displayedIndex=which-sourceOffset;
         if(displayedIndex<0||displayedIndex>=displayedUrls.size())return;
         String url=displayedUrls.get(displayedIndex);
         int index=SourceSelectionPolicy.resolveManualSelection(c,current,c.backups,url);
@@ -6621,6 +6665,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   /** Commit an already validated manual source choice before starting playback. */
   private void selectManualSource(Channel c,int next){
+    recentDepartedLiveSource=null;
     c.activeSource=next;
     resetLiveRecoveryBudget();
     manualSourceSwitch=true;
@@ -7205,6 +7250,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(selected<0||selected>=channels.size())return;
     String failedMediaId=currentMediaId;
     if(failedMediaId.isEmpty()||failedMediaId.equals(lastAutoFailoverMediaId))return;
+    rememberDepartedLiveSource(channels.get(selected));
     // Every automatic failover path (buffer timeout, silent freeze, ended stream,
     // track failure or player error) must update the same failure memory. Some
     // paths arrive here without passing through onPlayerError.
@@ -7293,6 +7339,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     boolean explicit=requestedSourceIndex!=null;
     Channel target=channels.get(ix);
     if(explicit&&(target.backups==null||target.backups.isEmpty()))return;
+    recentDepartedLiveSource=null;
     resetLiveRecoveryBudget();
     manualSourceSwitch=explicit;
     int previouslySelected=selected;
