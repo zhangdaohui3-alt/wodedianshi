@@ -107,16 +107,19 @@ public class IdleProbeWavePolicyTest {
         assertFalse(IdleProbeWavePolicy.permitsParallel(true,false,true));
         assertFalse(IdleProbeWavePolicy.permitsParallel(false,true,true));
     }
-    @Test public void manualWaveKeepsFullStageDeadlineButDoesNotStartNearEnd() {
-        assertTrue(IdleProbeWavePolicy.canStart(false,73000L,90000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(false,73001L,90000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(false,91000L,90000L,90000L));
-        assertTrue(IdleProbeWavePolicy.canStart(true,1000L,16000L,90000L));
-        assertTrue(IdleProbeWavePolicy.canStart(true,15999L,16000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(true,16000L,16000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(true,17000L,16000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(true,-1L,16000L,90000L));
-        assertFalse(IdleProbeWavePolicy.canStart(true,1000L,89000L,90000L));
+    @Test public void idleWavesUseAllocatedAddressDeadlineAndActualDrainMargin() {
+        // Manual and initial callers allocate 15 seconds at the same boundary.
+        assertTrue(IdleProbeWavePolicy.canStart(73000L,88000L,90000L));
+        assertTrue(IdleProbeWavePolicy.canStart(73001L,88000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(73001L,88001L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(88000L,88000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(91000L,88000L,90000L));
+        assertTrue(IdleProbeWavePolicy.canStart(1000L,16000L,90000L));
+        assertTrue(IdleProbeWavePolicy.canStart(15999L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(16000L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(17000L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(-1L,16000L,90000L));
+        assertFalse(IdleProbeWavePolicy.canStart(1000L,89000L,90000L));
     }
     @Test public void hostLimitAndGlobalLimitAreIndependent() {
         IdleProbeWavePolicy wave=new IdleProbeWavePolicy();
