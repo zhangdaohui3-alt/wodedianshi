@@ -13,19 +13,38 @@ public class SourceSelectionPolicyTest {
         Object channel=new Object();
         java.util.List<String> reordered=Arrays.asList("c","a","d","b");
         assertEquals(2,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
-                reordered,"a","a","d",Collections.emptySet()));
+                reordered,"a","a","d",url->false));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,new Object(),7L,7L,
-                reordered,"a","a","d",Collections.emptySet()));
+                reordered,"a","a","d",url->false));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,8L,
-                reordered,"a","a","d",Collections.emptySet()));
+                reordered,"a","a","d",url->false));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
-                reordered,"a","c","d",Collections.emptySet()));
+                reordered,"a","c","d",url->false));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
-                reordered,"a","a","a",Collections.emptySet()));
+                reordered,"a","a","a",url->false));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
-                reordered,"a","a","d",Collections.singleton("d")));
+                reordered,"a","a","d",url->{assertEquals("d",url);return true;}));
         assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,7L,7L,
-                reordered,"a","a","missing",Collections.emptySet()));
+                reordered,"a","a","missing",url->false));
+    }
+
+    @Test public void queuedSourceChecksOnlyValidTargetForUserBlock() {
+        Object channel=new Object();
+        java.util.List<String> routes=Arrays.asList("a","b","c");
+        java.util.List<String> checked=new java.util.ArrayList<>();
+        java.util.function.Predicate<String> blocked=url->{checked.add(url);return false;};
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,1L,2L,
+                routes,"a","a","b",blocked));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,new Object(),1L,1L,
+                routes,"a","a","b",blocked));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,1L,1L,
+                routes,"a","a","missing",blocked));
+        assertEquals(-1,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,1L,1L,
+                routes,"a","a","a",blocked));
+        assertTrue(checked.isEmpty());
+        assertEquals(2,SourceSelectionPolicy.resolveQueuedManualSelection(channel,channel,1L,1L,
+                routes,"a","a","c",blocked));
+        assertEquals(Collections.singletonList("c"),checked);
     }
 
     @Test public void wrapIndexHandlesNegativeAndOversizedValues() {
