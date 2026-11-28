@@ -159,6 +159,16 @@ public interface ChannelDao {
     @Query("SELECT c.* FROM channels c INNER JOIN favorites f ON f.channelId = c.id ORDER BY f.addedAt DESC")
     List<ChannelWithSources> getFavoriteChannels();
 
+    // Snapshot reconciliation needs only stable identity and favorite time.
+    final class FavoriteIdentity {
+        public String name, legacyKey, primaryUrl, tvgId, groupName, tvgName;
+        public long addedAt;
+    }
+
+    @Query("SELECT c.name, c.legacyKey, c.primaryUrl, c.tvgId, c.groupName, c.tvgName, f.addedAt "
+            + "FROM channels c INNER JOIN favorites f ON f.channelId = c.id")
+    List<FavoriteIdentity> getFavoriteIdentities();
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void addFavorite(FavoriteEntity favorite);
 
