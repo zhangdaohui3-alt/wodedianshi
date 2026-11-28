@@ -617,11 +617,16 @@ public final class RoomCatalogueWriter {
         return -1;
     }
 
-    /** Preserve an exact current URL if retained, otherwise use ranked source 0.
-     * Never reuse a numeric index across reordered source arrays. */
+    /** Exact selection wins; an equivalent retained endpoint also preserves
+     * the selection. Never reuse a numeric index across reordered arrays. */
     static int resolveLiveSelection(List<BackupSourceEntity> sources,String liveUrl){
-        if(liveUrl!=null)for(BackupSourceEntity source:sources)
+        if(liveUrl==null||liveUrl.isEmpty())return 0;
+        for(BackupSourceEntity source:sources)
             if(liveUrl.equals(source.url))return source.priority;
+        String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(liveUrl);
+        for(BackupSourceEntity source:sources)
+            if(endpoint.equals(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url)))
+                return source.priority;
         return 0;
     }
 
