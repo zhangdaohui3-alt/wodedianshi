@@ -639,16 +639,21 @@ public class SourceUpdateWorker extends Worker {
         // Recover an already committed but not yet exposed preview even when
         // every remaining feed is deferred for idle. Do not probe another URL
         // or advance a cursor in this publication-only continuation.
-        int stagedCount=roomInt("source_initial_progress_staged_channels",0);
-        int chinaValidated=roomInt("source_initial_progress_china_validated_urls",0);
-        int oldPreview=roomInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
-        int oldMilestone=roomInt(FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
+        Map<String,String> previewState=com.wodedianshi.tv.db.AppStateStore.getValues(
+            getApplicationContext(),Arrays.asList("source_initial_progress_staged_channels",
+                "source_initial_progress_china_validated_urls",FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,
+                FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,"source_initial_progress_china_done_feeds",
+                FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY));
+        int stagedCount=stateInt(previewState,"source_initial_progress_staged_channels",0);
+        int chinaValidated=stateInt(previewState,"source_initial_progress_china_validated_urls",0);
+        int oldPreview=stateInt(previewState,FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0);
+        int oldMilestone=stateInt(previewState,FullDiscoveryProgressPolicy.PREVIEW_MILESTONE_KEY,0);
         int pendingPreview=FullDiscoveryProgressPolicy.nextPreviewLevel(oldPreview,stagedCount,
-            chinaValidated,roomInt("source_initial_progress_china_done_feeds",0)>=SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
+            chinaValidated,stateInt(previewState,"source_initial_progress_china_done_feeds",0)>=SourceDiscoveryFeedCatalog.MAINLAND_FEED_COUNT);
         int pendingMilestone=FullDiscoveryProgressPolicy.nextPreviewMilestone(oldMilestone,stagedCount,chinaValidated);
-        int oldCoreMask=roomInt(FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
+        int oldCoreMask=stateInt(previewState,FullDiscoveryProgressPolicy.PREVIEW_CORE_MASK_KEY,0);
         int pendingCoreMask=FullDiscoveryProgressPolicy.nextPreviewCoreMask(oldCoreMask,
-            roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0),chinaValidated);
+            stateInt(previewState,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,0),chinaValidated);
         if((pendingPreview>oldPreview||pendingMilestone>oldMilestone||pendingCoreMask!=oldCoreMask)
             &&FullDiscoveryProgressPolicy.canPublishPreview(slowPlayback,stagedCount,
                 com.wodedianshi.tv.db.RoomDatabaseProvider.get(getApplicationContext()).channelDao().countChannels())){
@@ -4167,6 +4172,10 @@ public class SourceUpdateWorker extends Worker {
   }
   private String roomString(String key,String fallback){
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
+  }
+  private static int stateInt(Map<String,String> state,String key,int fallback){
+    try{return Integer.parseInt(state.get(key));}
+    catch(NumberFormatException invalid){return fallback;}
   }
   private int roomInt(String key,int fallback){
     try{return Integer.parseInt(roomString(key,Integer.toString(fallback)));}
