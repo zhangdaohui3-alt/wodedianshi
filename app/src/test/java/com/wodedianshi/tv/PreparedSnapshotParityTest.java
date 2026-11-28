@@ -289,4 +289,30 @@ public class PreparedSnapshotParityTest {
         assertEquals(0,field(owner,"selected").getInt(activity));
         assertEquals(0,field(channel,"activeSource").getInt(first));
     }
+
+    @Test public void unchangedRouteOwnershipKeepsArrayAndPruningPreservesLastScope() throws Exception {
+        String a="https://example.invalid/a",b="https://example.invalid/b";
+        org.json.JSONObject row=new org.json.JSONObject();
+        org.json.JSONObject first=new org.json.JSONObject().put("url",a)
+            .put("scopes",new org.json.JSONArray().put("global"));
+        org.json.JSONObject second=new org.json.JSONObject().put("url",b)
+            .put("scopes",new org.json.JSONArray().put("global"));
+        org.json.JSONObject last=new org.json.JSONObject().put("url",a)
+            .put("scopes",new org.json.JSONArray().put("china"));
+        org.json.JSONArray ownership=new org.json.JSONArray().put(first).put(second).put(last);
+        row.put("backupSourceScopes",ownership);
+        SourceUpdateWorker.retainBackupSourceScopes(row,new org.json.JSONArray().put(a).put(b));
+        assertSame(ownership,row.getJSONArray("backupSourceScopes"));
+        assertEquals("[\"china\",\"global\"]",row.getJSONArray("sourceScopes").toString());
+        SourceUpdateWorker.retainBackupSourceScopes(row,new org.json.JSONArray().put(a));
+        org.json.JSONArray retained=row.getJSONArray("backupSourceScopes");
+        assertNotSame(ownership,retained);
+        assertEquals(2,retained.length());
+        assertSame(first,retained.getJSONObject(0));
+        assertSame(last,retained.getJSONObject(1));
+        assertEquals("[\"china\"]",row.getJSONArray("sourceScopes").toString());
+        SourceUpdateWorker.retainBackupSourceScopes(row,new org.json.JSONArray());
+        assertEquals(0,row.getJSONArray("backupSourceScopes").length());
+        assertEquals(0,row.getJSONArray("sourceScopes").length());
+    }
 }
