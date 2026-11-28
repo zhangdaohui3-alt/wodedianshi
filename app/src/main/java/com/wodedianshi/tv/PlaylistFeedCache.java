@@ -189,7 +189,7 @@ public final class PlaylistFeedCache {
                 if(!SourceProbeTimePolicy.fullDirectoryResponse(status,connection.getHeaderField("Content-Range")))
                     throw new IOException("Invalid full directory response");
                 // Range ignored or representation changed. Never append a 200.
-                clearRangeCheckpoint(checkpoint,partial);offset=0L;
+                // Keep the old validated prefix until we admit its replacement.
                 expected=connection.getContentLength();total=expected;
                 if(lowRate){
                     transferLimit=SourceProbeTimePolicy.LIVE_RESUMABLE_MAX_BYTES;
@@ -197,6 +197,8 @@ public final class PlaylistFeedCache {
                 }
                 if(expected>transferLimit)
                     throw new IOException("Directory exceeds bounded full transfer size");
+                if(lowRate)checkLiveFullDirectoryAdmission(expected,encoding,deadline);
+                clearRangeCheckpoint(checkpoint,partial);offset=0L;
             }else{
                 if(status==416){clearRangeCheckpoint(checkpoint,partial);}
                 throw new IOException("Directory range HTTP "+status);
@@ -422,6 +424,7 @@ public final class PlaylistFeedCache {
             if (declaredLength > maxBytes) {
                 throw new IOException("Playlist exceeds cache size limit");
             }
+            if(lowRate)checkLiveFullDirectoryAdmission(declaredLength,responseEncoding,deadline);
             long copied = 0L;
             MessageDigest digest = newDigest();
             try (InputStream input = lowRate?connection.getInputStream():new BufferedInputStream(connection.getInputStream());
@@ -570,6 +573,13 @@ public final class PlaylistFeedCache {
             if(remaining<=0L)return;
             android.os.SystemClock.sleep(Math.min(25L,remaining));
         }
+    }
+
+    private static void checkLiveFullDirectoryAdmission(long declared,String encoding,long deadline)throws IOException{
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(!SourceProbeTimePolicy.admitsLiveFullDirectory(declared,encoding,deadline-now,
+                SourceUpdateActivityPolicy.viewingSampleBytesPerSecond(now)))
+            throw new IOException("Directory exceeds current viewing transfer budget; defer");
     }
 
     private static void checkDownloadBudget(java.util.function.BooleanSupplier paused,
