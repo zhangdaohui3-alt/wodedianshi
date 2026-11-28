@@ -24,11 +24,11 @@ public interface ManualProbeQualityDao {
     List<ManualProbeQualityEntity> page(String owner,String after,int limit);
     @Query("SELECT sourceKey FROM manual_probe_quality WHERE owner=:owner AND sourceKey>:after ORDER BY sourceKey LIMIT :limit")
     List<String> pageKeys(String owner,String after,int limit);
-    @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak) "
+    @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak,observedAt) "
         + "SELECT :target,sourceKey,score,failureStreak FROM manual_probe_quality "
         + "WHERE owner=:source AND sourceKey>:after AND sourceKey<=:through")
     void copyRange(String source,String target,String after,String through);
-    @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak) "
+    @Query("INSERT OR REPLACE INTO manual_probe_quality (owner,sourceKey,score,failureStreak,observedAt) "
         + "SELECT :target,sourceKey,score,failureStreak FROM manual_probe_quality "
         + "WHERE owner=:source AND sourceKey IN (:keys)")
     void copyKeys(String source,String target,List<String> keys);
