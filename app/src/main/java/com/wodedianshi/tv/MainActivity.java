@@ -1063,7 +1063,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(channel==null)return "";
     String broadcaster=ChannelNamePolicy.canonicalBroadcasterName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
-    if(!broadcaster.isEmpty())return displayChannelName(broadcaster);
+    if(!broadcaster.isEmpty())return ChannelNamePolicy.broadcasterDisplayName(broadcaster);
     return ChannelNamePolicy.chineseDisplayName(
         channel.name,channel.tvgName,channel.tvgId,channel.group);
   }
@@ -1122,34 +1122,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         c.name,c.tvgName,c.tvgId,c.group);
     if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.name);
     if(!key.startsWith("CCTV-"))key=canonicalChannelName(c==null?"":c.group);
-    try{
-      String n=key.substring(5);
-      if(n.matches("\\d{1,2}\\+?"))return Integer.parseInt(n.replace("+",""));
-      if(n.equals("NEWS"))return 90;
-      if(n.equals("4K"))return 91;
-      if(n.equals("8K"))return 92;
-    }catch(Exception ignored){}
-    return 999;
-  }
-  private String displayChannelName(String name){
-    String key=canonicalChannelName(name);
-    if(key.endsWith("卫视"))return key;
-    if(!key.startsWith("CCTV-"))return name==null?"":name;
-    String suffix=key.substring(5);
-    // CCTV-5+ is a separate sports-events channel. Dropping "+" produced two
-    // visibly identical "CCTV-5 体育" rows in the live channel selector.
-    if("5+".equals(suffix))return "CCTV-5+ 体育赛事";
-    String[] titles={"","综合","财经","综艺","中文国际","体育","电影","国防军事","电视剧","纪录","科教","戏曲","社会与法","新闻","少儿","音乐","奥林匹克","农业农村"};
-    try{
-      if(suffix.matches("\\d{1,2}\\+?")){
-        int n=Integer.parseInt(suffix.replace("+",""));
-        if(n>=1&&n<titles.length)return "CCTV-"+n+" "+titles[n];
-      }
-    }catch(Exception ignored){}
-    if(suffix.equals("NEWS"))return "CCTV-NEWS 新闻";
-    if(suffix.equals("4K"))return "CCTV-4K 超高清";
-    if(suffix.equals("8K"))return "CCTV-8K 超高清";
-    return key;
+    return ChannelNamePolicy.cctvSortOrder(key);
   }
   // Satellite channels have a stable canonical identity across different source hosts.
   // Generic/local names retain host separation to avoid merging unrelated "News" channels.
