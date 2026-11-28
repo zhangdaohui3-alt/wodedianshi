@@ -588,14 +588,24 @@ public final class RoomCatalogueWriter {
         if(position<0)return 0;
         BackupSourceEntity old=oldSources.get(selected);
         BackupSourceEntity restored=new BackupSourceEntity(item.channel.id,selected,position,old.scopesJson);
-        // Keep source scope ownership consistent with the restored relation.
+        // Remove only the displaced route's exclusive scope claims; preserve
+        // unrelated channel metadata and claims still owned by retained routes.
         final String mergedScopes;
         try{
             java.util.TreeSet<String> scopes=new java.util.TreeSet<>();
-            for(String raw:new String[]{item.channel.channelScopesJson,old.scopesJson}){
-                JSONArray array=new JSONArray(raw);
-                for(int i=0;i<array.length();i++)scopes.add(array.getString(i));
+            JSONArray prior=new JSONArray(item.channel.channelScopesJson);
+            for(int i=0;i<prior.length();i++)scopes.add(prior.getString(i));
+            if(position<item.sources.size()){
+                JSONArray displaced=new JSONArray(item.sources.get(position).scopesJson);
+                for(int i=0;i<displaced.length();i++)scopes.remove(displaced.getString(i));
+                for(int i=0;i<item.sources.size();i++){
+                    if(i==position)continue;
+                    JSONArray retained=new JSONArray(item.sources.get(i).scopesJson);
+                    for(int j=0;j<retained.length();j++)scopes.add(retained.getString(j));
+                }
             }
+            JSONArray restoredScopes=new JSONArray(old.scopesJson);
+            for(int i=0;i<restoredScopes.length();i++)scopes.add(restoredScopes.getString(i));
             JSONArray merged=new JSONArray();for(String scope:scopes)merged.put(scope);
             mergedScopes=merged.toString();
         }catch(org.json.JSONException malformed){return 0;}
