@@ -155,7 +155,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private boolean libVlcAudioTrackReady;
   // Consecutive healthy checks permit low-priority discovery, not source promotion.
   private int libVlcStableChecks=0;
-  private long libVlcLastHealthClockMs;
+  private long libVlcLastHealthClockMs,libVlcLastHealthAt;
   // UI-thread epoch; a queued native observation must not cross a health reset.
   private long libVlcHealthEpoch;
   private final TrackHealthPolicy.VlcCounterProgress libVlcVideoProgress=new TrackHealthPolicy.VlcCounterProgress();
