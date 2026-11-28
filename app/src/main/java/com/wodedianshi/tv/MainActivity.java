@@ -4832,14 +4832,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     final int requestedPage=livePageIndex;
     final long filterStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","filter_start category="+categorySnapshot+" total_snapshot_pending=true generation="+generation);
-    final int previousFocusedIndex;
-    final String previousFocusedKey;
-    View focusRoot=fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()
-        ?fullscreenMenuPopup.getContentView():rootLayout;
-    View currentFocus=pageOnly||focusRoot==null?null:focusRoot.findFocus();
-    previousFocusedIndex=currentFocus!=null&&currentFocus.getTag() instanceof Integer?(Integer)currentFocus.getTag():-1;
-    Object focusedKeyTag=currentFocus==null?null:currentFocus.getTag(R.id.tag_channel_key);
-    previousFocusedKey=focusedKeyTag instanceof String?(String)focusedKeyTag:null;
     final boolean customCategory="自建频道".equals(categorySnapshot);
     // Do not walk and clone a potentially huge catalogue on the UI thread.
     // Capture only the list of references under the short catalogue lock, then
@@ -4985,7 +4977,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
           String currentSelectedKey=null;
           if(selected>=0&&selected<channels.size())currentSelectedKey=channels.get(selected).key();
           renderFilteredChannels(ready.visible,currentSelectedKey,favoriteSnapshot,customCategory,requestedPage,
-              preserveRequestedLivePageOnce,previousFocusedIndex,previousFocusedKey,ready.sourceIndexByKey);
+              preserveRequestedLivePageOnce,pageOnly,ready.sourceIndexByKey);
           if(geoScopeSnapshot!=null&&info!=null)info.setText(geoLabelSnapshot+"：已显示保存的 "+ready.visible.size()+" 个频道"+(ready.visible.isEmpty()?"；可手动更新或导入":""));
           if(menuSelectedFocusGeneration==generation){
             menuSelectedFocusGeneration=-1L;
@@ -5018,7 +5010,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private void renderFilteredChannels(ArrayList<Channel> visible,String selectedKey,Set<String> favoriteSnapshot,
       boolean customCategory,int requestedPage,boolean preserveRequestedPage,
-      int previousFocusedIndex,String previousFocusedKey,HashMap<String,Integer> sourceIndexByKey){
+      boolean pageOnly,HashMap<String,Integer> sourceIndexByKey){
+    // Capture the actual channel focus immediately before replacing the rows,
+    // not before the asynchronous filter. Paging/category controls are outside list.
+    View focused=pageOnly||!fullScreenPlayback||fullscreenMenuPopup==null
+        ||!fullscreenMenuPopup.isShowing()?null:list.findFocus();
+    Object focusKey=focused==null?null:focused.getTag(R.id.tag_channel_key);
     final long renderStartedAt=android.os.SystemClock.elapsedRealtime();
     android.util.Log.i("MyTVDirectory","render_start category="+activeCategory+" visible="+visible.size()+" page="+requestedPage);
     list.removeAllViews();
@@ -5120,31 +5117,20 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     if(pageCount>1){TextView more=new TextView(this);more.setText("共 "+visible.size()+" 个频道，当前第 "+(pageStart+1)+"–"+pageEnd+" 个。可翻页或选择页码。");more.setTextColor(Color.LTGRAY);more.setPadding(dp(8),dp(12),dp(8),dp(12));list.addView(more);}
     android.util.Log.i("MyTVDirectory","render_ready category="+activeCategory+" total_matches="+visible.size()+" rendered_buttons="+(pageEnd-pageStart)+" child_views="+list.getChildCount()+" elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-renderStartedAt));
-    final int restoreIndex=previousFocusedIndex;
-    final long focusGeneration=catalogueFilterGeneration;
-    final PopupWindow focusPopup=fullscreenMenuPopup;
-    if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()
-        &&(previousFocusedKey!=null||previousFocusedIndex>=0))list.post(()->{
-      if(!activityStarted||!fullScreenPlayback||focusPopup!=fullscreenMenuPopup
-          ||focusPopup==null||!focusPopup.isShowing()||focusGeneration!=catalogueFilterGeneration
-          ||hasLivePagingFocus())return;
-      View target=null,selectedRow=null;
-      // Resolve previous focus and selected-channel fallback in one pass.
-      // An old integer index is valid only when no stable focus key was saved.
-      int childCount=list.getChildCount();
-      for(int i=0;i<childCount;i++){
+    // Restore within this UI render, before another input can arrive.
+    if(focusKey instanceof String&&activityStarted){
+      View target=null,selectedRow=null,firstRow=null;
+      for(int i=0;i<list.getChildCount();i++){
         View child=list.getChildAt(i);
         Object keyTag=child.getTag(R.id.tag_channel_key);
-        if(previousFocusedKey!=null?previousFocusedKey.equals(keyTag)
-            :restoreIndex>=0&&child.getTag() instanceof Integer&&((Integer)child.getTag())==restoreIndex){
-          target=child;break;
-        }
+        if(!(keyTag instanceof String))continue;
+        if(firstRow==null)firstRow=child;
+        if(focusKey.equals(keyTag)){target=child;break;}
         if(selectedRow==null&&selectedKey!=null&&selectedKey.equals(keyTag))selectedRow=child;
       }
-      if(target==null)target=selectedRow;
-      if(target==null&&childCount>0)target=list.getChildAt(0);
+      if(target==null)target=selectedRow!=null?selectedRow:firstRow;
       if(target!=null)target.requestFocus();
-    });
+    }
   }
   private void requestLivePage(int target,View control){
     if(!LivePagePolicy.canRequestPage(target,livePageIndex,getCurrentLiveMatchCount(),
@@ -5212,11 +5198,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       if(key.equals(child.getTag(R.id.tag_channel_key)))return child;
     }
     return null;
-  }
-  private boolean hasLivePagingFocus(){
-    return (livePreviousPageButton!=null&&livePreviousPageButton.hasFocus())
-        ||(liveNextPageButton!=null&&liveNextPageButton.hasFocus())
-        ||(livePageStatus!=null&&livePageStatus.hasFocus());
   }
   private void focusSelectedChannelInMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
