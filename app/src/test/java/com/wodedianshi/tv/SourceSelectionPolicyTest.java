@@ -336,4 +336,22 @@ public class SourceSelectionPolicyTest {
         assertEquals(-1,SourceSelectionPolicy.findNextManualSource(Collections.singletonList("active"),0,1,blocked));
     }
 
+    @Test public void capturedAdBlockDoesNotFollowAutomaticSourceOrChannelChanges() {
+        String station="CCTV-1|cctv";
+        String ad="https://example.org/live?token=A";
+        String next="https://example.org/live?token=B";
+        String captured=SourceSelectionPolicy.channelBlockKey(station,ad);
+        java.util.Set<String> records=Collections.singleton(captured);
+        org.junit.Assert.assertFalse(captured.isEmpty());
+        org.junit.Assert.assertEquals(captured,SourceSelectionPolicy.channelBlockKey(
+                station,"https://EXAMPLE.org:443/live?token=A"));
+        org.junit.Assert.assertNotEquals(captured,SourceSelectionPolicy.channelBlockKey(station,next));
+        org.junit.Assert.assertNotEquals(captured,SourceSelectionPolicy.channelBlockKey("CCTV-2|cctv",ad));
+        org.junit.Assert.assertTrue(SourceSelectionPolicy.isUserBlocked(records,station,ad));
+        org.junit.Assert.assertFalse(SourceSelectionPolicy.isUserBlocked(records,station,next));
+        org.junit.Assert.assertFalse(SourceSelectionPolicy.isUserBlocked(records,"CCTV-2|cctv",ad));
+        assertEquals(1,SourceSelectionPolicy.findInitialSource(Arrays.asList(ad,next),ad,
+                SourceSelectionPolicy.blockedUrls(records,station,Arrays.asList(ad,next)),key->false));
+    }
+
 }
