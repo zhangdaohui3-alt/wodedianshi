@@ -336,4 +336,13 @@ public class ChannelNamePolicyTest {
         assertEquals(999,ChannelNamePolicy.cctvSortOrder("CCTV-123"));
     }
 
+    @Test public void discoveryFallbackUsesTheSameSpecialCctvIdentity() {
+        for(String label:new String[]{"CCTV-4K","CCTV-8K","CCTV-4 Asia","CCTV5Plus","CCTV-4","CCTV-5+"}){
+            String canonical=ChannelNamePolicy.canonicalBroadcasterName(label,"","","");
+            assertEquals(canonical,SourceDiscoveryIdentityPolicy.canonicalName(label));
+            assertEquals(canonical+"|cctv",SourceDiscoveryIdentityPolicy.identity(label,"","https://example.invalid/live","",""));
+        }
+        assertEquals("CCTV-1",SourceDiscoveryIdentityPolicy.canonicalName("中央电视台一套"));
+    }
+
 }
