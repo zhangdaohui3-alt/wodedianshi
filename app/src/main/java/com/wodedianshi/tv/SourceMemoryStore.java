@@ -57,14 +57,6 @@ public final class SourceMemoryStore {
         }
     }
 
-    public static String channelKey(String name, String group, String primaryUrl) {
-        return StableKey.channel(name, group, primaryUrl);
-    }
-
-    public static String legacyChannelKey(String name, String group, String primaryUrl) {
-        return StableKey.legacyChannel(name, group, primaryUrl);
-    }
-
     public static String channelIdentityKey(String identity) {
         if (identity == null || identity.isEmpty()) return "";
         return StableKey.channelIdentity(identity);
@@ -87,22 +79,11 @@ public final class SourceMemoryStore {
     }
 
     public static String getLastGood(Context context, String channelKey) {
-        return getLastGood(context, channelKey, null);
-    }
-
-    public static String getLastGood(Context context, String channelKey, String legacyChannelKey) {
-        return getLastGood(context, channelKey, null, legacyChannelKey);
-    }
-
-    public static String getLastGood(Context context, String channelKey,
-                                     String previousChannelKey, String legacyChannelKey) {
         if (context == null || channelKey == null || channelKey.isEmpty()) return null;
         synchronized (LOCK) {
             if (!initialized) return null;
             try {
                 JSONObject entry = lastGood.optJSONObject(channelKey);
-                if (entry == null && previousChannelKey != null) entry = lastGood.optJSONObject(previousChannelKey);
-                if (entry == null && legacyChannelKey != null) entry = lastGood.optJSONObject(legacyChannelKey);
                 if (entry == null) return null;
                 long age = System.currentTimeMillis() - entry.optLong("at", 0L);
                 if (age < 0L || age > LAST_GOOD_MAX_AGE_MS) return null;
