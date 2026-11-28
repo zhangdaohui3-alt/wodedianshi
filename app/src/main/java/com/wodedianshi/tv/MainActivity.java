@@ -6596,11 +6596,14 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(from<0){clearPendingRemoteSource();from=c.activeSource;}
     int next=findNextUnblockedSource(c,from,delta>=0?1:-1);
     if(next<0){toast("本频道备用源都已被屏蔽，请在换源菜单中恢复");return;}
+    final String expectedActive=currentSourceUrl();
+    String targetUrl=c.backups.get(next);
+    // Returning to the playing URL cancels the queued source change outright.
+    if(targetUrl.equals(expectedActive)){clearPendingRemoteSource();return;}
     pendingRemoteSourceChannel=c;
-    pendingRemoteSourceUrl=c.backups.get(next);
+    pendingRemoteSourceUrl=targetUrl;
     if(pendingRemoteSourceDispatch!=null)return;
     final long expectedSerial=liveTuneRequestSerial;
-    final String expectedActive=currentSourceUrl();
     pendingRemoteSourceDispatch=()->{
       String target=pendingRemoteSourceUrl;
       clearPendingRemoteSource();
