@@ -224,4 +224,69 @@ public class PreparedSnapshotParityTest {
         assertSame(firstRow,publishedRows.get(0));
         assertSame(secondRow,publishedRows.get(1));
     }
+
+    @Test
+    @org.robolectric.annotation.LooperMode(org.robolectric.annotation.LooperMode.Mode.PAUSED)
+    public void oppositeRemoteKeysCancelActualActivityRequests() throws Exception {
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();
+        Class<?> owner=MainActivity.class;
+        field(owner,"activityStarted").setBoolean(activity,true);
+        field(owner,"fullScreenPlayback").setBoolean(activity,true);
+        assertTrue((Boolean)method("canApplyRemoteZap").invoke(activity));
+        Class<?> channel=Class.forName("com.wodedianshi.tv.MainActivity$Channel");
+        Constructor<?> rowConstructor=channel.getDeclaredConstructor(String.class,String.class,String.class);
+        rowConstructor.setAccessible(true);
+        String primary="https://example.invalid/primary",backup="https://example.invalid/backup";
+        Object first=rowConstructor.newInstance("First",primary,"local");
+        Object second=rowConstructor.newInstance("Second","https://example.invalid/second","local");
+        @SuppressWarnings("unchecked")
+        List<String> sources=(List<String>)field(channel,"backups").get(first);
+        sources.add(backup);
+        @SuppressWarnings("unchecked")
+        List<Object> rows=(List<Object>)field(owner,"channels").get(activity);
+        rows.add(first);rows.add(second);
+        field(owner,"selected").setInt(activity,0);
+        Method stepChannel=method("stepChannel",int.class);
+        Method stepSource=method("stepSource",int.class);
+        Field channelDispatch=field(owner,"pendingRemoteZapDispatch");
+        Field channelSteps=field(owner,"pendingRemoteZapSteps");
+        Field channelGeneration=field(owner,"pendingRemoteZapGeneration");
+        Field sourceDispatch=field(owner,"pendingRemoteSourceDispatch");
+        Field sourceTarget=field(owner,"pendingRemoteSourceUrl");
+        Field sourceChannel=field(owner,"pendingRemoteSourceChannel");
+        // No directory UI is attached, so a cache miss cannot publish an order.
+        stepChannel.invoke(activity,1);
+        assertEquals(1,channelSteps.getInt(activity));
+        assertNull(channelDispatch.get(activity));
+        stepChannel.invoke(activity,-1);
+        assertEquals(0,channelSteps.getInt(activity));
+        assertEquals(-1L,channelGeneration.getLong(activity));
+
+        // A published order must also cancel its already queued callback.
+        Class<?> order=Class.forName("com.wodedianshi.tv.MainActivity$RemoteChannelOrder");
+        Constructor<?> orderConstructor=order.getDeclaredConstructor(String.class,ArrayList.class,ArrayList.class);
+        orderConstructor.setAccessible(true);
+        String orderKey=(String)method("currentDirectoryOrderKey").invoke(activity);
+        field(owner,"cachedRemoteChannelOrder").set(activity,orderConstructor.newInstance(orderKey,
+            new ArrayList<>(Arrays.asList(0,1)),new ArrayList<>(rows)));
+        stepChannel.invoke(activity,1);
+        assertNotNull(channelDispatch.get(activity));
+        stepChannel.invoke(activity,-1);
+        assertNull(channelDispatch.get(activity));
+        assertEquals(0,channelSteps.getInt(activity));
+        assertEquals(-1L,channelGeneration.getLong(activity));
+
+        stepSource.invoke(activity,1);
+        assertEquals(backup,sourceTarget.get(activity));
+        assertSame(first,sourceChannel.get(activity));
+        assertNotNull(sourceDispatch.get(activity));
+        stepSource.invoke(activity,-1);
+        assertNull(sourceDispatch.get(activity));
+        assertNull(sourceTarget.get(activity));
+        assertNull(sourceChannel.get(activity));
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(160L,java.util.concurrent.TimeUnit.MILLISECONDS);
+        assertEquals(0,field(owner,"selected").getInt(activity));
+        assertEquals(0,field(channel,"activeSource").getInt(first));
+    }
 }
