@@ -56,4 +56,21 @@ public class SourceMaintenanceRetentionPolicyTest {
             SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(old,
             "https://new.test/live",2,BEST_FIRST,old.get(0),old.get(0),Collections.emptySet()));
     }
+    @Test public void equivalentCandidateNeverTriggersRetirementScoring(){
+        List<String> old=Arrays.asList("https://primary.test/live","https://weak.test/live");
+        assertEquals(old,SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(old,
+            "https://PRIMARY.test:443/live",2,
+            (a,b)->{throw new AssertionError("Existing endpoint needs no retirement scoring");},
+            old.get(0),old.get(0),Collections.singleton(SourceSelectionPolicy.endpointKey(old.get(1)))));
+    }
+
+    @Test public void appendAtCapacityPreservesSelectedAliasWithoutRetirement(){
+        String active="https://PRIMARY.test:443/live";
+        List<String> old=Arrays.asList("https://primary.test/live",active);
+        assertEquals(Arrays.asList(active,"https://new.test/live"),
+            SourceMaintenanceRetentionPolicy.retainDuringRoutineUpdate(old,"https://new.test/live",2,
+                (a,b)->{throw new AssertionError("Appending needs no retirement scoring");},
+                old.get(0),active,Collections.emptySet()));
+    }
+
 }
