@@ -397,4 +397,18 @@ public class SourceProbeTimePolicyTest {
             262144L,524288L,262144L,"\"same\"","location"));
     }
 
+    @Test public void knownFullDirectoryAdmissionRespectsRateAndRemainingBudget(){
+        long mib=1024L*1024L;
+        assertTrue(SourceProbeTimePolicy.admitsLiveFullDirectory(8*mib,"identity",300000L,32768L));
+        assertFalse(SourceProbeTimePolicy.admitsLiveFullDirectory(8*mib,"identity",300000L,16384L));
+        assertTrue(SourceProbeTimePolicy.admitsLiveFullDirectory(4*mib,null,300000L,16384L));
+        assertFalse(SourceProbeTimePolicy.admitsLiveFullDirectory(4*mib,null,256000L,16384L));
+        assertTrue(SourceProbeTimePolicy.admitsLiveFullDirectory(4*mib,null,256001L,16384L));
+        assertFalse(SourceProbeTimePolicy.admitsLiveFullDirectory(8*mib,null,200000L,49152L));
+        assertFalse(SourceProbeTimePolicy.admitsLiveFullDirectory(Long.MAX_VALUE,null,300000L,32768L));
+        assertTrue(SourceProbeTimePolicy.admitsLiveFullDirectory(-1L,null,1000L,16384L));
+        assertTrue(SourceProbeTimePolicy.admitsLiveFullDirectory(8*mib,"gzip",1000L,16384L));
+        assertFalse(SourceProbeTimePolicy.admitsLiveFullDirectory(-1L,null,0L,32768L));
+    }
+
 }
