@@ -39,6 +39,12 @@ public final class TrackHealthPolicy {
         return warningAt==0L||(warningAt>0L&&now>=warningAt&&now-warningAt>=30000L);
     }
 
+    /** A normal VLC observation follows the 12s poll plus at most 8s
+     * native query budget. A longer gap cannot extend the old health epoch. */
+    static boolean vlcHealthIntervalFresh(long previousAt,long now){
+        return previousAt>0L&&now>previousAt&&now-previousAt<=20000L;
+    }
+
     /** An advancing engine clock strengthens the discovery gate, but is not
      * proof of physical output. Unknown, reset or stationary clocks yield. */
     static boolean vlcClockAdvanced(long previousMs,long currentMs) {
