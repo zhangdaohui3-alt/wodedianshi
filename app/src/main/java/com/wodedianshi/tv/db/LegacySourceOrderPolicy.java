@@ -24,25 +24,19 @@ public final class LegacySourceOrderPolicy {
 
     public static Result normalize(List<String> legacySources, String primaryUrl,
             int requestedActiveIndex) {
-        ArrayList<String> original = new ArrayList<>();
-        if (legacySources != null) original.addAll(legacySources);
-
-        if (original.isEmpty() && isUsable(primaryUrl)) original.add(primaryUrl);
-
-        String activeUrl = requestedActiveIndex >= 0 && requestedActiveIndex < original.size()
-                ? original.get(requestedActiveIndex) : primaryUrl;
-
-        // Some old catalogues kept the primary URL separately and omitted it
-        // from the optional backup array. It remains a valid source in Room.
-        if (isUsable(primaryUrl) && !original.contains(primaryUrl)) {
-            original.add(primaryUrl);
-        }
+        String activeUrl = legacySources != null && requestedActiveIndex >= 0
+                && requestedActiveIndex < legacySources.size()
+                ? legacySources.get(requestedActiveIndex) : primaryUrl;
 
         LinkedHashSet<String> unique = new LinkedHashSet<>();
-        for (String url : original) {
-            if (isUsable(url)) unique.add(url);
+        if (legacySources != null) {
+            for (String url : legacySources) {
+                if (isUsable(url)) unique.add(url);
+            }
         }
-        if (unique.isEmpty() && isUsable(primaryUrl)) unique.add(primaryUrl);
+        // Append a separately stored primary once, without copying or scanning
+        // the original list. LinkedHashSet preserves the ranked order.
+        if (isUsable(primaryUrl)) unique.add(primaryUrl);
 
         ArrayList<String> ordered = new ArrayList<>(unique);
         int activeIndex = isUsable(activeUrl) ? ordered.indexOf(activeUrl) : -1;
