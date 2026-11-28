@@ -285,19 +285,16 @@ public final class RoomCatalogueWriter {
             // Capture favorites before stale channel rows are deleted. A full rebuild
             // may change the primary URL, but verified TVG ids, national broadcaster
             // names, or a local channel's same host/category preserve its identity.
-            List<ChannelWithSources> previousFavorites = favoriteKeys==null
-                    ?dao.getFavoriteChannels():java.util.Collections.emptyList();
+            List<ChannelDao.FavoriteIdentity> previousFavorites = favoriteKeys==null
+                    ?dao.getFavoriteIdentities():java.util.Collections.emptyList();
             HashMap<String, Long> previousFavoriteTimes = new HashMap<>();
             HashSet<String> ambiguousPreviousFavorites = new HashSet<>();
-            for (ChannelWithSources favorite : previousFavorites) {
+            for (ChannelDao.FavoriteIdentity old : previousFavorites) {
                 checkPause(paused);
-                if (favorite == null || favorite.channel == null) continue;
-                ChannelEntity old = favorite.channel;
                 String oldUrl = legacyPrimaryUrl(old.legacyKey, old.name, old.primaryUrl);
                 String stableKey = LegacyChannelIdPolicy.stableIdentityKey(
                         old.name, oldUrl, old.tvgId, old.groupName, old.tvgName);
-                Long addedAt = dao.getFavoriteAddedAt(old.id);
-                long timestamp = addedAt == null ? System.currentTimeMillis() : addedAt;
+                long timestamp = old.addedAt;
                 if (previousFavoriteTimes.containsKey(stableKey)) {
                     previousFavoriteTimes.remove(stableKey);
                     ambiguousPreviousFavorites.add(stableKey);
