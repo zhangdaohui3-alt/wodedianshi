@@ -2,7 +2,6 @@ package com.wodedianshi.tv;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 
 /** Adds a shared endpoint to a channel without losing its required or better sources. */
@@ -39,21 +38,19 @@ public final class SourceChannelMergePolicy {
                 }
             }
         }
-        HashSet<String> endpoints = new HashSet<>(endpointIndexes.keySet());
         if (!isHttpUrl(candidate)) return result;
         String candidateKey = SourceSelectionPolicy.endpointKey(candidate);
-        if (endpoints.contains(candidateKey)) return result;
+        if (endpointIndexes.containsKey(candidateKey)) return result;
         if (result.size() < limit) {
             result.add(candidate);
             return result;
         }
         if (bestFirst == null || result.isEmpty()) return result;
-        String primaryKey = SourceSelectionPolicy.endpointKey(primaryUrl);
-        String activeKey = SourceSelectionPolicy.endpointKey(activeUrl);
+        Integer primaryIndex = endpointIndexes.get(SourceSelectionPolicy.endpointKey(primaryUrl));
+        Integer activeIndex = endpointIndexes.get(SourceSelectionPolicy.endpointKey(activeUrl));
         int worstIndex = -1;
         for (int i = 0; i < result.size(); i++) {
-            String existingKey = SourceSelectionPolicy.endpointKey(result.get(i));
-            if (existingKey.equals(primaryKey) || existingKey.equals(activeKey)) continue;
+            if (java.util.Objects.equals(primaryIndex,i)||java.util.Objects.equals(activeIndex,i)) continue;
             if (worstIndex < 0
                     || bestFirst.compare(result.get(i), result.get(worstIndex)) > 0) {
                 worstIndex = i;
