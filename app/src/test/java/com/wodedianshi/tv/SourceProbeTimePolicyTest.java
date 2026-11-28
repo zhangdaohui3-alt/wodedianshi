@@ -263,6 +263,16 @@ public class SourceProbeTimePolicyTest {
         assertFalse(SourceProbeTimePolicy.latchPause(viewing::get).getAsBoolean());
     }
 
+    @Test public void latchedPauseDoesNotResampleCancellationConditions() {
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.BooleanSupplier pause = SourceProbeTimePolicy.latchPause(
+            () -> checks.incrementAndGet() == 2);
+        assertFalse(pause.getAsBoolean());
+        assertTrue(pause.getAsBoolean());
+        for(int i=0;i<20;i++)assertTrue(pause.getAsBoolean());
+        assertEquals(2,checks.get());
+    }
+
     @Test public void shortPlaybackStartIsVisibleEvenBetweenProbeChecks() {
         SourceUpdateActivityPolicy.setPlaybackActive(false);
         long start = SourceUpdateActivityPolicy.playbackStartGeneration();
