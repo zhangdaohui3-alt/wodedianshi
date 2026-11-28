@@ -180,7 +180,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   private TextView fullscreenActionsButton;
   private LinearLayout categoryMenuItems;
   private Button fullscreenAspectMenuItem;
-  private Runnable hideFullscreenControls;
+  private final Runnable hideFullscreenControls=()->{if(!this.fullscreenControlGesture)hideFullscreenControlsNow();};
   private boolean fullscreenControlsVisible=false;
   private boolean fullscreenControlGesture;
   private long lastChannelZapKeyAt=0L;
@@ -1524,7 +1524,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
               &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
               &&(fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())&&hitsButton){
             fullscreenControlGesture=true;
-            if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
+            uiHandler.removeCallbacks(hideFullscreenControls);
           }
           ownsVideoGesture=fullScreenPlayback&&activityStarted&&currentVodPanel==null
               &&!isAnyPlaybackLockActive()&&!fullscreenRemoteDialogOpen
@@ -5753,7 +5753,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
   }
   private void clearLiveOverlayCallbacks(){
-    if(hideFullscreenControls!=null){uiHandler.removeCallbacks(hideFullscreenControls);hideFullscreenControls=null;}
+    uiHandler.removeCallbacks(hideFullscreenControls);
     if(hideChannelZapOverlay!=null){uiHandler.removeCallbacks(hideChannelZapOverlay);hideChannelZapOverlay=null;}
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
     for(TextView control:new TextView[]{fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton}){
@@ -5772,9 +5772,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     scheduleFullscreenControlsHide();
   }
   private void scheduleFullscreenControlsHide(){
-    if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
+    uiHandler.removeCallbacks(hideFullscreenControls);
     if(fullscreenControlGesture||!fullScreenPlayback||!fullscreenControlsVisible)return;
-    hideFullscreenControls=()->{if(!fullscreenControlGesture)hideFullscreenControlsNow();};
     uiHandler.postDelayed(hideFullscreenControls,3500);
   }
   private void hideFullscreenControlsNow(){
@@ -5782,7 +5781,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     fullscreenControlsVisible=false;fullscreenControlGesture=false;
     TextView[] controls={fullscreenMenuButton,fullscreenSourceButton,fullscreenFavoriteButton,fullscreenActionsButton};
     for(TextView control:controls){control.animate().cancel();control.animate().alpha(0f).setDuration(220).withEndAction(()->{if(!fullscreenControlsVisible&&fullScreenPlayback)control.setVisibility(View.GONE);}).start();}
-    if(hideFullscreenControls!=null)uiHandler.removeCallbacks(hideFullscreenControls);
+    uiHandler.removeCallbacks(hideFullscreenControls);
   }
   private boolean isCurrentLiveFavorite(){return selected>=0&&selected<channels.size()&&favorites.contains(channels.get(selected).key());}
   // Single Set calls are synchronized, but contains + toggle must be atomic
