@@ -521,16 +521,10 @@ public class SourceUpdateWorker extends Worker {
                 .remove(initialFeedFailureReasonKey(feed))
                 .remove(initialFeedDisplayLabelKey(feed));
           }
-          resetBuildState.remove("source_feed_batch_fingerprint")
-              .remove("source_feed_batch_scanned")
-              .remove("source_initial_feed_batch_fingerprint")
-              .remove("source_initial_feed_batch_scanned")
-              .remove("source_scan_after_key").remove("source_scan_cursor")
+          resetBuildState.remove("source_scan_after_key").remove("source_scan_cursor")
               .remove("source_saved_scan_after_key").remove("source_saved_scan_cursor")
               .remove("source_initial_has_validated_source")
               .remove(FullDiscoveryProgressPolicy.FRESH_COVERAGE_KEY)
-              .remove("source_initial_discovery_fingerprint")
-              .remove("source_initial_discovery_scanned")
               .remove(FullDiscoveryProgressPolicy.THROUGHPUT_STATUS_KEY)
               .putLong(FullDiscoveryProgressPolicy.INITIAL_BUILD_STARTED_AT_KEY,System.currentTimeMillis())
               .putInt(FullDiscoveryProgressPolicy.PREVIEW_LEVEL_KEY,0)
@@ -1263,27 +1257,18 @@ public class SourceUpdateWorker extends Worker {
         appendFingerprintPart(batchIdentity,Integer.toString(batch.cursor));
       }
       String discoveryFingerprint=CatalogueFingerprint.sha256(batchIdentity.toString());
-      ArrayList<String> batchStateKeys=new ArrayList<>(7);
+      ArrayList<String> batchStateKeys=new ArrayList<>(5);
       batchStateKeys.add(batchPrefix+"fingerprint");
       batchStateKeys.add(batchPrefix+"scanned");
       if(initialDiscoveryChain&&pageFeed>=0){
         Collections.addAll(batchStateKeys,batchPrefix+"coverage_order",
             DiscoveryBatchPolicy.initialTransientRecheckKey(pageFeed),
-            DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed),
-            "source_initial_feed_batch_fingerprint","source_initial_feed_batch_scanned");
+            DiscoveryBatchPolicy.initialReplayMaskKey(pageFeed));
       }
       Map<String,String> batchState=com.wodedianshi.tv.db.AppStateStore.getValues(
           getApplicationContext(),batchStateKeys);
       String previousDiscoveryFingerprint=batchState.getOrDefault(batchPrefix+"fingerprint","");
       int previousScanned=stateInt(batchState,batchPrefix+"scanned",0);
-      // An upgrade may have one committed legacy page. Migrate only if the
-      // full page fingerprint matches (including feed, version and cursor).
-      if(initialDiscoveryChain&&pageFeed>=0&&previousDiscoveryFingerprint.isEmpty()
-          &&discoveryFingerprint.equals(batchState.getOrDefault("source_initial_feed_batch_fingerprint",""))){
-        previousDiscoveryFingerprint=discoveryFingerprint;
-        previousScanned=stateInt(batchState,"source_initial_feed_batch_scanned",0);
-        update.remove("source_initial_feed_batch_fingerprint").remove("source_initial_feed_batch_scanned");
-      }
       // Coverage ordering uses only the committed staging at the start of a
       // new page. Store the mask beside the existing fingerprint/cursor so
       // playback, restart and exact replay cannot change positional identity.
@@ -2146,8 +2131,7 @@ public class SourceUpdateWorker extends Worker {
           update.putString("source_initial_progress_phase",
               "目录已发布，核心中国频道覆盖不足，待空闲或手动补查");
         }
-        update.remove("source_initial_discovery_fingerprint").remove("source_initial_discovery_scanned")
-            .remove("source_initial_has_validated_source")
+        update.remove("source_initial_has_validated_source")
             .remove("source_full_rebuild_active");
         if(saved.length()>0){
           long completedAt=System.currentTimeMillis();
@@ -2217,12 +2201,6 @@ public class SourceUpdateWorker extends Worker {
             .remove("source_full_rebuild_active")
             .remove("source_full_rebuild_feed_fingerprint")
             .remove("source_initial_has_validated_source")
-            .remove("source_initial_discovery_fingerprint")
-            .remove("source_initial_discovery_scanned")
-            .remove("source_feed_batch_fingerprint")
-            .remove("source_feed_batch_scanned")
-            .remove("source_initial_feed_batch_fingerprint")
-            .remove("source_initial_feed_batch_scanned")
             .putInt("source_initial_next_feed_index",0)
               .remove(SourceDiscoveryPriorityPolicy.ACQUISITION_YIELD_KEY)
             .putInt("source_initial_progress_percent",0)
