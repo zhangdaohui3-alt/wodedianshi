@@ -6531,14 +6531,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
   }
   private int findNextUnblockedSource(Channel c,int from,int direction){
     if(c==null||c.backups==null||c.backups.size()<2)return -1;
-    // Manual selection remains unrestricted except for sources explicitly blocked by the user.
-    Set<String> blocked=blockedSourceUrls(c);
-    for(int step=1;step<c.backups.size();step++){
-      int ix=(from+direction*step)%c.backups.size();
-      if(ix<0)ix+=c.backups.size();
-      if(!blocked.contains(c.backups.get(ix)))return ix;
-    }
-    return -1;
+    return SourceSelectionPolicy.findNextManualSource(c.backups,from,direction,blockedSourceUrls(c));
   }
   private int findNextAutomaticSource(Channel c,int from){
     if(c==null||c.backups==null||c.backups.size()<2)return -1;
@@ -7366,9 +7359,10 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       return;
     }
     if(c.activeSource<0||c.activeSource>=c.backups.size())c.activeSource=0;
-    if(isSourceBlocked(c,c.backups.get(c.activeSource))){
+    String requestedUrl=c.backups.get(c.activeSource);
+    if(!SourceSelectionPolicy.hasSourceAddress(requestedUrl)||isSourceBlocked(c,requestedUrl)){
       int next=findNextUnblockedSource(c,c.activeSource,1);
-      if(next<0){stopFailedLiveSession("本频道线路已屏蔽，请在换源菜单中恢复");return;}
+      if(next<0){stopFailedLiveSession("本频道没有有效的未屏蔽线路，请在换源菜单中检查");return;}
       c.activeSource=next;
     }
     cancelBufferingFallback();
