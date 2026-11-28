@@ -1,6 +1,8 @@
 package com.wodedianshi.tv;
 
 import java.net.URI;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -23,31 +25,56 @@ public final class SourceSelectionPolicy {
      */
     public static int findNext(List<String> sources, int currentIndex,
                                Set<String> blocked, Set<String> coolingDown) {
+        return findNextByEndpoint(sources,currentIndex,blocked,Collections.emptySet(),
+                endpointKeys(coolingDown)::contains);
+    }
+
+    /** Check cooldown only for an eligible endpoint, stopping at the first healthy route. */
+    static int findNextByEndpoint(List<String> sources,int currentIndex,Set<String> blocked,
+            Set<String> failedEndpoints,java.util.function.Predicate<String> coolingDown) {
         if (sources == null || sources.size() < 2) return -1;
-        int fallback = -1;
         int size = sources.size();
         int start = wrapIndex(currentIndex, size);
-        String activeUrl = sources.get(start);
-        String activeKey = endpointKey(activeUrl);
-        for (int step = 1; step < size; step++) {
-            int index = (start + step) % size;
+        return findEligible(sources,(start+1)%size,size-1,endpointKey(sources.get(start)),
+                endpointKeys(blocked),failedEndpoints,coolingDown);
+    }
+
+    /** Prefer proven playback memory; otherwise start at the best ranked healthy route. */
+    static int findInitialSource(List<String> ranked,String remembered,Set<String> blocked,
+            java.util.function.Predicate<String> coolingDown) {
+        if(ranked==null||ranked.isEmpty())return -1;
+        Set<String> blockedKeys=endpointKeys(blocked);
+        int preferred=findEquivalentSource(ranked,remembered);
+        if(preferred>=0){
+            String key=endpointKey(ranked.get(preferred));
+            if(!blockedKeys.contains(key)&&!coolingDown.test(key))return preferred;
+        }
+        return findEligible(ranked,0,ranked.size(),null,blockedKeys,
+                Collections.emptySet(),coolingDown);
+    }
+
+    private static int findEligible(List<String> sources,int start,int count,String activeKey,
+            Set<String> blockedKeys,Set<String> failedEndpoints,
+            java.util.function.Predicate<String> coolingDown) {
+        int fallback=-1;
+        int size=sources.size();
+        for(int step=0;step<count;step++){
+            int index=(start+step)%size;
             String url = sources.get(index);
-            if (url == null || url.trim().isEmpty()
-                    || endpointKey(url).equals(activeKey)
-                    || containsEquivalent(blocked, url)) continue;
+            if (url == null || url.trim().isEmpty()) continue;
+            String key = endpointKey(url);
+            if (key.equals(activeKey) || blockedKeys.contains(key) || failedEndpoints.contains(key)) continue;
             if (fallback < 0) fallback = index;
-            if (!containsEquivalent(coolingDown, url)) return index;
+            if (!coolingDown.test(key)) return index;
         }
         return fallback;
     }
 
-    private static boolean containsEquivalent(Set<String> values, String candidate) {
-        if (values == null || values.isEmpty()) return false;
-        String key = endpointKey(candidate);
-        for (String value : values) {
-            if (endpointKey(value).equals(key)) return true;
-        }
-        return false;
+    private static Set<String> endpointKeys(Set<String> values) {
+        if (values == null || values.isEmpty()) return Collections.emptySet();
+        Set<String> keys = new HashSet<>();
+        for (String value : values) keys.add(endpointKey(value));
+        return keys;
     }
 
     /**
@@ -83,31 +110,103 @@ public final class SourceSelectionPolicy {
         }
     }
 
+    /** Explicit user feedback concerns this station/endpoint association, not
+     * the endpoint's transport quality or another station's use of the URL. */
+    static String channelBlockKey(String identity,String url) {
+        return blockKeyForPrefix(channelBlockPrefix(identity),url);
+    }
+
+    private static String channelBlockPrefix(String identity) {
+        return identity==null||identity.isEmpty()?"":"station:"+StableKey.channelIdentity(identity)+":";
+    }
+
+    private static String blockKeyForPrefix(String prefix,String url) {
+        if(prefix.isEmpty()||url==null||url.trim().isEmpty())return "";
+        return prefix+StableKey.url(endpointKey(url));
+    }
+
+    static boolean isUserBlocked(Set<String> records,String identity,String url) {
+        if(records==null||records.isEmpty()||url==null||url.isEmpty())return false;
+        return matchesBlock(records,channelBlockPrefix(identity),url);
+    }
+
+    private static boolean matchesBlock(Set<String> records,String prefix,String url) {
+        if(url==null||url.isEmpty())return false;
+        // Preserve old explicit URL blocks without expanding them to other aliases.
+        if(records.contains(url))return true;
+        String key=blockKeyForPrefix(prefix,url);
+        return !key.isEmpty()&&records.contains(key);
+    }
+
+    static Set<String> blockedUrls(Set<String> records,String identity,List<String> sources) {
+        Set<String> result=new java.util.HashSet<>();
+        if(records==null||records.isEmpty()||sources==null||sources.isEmpty())return result;
+        String prefix=channelBlockPrefix(identity);
+        for(String url:sources)if(matchesBlock(records,prefix,url))result.add(url);
+        return result;
+    }
+
+    /** A stale menu must not modify another channel or silently select a changed URL. */
+    public static int resolveManualSelection(Object menuChannel, Object selectedChannel,
+            List<String> currentSources, String requestedUrl) {
+        if (menuChannel == null || menuChannel != selectedChannel || currentSources == null
+                || requestedUrl == null || requestedUrl.trim().isEmpty()) return -1;
+        return currentSources.indexOf(requestedUrl);
+    }
+
+    /** A delayed manual request belongs to the same channel and playback
+     * generation. Resolve by exact URL, never reuse a stale list position. */
+    static int resolveQueuedManualSelection(Object expectedChannel,Object currentChannel,
+            long expectedSerial,long currentSerial,List<String> sources,
+            String expectedActive,String currentActive,String target,Set<String> blocked) {
+        if(expectedSerial!=currentSerial||expectedActive==null
+                ||!expectedActive.equals(currentActive)||expectedActive.equals(target)
+                ||(blocked!=null&&blocked.contains(target)))return -1;
+        return resolveManualSelection(expectedChannel,currentChannel,sources,target);
+    }
+
+    /** Finds a remembered URL in the current list without rewriting its signed path/query. */
+    public static int findEquivalentSource(List<String> sources, String rememberedUrl) {
+        if (sources == null || sources.isEmpty() || rememberedUrl == null || rememberedUrl.trim().isEmpty()) return -1;
+        String rememberedKey = endpointKey(rememberedUrl);
+        for (int i = 0; i < sources.size(); i++) {
+            if (rememberedKey.equals(endpointKey(sources.get(i)))) return i;
+        }
+        return -1;
+    }
+
     /**
      * Resumes a rotating scan after the last URL identity rather than relying only
      * on a list index. This keeps progress stable when a playlist inserts or removes
      * entries between scheduled runs.
      */
     public static int nextScanStart(List<String> urls, String lastScannedKey, int fallbackIndex) {
-        if (urls == null || urls.isEmpty()) return -1;
+        return urls == null ? -1 : nextScanStart(urls.size(), urls::get, lastScannedKey, fallbackIndex);
+    }
+
+    /** Reverse search preserves the last-occurrence rule and avoids hashing
+     * earlier entries once the exact persisted cursor has been located. */
+    static int nextScanStart(int size, java.util.function.IntFunction<String> urlAt,
+                             String lastScannedKey, int fallbackIndex) {
+        if (size <= 0) return -1;
         if (lastScannedKey != null && !lastScannedKey.isEmpty()) {
-            // Choose the last occurrence: duplicate feed entries for one URL should
-            // not make the scanner repeatedly restart before the same endpoint.
-            int lastMatch = -1;
-            for (int i = 0; i < urls.size(); i++) {
-                if (StableKey.url(urls.get(i)).equals(lastScannedKey)) lastMatch = i;
+            for (int i = size - 1; i >= 0; i--) {
+                if (StableKey.url(urlAt.apply(i)).equals(lastScannedKey)) return (i + 1) % size;
             }
-            if (lastMatch >= 0) return (lastMatch + 1) % urls.size();
         }
-        return wrapIndex(fallbackIndex, urls.size());
+        return wrapIndex(fallbackIndex, size);
     }
 
     /** Returns the stable key of the last item consumed by a scan window. */
     public static String lastScannedKey(List<String> urls, int startIndex, int scannedCount) {
-        if (urls == null || urls.isEmpty() || scannedCount <= 0) return "";
-        int start = wrapIndex(startIndex, urls.size());
-        if (start < 0) return "";
-        int last = (start + scannedCount - 1) % urls.size();
-        return StableKey.url(urls.get(last));
+        return urls == null ? "" : lastScannedKey(urls.size(), urls::get, startIndex, scannedCount);
+    }
+
+    static String lastScannedKey(int size, java.util.function.IntFunction<String> urlAt,
+                                 int startIndex, int scannedCount) {
+        if (size <= 0 || scannedCount <= 0) return "";
+        int start = wrapIndex(startIndex, size);
+        int last = (int)(((long)start + scannedCount - 1) % size);
+        return StableKey.url(urlAt.apply(last));
     }
 }
