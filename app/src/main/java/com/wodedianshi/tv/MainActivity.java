@@ -5126,7 +5126,8 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     if(fullScreenPlayback&&fullscreenMenuPopup!=null&&fullscreenMenuPopup.isShowing()
         &&(previousFocusedKey!=null||previousFocusedIndex>=0))list.post(()->{
       if(!activityStarted||!fullScreenPlayback||focusPopup!=fullscreenMenuPopup
-          ||focusPopup==null||!focusPopup.isShowing()||focusGeneration!=catalogueFilterGeneration)return;
+          ||focusPopup==null||!focusPopup.isShowing()||focusGeneration!=catalogueFilterGeneration
+          ||hasLivePagingFocus())return;
       View target=null,selectedRow=null;
       // Resolve previous focus and selected-channel fallback in one pass.
       // An old integer index is valid only when no stable focus key was saved.
@@ -5212,18 +5213,26 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
     return null;
   }
+  private boolean hasLivePagingFocus(){
+    return (livePreviousPageButton!=null&&livePreviousPageButton.hasFocus())
+        ||(liveNextPageButton!=null&&liveNextPageButton.hasFocus())
+        ||(livePageStatus!=null&&livePageStatus.hasFocus());
+  }
   private void focusSelectedChannelInMenu(){
     if(!fullScreenPlayback||fullscreenMenuPopup==null||!fullscreenMenuPopup.isShowing())return;
     final PopupWindow expectedPopup=fullscreenMenuPopup;
+    final long expectedGeneration=catalogueFilterGeneration;
     channelPane.post(()->{
-      if(!activityStarted||!fullScreenPlayback||expectedPopup!=fullscreenMenuPopup||!expectedPopup.isShowing())return;
+      if(!activityStarted||!fullScreenPlayback||expectedPopup!=fullscreenMenuPopup||!expectedPopup.isShowing()
+          ||expectedGeneration!=catalogueFilterGeneration)return;
       View target=findChannelRow(selected);
       if(target==null&&list.getChildCount()>0)target=list.getChildAt(0);
       if(target==null)return;
       final View focusTarget=target;
       channelScroll.post(()->{
         if(!activityStarted||!fullScreenPlayback||expectedPopup!=fullscreenMenuPopup
-            ||!expectedPopup.isShowing()||focusTarget.getParent()!=list)return;
+            ||!expectedPopup.isShowing()||focusTarget.getParent()!=list
+            ||expectedGeneration!=catalogueFilterGeneration)return;
         channelScroll.scrollTo(0,Math.max(0,focusTarget.getTop()-dp(72)));
         focusTarget.requestFocus();
       });
