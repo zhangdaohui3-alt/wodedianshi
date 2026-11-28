@@ -662,4 +662,46 @@ public class RoomPublicationIntegrationTest {
             assertEquals(version,RoomCatalogueReader.read(context).catalogueVersion);
         });
     }
+    @Test public void sourceMemoryRetriesBothDirtyKeysAfterFailedCheckpoint()throws Exception {
+        isolated(context->{
+            final String good="source_last_good_v1",cooldown="source_cooldowns_v1";
+            final String station="station-test";
+            final String older="https://example.invalid/older";
+            final String newer="https://example.invalid/newer";
+            final String failed="https://example.invalid/failed";
+            com.wodedianshi.tv.SourceMemoryStore.initialize(context);
+            AppDatabase db=RoomDatabaseProvider.get(context);
+            db.getOpenHelper().getWritableDatabase().execSQL(
+                "CREATE TRIGGER fail_memory BEFORE INSERT ON app_state "
+                +"WHEN NEW.`key` = 'source_cooldowns_v1' "
+                +"BEGIN SELECT RAISE(ABORT, 'injected memory checkpoint failure'); END");
+            Field writerField=com.wodedianshi.tv.SourceMemoryStore.class.getDeclaredField("WRITER");
+            writerField.setAccessible(true);
+            ExecutorService writer=(ExecutorService)writerField.get(null);
+            java.util.concurrent.CountDownLatch release=new java.util.concurrent.CountDownLatch(1);
+            writer.submit(()->{release.await();return null;});
+            try {
+                com.wodedianshi.tv.SourceMemoryStore.saveLastGood(context,station,older);
+                com.wodedianshi.tv.SourceMemoryStore.coolDown(context,failed,600000L);
+                com.wodedianshi.tv.SourceMemoryStore.saveLastGood(context,station,newer);
+            } finally {
+                release.countDown();
+            }
+            writer.submit(()->{}).get(30,TimeUnit.SECONDS);
+            assertNull(db.appStateDao().getValue(good));
+            assertNull(db.appStateDao().getValue(cooldown));
+            assertEquals(newer,com.wodedianshi.tv.SourceMemoryStore.getLastGood(context,station));
+            assertTrue(com.wodedianshi.tv.SourceMemoryStore.isCoolingDown(context,failed));
+            db.getOpenHelper().getWritableDatabase().execSQL("DROP TRIGGER fail_memory");
+            // Only a cooldown update occurs. The failed good-route key must also retry.
+            com.wodedianshi.tv.SourceMemoryStore.coolDown(context,failed,600000L);
+            writer.submit(()->{}).get(30,TimeUnit.SECONDS);
+            JSONObject persistedGood=new JSONObject(db.appStateDao().getValue(good));
+            assertEquals(newer,persistedGood.getJSONObject(station).getString("url"));
+            JSONObject persistedCooldown=new JSONObject(db.appStateDao().getValue(cooldown));
+            assertEquals(1,persistedCooldown.length());
+            assertTrue(persistedCooldown.getLong(persistedCooldown.keys().next())>System.currentTimeMillis());
+        });
+    }
+
 }
