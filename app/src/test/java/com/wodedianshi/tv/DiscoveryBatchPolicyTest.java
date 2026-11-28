@@ -324,6 +324,16 @@ public class DiscoveryBatchPolicyTest {
         assertTrue(DiscoveryBatchPolicy.permitsRollingInitial(true,false,false,513,-1));
     }
 
+    @Test public void replayAliasesInspectEachEndpointAtMostOnceAndSkipEmptyMask(){
+        java.util.List<String> rows=java.util.Arrays.asList("slow","ok","slow","other","other");
+        java.util.concurrent.atomic.AtomicInteger reads=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Function<String,String> endpoint=row->{reads.incrementAndGet();return row;};
+        assertEquals(0L,DiscoveryBatchPolicy.includeReplayAliases(0L,rows,endpoint));
+        assertEquals(0,reads.get());
+        assertEquals(29L,DiscoveryBatchPolicy.includeReplayAliases(9L,rows,endpoint));
+        assertEquals(rows.size(),reads.get());
+    }
+
     @Test public void exactReplayKeepsOnlyUncertainPositionsAndTheirEndpointAliases(){
         int count=6;
         long mask=DiscoveryBatchPolicy.noteReplayPosition(0L,1,count);
