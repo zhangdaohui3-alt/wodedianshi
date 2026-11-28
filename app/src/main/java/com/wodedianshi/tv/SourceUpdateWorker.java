@@ -785,10 +785,13 @@ public class SourceUpdateWorker extends Worker {
         String feed=feeds[feedIndex];
         String cursorKey=initialDiscoveryChain?feedCursorKey(feedIndex):
             manualRefresh?manualFeedCursorKey(feedIndex):routineFeedCursorKey(feedIndex);
-        int feedCursor=roomInt(cursorKey,0);
-        final String savedProbeVersion=roomString(cursorKey+"_version","");
-        final int savedPartialScanned=initialDiscoveryChain?
-            roomInt(DiscoveryBatchPolicy.initialBatchPrefix(feedIndex)+"scanned",0):0;
+        String versionKey=cursorKey+"_version";
+        String scannedKey=initialDiscoveryChain?DiscoveryBatchPolicy.initialBatchPrefix(feedIndex)+"scanned":null;
+        Map<String,String> cursorState=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),
+            initialDiscoveryChain?Arrays.asList(cursorKey,versionKey,scannedKey):Arrays.asList(cursorKey,versionKey));
+        int feedCursor=stateInt(cursorState,cursorKey,0);
+        final String savedProbeVersion=cursorState.getOrDefault(versionKey,"");
+        final int savedPartialScanned=initialDiscoveryChain?stateInt(cursorState,scannedKey,0):0;
         String feedVersion="";
         int[] parsedCount={0};
         int indexedEntries=-1; // Count from the validated cached playlist index.
@@ -2312,10 +2315,13 @@ public class SourceUpdateWorker extends Worker {
           // Use exactly the same admission policy as the next slice. A
           // cooling feed or an already visited family must not impose its
           // retry delay on a different eligible, unfailed directory.
+          Map<String,String> committedProgress=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),
+              Arrays.asList("source_initial_progress_staged_channels","source_initial_progress_checked_urls",
+                  FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY));
           boolean preferCoreNow=DiscoveryBatchPolicy.preferCoreCoverage(
-              roomInt("source_initial_progress_staged_channels",0),
-              roomInt("source_initial_progress_checked_urls",0),
-              roomInt(FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
+              stateInt(committedProgress,"source_initial_progress_staged_channels",0),
+              stateInt(committedProgress,"source_initial_progress_checked_urls",0),
+              stateInt(committedProgress,FullDiscoveryProgressPolicy.STAGED_CORE_MASK_KEY,-1));
           InitialFeedAdmission admission=readInitialFeedAdmission(feeds,false);
           int next=SourceDiscoveryPriorityPolicy.nextInitialFeedWithCache(initialNextFeedIndex,
               admission.completed,admission.deferred,admission.visited,admission.prepared,admission.failed,
@@ -2948,9 +2954,8 @@ public class SourceUpdateWorker extends Worker {
     ArrayList<String> keys=new ArrayList<>(feedCount);
     for(int i=0;i<feedCount;i++)keys.add(initialFeedDoneKey(i));
     Map<String,String> values=com.wodedianshi.tv.db.AppStateStore.getValues(getApplicationContext(),keys);
-    boolean[] completed=new boolean[feedCount];
-    for(int i=0;i<feedCount;i++)completed[i]=Boolean.parseBoolean(values.get(keys.get(i)));
-    return areAllDiscoveryFeedsComplete(completed,Collections.emptyList());
+    for(String key:keys)if(!Boolean.parseBoolean(values.get(key)))return false;
+    return true;
   }
   private boolean areAllDiscoveryFeedsComplete(boolean[] completed,List<FeedBatch> batches){
     for(int i=0;i<completed.length;i++){
@@ -4145,16 +4150,13 @@ public class SourceUpdateWorker extends Worker {
       admission.visited[i]=admission.failed[i]
           ||positiveFeedState(state,feedCursorKey(i))
           ||positiveFeedState(state,DiscoveryBatchPolicy.initialBatchPrefix(i)+"scanned");
-      int marker=DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK;
-      try{marker=Integer.parseInt(state.get(DiscoveryBatchPolicy.initialTransientRecheckKey(i)));}
-      catch(NumberFormatException ignored){}
+      int marker=stateInt(state,DiscoveryBatchPolicy.initialTransientRecheckKey(i),
+          DiscoveryBatchPolicy.NO_TRANSIENT_RECHECK);
       admission.deferred[i]=DiscoveryBatchPolicy.deferInitialReplayForIdle(viewing,marker)
           ||(viewing&&elapsed<LIVE_DIRECTORY_RETRY_AFTER.getOrDefault(i,0L));
       if(!admission.completed[i]&&!admission.deferred[i]
           &&marker==DiscoveryBatchPolicy.TRANSIENT_RECHECK_USED){
-        long admittedAt=0L;
-        try{admittedAt=Long.parseLong(state.get(DiscoveryBatchPolicy.initialTransientRecheckAtKey(i)));}
-        catch(NumberFormatException ignored){}
+        long admittedAt=stateLong(state,DiscoveryBatchPolicy.initialTransientRecheckAtKey(i),0L);
         admission.remaining[i]=DiscoveryBatchPolicy.transientRecheckRemainingMs(admittedAt,wall);
         admission.deferred[i]=admission.remaining[i]>0L;
       }
@@ -4166,8 +4168,7 @@ public class SourceUpdateWorker extends Worker {
     return admission;
   }
   private static boolean positiveFeedState(Map<String,String> values,String key){
-    try{return Long.parseLong(values.get(key))>0L;}
-    catch(NumberFormatException invalid){return false;}
+    return stateLong(values,key,0L)>0L;
   }
   private String roomString(String key,String fallback){
     return com.wodedianshi.tv.db.AppStateStore.get(getApplicationContext(),key,fallback);
