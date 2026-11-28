@@ -20,6 +20,9 @@ public final class PlaylistParser {
     // Bound input before allocating or interpreting a whole line. Existing
     // index fields retain their independent UTF-8 byte limit.
     static final int MAX_LINE_CHARS=1024*1024;
+    static final class LineLimitException extends IOException {
+        LineLimitException(){super("Playlist line exceeds size limit");}
+    }
     static final class BoundedLineReader {
         private final Reader source;
         private final char[] buffer=new char[8192];
@@ -44,7 +47,7 @@ public final class PlaylistParser {
                 while(position<limit&&buffer[position]!='\r'&&buffer[position]!='\n')position++;
                 int count=position-start;
                 if(count>MAX_LINE_CHARS-(joined==null?0:joined.length()))
-                    throw new IOException("Playlist line exceeds size limit");
+                    throw new LineLimitException();
                 if(position<limit){
                     skipLf=buffer[position++]=='\r';
                     if(joined==null)return new String(buffer,start,count);
