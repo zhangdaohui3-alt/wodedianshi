@@ -54,6 +54,12 @@ public final class RoomDatabaseProvider {
         }
     };
 
+    private static final Migration MIGRATION_10_11 = new Migration(10, 11) {
+        @Override public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE manual_probe_quality ADD COLUMN observedAt INTEGER NOT NULL DEFAULT 0");
+        }
+    };
+
     private RoomDatabaseProvider() {}
 
     public static AppDatabase get(Context context) {
