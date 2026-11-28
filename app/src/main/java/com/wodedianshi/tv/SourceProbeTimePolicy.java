@@ -14,6 +14,7 @@ public final class SourceProbeTimePolicy {
     public static java.util.function.BooleanSupplier latchPause(java.util.function.BooleanSupplier requested) {
         java.util.concurrent.atomic.AtomicBoolean paused = new java.util.concurrent.atomic.AtomicBoolean();
         return () -> {
+            if (paused.get()) return true;
             if (Thread.currentThread().isInterrupted() || requested.getAsBoolean()) paused.set(true);
             return paused.get();
         };
