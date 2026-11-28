@@ -1038,15 +1038,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
       }
       channels.clear();channels.addAll(compact);
       channelsByUrl.clear();channelsByIdentity.clear();
+      channelsByIdentity.putAll(firstByIdentity);
       for(Channel c:channels){
         for(String u:c.backups)channelsByUrl.put(u,c);
-        channelsByIdentity.put(identity(c),c);
       }
       if(selectedIdentity!=null){
-        selected=-1;
-        for(int i=0;i<channels.size();i++){
-          if(selectedIdentity.equals(identity(channels.get(i)))){selected=i;break;}
-        }
+        selected=channels.indexOf(firstByIdentity.get(selectedIdentity));
       }
     }
     synchronized(cataloguePersistLock){catalogueMutationGeneration++;catalogueMembershipGeneration++;}
