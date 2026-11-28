@@ -211,4 +211,28 @@ public class SourceUpdateActivityPolicyTest {
         assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
         assertFalse(SourceUpdateActivityPolicy.isActivityActive());
     }
+    @org.junit.Test public void playbackHandoffRevokesLeaseAndMarksPressureTogether(){
+        try{
+            SourceUpdateActivityPolicy.setActivityActive(true);
+            SourceUpdateActivityPolicy.setPlaybackActive(true);
+            SourceUpdateActivityPolicy.reportStableLive(1000L);
+            SourceUpdateActivityPolicy.reportStableLive(11000L);
+            long lease=SourceUpdateActivityPolicy.stableRevocationGeneration();
+            long pressure=SourceUpdateActivityPolicy.pressureGeneration();
+            long starts=SourceUpdateActivityPolicy.playbackStartGeneration();
+            org.junit.Assert.assertTrue(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(12000L,lease));
+            SourceUpdateActivityPolicy.setPlaybackActive(true,12000L);
+            org.junit.Assert.assertEquals(pressure+1,SourceUpdateActivityPolicy.pressureGeneration());
+            org.junit.Assert.assertEquals(lease+1,SourceUpdateActivityPolicy.stableRevocationGeneration());
+            org.junit.Assert.assertEquals(starts,SourceUpdateActivityPolicy.playbackStartGeneration());
+            org.junit.Assert.assertFalse(SourceUpdateActivityPolicy.permitsInitialPlaybackWork(12000L,lease));
+            SourceUpdateActivityPolicy.setPlaybackActive(false,13000L);
+            org.junit.Assert.assertFalse(SourceUpdateActivityPolicy.isPlaybackActive());
+            org.junit.Assert.assertEquals(1,SourceUpdateActivityPolicy.idleProbeConcurrency(13000L,true));
+        }finally{
+            SourceUpdateActivityPolicy.setPlaybackActive(false);
+            SourceUpdateActivityPolicy.setActivityActive(false);
+        }
+    }
+
 }
