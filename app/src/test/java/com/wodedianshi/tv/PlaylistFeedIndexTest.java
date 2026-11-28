@@ -674,4 +674,37 @@ public class PlaylistFeedIndexTest {
             PlaylistFeedIndex.initialProbeVersion(body,PlaylistFeedIndex.hasCoverageOrder(feed))));
     }
 
+    @Test public void ordinaryReadRepairsRecognizedCoverageOrderWithoutDowngrade()throws Exception{
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n"
+                +"#EXTINF:-1,CCTV-1\nhttps://example.invalid/backup\n"
+                +"#EXTINF:-1,CCTV-2\nhttps://example.invalid/two\n");
+        PlaylistFeedIndex.readInitialPage(feed,0,1,row->{},()->false);
+        assertEquals(3,PlaylistFeedIndex.indexedEntryCount(feed));
+        File records=new File(feed.getPath()+".index-data");
+        try(RandomAccessFile broken=new RandomAccessFile(records,"rw")){broken.setLength(1);}
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(feed));
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,1,1,page::add));
+        assertEquals("CCTV-2",page.get(0).name);
+        org.junit.Assert.assertTrue(PlaylistFeedIndex.hasCoverageOrder(feed));
+        assertEquals(3,PlaylistFeedIndex.indexedEntryCount(feed));
+    }
+
+    @Test public void nonemptyRecordsCannotBeCertifiedByZeroCountHeader()throws Exception{
+        File feed=playlist("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://example.invalid/one\n");
+        PlaylistFeedIndex.readPage(feed,0,1,row->{});
+        try(RandomAccessFile offsets=new RandomAccessFile(feed.getPath()+".index-offsets","rw")){
+            offsets.seek(4L);offsets.writeLong(0L);offsets.setLength(12L);
+        }
+        assertEquals(-1,PlaylistFeedIndex.indexedEntryCount(feed));
+        org.junit.Assert.assertFalse(PlaylistFeedIndex.hasCoverageOrder(feed));
+        List<PlaylistParser.ChannelSource> page=new ArrayList<>();
+        try{
+            PlaylistFeedIndex.readExistingPage(feed,0,1,page::add,()->false);
+            org.junit.Assert.fail("Expected invalid header");
+        }catch(java.io.IOException expected){}
+        org.junit.Assert.assertTrue(page.isEmpty());
+        assertEquals(1,PlaylistFeedIndex.readPage(feed,0,1,page::add));
+    }
+
 }
