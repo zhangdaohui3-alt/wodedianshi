@@ -900,4 +900,24 @@ public class RoomPublicationIntegrationTest {
         });
     }
 
+    @Test public void restoredSelectionRemovesOnlyDisplacedExclusiveScope() {
+        String active="https://old.example/live";
+        BackupSourceEntity[] rows=new BackupSourceEntity[8];
+        java.util.Map<String,BackupSourceEntity> old=new java.util.HashMap<>();
+        for(int i=0;i<7;i++){
+            rows[i]=new BackupSourceEntity("a","https://kept.example/"+i,i,"[\"china\"]");
+            old.put(rows[i].url,rows[i]);
+        }
+        rows[7]=new BackupSourceEntity("a","https://new.example/live",7,"[\"china\",\"geo:countries:us\"]");
+        old.put(active,new BackupSourceEntity("a",active,4,"[\"geo:countries:cn\"]"));
+        ChannelEntity row=new ChannelEntity("a","a","a",rows[0].url,"group","group",
+                "","","[\"china\",\"custom\",\"geo:countries:us\"]",0,0);
+        RoomCatalogueWriter.PreparedChannel item=new RoomCatalogueWriter.PreparedChannel(
+                row,java.util.Arrays.asList(rows));
+        assertEquals(7,RoomCatalogueWriter.retainLiveSelection(item,old,active,url->true));
+        assertEquals(active,item.sources.get(7).url);
+        assertEquals("[\"china\",\"custom\",\"geo:countries:cn\"]",item.channel.channelScopesJson);
+        assertEquals("[\"geo:countries:cn\"]",item.sources.get(7).scopesJson);
+    }
+
 }
