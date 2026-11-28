@@ -46,9 +46,9 @@ public class RemoteChannelOrderPolicyTest {
     }
 
     @Test public void displayAliasAndWhitespaceAreHandledConsistently() {
-        assertTrue(RemoteChannelOrderPolicy.matchesQuery(" CCTV-2 ", "Finance", null, "CCTV-2"));
-        assertFalse(RemoteChannelOrderPolicy.matchesQuery("CCTV-3", "Finance", null, "CCTV-2"));
-        assertTrue(RemoteChannelOrderPolicy.matchesQuery(" ", null, null, null));
+        assertTrue(RemoteChannelOrderPolicy.matchesNormalizedQuery(RemoteChannelOrderPolicy.normalizeQuery(" CCTV-2 "), "Finance", null, "CCTV-2"));
+        assertFalse(RemoteChannelOrderPolicy.matchesNormalizedQuery(RemoteChannelOrderPolicy.normalizeQuery("CCTV-3"), "Finance", null, "CCTV-2"));
+        assertTrue(RemoteChannelOrderPolicy.matchesNormalizedQuery(RemoteChannelOrderPolicy.normalizeQuery(" "), null, null, null));
     }
 
     @Test public void autoResumeCannotUseReplacedPositionOrInterruptVod() {
