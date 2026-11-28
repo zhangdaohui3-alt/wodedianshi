@@ -1224,10 +1224,16 @@ public class SourceUpdateWorker extends Worker {
         com.wodedianshi.tv.db.ManualProbeQualityStore.loadUrls(getApplicationContext(),qualityOwner,needed,
             manualQualityLoaded,measuredScores,probeFailureStreaks,pauseRequested);
       }
-      int savedScanStart=manualRefresh?0:SourceSelectionPolicy.nextScanStart(savedPool.size(),position->{
-        SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
-        return savedPool.get(position).url;
-      },roomString("source_saved_scan_after_key",""),roomInt("source_saved_scan_cursor",0));
+      int savedScanStart=0;
+      if(!initialDiscoveryChain&&!manualRefresh&&!savedPool.isEmpty()){
+        Map<String,String> savedScanState=com.wodedianshi.tv.db.AppStateStore.getValues(
+            getApplicationContext(),Arrays.asList("source_saved_scan_after_key","source_saved_scan_cursor"));
+        savedScanStart=SourceSelectionPolicy.nextScanStart(savedPool.size(),position->{
+          SourceProbeTimePolicy.checkPublicationPaused(pauseRequested);
+          return savedPool.get(position).url;
+        },savedScanState.getOrDefault("source_saved_scan_after_key",""),
+            stateInt(savedScanState,"source_saved_scan_cursor",0));
+      }
       // During a full rebuild every probe slot belongs to newly discovered feed
       // candidates. Staged rows already retain their measured scores; repeatedly
       // health-checking them here would starve unseen entries and slow completion.
@@ -1864,11 +1870,13 @@ public class SourceUpdateWorker extends Worker {
         throw new IllegalStateException("Full rebuild has no validated channels");
       if(pauseRequested.getAsBoolean())
         return deferredViewingResult(manual,initialDiscoveryChain);
-      update.putInt("source_saved_scan_cursor",!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()
-              ?(savedScanStart+savedScanned)%savedPool.size():roomInt("source_saved_scan_cursor",0))
-          .putString("source_saved_scan_after_key",!manualRefresh&&savedScanned>0?SourceSelectionPolicy.lastScannedKey(savedPool.size(),position->savedPool.get(position).url,savedScanStart,savedScanned):roomString("source_saved_scan_after_key",""))
-          // The exact catalogue snapshot is represented by a compact fingerprint.
-          .putString("source_update_time",now())
+      if(!initialDiscoveryChain&&!manualRefresh&&savedScanned>0&&!savedPool.isEmpty()){
+        update.putInt("source_saved_scan_cursor",(savedScanStart+savedScanned)%savedPool.size())
+            .putString("source_saved_scan_after_key",SourceSelectionPolicy.lastScannedKey(
+                savedPool.size(),position->savedPool.get(position).url,savedScanStart,savedScanned));
+      }
+      // The exact catalogue snapshot is represented by a compact fingerprint.
+      update.putString("source_update_time",now())
           .putString("source_update_result",(initialDiscoveryChain
               ?(initialDiscoveryComplete?"全量目录采集完成并已原子发布；":"独立全量目录构建中，保留已发布频道；")
               :"已安全更新当前目录；")+(initialDiscoveryChain?"首次全量重建按批次覆盖全部配置目录；":(foregroundAtStart||SourceUpdateActivityPolicy.isActivityActive()?"日常更新优先读取中国及港澳台目录，全球目录留待后台运行时补充；":"本轮已检查中国及全球公开目录；"))+(discoveryUnavailable?"公开目录暂不可用，仍完成已保存线路的轮检；":(feedsWithEntries==0?"目录可访问，但没有解析出有效频道条目；":(discoveryProbesValid==0?(initialHasValidatedSource?"本轮新增候选未通过媒体预检，未纳入已验证频道；":"已解析频道条目，但尚无候选线路通过媒体预检；"):"成功读取 "+feedsOk+" 个目录，"+feedsWithEntries+" 个含频道条目，"+discoveryProbesValid+" 条候选通过媒体预检；")))+"初筛 "+checked+" 个候选地址；新增/替换 "+added+" 个备用地址；每频道最多保留 "+MAX_SOURCES_PER_CHANNEL+" 条线路；网络初筛不能保证实际画面与声音，仍需播放器验证；"+(errors.length()>0?"部分目录失败。":""));
