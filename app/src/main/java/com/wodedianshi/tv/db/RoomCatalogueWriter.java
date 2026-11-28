@@ -535,8 +535,7 @@ public final class RoomCatalogueWriter {
                 if(preserveLiveSelection&&!ambiguousSelections.contains(id)){
                     ChannelDao.ActiveSelection live=liveSelections.get(id);
                     if(live!=null&&channel.legacyKey.equals(live.legacyKey)){
-                        retainLiveSelection(item,oldSources,live.url,eligibleSelection);
-                        channel.activeSource=resolveLiveSelection(item.sources,live.url);
+                        channel.activeSource=retainLiveSelection(item,oldSources,live.url,eligibleSelection);
                     }
                 }
                 dao.updateChannelFields(channel.id,channel.legacyKey,channel.name,
@@ -576,18 +575,17 @@ public final class RoomCatalogueWriter {
         }catch(org.json.JSONException malformed){return url->false;}
     }
 
-    /** Keep a positively scored current old URL if the staged ranking evicted
-     * it. Never displace a retained old route or the ranked primary. */
-    static void retainLiveSelection(PreparedChannel item,Map<String,BackupSourceEntity> oldSources,
+    /** Resolve retained selection directly; only an absent old URL needs
+     * eligibility and slot checks. Never displace a retained old route or primary. */
+    static int retainLiveSelection(PreparedChannel item,Map<String,BackupSourceEntity> oldSources,
             String selected,java.util.function.Predicate<String> eligible){
-        if(selected==null||!oldSources.containsKey(selected))return;
-        if(!selected.startsWith("http://")&&!selected.startsWith("https://"))return;
-        String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(selected);
-        for(BackupSourceEntity row:item.sources)
-            if(endpoint.equals(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(row.url)))return;
-        if(!eligible.test(selected))return;
+        int existing=resolveLiveSelection(item.sources,selected);
+        if(existing>=0)return existing;
+        if(selected==null||!oldSources.containsKey(selected))return 0;
+        if(!selected.startsWith("http://")&&!selected.startsWith("https://"))return 0;
+        if(!eligible.test(selected))return 0;
         int position=selectionRetentionSlot(item,oldSources);
-        if(position<0)return;
+        if(position<0)return 0;
         BackupSourceEntity old=oldSources.get(selected);
         BackupSourceEntity restored=new BackupSourceEntity(item.channel.id,selected,position,old.scopesJson);
         // Keep source scope ownership consistent with the restored relation.
@@ -600,10 +598,11 @@ public final class RoomCatalogueWriter {
             }
             JSONArray merged=new JSONArray();for(String scope:scopes)merged.put(scope);
             mergedScopes=merged.toString();
-        }catch(org.json.JSONException malformed){return;}
+        }catch(org.json.JSONException malformed){return 0;}
         if(position==item.sources.size())item.sources.add(restored);
         else item.sources.set(position,restored);
         item.channel.channelScopesJson=mergedScopes;
+        return position;
     }
 
     static int selectionRetentionSlot(PreparedChannel item,Map<String,BackupSourceEntity> oldSources){
@@ -618,16 +617,16 @@ public final class RoomCatalogueWriter {
     }
 
     /** Exact selection wins; an equivalent retained endpoint also preserves
-     * the selection. Never reuse a numeric index across reordered arrays. */
+     * the selection. Return -1 when absent, not the ranked fallback index. */
     static int resolveLiveSelection(List<BackupSourceEntity> sources,String liveUrl){
-        if(liveUrl==null||liveUrl.isEmpty())return 0;
+        if(liveUrl==null||liveUrl.isEmpty())return -1;
         for(BackupSourceEntity source:sources)
             if(liveUrl.equals(source.url))return source.priority;
         String endpoint=com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(liveUrl);
         for(BackupSourceEntity source:sources)
             if(endpoint.equals(com.wodedianshi.tv.SourceSelectionPolicy.endpointKey(source.url)))
                 return source.priority;
-        return 0;
+        return -1;
     }
 
     private static void checkPause(BooleanSupplier paused) {
