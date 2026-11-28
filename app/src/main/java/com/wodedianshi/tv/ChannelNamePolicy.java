@@ -493,6 +493,44 @@ final class ChannelNamePolicy {
         return "";
     }
 
+    private static final String[] CCTV_TITLES={"","综合","财经","综艺","中文国际","体育","电影","国防军事","电视剧","纪录","科教","戏曲","社会与法","新闻","少儿","音乐","奥林匹克","农业农村"};
+
+    /** Display an already recognized identity; never parse it a second time. */
+    static String broadcasterDisplayName(String key) {
+        if(!key.startsWith("CCTV-"))return key;
+        switch(key){
+            case "CCTV-5+":return "CCTV-5+ 体育赛事";
+            case "CCTV-4 Asia":return "CCTV-4 亚洲版";
+            case "CCTV-NEWS":return "CCTV-NEWS 新闻";
+            case "CCTV-4K":return "CCTV-4K 超高清";
+            case "CCTV-8K":return "CCTV-8K 超高清";
+            default:
+                int n=cctvSortOrder(key);
+                return n>=1&&n<CCTV_TITLES.length?key+" "+CCTV_TITLES[n]:key;
+        }
+    }
+
+    /** Only a CCTV identity may receive a national-channel sort position. */
+    static int cctvSortOrder(String key) {
+        if(key==null||!key.startsWith("CCTV-"))return 999;
+        String suffix=key.substring(5);
+        switch(suffix){
+            case "NEWS":return 90;
+            case "4K":return 91;
+            case "8K":return 92;
+            case "4 Asia":return 4;
+        }
+        int end=suffix.endsWith("+")?suffix.length()-1:suffix.length();
+        if(end<1||end>2)return 999;
+        int number=0;
+        for(int i=0;i<end;i++){
+            char digit=suffix.charAt(i);
+            if(digit<'0'||digit>'9')return 999;
+            number=number*10+digit-'0';
+        }
+        return number;
+    }
+
     // null denotes contradictory recognized broadcaster labels.
     static String consistentBroadcaster(String... fields){
         String found="";
