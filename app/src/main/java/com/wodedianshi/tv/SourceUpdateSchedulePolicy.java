@@ -83,14 +83,20 @@ public final class SourceUpdateSchedulePolicy {
     }
 
     /** Preserve the oldest three normal turns, then allow at most three
-     * promotions (positions 4, 8, 12). All other rows retain relative order.
+     * priority turns (positions 4, 8, 12), at most one per origin.
+     * All other rows retain relative order, including same-origin siblings.
      * The durable pending queue and normal network/cooldown gates are unchanged. */
     static <T> void promotePlaybackRechecks(java.util.List<T> ordered,
-            java.util.function.Predicate<T> urgent){
+            java.util.function.Predicate<T> urgent,java.util.function.Function<T,String> originOf){
+        java.util.HashSet<String> priorityOrigins=new java.util.HashSet<>();
         int searchFrom=3;
         for(int slot=3;slot<12&&slot<ordered.size();slot+=4){
             int found=Math.max(slot,searchFrom);
-            while(found<ordered.size()&&!urgent.test(ordered.get(found)))found++;
+            while(found<ordered.size()){
+                T candidate=ordered.get(found);
+                if(urgent.test(candidate)&&priorityOrigins.add(originOf.apply(candidate)))break;
+                found++;
+            }
             if(found>=ordered.size())break;
             if(found!=slot)ordered.add(slot,ordered.remove(found));
             searchFrom=found+1;
