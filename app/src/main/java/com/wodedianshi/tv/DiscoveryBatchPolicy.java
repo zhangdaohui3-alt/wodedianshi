@@ -278,10 +278,15 @@ public final class DiscoveryBatchPolicy {
     // Keep all of its aliases in the replay suffix, without replaying other URLs.
     static <T> long includeReplayAliases(long mask,java.util.List<T> page,
             java.util.function.Function<T,String> endpoint) {
-        if(mask<0L||page.size()>INITIAL_PAGE_SIZE)return -1L;
+        if(mask<0L)return -1L;
+        int size=page.size();
+        if(size>INITIAL_PAGE_SIZE)return -1L;
+        if(mask==0L)return 0L;
         java.util.HashSet<String> needed=new java.util.HashSet<>();
-        for(int i=0;i<page.size();i++)if((mask&(1L<<i))!=0L)needed.add(endpoint.apply(page.get(i)));
-        for(int i=0;i<page.size();i++)if(needed.contains(endpoint.apply(page.get(i))))mask|=1L<<i;
+        for(int i=0;i<size;i++)if((mask&(1L<<i))!=0L)needed.add(endpoint.apply(page.get(i)));
+        if(needed.isEmpty())return mask;
+        for(int i=0;i<size;i++)
+            if((mask&(1L<<i))==0L&&needed.contains(endpoint.apply(page.get(i))))mask|=1L<<i;
         return mask;
     }
     static boolean skipReplayPosition(int marker,long mask,int position) {
