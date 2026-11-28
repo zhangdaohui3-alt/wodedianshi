@@ -91,4 +91,17 @@ public class PlaylistFeedCacheRecencyTest {
         assertFalse(state.exists());
         assertFalse(prefix.exists());
     }
+    @Test public void idleFullReplacementUsesOrdinaryLimitAndNoImmediateSecondAttempt() throws Exception {
+        long mib=1024L*1024L;
+        assertEquals(96*mib,PlaylistFeedCache.fullReplacementLimit(false));
+        assertEquals(8*mib,PlaylistFeedCache.fullReplacementLimit(true));
+        File absent=new File(folder.getRoot(),"missing.range-part");
+        java.io.IOException failure=new java.io.IOException("Incomplete directory range");
+        PlaylistFeedCache.FullDirectoryAttemptException attempted=
+                new PlaylistFeedCache.FullDirectoryAttemptException(failure);
+        assertSame(failure,attempted.getCause());
+        assertEquals(failure.getMessage(),attempted.getMessage());
+        assertTrue(PlaylistFeedCache.shouldDeferRangeFallback(attempted,absent));
+        assertFalse(PlaylistFeedCache.shouldDeferRangeFallback(failure,absent));
+    }
 }
