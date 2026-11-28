@@ -297,4 +297,21 @@ public class SourceSelectionPolicyTest {
                 "https://slow.example/Live?token=B","https://later.example/live"),checked);
     }
 
+    @Test public void initialSelectionPrefersHealthyMemoryThenRankedHealthyRoute() {
+        java.util.List<String> ranked=Arrays.asList("https://best.example/live",
+                "https://next.example/live","https://remembered.example/live");
+        assertEquals(2,SourceSelectionPolicy.findInitialSource(ranked,
+                "HTTPS://REMEMBERED.example:443/live",Collections.emptySet(),key->false));
+        assertEquals(0,SourceSelectionPolicy.findInitialSource(ranked,null,
+                Collections.emptySet(),key->false));
+        assertEquals(1,SourceSelectionPolicy.findInitialSource(ranked,ranked.get(2),
+                Collections.emptySet(),key->!key.equals(ranked.get(1))));
+        assertEquals(1,SourceSelectionPolicy.findInitialSource(ranked,ranked.get(2),
+                new HashSet<>(Arrays.asList(ranked.get(0),ranked.get(2))),key->false));
+        assertEquals(0,SourceSelectionPolicy.findInitialSource(ranked,null,
+                Collections.emptySet(),key->true));
+        assertEquals(-1,SourceSelectionPolicy.findInitialSource(ranked,null,
+                new HashSet<>(ranked),key->false));
+    }
+
 }
