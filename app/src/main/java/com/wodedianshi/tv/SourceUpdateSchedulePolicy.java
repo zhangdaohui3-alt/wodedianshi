@@ -103,17 +103,6 @@ public final class SourceUpdateSchedulePolicy {
         }
     }
 
-    static java.util.ArrayList<String> selectProvisionalRechecks(
-            java.util.Set<String> pending,java.util.Map<String,String> current) {
-        return selectProvisionalRechecks(pending,current,key->false);
-    }
-
-    static java.util.ArrayList<String> selectProvisionalRechecks(
-            java.util.Set<String> pending,java.util.Map<String,String> current,
-            java.util.function.Predicate<String> temporarilyDeferred) {
-        return provisionalRecheckOrder(pending,current,temporarilyDeferred,PROVISIONAL_DAILY_LIMIT);
-    }
-
     /** Only a completed positive full sample can be shared by equivalent
      * endpoint aliases in the same bounded idle recheck. Never share failures,
      * provisional evidence or a cancelled/expired observation. */
@@ -297,19 +286,6 @@ public final class SourceUpdateSchedulePolicy {
         return (valid||!independentHealth)
                 &&SourceQualityScorer.reusableProbeMode(paced,viewing)
                 &&canReuseInitialProbe(valid,provisional,measuredAt,now);
-    }
-
-    /** At capacity discard expired observations before evicting a still reusable
-     * least-recently-used result. The owner retains the original hard cap. */
-    static <K,V> void trimInitialProbeCache(java.util.LinkedHashMap<K,V> cache,int capacity,
-            java.util.function.Predicate<V> reusable) {
-        int limit=Math.max(0,capacity);
-        if(cache.size()<=limit)return;
-        java.util.Iterator<V> values=cache.values().iterator();
-        while(values.hasNext()&&cache.size()>limit){
-            if(!reusable.test(values.next()))values.remove();
-        }
-        while(cache.size()>limit)cache.remove(cache.keySet().iterator().next());
     }
 
     /** The owner supplies a conservative earliest-expiry hint. Before that
